@@ -1,5 +1,37 @@
 # Changelog - LUGX Project
 
+## [1.46.1] - 2026-10-13 (Offline 3-Way Auto-Merge, Storage-First Cross-Tab Broadcast & Diff3 Deletion Guard Hardening)
+
+### Core Synchronization & Concurrency Hardening (`src/hooks/use-editor-orchestrator.ts`, `src/hooks/use-editor-conflict.ts`, `src/lib/sync/conflict-resolver.ts`, `src/lib/sync/diff3.ts`)
+
+- **Storage-First Cross-Tab Sequential Broadcast (`src/hooks/use-editor-orchestrator.ts`):**
+  - Resolved asynchronous race condition between IndexedDB disk write and sibling tab notifications: `useEditorOrchestrator` strictly awaits `syncHook.saveLocal()` to settle on disk before emitting `broadcastCrossTabEvent({ type: 'file_saved', ... })`.
+  - Guaranteed that sibling tabs receiving `file_saved` read completely synchronized, fresh document state from local IndexedDB storage rather than stale in-memory buffers or partial writes.
+- **Silent Automated 3-Way Merge on Non-Overlapping HTTP 412 Conflicts (LUGX-054 - `src/hooks/use-editor-conflict.ts`):**
+  - Integrated `conflictResolver.attemptThreeWayMerge()` into `handle412Conflict` when differing server versions collide with local edits and a valid `baseSnapshot` is present.
+  - When mutations do not overlap (`status === 'merged_clean'`), the hook automatically re-encrypts the merged content (if encrypted), dispatches an authoritative CAS save to the server with `expectedVersion: serverVersion.version`, commits clean state to IndexedDB, updates the editor buffer, and transitions to clean state without opening `ConflictDialog` or disrupting offline-to-online editing.
+- **Visual Diff LCS Gap Pairing & Deletion Guard Hardening (`src/lib/sync/conflict-resolver.ts`, `src/lib/sync/diff3.ts`):**
+  - Corrected gap handling in `ConflictResolver.computeVisualDiff`: restricted `baseSet.has(line)` deletion pruning strictly to surplus remote insertions (`insLines.length > delLines.length`).
+  - Guaranteed that in-place line replacements are cleanly paired as `modify` operations with token-level diff spans, eliminating the duplicate strike-through of Line 4 in local view and omission in server view during 4-line concurrent edit scenarios.
+  - Guarded Diff3 Deletion Guard line pruning in `src/lib/sync/diff3.ts` to execute strictly when local line count is less than base line count (`aContent.length < oContent.length`), preserving remote lines on in-place mutations.
+
+### React 19 Strict Compiler Discipline & ESLint Remediation (`src/components/vault/`, `src/components/layout/`, `src/app/workspace/editor/`)
+
+- **Elimination of Render-Phase State Resets:**
+  - In `CreateVaultModal`, `TrustDeviceModal`, and `VaultUnlockModal`, replaced synchronous `setState` resets inside `useEffect` with pure render-time previous-state comparisons (`prevIsOpen !== isOpen`).
+  - Purged unused `useEffect` import from `src/components/vault/create-vault-modal.tsx`.
+- **Cancellation & Async Guard Discipline:**
+  - In `VaultSecurityCard`, `TrustDeviceModal`, `VaultUnlockModal`, and `OCRSettingsCard`, added `isMounted` guards across all asynchronous WebAuthn, IndexedDB, and server profile checks to prevent cascading state updates and memory leaks on unmounted trees.
+  - In `src/app/workspace/editor/[fileId]/page.tsx`, converted synchronous `localStorage` reading in `useEffect` to lazy `useState(() => ...)` initialization.
+- **Static Analysis Scorecard:** Repository-wide `npm run lint` achieves 0 errors and 0 warnings; `npx tsc --noEmit` compiles cleanly with 0 errors.
+
+### Dedicated Test Suites & Regression Contracts (`src/test/editor/`, `src/test/sync/`)
+
+- **Automated 3-Way Merge on 412 Contract (`src/test/editor/use-editor-conflict.test.ts`):**
+  - Added unit test asserting that differing server and local versions on non-overlapping lines cleanly auto-merge, push to server, update editor state, and suppress `ConflictDialog`.
+- **4-Line Visual Diff Pairing Contract (`src/test/sync/sync-conflict-resolver.test.ts`):**
+  - Added unit regression test verifying that modifying Line 4 locally while Line 2 is modified on the server generates valid paired `modify` operations without duplicate `delete` entries or dropped lines.
+
 ## [1.45.1] - 2026-10-05 (Static Type Safety & Code Quality Hardening: ESLint and TypeScript Remediation)
 
 ### Bug Fixes & Type Safety Hardening (`src/lib/sync/sync-queue-worker.ts`)

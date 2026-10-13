@@ -267,7 +267,10 @@ flowchart TD
     DecryptServer --> CompareMarkdown{"False Conflict Check<br/>normalizeMarkdownSource() equality"}
     
     CompareMarkdown -- "Identical Content / ETag" --> AutoAdopt["Auto-Adopt Server Version & ETag<br/>Save Clean IDB & markClean()"]
-    CompareMarkdown -- "Divergent Content" --> QuarantineConflict["Instantiate SyncConflict<br/>activeConflict = conflict<br/>isConflictDialogOpen = true"]
+    CompareMarkdown -- "Divergent Content" --> AutoMergeCheck{"Base Snapshot Present?<br/>attemptThreeWayMerge()"}
+    
+    AutoMergeCheck -- "Clean Merge (status === 'merged_clean')" --> AutoCommitMerged["Commit Merged to IDB & Server (LUGX-054)<br/>expectedVersion: serverVersion.version<br/>Update Adapter & Broadcast file_saved"]
+    AutoMergeCheck -- "Overlapping Conflict / No Base" --> QuarantineConflict["Instantiate SyncConflict<br/>activeConflict = conflict<br/>isConflictDialogOpen = true"]
     QuarantineConflict --> BlockGate["isBlockedByConflict() = true<br/>Suspend Autosave & Server Writes"]
     
     %% Conflict Resolution Flow
@@ -335,6 +338,14 @@ flowchart TD
 6. **LUGX-053 (`normalizeMarkdownSource` Equality):**
    - False-conflict detection in `handleSyncConflict`, false-conflict suppression in `handle412Conflict`, and in-flight snapshot comparison in `handleResolveConflict` all use `normalizeMarkdownSource`.
    - Normalizes CRLF/LF line endings and trailing whitespace, preventing false conflicts caused by serialization artifacts.
+
+7. **LUGX-054 (Silent Automated 3-Way Merge on Non-Overlapping 412):**
+   - When encountering HTTP 412 and a valid `baseSnapshot` is present, `useEditorConflict` executes `conflictResolver.attemptThreeWayMerge()`.
+   - If mutations between local and server do not overlap (`status === 'merged_clean'`), the merged content is automatically re-encrypted (if encrypted), saved to the server with `expectedVersion: serverVersion.version`, committed to IndexedDB, and applied to the editor without opening `ConflictDialog` or interrupting offline workflows.
+
+8. **Storage-First Sequential Cross-Tab Broadcast Invariant:**
+   - In `useEditorOrchestrator`, `await syncHook.saveLocal()` must settle in IndexedDB before emitting `broadcastCrossTabEvent('file_saved')`.
+   - Guarantees that sibling tabs receiving the notification always read fully committed, up-to-date document state from disk, eliminating asynchronous race conditions where tabs read stale content.
 
 ### 4.4 Architectural Decisions & Trade-offs
 
@@ -801,7 +812,7 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
   - **Vault Subsystem Total:** 10/10 test files, 178/178 tests passing (100% success rate).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 88 unit suites (1069 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 88 unit suites (1071 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
   - **TypeScript Typecheck:** `npx tsc --noEmit` exits with code 0 (zero errors).

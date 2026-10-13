@@ -470,6 +470,7 @@ The sync system implements a deterministic Three-Way Merge protocol to resolve c
    - Implements deterministic token-based 3-way line merge with half-open intervals `[start, end)`.
    - Eliminates token erasure bugs on repeated lines (e.g. duplicate lines `D\nC\nC`, `LUGX-045`) and adjacent empty lines.
    - Non-overlapping line/block changes are cleanly merged (`merged_clean`).
+   - **Silent Automated 3-Way Merge on 412 (LUGX-054):** When differing server and local versions collide under HTTP 412 and a valid `baseSnapshot` is present, `useEditorConflict` calls `conflictResolver.attemptThreeWayMerge()`. If `status === 'merged_clean'` (mutations do not overlap), the merged content is automatically re-encrypted (if applicable), pushed to the server with `expectedVersion: serverVersion.version`, committed to IndexedDB, and applied to the editor surface without displaying `ConflictDialog` or interrupting offline editing.
    - Overlapping regions insert explicit Git-style conflict markers (`<<<<<<< LOCAL ... ======= ... >>>>>>> REMOTE`).
    - Title (`title`) and Move (`parentFolderId`) metadata are merged independently.
    - Delete conflicts (remote delete vs local edit) produce `delete_conflict` requiring explicit "Restore" or "Delete" selection.
@@ -481,7 +482,9 @@ The sync system implements a deterministic Three-Way Merge protocol to resolve c
 5. **Single Authoritative Write:** After user resolution (Local, Server, 3-Way Merge, or Restore), exactly one write request is dispatched to the server containing `expectedVersion: serverVersion.version`.
 6. **Verified State Transition:** Editor state (MarkdownEditor / EditorAdapter) and IndexedDB cache are only transitioned to clean (`isDirty: false`, `syncStatus = 'synced'`) after receiving 200 OK confirmation from the server. If local resolution is selected, `isDirty = true` and `syncStatus = 'dirty'` are preserved to trigger subsequent sync push.
 7. **Autosave Lockout:** Autosave is strictly inhibited whenever an unresolved conflict is active.
-8. **User-Scoped Multi-Tab Isolation (`src/lib/sync/tab-sync.ts` & `src/lib/sync/cross-tab-sync.ts`):** Broadcast channels are scoped per authenticated user (`lugx_sync_${userId}`) to prevent cross-tenant event bleed, filtering echo messages (`senderTabId !== currentTabId`) and only advancing clean tab versions.
+8. **User-Scoped Multi-Tab Isolation & Storage-First Broadcast (`src/lib/sync/tab-sync.ts`, `src/lib/sync/cross-tab-sync.ts`, `src/hooks/use-editor-orchestrator.ts`):**
+   - Broadcast channels are scoped per authenticated user (`lugx_sync_${userId}`) to prevent cross-tenant event bleed, filtering echo messages (`senderTabId !== currentTabId`) and only advancing clean tab versions.
+   - **Storage-First Sequential Broadcast:** `useEditorOrchestrator` strictly awaits local IndexedDB persistence (`await syncHook.saveLocal()`) before emitting `file_saved` events, eliminating asynchronous race conditions where sibling tabs read stale or uncommitted data from disk.
 
 ---
 

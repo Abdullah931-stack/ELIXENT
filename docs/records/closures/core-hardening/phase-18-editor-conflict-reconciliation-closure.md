@@ -125,7 +125,7 @@ flowchart TD
 
 ## 4. Technical Debt & Accepted Compromises (`TD-18`)
 
-As documented in [`docs/TECHNICAL_DEBT_REGISTER.md`](file:///d:/Projects/LUGX/docs/TECHNICAL_DEBT_REGISTER.md):
+As documented in [`docs/TECHNICAL_DEBT_REGISTER.md`](../../../TECHNICAL_DEBT_REGISTER.md):
 
 - **Accepted Compromise:** Retained unisolated ambient channel name (`textai_cross_tab_sync`) for `broadcastCrossTabEvent` and `subscribeCrossTabSync` inside `useEditorConflict`.
 - **Rationale:** Auditing the codebase revealed that UI components (`VaultUnlockModal`, `CreateVaultModal`, `FileContextMenu`) and `SessionKeyStore` emit vault and file events on the ambient channel without passing `userId`. Restricting only the editor hook to `lugx_sync_${userId}` would introduce split-brain communication and break cross-tab vault lock/unlock propagation.

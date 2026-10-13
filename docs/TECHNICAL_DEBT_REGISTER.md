@@ -5,7 +5,7 @@ Each entry records the decision owner and the mitigation currently in place.
 Last reviewed: 2026-10-13 (v1.45.1 — TD-18 editor conflict & cross-tab sync extraction into useEditorConflict, reduction of orchestrator, accepted debt of ambient channel broadcasting pending systematic multi-tenant overhaul).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 88 unit suites (1069 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 88 unit suites (1071 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ---
@@ -236,5 +236,20 @@ Last reviewed: 2026-10-13 (v1.45.1 — TD-18 editor conflict & cross-tab sync ex
   - **Decision Rationale:** To maintain 100% interoperability with existing UI modals (`VaultUnlockModal`, `TrustDeviceModal`, `FileContextMenu`), `useEditorConflict` broadcasts and subscribes on the ambient `textai_cross_tab_sync` channel via `broadcastCrossTabEvent` and `subscribeCrossTabSync`. Prematurely enforcing isolated user scoping in the editor hook alone created a split-brain architecture where vault lock/unlock events broadcast by ambient modals were silently ignored by the editor.
   - **Mitigation Currently in Place:** `useEditorConflict` binds to the shared `subscribeCrossTabSync` listener and filters events by fileId and tabId (`senderTabId !== currentTabId`). Encryption operations strictly validate user AAD bindings (`vault:file:${userId}:${fileId}`) in volatile RAM, preventing cross-tenant data corruption.
   - **Conditions to Revisit / Reverse:** A systematic multi-tenant overhaul milestone that simultaneously refactors all UI modals, context menus, and worker bridges to subscribe to user-scoped `lugx_sync_${userId}` channels.
+
+## TD-19 — Multi-Tab Cross-Broadcast Race, 4-Line Visual Diff Duplication & Silent 412 Auto-Merge — ✅ RESOLVED (Release 1.46.1 / 2026-10-13)
+
+- **Debt:**
+  - Sibling tabs reading stale state from IndexedDB due to out-of-order broadcast before write settlement (`broadcastCrossTabEvent` invoked prior to `await saveLocal()`).
+  - Visual Diff LCS gap processor treating in-place line replacements as local deletions (`baseSet.has(line)` evaluated across all insertions), creating phantom duplicate strike-throughs on line 4 and empty deletions in remote view.
+  - Diff3 Deletion Guard pruning remote lines when local lines were mutated in place without line count reduction (`aContent.length < oContent.length` guard absent).
+  - Manual conflict modal disruption on HTTP 412 when edits are clean and non-overlapping.
+- **Resolution:**
+  - **Storage-First Sequential Broadcast:** Enforced `await syncHook.saveLocal()` settlement before dispatching `broadcastCrossTabEvent('file_saved')`.
+  - **Paired Visual Diff & Deletion Guard Hardening:** In `conflict-resolver.ts`, `baseSet.has(line)` is restricted to surplus insertions (`insLines.length > delLines.length`). In `diff3.ts`, Deletion Guard only prunes when `aContent.length < oContent.length`.
+  - **Silent Automated 3-Way Merge (`LUGX-054`):** Integrated `attemptThreeWayMerge` into `handle412Conflict`. If `status === 'merged_clean'`, commits to IDB, pushes to server, updates editor buffer, and skips `ConflictDialog`.
+  - **React 19 Lint Cleanliness:** Eliminated render-phase state resets and missing mounted guards across `create-vault-modal`, `trust-device-modal`, `vault-security-card`, `vault-unlock-modal`, `ocr-settings-card`, and `editor/[fileId]/page.tsx`.
+  - **Verification:** Covered by dedicated unit suites `src/test/editor/use-editor-conflict.test.ts` (12/12 passing) and `src/test/sync/sync-conflict-resolver.test.ts` (61/61 passing).
+
 
 

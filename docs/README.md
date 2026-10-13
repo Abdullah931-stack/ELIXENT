@@ -50,8 +50,8 @@ docs/
 │   │   ├── phase-11-to-15-core-infrastructure/
 │   │   ├── phase-16-vault-encryption/
 │   │   ├── phase-17-to-20-production-readiness/
-│   │   ├── extensions/                ← pdf worker extraction & vault import closure
-│   │   └── core-hardening/            ← core hardening dossiers (Phase 1–16: metrics, links, skipped tests, Redis, contracts, reducers, schema, identity, crypto hierarchy, encrypted content governance, AI settlement, Stripe 1:N, Redis fail-closed & cron overlap, local sync queue CAS, durable IDB conflict quarantine, CI dependency audit gate, thin coordinator sync-manager decomposition)
+│   │   ├── extensions/                ← pdf worker extraction, vault import, sub-line diff3 & v1.46.1 offline auto-merge closure
+│   │   └── core-hardening/            ← core hardening dossiers (Phase 1–18: metrics, links, skipped tests, Redis, contracts, reducers, schema, identity, crypto hierarchy, encrypted content governance, AI settlement, Stripe 1:N, Redis fail-closed & cron overlap, local sync queue CAS, durable IDB conflict quarantine, CI dependency audit gate, thin coordinator sync-manager decomposition, use-editor-conflict extraction)
 │   ├── plans/                         ← completed historical execution plans (technical-execution, hybrid-vault, markdown-editor, M6)
 │   └── archive/                       ← superseded, halted, or abandoned specs & plans (core-hardening-pre-stage-2, legacy snapshots)
 │
@@ -78,8 +78,8 @@ docs/
 | :--- | :--- |
 | [README.md](./README.md) | Structural master index mapping every document in the repository |
 | [DOCUMENTATION_GUIDELINES.md](./DOCUMENTATION_GUIDELINES.md) | Policy on create/update/merge, nested directories, evidence discipline, and dual-track planning governance |
-| [CHANGELOG.md](./CHANGELOG.md) | Append-only chronological release notes covering v1.0.0 through v1.42.0 |
-| [TECHNICAL_DEBT_REGISTER.md](./TECHNICAL_DEBT_REGISTER.md) | Living register of accepted debts, mitigations, and resolution status (TD-01 to TD-14) |
+| [CHANGELOG.md](./CHANGELOG.md) | Append-only chronological release notes covering v1.0.0 through v1.46.1 |
+| [TECHNICAL_DEBT_REGISTER.md](./TECHNICAL_DEBT_REGISTER.md) | Living register of accepted debts, mitigations, and resolution status (TD-01 to TD-19) |
 | [METRICS.json](./METRICS.json) | Centralized single source of truth for test suite counts and verification numbers |
 
 ---
@@ -251,7 +251,7 @@ docs/
 ## 4. Verification Commands
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 88 unit suites (1069 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 88 unit suites (1071 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ```bash
@@ -260,7 +260,7 @@ npm run lint:links      # deterministic markdown internal link verification (zer
 npm run test:ci-gate    # deterministic CI gating simulation matrix (30 assertions, zero broken contracts)
 npx tsc --noEmit        # strict TypeScript type-checking (0 errors)
 npm run audit:ci        # dependency security gate: production fail-closed (0 vulnerabilities) + dev allowlist (TD-15)
-npm run test            # pure unit, contract, and vault cryptographic test suites (88 files, 1069 tests via vitest.config.mts)
+npm run test            # pure unit, contract, and vault cryptographic test suites (88 files, 1071 tests via vitest.config.mts)
 npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (21 files, 117 tests via vitest.live.config.mts)
 npm run test:e2e        # browser-driven E2E user journeys (14 specs, 15 scenarios via Playwright / Chromium)
 npm run test:all        # full suite execution (unit + live)
