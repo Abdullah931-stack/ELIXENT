@@ -20,6 +20,7 @@ import { getUserVaultProfile } from "@/server/actions/vault-actions";
 import type { FileEncryptionMetadata } from "@/types/storage-payload";
 import { useSync, type UseSyncReturn } from "@/hooks/use-sync";
 import { useEditorAutosave, type UseEditorAutosaveReturn } from "@/hooks/use-editor-autosave";
+import { useEditorConflict, type RemoteUpdatePayload } from "@/hooks/use-editor-conflict";
 import { useAIStream } from "@/hooks/use-ai-stream";
 import { sessionKeyStore } from "@/lib/sync/session-key-store";
 import { cryptoWorkerBridge, wipeBuffer } from "@/lib/sync/crypto-worker-bridge";
@@ -27,27 +28,15 @@ import { createClient } from "@/lib/supabase/client";
 import { AIOperationType } from "@/lib/ai/stream-handler";
 import { SyncConflict } from "@/lib/sync/idb-types";
 import { ConflictResolutionPayload } from "@/components/sync/conflict-dialog";
-import { broadcastCrossTabEvent, subscribeCrossTabSync } from "@/lib/sync/cross-tab-sync";
+import { broadcastCrossTabEvent } from "@/lib/sync/cross-tab-sync";
 import {
     classifyRemoteUpdate,
     type LocalBaseline,
 } from "@/lib/sync/reconciliation";
 import { AIStreamStatus } from "@/lib/ai/stream-session";
-import { normalizeMarkdownSource } from "@/lib/sync/etag-generator";
 import { SyncCryptoGateway } from "@/lib/sync/sync-crypto-gateway";
 
-export interface RemoteUpdatePayload {
-    fileId: string;
-    content: string;
-    etag: string;
-    version: number;
-    title?: string;
-    parentFolderId?: string | null;
-    updatedAt: string;
-    isEncrypted?: boolean;
-    isVaultLocked?: boolean;
-    encryptionMetadata?: FileEncryptionMetadata | null;
-}
+export type { RemoteUpdatePayload } from "@/hooks/use-editor-conflict";
 
 export type WriteStateType =
     | "idle"
@@ -163,12 +152,7 @@ export function useEditorOrchestrator({
     const [lastSaved, setLastSaved] = useState<Date | null>(null);
     const [error, setError] = useState<string | null>(null);
 
-    // --- 3. Conflict State ---
-    const [activeConflict, setActiveConflict] = useState<SyncConflict | null>(null);
-    const [isConflictDialogOpen, setIsConflictDialogOpen] = useState<boolean>(false);
-    const [isResolvingConflict, setIsResolvingConflict] = useState<boolean>(false);
-
-    // --- 4. Server Version State & Invariants ---
+    // --- 3. Server Version State & Invariants ---
     const [serverVersion, setServerVersion] = useState<number>(1);
     const [serverEtag, setServerEtag] = useState<string | null>(null);
 
@@ -178,8 +162,6 @@ export function useEditorOrchestrator({
     const editorContentRef = useRef<string>("");
     const isProgrammaticUpdateRef = useRef<boolean>(false);
     const pendingRemoteUpdateRef = useRef<RemoteUpdatePayload | null>(null);
-    const activeConflictRef = useRef<SyncConflict | null>(null);
-    const isResolvingConflictRef = useRef<boolean>(false);
     // Synchronous mirror of the dirty flag, read by the reconciliation policy at
     // decision time without waiting for a React state flush.
     const isDirtyRef = useRef<boolean>(false);
@@ -286,92 +268,9 @@ export function useEditorOrchestrator({
         return resolved.trim();
     }, [userId]);
 
-    // Keep active conflict ref synchronized
-    useEffect(() => {
-        activeConflictRef.current = activeConflict;
-    }, [activeConflict]);
-
-    // Keep resolving conflict ref synchronized
-    useEffect(() => {
-        isResolvingConflictRef.current = isResolvingConflict;
-    }, [isResolvingConflict]);
-
     // --- Sync Hook Integration ---
     const syncHookRef = useRef<UseSyncReturn | null>(null);
     const pendingLocalSyncRef = useRef<boolean>(false);
-
-    const handleSyncConflict = useCallback(
-        async (conflict: SyncConflict): Promise<"local" | "server" | "merge"> => {
-            const effectiveUid = await resolveEffectiveUserId();
-
-            // Decrypt server version if encrypted and not yet decrypted
-            if (isEncryptedRef.current || conflict.serverVersion.isEncrypted) {
-                const serverInbound = await SyncCryptoGateway.decryptInbound({
-                    fileId,
-                    content: conflict.serverVersion.content,
-                    isEncrypted: true,
-                    encryptionMetadata: conflict.serverVersion.encryptionMetadata || fileEncryptionMetadataRef.current,
-                    userId: effectiveUid,
-                });
-                if (serverInbound.status === "decrypted") {
-                    conflict.serverVersion.content = serverInbound.content;
-                }
-            }
-
-            // Decrypt base version if present and encrypted
-            if (conflict.baseVersion?.content && (isEncryptedRef.current || conflict.baseVersion.isEncrypted)) {
-                const baseInbound = await SyncCryptoGateway.decryptInbound({
-                    fileId,
-                    content: conflict.baseVersion.content,
-                    isEncrypted: true,
-                    encryptionMetadata: conflict.baseVersion.encryptionMetadata || fileEncryptionMetadataRef.current,
-                    userId: effectiveUid,
-                });
-                if (baseInbound.status === "decrypted") {
-                    conflict.baseVersion.content = baseInbound.content;
-                }
-            }
-
-            // Auto-resolve if identical markdown content or identical ETags
-            const isIdentical =
-                normalizeMarkdownSource(conflict.localVersion.content) ===
-                    normalizeMarkdownSource(conflict.serverVersion.content) ||
-                (conflict.localVersion.etag &&
-                    conflict.serverVersion.etag &&
-                    conflict.localVersion.etag === conflict.serverVersion.etag);
-
-            if (isIdentical) {
-                console.log("[Orchestrator] Auto-resolving identical conflict without modal");
-                if (syncHookRef.current?.isInitialized) {
-                    await syncHookRef.current.saveLocal({
-                        id: fileId,
-                        content: conflict.serverVersion.content,
-                        version: conflict.serverVersion.version,
-                        etag: conflict.serverVersion.etag,
-                        isEncrypted: isEncryptedRef.current,
-                        encryptionMetadata: fileEncryptionMetadataRef.current,
-                        isDirty: false,
-                    });
-                }
-                fileVersionRef.current = conflict.serverVersion.version;
-                setServerVersion(conflict.serverVersion.version);
-                if (conflict.serverVersion.etag) {
-                    fileEtagRef.current = conflict.serverVersion.etag;
-                    setServerEtag(conflict.serverVersion.etag);
-                }
-                activeConflictRef.current = null;
-                setActiveConflict(null);
-                setIsConflictDialogOpen(false);
-                return "server";
-            }
-
-            activeConflictRef.current = conflict;
-            setActiveConflict(conflict);
-            setIsConflictDialogOpen(true);
-            return "local";
-        },
-        [fileId, resolveEffectiveUserId]
-    );
 
     // --- AI Stream Hook Integration ---
     const aiStream = useAIStream({
@@ -469,192 +368,161 @@ export function useEditorOrchestrator({
         },
     });
 
-    const handleRemoteUpdate = useCallback(
-        async (event: RemoteUpdatePayload) => {
-            if (event.fileId !== fileId) return;
+    // Vault Unlock Handler: Decrypts pending payload and hydrates editor
+    const handleVaultUnlocked = useCallback(async () => {
+        setIsVaultLocked(false);
+        setIsUnlockModalOpen(false);
 
-            // Invariant Guards:
-            // 1. Never overwrite during active unresolved conflict or active conflict resolution
-            if (activeConflictRef.current !== null || isResolvingConflictRef.current) {
-                return;
-            }
+        const pending = pendingEncryptedPayloadRef.current;
+        if (!pending) {
+            hydratedRef.current = true;
+            setHydration("ready");
+            if (adapterRef.current) adapterRef.current.setEditable(true);
+            return;
+        }
 
-            // 2. Never overwrite during AI generation / reservation / commit
-            if (
-                aiStream.isLoading ||
-                aiStream.isStreaming ||
-                aiStream.isCommitting ||
-                aiStream.status === "reserved" ||
-                aiStream.status === "preview_ready"
-            ) {
-                return;
-            }
+        const masterKey = sessionKeyStore.getMasterKeyRaw();
+        let contentToDisplay = pending.content;
 
-            // 3. Never overwrite during programmatic transactions or before hydration completes
-            if (isProgrammaticUpdateRef.current || !hydratedRef.current) {
-                if (!hydratedRef.current) {
-                    pendingRemoteUpdateRef.current = event;
-                }
-                return;
-            }
-
-            let safeContent = event.content;
-            if (isEncryptedRef.current || event.isEncrypted) {
-                if (event.isVaultLocked || !sessionKeyStore.hasMasterKey()) {
-                    console.warn("[Orchestrator] Remote update received for encrypted file while vault is locked. Preserving locked state.");
-                    pendingEncryptedPayloadRef.current = {
-                        content: event.content,
-                        metadata: event.encryptionMetadata || fileEncryptionMetadataRef.current,
-                        title: event.title || title,
-                        version: event.version,
-                        etag: event.etag,
-                    };
-                    setIsVaultLocked(true);
-                    setIsUnlockModalOpen(true);
-                    return;
-                }
-
+        if (masterKey && pending.content) {
+            try {
                 const effectiveUid = await resolveEffectiveUserId();
                 buildFileAAD(effectiveUid, fileId);
                 const inbound = await SyncCryptoGateway.decryptInbound({
                     fileId,
-                    content: event.content,
+                    content: pending.content,
                     isEncrypted: true,
-                    encryptionMetadata: event.encryptionMetadata || fileEncryptionMetadataRef.current,
+                    encryptionMetadata: pending.metadata,
                     userId: effectiveUid,
                 });
 
                 if (inbound.status === "decrypted") {
-                    safeContent = inbound.content;
-                    if (inbound.encryptionMetadata) {
-                        fileEncryptionMetadataRef.current = inbound.encryptionMetadata;
-                    }
-                } else if (inbound.status === "locked") {
-                    setIsVaultLocked(true);
-                    setIsUnlockModalOpen(true);
-                    return;
+                    contentToDisplay = inbound.content;
                 } else {
-                    console.error("[Orchestrator] Remote update decryption failed:", inbound.error);
-                    setError("فشل فك تشفير التحديث الوارد من الخادم.");
+                    console.error("[Orchestrator] Decryption failed upon vault unlock (LUGX-048):", inbound.error);
+                    setError("تعذّر فك تشفير محتوى الملف (بيانات تالفة أو مفتاح غير صالح).");
+                    setHydration("fatal");
+                    hydratedRef.current = false;
+                    if (adapterRef.current) adapterRef.current.setEditable(false);
                     return;
                 }
+            } catch (err) {
+                console.error("[Orchestrator] Decryption error upon vault unlock (LUGX-048):", err);
+                setError("تعذّر فك تشفير محتوى الملف (بيانات تالفة أو مفتاح غير صالح).");
+                setHydration("fatal");
+                hydratedRef.current = false;
+                if (adapterRef.current) adapterRef.current.setEditable(false);
+                return;
             }
+        }
 
-            const currentLocalContent = adapterRef.current?.getValue() ?? editorContentRef.current ?? "";
-            const localBaseline: LocalBaseline = {
-                version: fileVersionRef.current,
-                etag: fileEtagRef.current,
-                content: currentLocalContent,
-            };
+        setTitle(pending.title);
+        fileVersionRef.current = pending.version;
+        setServerVersion(pending.version);
+        fileEtagRef.current = pending.etag;
+        setServerEtag(pending.etag);
+        editorGenerationRef.current += 1;
+        editorContentRef.current = contentToDisplay;
 
-            const decision = classifyRemoteUpdate({
-                localBaseline,
-                isDirty: isDirtyRef.current,
-                remoteVersion: event.version,
-                remoteEtag: event.etag,
-                remoteContent: safeContent,
-            });
+        isProgrammaticUpdateRef.current = true;
+        try {
+            adapterRef.current?.setValue(contentToDisplay);
+        } finally {
+            isProgrammaticUpdateRef.current = false;
+        }
 
-            if (decision.action === "apply") {
-                // 1. Invariant: Cancel any pending debounced auto-save timer so in-flight stale typing does not overwrite server content
-                cancelAutosave();
+        hydratedRef.current = true;
+        setHydration("ready");
+        if (adapterRef.current) adapterRef.current.setEditable(true);
+        pendingEncryptedPayloadRef.current = null;
+    }, [fileId, resolveEffectiveUserId]);
 
-                // 2. Synchronously reset dirty flags
-                markClean();
-
-                // 3. Generation guard: apply remote update cleanly without disrupting user
-                fileVersionRef.current = event.version;
-                setServerVersion(event.version);
-                fileEtagRef.current = event.etag;
-                setServerEtag(event.etag);
-                editorGenerationRef.current += 1;
-
-                // 4. Synchronously update memory ref
-                editorContentRef.current = safeContent;
-
-                const prevSelection = adapterRef.current?.getSelection();
-                const hadFocus = adapterRef.current?.hasFocus() ?? false;
-
-                isProgrammaticUpdateRef.current = true;
-                try {
-                    adapterRef.current?.setValue(safeContent);
-                    if (prevSelection && hadFocus) {
-                        const maxLen = safeContent.length;
-                        adapterRef.current?.setSelection(
-                            Math.min(prevSelection.from, maxLen),
-                            Math.min(prevSelection.to, maxLen)
-                        );
-                    }
-                } finally {
-                    isProgrammaticUpdateRef.current = false;
-                }
-
-                if (event.title && event.title !== title) {
-                    setTitle(event.title);
-                }
-
-                markServerPersisted(event.updatedAt);
-
-                // 5. Atomically persist clean state and baseSnapshot into local IndexedDB
-                if (syncHookRef.current?.isInitialized) {
-                    try {
-                        await syncHookRef.current.saveLocal({
-                            id: fileId,
-                            content: isEncryptedRef.current ? event.content : safeContent,
-                            title: event.title || title,
-                            version: event.version,
-                            etag: event.etag || "",
-                            isEncrypted: isEncryptedRef.current,
-                            encryptionMetadata: fileEncryptionMetadataRef.current,
-                            isDirty: false,
-                        });
-                    } catch (idbErr) {
-                        console.error("[Orchestrator] Error updating local IDB during remote update:", idbErr);
-                    }
-                }
-            } else if (decision.action === "adopt_metadata") {
-                fileVersionRef.current = event.version;
-                setServerVersion(event.version);
-                fileEtagRef.current = event.etag;
-                setServerEtag(event.etag);
-                markServerPersisted(event.updatedAt);
-                if (syncHookRef.current?.isInitialized) {
-                    try {
-                        await syncHookRef.current.saveLocal({
-                            id: fileId,
-                            content: isEncryptedRef.current ? event.content : safeContent,
-                            title: event.title || title,
-                            version: event.version,
-                            etag: event.etag || "",
-                            isEncrypted: isEncryptedRef.current,
-                            encryptionMetadata: fileEncryptionMetadataRef.current,
-                            isDirty: false,
-                        });
-                    } catch (idbErr) {
-                        console.error("[Orchestrator] Error updating local IDB during adopt_metadata:", idbErr);
-                    }
-                }
-            } else if (decision.action === "keep_local") {
-                console.log(
-                    `[Orchestrator] Remote update retained locally (reason: ${decision.reason}). Local edits preserved.`
-                );
+    const conflictHook = useEditorConflict({
+        fileId,
+        userId,
+        getTitle: () => title,
+        setTitle,
+        getVersion: () => fileVersionRef.current,
+        setVersion: (v) => {
+            fileVersionRef.current = v;
+            setServerVersion(v);
+        },
+        getEtag: () => fileEtagRef.current,
+        setEtag: (e) => {
+            fileEtagRef.current = e;
+            setServerEtag(e);
+        },
+        markServerPersisted,
+        getEditorContent: () => editorContentRef.current,
+        setEditorContent: (c) => {
+            editorContentRef.current = c;
+        },
+        getAdapter: () => adapterRef.current,
+        isProgrammaticUpdate: () => isProgrammaticUpdateRef.current,
+        setProgrammaticUpdate: (val) => {
+            isProgrammaticUpdateRef.current = val;
+        },
+        incrementEditorGeneration: () => {
+            editorGenerationRef.current += 1;
+        },
+        isDirty: () => isDirtyRef.current,
+        markClean,
+        markDirty,
+        cancelAutosave,
+        isAIActive: () =>
+            aiStream.isLoading ||
+            aiStream.isStreaming ||
+            aiStream.isCommitting ||
+            aiStream.status === "reserved" ||
+            aiStream.status === "preview_ready",
+        isHydrated: () => hydratedRef.current,
+        setHydration,
+        setPendingRemoteUpdate: (p) => {
+            pendingRemoteUpdateRef.current = p;
+        },
+        setPendingEncryptedPayload: (p) => {
+            pendingEncryptedPayloadRef.current = p;
+        },
+        isEncrypted: () => isEncryptedRef.current,
+        setIsEncrypted: (val) => {
+            isEncryptedRef.current = val;
+            setIsEncrypted(val);
+        },
+        getEncryptionMetadata: () => fileEncryptionMetadataRef.current,
+        setEncryptionMetadata: (meta) => {
+            fileEncryptionMetadataRef.current = meta;
+        },
+        setIsVaultLocked,
+        setIsUnlockModalOpen,
+        handleVaultUnlocked,
+        saveLocal: async (payload) => {
+            if (syncHookRef.current?.isInitialized) {
+                await syncHookRef.current.saveLocal(payload);
             }
         },
-        [fileId, title, aiStream.isLoading, aiStream.isStreaming, aiStream.isCommitting, aiStream.status, markServerPersisted, resolveEffectiveUserId, cancelAutosave, markClean]
-    );
+        loadLocal: async (id) => {
+            return syncHookRef.current?.isInitialized ? await syncHookRef.current.loadLocal(id) : null;
+        },
+        isSyncInitialized: () => syncHookRef.current?.isInitialized ?? false,
+        setError,
+        onNavigate,
+        resolveEffectiveUserId,
+        buildFileAAD,
+    });
+    const { isBlockedByConflict, handle412Conflict } = conflictHook;
 
     const syncHook = useSync({
         userId: userId || "",
         autoSyncInterval: 30000,
-        onConflict: handleSyncConflict,
-        onRemoteUpdate: handleRemoteUpdate,
+        onConflict: conflictHook.handleSyncConflict,
+        onRemoteUpdate: conflictHook.handleRemoteUpdate,
     });
     useLayoutEffect(() => {
         syncHookRef.current = syncHook;
     }, [syncHook]);
 
     // Write State Computation
-    const writeState: WriteStateType = isResolvingConflict
+    const writeState: WriteStateType = conflictHook.isResolvingConflict
         ? "resolving_conflict"
         : aiStream.isCommitting
         ? "ai_committing"
@@ -672,11 +540,10 @@ export function useEditorOrchestrator({
     const isBlocked = useCallback((): boolean => {
         if (isProgrammaticUpdateRef.current) return true;
         if (hydratedRef.current !== true) return true;
-        if (activeConflictRef.current !== null) return true;
-        if (isResolvingConflictRef.current) return true;
+        if (isBlockedByConflict()) return true;
         if (syncHook.status === "stopped") return true;
         return false;
-    }, [syncHook.status]);
+    }, [isBlockedByConflict, syncHook.status]);
 
     const isWriteLocked =
         aiStream.isLoading ||
@@ -861,135 +728,14 @@ export function useEditorOrchestrator({
                         });
                     }
                 } else if (saveRes.status === "conflict" && saveRes.serverVersion) {
-                    const effectiveUid = await resolveEffectiveUserId();
-                    buildFileAAD(effectiveUid, fileId);
-                    let decryptedServerContent = saveRes.serverVersion.content || "";
-
-                    if (isEncryptedRef.current || saveRes.serverVersion.isEncrypted) {
-                        const serverInbound = await SyncCryptoGateway.decryptInbound({
-                            fileId,
-                            content: saveRes.serverVersion.content || "",
-                            isEncrypted: true,
-                            encryptionMetadata: saveRes.serverVersion.encryptionMetadata || fileEncryptionMetadataRef.current,
-                            userId: effectiveUid,
-                        });
-                        if (serverInbound.status === "decrypted") {
-                            decryptedServerContent = serverInbound.content;
+                    await handle412Conflict(
+                        saveRes.serverVersion,
+                        content ?? editorContentRef.current ?? "",
+                        {
+                            contentToSend,
+                            metaToSend,
                         }
-                    }
-
-                    // False conflict check with decrypted content
-                    const isIdenticalContent =
-                        normalizeMarkdownSource(decryptedServerContent) === normalizeMarkdownSource(content);
-
-                    if (
-                        isIdenticalContent ||
-                        (saveRes.serverVersion.etag && saveRes.serverVersion.etag === fileEtagRef.current)
-                    ) {
-                        console.log("[Orchestrator] Server conflict has identical content, auto-synchronizing version");
-                        fileVersionRef.current = saveRes.serverVersion.version || fileVersionRef.current;
-                        setServerVersion(fileVersionRef.current);
-                        fileEtagRef.current = saveRes.serverVersion.etag || null;
-                        setServerEtag(fileEtagRef.current);
-
-                        if (syncHook.isInitialized) {
-                            await syncHook.saveLocal({
-                                id: fileId,
-                                content: isEncryptedRef.current ? contentToSend : content,
-                                title,
-                                version: saveRes.serverVersion.version ?? fileVersionRef.current,
-                                etag: saveRes.serverVersion.etag || "",
-                                isEncrypted: isEncryptedRef.current,
-                                encryptionMetadata: metaToSend,
-                                isDirty: false,
-                            });
-                        }
-                        setIsSaving(false);
-                        markClean();
-                        activeConflictRef.current = null;
-                        setActiveConflict(null);
-                        setIsConflictDialogOpen(false);
-                        return;
-                    }
-
-                    // True conflict (412 Precondition Failed)
-                    console.warn("[Orchestrator] 412 Sync conflict detected during save:", saveRes.serverVersion);
-                    const localFile = syncHook.isInitialized ? await syncHook.loadLocal(fileId) : null;
-
-                    let baseContent = localFile?.baseSnapshot?.content;
-                    if (baseContent && (isEncryptedRef.current || localFile?.baseSnapshot?.isEncrypted)) {
-                        const baseInbound = await SyncCryptoGateway.decryptInbound({
-                            fileId,
-                            content: baseContent,
-                            isEncrypted: true,
-                            encryptionMetadata: localFile?.encryptionMetadata || fileEncryptionMetadataRef.current,
-                            userId: effectiveUid,
-                        });
-                        if (baseInbound.status === "decrypted") {
-                            baseContent = baseInbound.content;
-                        }
-                    }
-
-                    const conflictObj: SyncConflict = {
-                        fileId,
-                        localVersion: {
-                            content,
-                            etag: fileEtagRef.current || "",
-                            lastModified: Date.now(),
-                            version: fileVersionRef.current,
-                            title,
-                            parentFolderId: null,
-                            deleted: false,
-                            isEncrypted: isEncryptedRef.current,
-                            encryptionMetadata: fileEncryptionMetadataRef.current,
-                        },
-                        serverVersion: {
-                            content: decryptedServerContent,
-                            etag: saveRes.serverVersion.etag || "",
-                            lastModified: saveRes.serverVersion.updatedAt
-                                ? new Date(saveRes.serverVersion.updatedAt).getTime()
-                                : Date.now(),
-                            version: saveRes.serverVersion.version || 0,
-                            title,
-                            parentFolderId: null,
-                            deleted: false,
-                            isEncrypted: saveRes.serverVersion.isEncrypted ?? isEncryptedRef.current,
-                            encryptionMetadata: saveRes.serverVersion.encryptionMetadata || fileEncryptionMetadataRef.current,
-                        },
-                        baseVersion: localFile?.baseSnapshot
-                            ? {
-                                  content: baseContent || "",
-                                  etag: localFile.baseSnapshot.etag,
-                                  lastModified: localFile.lastSyncedAt || 0,
-                                  version: localFile.baseSnapshot.version,
-                                  title: localFile.baseSnapshot.title,
-                                  parentFolderId: localFile.baseSnapshot.parentFolderId,
-                                  deleted: false,
-                                  isEncrypted: isEncryptedRef.current,
-                                  encryptionMetadata: localFile.encryptionMetadata,
-                              }
-                            : undefined,
-                        operations: [],
-                        detectedAt: Date.now(),
-                        type: "content",
-                    };
-
-                    activeConflictRef.current = conflictObj;
-                    setActiveConflict(conflictObj);
-                    setIsConflictDialogOpen(true);
-
-                    if (syncHook.isInitialized) {
-                        await syncHook.saveLocal({
-                            id: fileId,
-                            content: isEncryptedRef.current ? contentToSend : content,
-                            title,
-                            version: fileVersionRef.current,
-                            etag: fileEtagRef.current || "",
-                            isEncrypted: isEncryptedRef.current,
-                            encryptionMetadata: metaToSend,
-                            isDirty: false,
-                        });
-                    }
+                    );
                 } else {
                     // Offline / Network failure -> save dirty locally with ciphertext
                     if (syncHook.isInitialized) {
@@ -1031,7 +777,7 @@ export function useEditorOrchestrator({
                 setIsSaving(false);
             }
         },
-        [fileId, title, isBlocked, isWriteLocked, syncHook, resolveEffectiveUserId, markClean]
+        [fileId, title, isBlocked, isWriteLocked, syncHook, resolveEffectiveUserId, markClean, handle412Conflict]
     );
 
     const autosave = useEditorAutosave({
@@ -1061,74 +807,6 @@ export function useEditorOrchestrator({
         isDirtyRef.current = autosave.isDirty;
     }, [autosave.isDirty]);
 
-    // Vault Unlock Handler: Decrypts pending payload and hydrates editor
-    const handleVaultUnlocked = useCallback(async () => {
-        setIsVaultLocked(false);
-        setIsUnlockModalOpen(false);
-
-        const pending = pendingEncryptedPayloadRef.current;
-        if (!pending) {
-            hydratedRef.current = true;
-            setHydration("ready");
-            if (adapterRef.current) adapterRef.current.setEditable(true);
-            return;
-        }
-
-        const masterKey = sessionKeyStore.getMasterKeyRaw();
-        let contentToDisplay = pending.content;
-
-        if (masterKey && pending.content) {
-            try {
-                const effectiveUid = await resolveEffectiveUserId();
-                buildFileAAD(effectiveUid, fileId);
-                const inbound = await SyncCryptoGateway.decryptInbound({
-                    fileId,
-                    content: pending.content,
-                    isEncrypted: true,
-                    encryptionMetadata: pending.metadata,
-                    userId: effectiveUid,
-                });
-
-                if (inbound.status === "decrypted") {
-                    contentToDisplay = inbound.content;
-                } else {
-                    console.error("[Orchestrator] Decryption failed upon vault unlock (LUGX-048):", inbound.error);
-                    setError("تعذّر فك تشفير محتوى الملف (بيانات تالفة أو مفتاح غير صالح).");
-                    setHydration("fatal");
-                    hydratedRef.current = false;
-                    if (adapterRef.current) adapterRef.current.setEditable(false);
-                    return;
-                }
-            } catch (err) {
-                console.error("[Orchestrator] Decryption error upon vault unlock (LUGX-048):", err);
-                setError("تعذّر فك تشفير محتوى الملف (بيانات تالفة أو مفتاح غير صالح).");
-                setHydration("fatal");
-                hydratedRef.current = false;
-                if (adapterRef.current) adapterRef.current.setEditable(false);
-                return;
-            }
-        }
-
-        setTitle(pending.title);
-        fileVersionRef.current = pending.version;
-        setServerVersion(pending.version);
-        fileEtagRef.current = pending.etag;
-        setServerEtag(pending.etag);
-        editorGenerationRef.current += 1;
-        editorContentRef.current = contentToDisplay;
-
-        isProgrammaticUpdateRef.current = true;
-        try {
-            adapterRef.current?.setValue(contentToDisplay);
-        } finally {
-            isProgrammaticUpdateRef.current = false;
-        }
-
-        hydratedRef.current = true;
-        setHydration("ready");
-        if (adapterRef.current) adapterRef.current.setEditable(true);
-        pendingEncryptedPayloadRef.current = null;
-    }, [fileId, resolveEffectiveUserId]);
 
     // Initial Load - Offline-First with Background Server Sync
     useEffect(() => {
@@ -1460,7 +1138,7 @@ export function useEditorOrchestrator({
                 if (pendingRemoteUpdateRef.current) {
                     const pending = pendingRemoteUpdateRef.current;
                     pendingRemoteUpdateRef.current = null;
-                    handleRemoteUpdate(pending);
+                    conflictHook.handleRemoteUpdate(pending);
                 }
             }
         }
@@ -1496,136 +1174,6 @@ export function useEditorOrchestrator({
         };
     }, []);
 
-    // Cross-tab synchronization listener
-    useEffect(() => {
-        const unsubscribe = subscribeCrossTabSync(async (event) => {
-            if (event.type === "vault_unlocked") {
-                if (isEncryptedRef.current && sessionKeyStore.hasMasterKey()) {
-                    setIsVaultLocked(false);
-                    setIsUnlockModalOpen(false);
-                    handleVaultUnlocked();
-                }
-                return;
-            }
-
-            if (event.type === "vault_locked") {
-                // 1. Cancel pending auto-save immediately
-                autosaveRef.current?.cancelAutosave();
-                // 2. Purge RAM immediately (no re-broadcast)
-                sessionKeyStore.lock(false);
-                // 3. Update UI state
-                if (isEncryptedRef.current) {
-                    setIsVaultLocked(true);
-                    setIsUnlockModalOpen(true);
-                    setHydration("vault_locked");
-                    if (adapterRef.current) {
-                        adapterRef.current.setEditable(false);
-                    }
-                }
-                return;
-            }
-
-            if (event.fileId === fileId) {
-                if (event.type === "file_encrypted") {
-                    autosaveRef.current?.cancelAutosave();
-                    isEncryptedRef.current = true;
-                    setIsEncrypted(true);
-                    if (event.metadata) {
-                        fileEncryptionMetadataRef.current = event.metadata as FileEncryptionMetadata;
-                    }
-                    if (event.version) {
-                        fileVersionRef.current = event.version;
-                        setServerVersion(event.version);
-                    }
-                    if (event.etag) {
-                        fileEtagRef.current = event.etag;
-                        setServerEtag(event.etag);
-                    }
-                    autosaveRef.current?.markClean();
-                    activeConflictRef.current = null;
-                    setActiveConflict(null);
-                    setIsConflictDialogOpen(false);
-                    return;
-                }
-
-                if (event.type === "file_decrypted") {
-                    autosaveRef.current?.cancelAutosave();
-                    isEncryptedRef.current = false;
-                    setIsEncrypted(false);
-                    fileEncryptionMetadataRef.current = null;
-                    if (event.version) {
-                        fileVersionRef.current = event.version;
-                        setServerVersion(event.version);
-                    }
-                    if (event.etag) {
-                        fileEtagRef.current = event.etag;
-                        setServerEtag(event.etag);
-                    }
-                    autosaveRef.current?.markClean();
-                    activeConflictRef.current = null;
-                    setActiveConflict(null);
-                    setIsConflictDialogOpen(false);
-                    return;
-                }
-
-                const localFile = syncHook.isInitialized ? await syncHook.loadLocal(fileId) : null;
-                const isLocalDirty = localFile?.isDirty || activeConflictRef.current !== null || (autosaveRef.current?.isDirty ?? false);
-
-                if (!isLocalDirty && localFile) {
-                    autosaveRef.current?.cancelAutosave();
-                    autosaveRef.current?.markClean();
-
-                    if (event.version && event.version > fileVersionRef.current) {
-                        fileVersionRef.current = event.version;
-                        setServerVersion(event.version);
-                    }
-                    if (event.etag) {
-                        fileEtagRef.current = event.etag;
-                        setServerEtag(event.etag);
-                    }
-                    editorGenerationRef.current += 1;
-
-                    let incomingContent = localFile.content || "";
-                    if (isEncryptedRef.current && sessionKeyStore.hasMasterKey() && localFile.encryptionMetadata?.iv && incomingContent) {
-                        try {
-                            const effectiveUid = await resolveEffectiveUserId();
-                            buildFileAAD(effectiveUid, fileId);
-                            const inbound = await SyncCryptoGateway.decryptInbound({
-                                fileId,
-                                content: incomingContent,
-                                isEncrypted: true,
-                                encryptionMetadata: localFile.encryptionMetadata,
-                                userId: effectiveUid,
-                            });
-                            if (inbound.status === "decrypted") {
-                                incomingContent = inbound.content;
-                            } else {
-                                console.error("[Orchestrator] Cross-tab decryption failed (LUGX-048):", inbound.error);
-                                return;
-                            }
-                        } catch (decErr) {
-                            console.warn("[Orchestrator] Cross-tab decryption error (LUGX-048):", decErr);
-                            return;
-                        }
-                    }
-
-                    editorContentRef.current = incomingContent;
-                    isProgrammaticUpdateRef.current = true;
-                    try {
-                        adapterRef.current?.setValue(incomingContent);
-                    } finally {
-                        isProgrammaticUpdateRef.current = false;
-                    }
-                } else if (isLocalDirty) {
-                    console.warn("[Orchestrator] Sibling tab saved file while local tab is dirty. Retaining local expectedVersion for optimistic conflict guard.");
-                }
-            }
-        });
-
-        return () => {
-            unsubscribe();
-        };
-    }, [fileId, syncHook, handleVaultUnlocked, resolveEffectiveUserId]);
 
     // Navigation & Unload Guard
     useEffect(() => {
@@ -1708,163 +1256,6 @@ export function useEditorOrchestrator({
         [aiStream, fileId, autosave]
     );
 
-    // Conflict Resolution Handler
-    const handleResolveConflict = useCallback(
-        async (resolution: ConflictResolutionPayload) => {
-            if (!activeConflict) return;
-
-            setIsResolvingConflict(true);
-            isResolvingConflictRef.current = true;
-            setError(null);
-
-            try {
-                if (resolution.strategy === "delete") {
-                    if (confirm("هل أنت متأكد من تأكيد حذف الملف؟")) {
-                        await deleteFile(fileId);
-                        if (onNavigate) onNavigate("/workspace");
-                    }
-                    setIsResolvingConflict(false);
-                    isResolvingConflictRef.current = false;
-                    return;
-                }
-
-                let contentToSend = resolution.content;
-                let metaToSend = fileEncryptionMetadataRef.current;
-
-                if (isEncryptedRef.current) {
-                    const masterKey = sessionKeyStore.getMasterKeyRaw();
-                    if (!masterKey) {
-                        setError("الخزنة مقفلة. يرجى فتح الخزنة لحفظ حل التعارض المشفر بأمان.");
-                        setIsResolvingConflict(false);
-                        isResolvingConflictRef.current = false;
-                        return;
-                    }
-                    const effectiveUid = await resolveEffectiveUserId();
-                    buildFileAAD(effectiveUid, fileId);
-                    const encResult = await SyncCryptoGateway.encryptOutbound(
-                        fileId,
-                        resolution.content,
-                        effectiveUid
-                    );
-                    contentToSend = encResult.ciphertextBase64;
-                    metaToSend = encResult.encryptionMetadata;
-                    fileEncryptionMetadataRef.current = metaToSend;
-                }
-
-                const targetExpectedVersion = activeConflict.serverVersion.version;
-                const targetExpectedETag = activeConflict.serverVersion.etag || undefined;
-
-                const saveRes = isEncryptedRef.current
-                    ? await toggleFileEncryption(fileId, true, contentToSend, metaToSend, {
-                          expectedVersion: targetExpectedVersion,
-                          expectedETag: targetExpectedETag,
-                      })
-                    : await updateFileContent(fileId, contentToSend, {
-                          expectedVersion: targetExpectedVersion,
-                          expectedETag: targetExpectedETag,
-                      });
-
-                if (saveRes.success && saveRes.version) {
-                    fileVersionRef.current = saveRes.version;
-                    setServerVersion(saveRes.version);
-                    fileEtagRef.current = saveRes.etag || null;
-                    setServerEtag(saveRes.etag || null);
-                    editorGenerationRef.current += 1;
-                    editorContentRef.current = resolution.content;
-
-                    isProgrammaticUpdateRef.current = true;
-                    try {
-                        adapterRef.current?.setValue(resolution.content);
-                    } finally {
-                        isProgrammaticUpdateRef.current = false;
-                    }
-
-                    autosaveRef.current?.cancelAutosave();
-
-                    if (resolution.title && resolution.title !== title) {
-                        setTitle(resolution.title);
-                        await renameFile(fileId, resolution.title);
-                    }
-
-                    if (syncHook.isInitialized) {
-                        await syncHook.saveLocal({
-                            id: fileId,
-                            content: isEncryptedRef.current ? contentToSend : resolution.content,
-                            title: resolution.title || title,
-                            version: saveRes.version,
-                            etag: saveRes.etag || fileEtagRef.current || "",
-                            isEncrypted: isEncryptedRef.current,
-                            encryptionMetadata: metaToSend,
-                            isDirty: false,
-                        });
-                    }
-
-                    setLastSaved(new Date());
-                    autosaveRef.current?.markClean();
-
-                    broadcastCrossTabEvent({
-                        type: "conflict_resolved",
-                        fileId,
-                        version: saveRes.version,
-                        etag: saveRes.etag || undefined,
-                    });
-
-                    activeConflictRef.current = null;
-                    setActiveConflict(null);
-                    setIsConflictDialogOpen(false);
-                } else if (saveRes.status === "conflict" && saveRes.serverVersion) {
-                    let newServerContent = saveRes.serverVersion.content || "";
-                    if (isEncryptedRef.current || saveRes.serverVersion.isEncrypted) {
-                        const effectiveUid = await resolveEffectiveUserId();
-                        buildFileAAD(effectiveUid, fileId);
-                        const inbound = await SyncCryptoGateway.decryptInbound({
-                            fileId,
-                            content: newServerContent,
-                            isEncrypted: true,
-                            encryptionMetadata: saveRes.serverVersion.encryptionMetadata || fileEncryptionMetadataRef.current,
-                            userId: effectiveUid,
-                        });
-                        if (inbound.status === "decrypted") {
-                            newServerContent = inbound.content;
-                        }
-                    }
-
-                    const updatedConflict: SyncConflict = {
-                        ...activeConflict,
-                        serverVersion: {
-                            content: newServerContent,
-                            etag: saveRes.serverVersion.etag || "",
-                            lastModified: saveRes.serverVersion.updatedAt
-                                ? new Date(saveRes.serverVersion.updatedAt).getTime()
-                                : Date.now(),
-                            version: saveRes.serverVersion.version || 0,
-                            title: activeConflict.serverVersion.title,
-                            parentFolderId: activeConflict.serverVersion.parentFolderId,
-                            deleted: false,
-                            isEncrypted: saveRes.serverVersion.isEncrypted ?? isEncryptedRef.current,
-                            encryptionMetadata: saveRes.serverVersion.encryptionMetadata || fileEncryptionMetadataRef.current,
-                        },
-                        detectedAt: Date.now(),
-                    };
-                    activeConflictRef.current = updatedConflict;
-                    setActiveConflict(updatedConflict);
-                    setError("حدث تعديل جديد على الخادم أثناء حل التعارض. يرجى المراجعة والتأكيد مجدداً.");
-                } else {
-                    setError(saveRes.error || "فشل تأكيد حفظ حل التعارض على الخادم");
-                }
-            } catch (err) {
-                console.error("[Orchestrator] Conflict resolution error:", err);
-                const detailMessage = err instanceof Error
-                    ? err.message
-                    : "حدث خطأ غير متوقع أثناء حل التعارض";
-                setError(detailMessage);
-            } finally {
-                setIsResolvingConflict(false);
-                isResolvingConflictRef.current = false;
-            }
-        },
-        [activeConflict, fileId, title, syncHook, onNavigate, resolveEffectiveUserId]
-    );
 
     // Title Change
     const handleTitleChange = useCallback(
@@ -1912,11 +1303,11 @@ export function useEditorOrchestrator({
         serverVersion,
         serverEtag,
 
-        activeConflict,
-        isConflictDialogOpen,
-        setIsConflictDialogOpen,
-        isResolvingConflict,
-        handleResolveConflict,
+        activeConflict: conflictHook.activeConflict,
+        isConflictDialogOpen: conflictHook.isConflictDialogOpen,
+        setIsConflictDialogOpen: conflictHook.setIsConflictDialogOpen,
+        isResolvingConflict: conflictHook.isResolvingConflict,
+        handleResolveConflict: conflictHook.handleResolveConflict,
 
         writeState,
         canAutoSave: autosave.canAutoSave,
