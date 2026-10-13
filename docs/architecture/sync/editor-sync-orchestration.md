@@ -9,8 +9,9 @@ amended in Markdown Migration Phase 2 & 3 with the standalone MarkdownEditor
 and engine-agnostic `EditorAdapter` contract;
 amended in Vault Phase 3 with Zero-Knowledge Vault gating (`vault_locked`),
 pre-save Web Worker envelope encryption, and offline-first dynamic file conversion (Section 6e);
-amended in Phase 17 (v1.45.0) with decoupled standalone `useEditorAutosave` hook (`src/hooks/use-editor-autosave.ts`), AI write-lock suspension/resumption gate, and React 19 ref discipline.
-**Authoritative Modules:** `src/hooks/use-editor-orchestrator.ts`, `src/hooks/use-editor-autosave.ts`
+amended in Phase 17 (v1.45.0) with decoupled standalone `useEditorAutosave` hook (`src/hooks/use-editor-autosave.ts`), AI write-lock suspension/resumption gate, and React 19 ref discipline;
+amended in Phase 18 with decoupled standalone `useEditorConflict` hook (`src/hooks/use-editor-conflict.ts`), cross-tab lifecycle synchronization, 412 conflict isolation, and in-flight snapshot concurrent edit protection (Section 4).
+**Authoritative Modules:** `src/hooks/use-editor-orchestrator.ts`, `src/hooks/use-editor-autosave.ts`, `src/hooks/use-editor-conflict.ts`
 **Consuming Page:** `src/app/workspace/editor/[fileId]/page.tsx`
 
 ---
@@ -33,8 +34,8 @@ The orchestrator decomposes page state into 7 isolated, deterministic state slic
 | **2. Preview State** | Ephemeral AI streaming preview buffer, operation type, active tokens, and finite session status (`idle`, `reserving`, `reserved`, `streaming`, `preview_ready`, `committing`, `committed`, `aborted`, `failed`, `conflict`). |
 | **3. Dirty State** | Boolean flag tracking unsaved local changes, timestamp of last successful save, and active saving indicators. Formally isolated in Phase 17 into the dedicated `useEditorAutosave` hook (`autosave.isDirty`, `autosave.markClean()`, `autosave.markDirty()`). |
 | **4. Server Version** | Authoritative server version number and ETag precondition anchor received from PostgreSQL. |
-| **5. Conflict State** | Active `SyncConflict` descriptor, modal visibility toggle, resolution strategy payload, and in-flight resolution locks. |
-| **6. Write State** | Mutex controller tracking the active writing channel (`idle`, `saving`, `ai_committing`, `resolving_conflict`, `syncing`, `stopped`). |
+| **5. Conflict State** | Active `SyncConflict` descriptor, modal visibility toggle, resolution strategy payload, and in-flight resolution locks. Formally isolated in Phase 18 into the dedicated `useEditorConflict` hook (`conflict.activeConflict`, `conflict.isConflictDialogOpen`, `conflict.isResolvingConflict`, `conflict.isBlockedByConflict()`). |
+| **6. Write State** | Mutex controller tracking the active writing channel (`idle`, `saving`, `ai_committing`, `resolving_conflict`, `syncing`, `stopped`). Write gating is coordinated with `useEditorAutosave` (`isWriteLocked`) and `useEditorConflict` (`isBlockedByConflict()`). |
 | **7. Hydration State** | Initial-load lifecycle for the mounted file (`hydrating`, `ready`, `vault_locked`, `fatal`). While not `ready` the editor surface is frozen (`adapter.setEditable(false)`) and every autosave/input gate short-circuits — writing before the load pipeline settles is structurally impossible. When encountering an encrypted file without the Master Key present in memory, hydration settles on `vault_locked` to suspend painting and prompt the user for vault authentication. |
 
 ---
@@ -132,7 +133,248 @@ flowchart TD
 
 ---
 
-## 4. Manual Edit During AI Streaming Policy
+## 4. Decoupled Cross-Tab Conflict & Reconciliation Architecture (`useEditorConflict`)
+
+In Phase 18, conflict detection, three-way resolution submission, HTTP 412 precondition handling, and cross-tab lifecycle event synchronization were extracted from `useEditorOrchestrator` into a dedicated, engine-agnostic hook: `useEditorConflict` (`src/hooks/use-editor-conflict.ts`).
+
+### 4.1 Interface Contracts
+
+```typescript
+export interface RemoteUpdatePayload {
+    fileId: string;
+    content: string;
+    etag: string;
+    version: number;
+    title?: string;
+    parentFolderId?: string | null;
+    updatedAt: string;
+    isEncrypted?: boolean;
+    isVaultLocked?: boolean;
+    encryptionMetadata?: FileEncryptionMetadata | null;
+}
+
+export interface ServerVersionPayload {
+    version?: number | null;
+    etag?: string | null;
+    updatedAt?: string;
+    content?: string | null;
+    isEncrypted?: boolean | null;
+    encryptionMetadata?: FileEncryptionMetadata | null;
+}
+
+export interface UseEditorConflictOptions {
+    fileId: string;
+    userId: string | null;
+
+    // Document state
+    getTitle: () => string;
+    setTitle: (title: string) => void;
+
+    // Version & ETag anchors
+    getVersion: () => number;
+    setVersion: (version: number) => void;
+    getEtag: () => string | null;
+    setEtag: (etag: string | null) => void;
+    markServerPersisted?: (updatedAt?: string | Date | null) => void;
+
+    // Content & Adapter
+    getEditorContent: () => string;
+    setEditorContent: (content: string) => void;
+    getAdapter: () => EditorAdapter | null;
+    isProgrammaticUpdate: () => boolean;
+    setProgrammaticUpdate: (val: boolean) => void;
+    incrementEditorGeneration: () => void;
+
+    // Dirty & Autosave state
+    isDirty: () => boolean;
+    markClean: () => void;
+    markDirty: () => void;
+    cancelAutosave: () => void;
+
+    // AI & Hydration gates
+    isAIActive: () => boolean;
+    isHydrated: () => boolean;
+    setHydration?: (val: "hydrating" | "ready" | "fatal" | "vault_locked") => void;
+    setPendingRemoteUpdate?: (payload: RemoteUpdatePayload | null) => void;
+    setPendingEncryptedPayload?: (payload: {
+        content: string;
+        metadata: FileEncryptionMetadata | null;
+        title: string;
+        version: number;
+        etag: string | null;
+    } | null) => void;
+
+    // Encryption & Vault
+    isEncrypted: () => boolean;
+    setIsEncrypted: (val: boolean) => void;
+    getEncryptionMetadata: () => FileEncryptionMetadata | null;
+    setEncryptionMetadata: (meta: FileEncryptionMetadata | null) => void;
+    setIsVaultLocked: (val: boolean) => void;
+    setIsUnlockModalOpen: (val: boolean) => void;
+    handleVaultUnlocked?: () => Promise<void>;
+
+    // Storage / Sync
+    saveLocal: (payload: {
+        id: string;
+        content: string;
+        title?: string;
+        version: number;
+        etag: string;
+        isEncrypted: boolean;
+        encryptionMetadata?: FileEncryptionMetadata | null;
+        isDirty: boolean;
+    }) => Promise<void>;
+    loadLocal: (fileId: string) => Promise<IDBFile | null>;
+    isSyncInitialized: () => boolean;
+
+    // UI feedback & navigation
+    setError: (error: string | null) => void;
+    onNavigate?: (path: string) => void;
+
+    // User derivation / AAD
+    resolveEffectiveUserId?: () => Promise<string>;
+    buildFileAAD?: (userId: string | undefined | null, fileId: string) => string;
+}
+
+export interface UseEditorConflictReturn {
+    activeConflict: SyncConflict | null;
+    isConflictDialogOpen: boolean;
+    setIsConflictDialogOpen: (open: boolean) => void;
+    isResolvingConflict: boolean;
+    handleResolveConflict: (resolution: ConflictResolutionPayload) => Promise<void>;
+    handleSyncConflict: (conflict: SyncConflict) => Promise<"local" | "server" | "merge">;
+    handleRemoteUpdate: (event: RemoteUpdatePayload) => Promise<void>;
+    handle412Conflict: (
+        serverVersion: ServerVersionPayload,
+        localContent: string,
+        payloadToSend?: { contentToSend?: string; metaToSend?: FileEncryptionMetadata | null }
+    ) => Promise<void>;
+    isBlockedByConflict: () => boolean;
+}
+```
+
+### 4.2 Cross-Tab & 412 Conflict Lifecycle Flow
+
+```mermaid
+flowchart TD
+    Trigger["Server Response / Broadcast Event"] --> Branch{"Event / Response Type"}
+    
+    %% 412 Precondition Flow
+    Branch -- "HTTP 412 Precondition Failed" --> H412["handle412Conflict()"]
+    H412 --> DecryptCheck{"File Encrypted?"}
+    DecryptCheck -- Yes --> DecryptServer["Decrypt Inbound Server Ciphertext<br/>SyncCryptoGateway.decryptInbound()"]
+    DecryptCheck -- No --> CompareMarkdown
+    DecryptServer --> CompareMarkdown{"False Conflict Check<br/>normalizeMarkdownSource() equality"}
+    
+    CompareMarkdown -- "Identical Content / ETag" --> AutoAdopt["Auto-Adopt Server Version & ETag<br/>Save Clean IDB & markClean()"]
+    CompareMarkdown -- "Divergent Content" --> QuarantineConflict["Instantiate SyncConflict<br/>activeConflict = conflict<br/>isConflictDialogOpen = true"]
+    QuarantineConflict --> BlockGate["isBlockedByConflict() = true<br/>Suspend Autosave & Server Writes"]
+    
+    %% Conflict Resolution Flow
+    BlockGate --> UserResolves["User Submits Resolution Strategy<br/>handleResolveConflict(payload)"]
+    UserResolves --> SnapshotCapture["Capture startSnapshot in Editor<br/>(Pre-flight baseline)"]
+    SnapshotCapture --> EncryptOutbound{"Encrypted File?"}
+    EncryptOutbound -- Yes --> ReEncrypt["Re-encrypt Outbound Plaintext<br/>SyncCryptoGateway.encryptOutbound()"]
+    EncryptOutbound -- No --> ServerCommit
+    ReEncrypt --> ServerCommit["Authoritative Save via Server Action<br/>expectedVersion: serverVersion.version"]
+    
+    ServerCommit --> CommitSuccess{"Save Succeeded?"}
+    CommitSuccess -- "No / Repeat 412" --> RollbackSafe["Preserve Editor Live Edits (LUGX-013)<br/>Update SyncConflict & Surface Error"]
+    CommitSuccess -- "Yes" --> ConcurrentCheck{"Live Content Changed?<br/>normalizeMarkdownSource(liveNow) == startSnapshot (LUGX-010)"}
+    
+    ConcurrentCheck -- "No (Clean Resolution)" --> ApplyClean["Set Editor Content to Resolved<br/>Save Local Clean IDB<br/>markClean() & cancelAutosave()"]
+    ConcurrentCheck -- "Yes (Concurrent Typing)" --> PreserveEdits["Preserve Live Edits in Editor<br/>Save Local IDB with isDirty = true<br/>markDirty() for Subsequent Autosave"]
+    
+    ApplyClean --> BroadcastResolved["Broadcast conflict_resolved<br/>Close Dialog & Clear activeConflict"]
+    PreserveEdits --> BroadcastResolved
+    
+    %% Cross-Tab Sync Branch
+    Branch -- "Cross-Tab Event (BroadcastChannel)" --> TabEvent{"Event Type"}
+    
+    TabEvent -- "file_saved" --> SyncDirtyCheck{"Local Tab Dirty? (LUGX-020)<br/>isDirty() || localFile.isDirty"}
+    SyncDirtyCheck -- "Clean" --> AdoptRemoteTab["Atomically Adopt Server Version & Content<br/>Update Adapter & markClean()"]
+    SyncDirtyCheck -- "Dirty" --> RetainAnchors["Retain Local expectedVersion Anchors<br/>Enforce Optimistic Lock on Next Save"]
+    
+    TabEvent -- "vault_locked" --> PreLockFlush{"Local Tab Dirty? (LUGX-049)"}
+    PreLockFlush -- "Yes & Master Key Present" --> FlushIDB["Flush Encrypted Content to IDB<br/>isDirty = true"]
+    PreLockFlush -- "Yes & Master Key Missing" --> RefuseFlush["Skip Flush (LUGX-004)<br/>Retain Edits in Ephemeral Memory"]
+    PreLockFlush -- "No" --> LockTeardown
+    FlushIDB --> LockTeardown["cancelAutosave()<br/>sessionKeyStore.lock(false)<br/>Freeze Editor (setEditable: false)"]
+    RefuseFlush --> LockTeardown
+    
+    TabEvent -- "file_encrypted / file_decrypted" --> EncryptToggle["Update Encryption Metadata & Anchors<br/>Preserve Dirty State if isDirty (LUGX-051)"]
+```
+
+### 4.3 Core Invariants
+
+1. **LUGX-010 (In-Flight Snapshot Detection & Concurrent Edit Preservation):**
+   - Before dispatching asynchronous network calls in `handleResolveConflict`, the hook records `startSnapshot` from the active editor adapter.
+   - Upon network resolution settlement, the hook inspects live editor content (`liveNow`):
+     ```typescript
+     const noConcurrentEdits = normalizeMarkdownSource(liveNow) === normalizeMarkdownSource(startSnapshot);
+     ```
+   - If user edits occurred while the resolution request was in flight, the live edits are strictly preserved in the editor surface and memory reference, and the document is flagged `markDirty()`. The updated server version is adopted as the new base, enabling the next autosave debounce cycle to push concurrent edits smoothly without data loss.
+
+2. **LUGX-013 (Non-Destructive CAS Preservation):**
+   - On HTTP 412 conflict, repeated conflict, resolution failure, or network exceptions, `useEditorConflict` never overwrites editor content with stale remote snapshots or fallback states.
+   - In-flight user edits remain active in CodeMirror 6, and errors are surfaced non-destructively through UI alerts.
+
+3. **LUGX-020 (Synchronous Dirty Read on `file_saved`):**
+   - When sibling tabs broadcast `file_saved`, the hook inspects dirty state via synchronous getters (`optsRef.current.isDirty()`, local IDB record, active conflict) rather than waiting for asynchronous React state flushes.
+   - If clean, the tab atomically adopts the new version, ETag, and decrypted content.
+   - If dirty, the tab retains its existing `expectedVersion` anchors, guaranteeing an optimistic concurrency conflict (HTTP 412) on subsequent local saves rather than silently overwriting sibling changes.
+
+4. **LUGX-049 (Pre-Lock IDB Flush on `vault_locked`):**
+   - Upon receiving a cross-tab `vault_locked` broadcast while the local tab is dirty, `useEditorConflict` flushes dirty content to IndexedDB *before* cancelling autosave and purging volatile RAM keys.
+   - If the Master Key is missing from memory, the flush is skipped to prevent writing unencrypted plaintext under an encrypted flag (enforcing LUGX-004 fail-closed protection). Edits are safely retained in ephemeral editor memory until unlocked.
+
+5. **LUGX-051 (Preserve Dirty Edits on Cross-Tab Toggle):**
+   - Cross-tab `file_encrypted` and `file_decrypted` broadcasts synchronize metadata, version, and ETag anchors.
+   - The hook invokes `markClean()` *only* if `!optsRef.current.isDirty()`. If unsaved edits exist, dirty state is preserved, ensuring local edits are not dropped.
+
+6. **LUGX-053 (`normalizeMarkdownSource` Equality):**
+   - False-conflict detection in `handleSyncConflict`, false-conflict suppression in `handle412Conflict`, and in-flight snapshot comparison in `handleResolveConflict` all use `normalizeMarkdownSource`.
+   - Normalizes CRLF/LF line endings and trailing whitespace, preventing false conflicts caused by serialization artifacts.
+
+### 4.4 Architectural Decisions & Trade-offs
+
+#### Decision: In-Flight Snapshot Detection vs Post-Resolution Comparison
+
+- **Context:** Detecting whether the user typed new content during the asynchronous server round-trip of conflict resolution.
+- **Chosen Architecture:** Capturing `startSnapshot` prior to network invocation and comparing it against `liveNow` using `normalizeMarkdownSource` (LUGX-010).
+- **Rejected Alternatives:**
+  - Comparing `liveNow` against `resolution.content`: Erroneously classifies clean resolutions as dirty whenever the user selected "mine" or when merged content coincidentally matched previous text.
+  - Freezing the editor during resolution: Degrades typing experience and interrupts flow on mobile or high-latency connections.
+- **Trade-off Analysis:**
+  | Evaluation Criteria | Chosen Solution (Pre-Flight Snapshot) | Alternative #1 (Compare to Resolution) | Alternative #2 (Freeze Editor) |
+  | :--- | :--- | :--- | :--- |
+  | **Detection Accuracy** | Deterministic: captures exact pre-call state | Flawed: false dirty states on "mine" strategy | High: zero concurrent edits possible |
+  | **Typing Latency** | Zero: editor remains fully interactive | Zero: editor remains interactive | High: user typing is blocked during network round-trip |
+  | **State Complexity** | Low: requires single local string capture | Low | Moderate: requires lock state management |
+
+- **Migration Trigger (When to Switch):**
+  Migrate to an operational transform or transactional edit buffer only if conflict resolution is offloaded to a background web worker thread with concurrent live cursor presence.
+
+#### Decision: Ambient Broadcast Parity vs Fragmented User Scoping (TD-18 Debt)
+
+- **Context:** Decoupling cross-tab synchronization in `useEditorConflict` while sibling components (`VaultUnlockModal`, `FileContextMenu`, `SessionKeyStore`) continue broadcasting on the ambient channel (`textai_cross_tab_sync`).
+- **Chosen Architecture:** Retaining ambient broadcast parity (`textai_cross_tab_sync`) in `useEditorConflict` (via `broadcastCrossTabEvent` / `subscribeCrossTabSync`) until a holistic multi-tenant overhaul is executed repository-wide (recorded in TD-18).
+- **Rejected Alternative:** Enforcing strict user-scoped channel (`lugx_sync_${userId}`) in `useEditorConflict` alone. This creates a fragmented split-brain architecture where vault lock/unlock events broadcast by modals fail to be received by the editor hook.
+- **Trade-off Analysis:**
+  | Evaluation Criteria | Chosen Solution (Ambient Parity) | Alternative (Fragmented User Scoping) |
+  | :--- | :--- | :--- |
+  | **Cross-Component Reliability** | High: 100% of modals and editor tabs receive vault lock/unlock events | Broken: split channels cause dropped vault lock and unlock events |
+  | **Multi-Tenant Isolation** | Accepted Debt (TD-18): single-machine multi-account tab isolation deferred | Isolated in editor hook only, but broken everywhere else |
+  | **Refactoring Blast Radius** | Isolated to hook extraction without cascading regressions across 15+ UI files | High: requires touching every modal, context menu, and worker simultaneously |
+
+- **Migration Trigger (When to Switch):**
+  Migrate all broadcast channels across the entire application to unified `lugx_sync_${userId}` channels in a dedicated multi-tenant hardening milestone.
+
+---
+
+## 5. AI Streaming Interaction & Atomic Undo Policies
+
+### 5.1 Manual Edit During AI Streaming Policy
 
 When the user types or modifies text while an AI stream or generation is active:
 1. **Instant Abort:** The orchestrator detects manual changes via `handleEditorChange` and immediately aborts the active stream via `aiStream.stopStream()`.
@@ -140,9 +382,7 @@ When the user types or modifies text while an AI stream or generation is active:
 3. **Editor Generation Advance:** `editorGenerationRef` increments immediately, preventing any stale in-flight AI chunks or delayed commit responses from applying to the altered document.
 4. **Debounced AutoSave:** The user's manual modification proceeds cleanly without silent corrupt merges.
 
----
-
-## 5. Single-Action Atomic Undo (Ctrl+Z)
+### 5.2 Single-Action Atomic Undo (Ctrl+Z)
 
 Local application of committed AI results executes as a single, indivisible transaction via the editor adapter:
 
@@ -529,6 +769,7 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
 ## 7. Verification Proof
 
 - **Automated Test Execution Evidence:**
+  - `src/test/editor/use-editor-conflict.test.ts` (11/11 passing - Contract & behavior suite covering true 412 conflict dialog activation, false-conflict suppression, resolution strategies, in-flight snapshot concurrent edit preservation, non-destructive resolution failure handling, cross-tab encryption/decryption toggle dirty retention, and cross-tab vault_locked IDB flush)
   - `src/test/editor/use-editor-autosave.test.ts` (Contract suite covering debounced persistence, rapid edit coalescing, AI write-lock suspension & resumption, timer cancellation, and unmount flush)
   - `src/test/editor/editor-security-hardening.test.ts` (Regression & contract suite covering LUGX-056 AAD validation, LUGX-004 unmount flush leak prevention, LUGX-047 finally block reset prevention, and LUGX-048 fatal hydration on decrypt failure)
   - `src/test/editor/search-replace.stale-ranges.test.tsx` (LUGX-054 document slice validation preventing stale cache corruption)
@@ -560,7 +801,7 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
   - **Vault Subsystem Total:** 10/10 test files, 178/178 tests passing (100% success rate).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 87 unit suites (1058 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 88 unit suites (1069 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
   - **TypeScript Typecheck:** `npx tsc --noEmit` exits with code 0 (zero errors).

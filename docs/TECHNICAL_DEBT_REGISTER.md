@@ -2,10 +2,10 @@
 
 Living register of known technical debt, accepted risks, and deferred work.
 Each entry records the decision owner and the mitigation currently in place.
-Last reviewed: 2026-10-04 (v1.45.0 — TD-17 editor autosave extraction, React 19 ref discipline, and security hardening resolved in Phase 17).
+Last reviewed: 2026-10-13 (v1.45.1 — TD-18 editor conflict & cross-tab sync extraction into useEditorConflict, reduction of orchestrator, accepted debt of ambient channel broadcasting pending systematic multi-tenant overhaul).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 87 unit suites (1058 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 88 unit suites (1069 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ---
@@ -216,4 +216,25 @@ Last reviewed: 2026-10-04 (v1.45.0 — TD-17 editor autosave extraction, React 1
   - **LUGX-056 (Strict AAD Validation):** Hoisted `buildFileAAD(userId, fileId)` to module scope in `use-editor-orchestrator.ts` and enforced non-empty trimmed string checks throwing informative errors on invalid IDs.
   - **LUGX-057 (Offline-First Vault Import Durability):** Pre-persisted imported vault files to IndexedDB with `isDirty: true` and `lastSyncedAt: 0` before server dispatch, marking clean only after server confirmation.
   - **Verification:** Covered by 5 dedicated regression test suites: `use-editor-autosave.test.ts`, `editor-security-hardening.test.ts`, `search-replace.stale-ranges.test.tsx`, `file-context-menu.encryption-conflict.test.tsx`, and `sidebar-import.vault.test.tsx`.
+
+## TD-18 — Editor Orchestrator Monolithic Conflict & Cross-Tab Extraction, Ambient Channel Parity Debt — ✅ RESOLVED / ACCEPTED DEBT (Phase 18 / 2026-10-13)
+
+- **Debt:**
+  - `useEditorOrchestrator` conflated document state management, AI streaming, initial hydration, and monolithic conflict handling (`handle412Conflict`, `handleResolveConflict`, `handleSyncConflict`, `handleRemoteUpdate`) alongside cross-tab event listeners into a single file exceeding 1,936 lines.
+  - Sibling components across the application (`VaultUnlockModal`, `FileContextMenu`, `SessionKeyStore`) broadcast cross-tab events on an ambient channel (`textai_cross_tab_sync`), whereas Phase 15 introduced a user-scoped channel pattern (`lugx_sync_${userId}`). Attempting isolated user scoping inside the editor conflict hook without updating all modals, context menus, and worker bridges caused dropped vault lock and unlock synchronization across browser tabs.
+- **Resolution (Orchestrator Conflict Extraction):**
+  - **Hook Extraction (`useEditorConflict`):** Extracted `useEditorConflict` (`src/hooks/use-editor-conflict.ts`, 996 lines) with pure callback and getter injection (`UseEditorConflictOptions`), isolating 412 conflict handling, inbound decryption, three-way resolution submission, and cross-tab event lifecycle synchronization.
+  - **Orchestrator Reduction:** Reduced `src/hooks/use-editor-orchestrator.ts` from 1,936 lines to 1,327 lines (1,211 active executable lines), strictly delegating conflict states (`activeConflict`, `isConflictDialogOpen`, `isResolvingConflict`, `isBlockedByConflict`) and event dispatching to the standalone hook.
+  - **LUGX-010 (In-Flight Snapshot Detection):** `useEditorConflict` captures `startSnapshot` before initiating async network resolution calls and verifies `normalizeMarkdownSource(liveNow) === normalizeMarkdownSource(startSnapshot)` post-flight. Concurrent user edits typed during flight are preserved in CodeMirror (LUGX-013) and flagged dirty (`markDirty()`) for subsequent autosave.
+  - **LUGX-020 (Synchronous Dirty Read on `file_saved`):** Cross-tab `file_saved` reads synchronous getters (`isDirty()`, local IDB, active conflict) rather than asynchronous React state: clean tabs adopt server version/content atomically, while dirty tabs retain local version anchors for optimistic locking.
+  - **LUGX-049 (Pre-Lock IDB Flush on `vault_locked`):** When receiving cross-tab `vault_locked` while dirty, content is flushed to IndexedDB before cancelling autosave and purging volatile RAM keys (fail-closed if Master Key is absent, LUGX-004).
+  - **LUGX-051 (Preserve Dirty Edits on Cross-Tab Toggle):** Cross-tab `file_encrypted` and `file_decrypted` toggle handlers preserve dirty edits without invoking `markClean()`.
+  - **LUGX-053 (`normalizeMarkdownSource` Consistency):** Unified all Markdown equality and false-conflict checks through `normalizeMarkdownSource`.
+  - **Verification:** Covered by new dedicated unit contract suite `src/test/editor/use-editor-conflict.test.ts` (11/11 tests passing).
+- **Accepted Debt (Ambient Broadcast Parity Across Vault Modals):**
+  - **Decision Owner:** Project Owner & Systems Analyst.
+  - **Decision Rationale:** To maintain 100% interoperability with existing UI modals (`VaultUnlockModal`, `TrustDeviceModal`, `FileContextMenu`), `useEditorConflict` broadcasts and subscribes on the ambient `textai_cross_tab_sync` channel via `broadcastCrossTabEvent` and `subscribeCrossTabSync`. Prematurely enforcing isolated user scoping in the editor hook alone created a split-brain architecture where vault lock/unlock events broadcast by ambient modals were silently ignored by the editor.
+  - **Mitigation Currently in Place:** `useEditorConflict` binds to the shared `subscribeCrossTabSync` listener and filters events by fileId and tabId (`senderTabId !== currentTabId`). Encryption operations strictly validate user AAD bindings (`vault:file:${userId}:${fileId}`) in volatile RAM, preventing cross-tenant data corruption.
+  - **Conditions to Revisit / Reverse:** A systematic multi-tenant overhaul milestone that simultaneously refactors all UI modals, context menus, and worker bridges to subscribe to user-scoped `lugx_sync_${userId}` channels.
+
 
