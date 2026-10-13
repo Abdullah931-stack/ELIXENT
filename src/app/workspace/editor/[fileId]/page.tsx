@@ -34,33 +34,33 @@ export default function EditorPage() {
     const [selectedText, setSelectedText] = useState("");
     const [editorMode, setEditorMode] = useState<EditorMode>("live");
     const [adapter, setAdapter] = useState<EditorAdapter | null>(null);
-    const [directionSettings, setDirectionSettings] = useState<DirectionSettings>({
-        mode: "auto",
-        lockCodeBlocksLTR: true,
+    const [directionSettings, setDirectionSettings] = useState<DirectionSettings>(() => {
+        if (typeof window !== "undefined") {
+            try {
+                const saved = localStorage.getItem("lugx_editor_direction_pref");
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    if (parsed && typeof parsed === "object") {
+                        return {
+                            mode: ["auto", "rtl", "ltr"].includes(parsed.mode) ? parsed.mode : "auto",
+                            lockCodeBlocksLTR:
+                                typeof parsed.lockCodeBlocksLTR === "boolean"
+                                    ? parsed.lockCodeBlocksLTR
+                                    : true,
+                        };
+                    }
+                }
+            } catch {
+                // Ignore localStorage errors (e.g. privacy mode / SSR)
+            }
+        }
+        return {
+            mode: "auto",
+            lockCodeBlocksLTR: true,
+        };
     });
     const [isExportWarningOpen, setIsExportWarningOpen] = useState(false);
     const [pendingExportFormat, setPendingExportFormat] = useState<"md" | "txt">("txt");
-
-    // Load persisted direction preferences from localStorage on mount
-    useEffect(() => {
-        try {
-            const saved = localStorage.getItem("lugx_editor_direction_pref");
-            if (saved) {
-                const parsed = JSON.parse(saved);
-                if (parsed && typeof parsed === "object") {
-                    setDirectionSettings((prev) => ({
-                        mode: ["auto", "rtl", "ltr"].includes(parsed.mode) ? parsed.mode : prev.mode,
-                        lockCodeBlocksLTR:
-                            typeof parsed.lockCodeBlocksLTR === "boolean"
-                                ? parsed.lockCodeBlocksLTR
-                                : prev.lockCodeBlocksLTR,
-                    }));
-                }
-            }
-        } catch {
-            // Ignore localStorage errors (e.g. privacy mode / SSR)
-        }
-    }, []);
 
     // Update direction settings callback
     const handleDirectionSettingsChange = useCallback(

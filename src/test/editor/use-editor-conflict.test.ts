@@ -663,4 +663,70 @@ describe("useEditorConflict", () => {
         expect(fixture.options.cancelAutosave).not.toHaveBeenCalled();
         expect(fixture.options.saveLocal).not.toHaveBeenCalled();
     });
+
+    it("performs silent automated 3-way merge on 412 when baseSnapshot is present and edits do not overlap", async () => {
+        const baseDoc = "Line 1\nLine 2\nLine 3\nLine 4";
+        const localDoc = "Line 1\nLine 2\nLine 3\nLine 4 local";
+        const serverDoc = "Line 1\nLine 2 server\nLine 3\nLine 4";
+        const expectedMerged = "Line 1\nLine 2 server\nLine 3\nLine 4 local";
+
+        const fixture = setup({
+            getVersion: vi.fn(() => 1),
+            getEtag: vi.fn(() => "etag-v1"),
+            getEditorContent: vi.fn(() => localDoc),
+            loadLocal: vi.fn().mockResolvedValue({
+                id: "file-conflict-test",
+                content: localDoc,
+                version: 1,
+                etag: "etag-v1",
+                isDirty: true,
+                isEncrypted: false,
+                baseSnapshot: {
+                    content: baseDoc,
+                    etag: "etag-base",
+                    version: 1,
+                    title: "Test File",
+                    parentFolderId: null,
+                },
+            }),
+        });
+
+        vi.mocked(updateFileContent).mockResolvedValueOnce({
+            success: true,
+            version: 3,
+            etag: "etag-merged-v3",
+        });
+
+        const { result } = renderHook(() => useEditorConflict(fixture.options));
+
+        await act(async () => {
+            await result.current.handle412Conflict(
+                {
+                    version: 2,
+                    etag: "etag-server-v2",
+                    content: serverDoc,
+                    updatedAt: new Date().toISOString(),
+                },
+                localDoc
+            );
+        });
+
+        // Verifications:
+        // 1. Silent resolution: Dialog should NOT open and activeConflict should remain null
+        expect(result.current.isConflictDialogOpen).toBe(false);
+        expect(result.current.activeConflict).toBeNull();
+
+        // 2. Automated push: Pushed merged content to server with expectedVersion 2
+        expect(updateFileContent).toHaveBeenCalledWith(
+            fixture.fileId,
+            expectedMerged,
+            expect.objectContaining({ expectedVersion: 2 })
+        );
+
+        // 3. Editor updated with merged content
+        expect(fixture.options.setEditorContent).toHaveBeenCalledWith(expectedMerged);
+        expect(fixture.options.setVersion).toHaveBeenCalledWith(3);
+        expect(fixture.options.setEtag).toHaveBeenCalledWith("etag-merged-v3");
+        expect(fixture.options.markClean).toHaveBeenCalled();
+    });
 });

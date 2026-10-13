@@ -47,7 +47,9 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
     const [trustAgreement, setTrustAgreement] = useState(false);
 
     // Reset fields on modal open & check for trusted device PIN envelope
-    useEffect(() => {
+    const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
+    if (prevIsOpen !== isOpen) {
+        setPrevIsOpen(isOpen);
         if (isOpen) {
             setPassword("");
             setPin("");
@@ -62,49 +64,62 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
             setTrustPin("");
             setTrustPinConfirm("");
             setTrustAgreement(false);
+        }
+    }
 
-            // Check hardware support with detailed diagnostics
-            (async () => {
-                try {
-                    const status = await checkWebAuthnSupportStatus();
-                    setIsHardwareSupported(status.supported);
-                    setHardwareStatusMessage(status.message || null);
-                    if (status.supported) {
-                        setTrustMethod("webauthn_prf");
-                    } else {
-                        setTrustMethod("pin");
-                    }
-                } catch {
-                    setIsHardwareSupported(false);
-                    setHardwareStatusMessage("فشل التحقق من دعم عتاد الجهاز.");
+    useEffect(() => {
+        if (!isOpen) return;
+        let isMounted = true;
+
+        // Check hardware support with detailed diagnostics
+        void (async () => {
+            try {
+                const status = await checkWebAuthnSupportStatus();
+                if (!isMounted) return;
+                setIsHardwareSupported(status.supported);
+                setHardwareStatusMessage(status.message || null);
+                if (status.supported) {
+                    setTrustMethod("webauthn_prf");
+                } else {
                     setTrustMethod("pin");
                 }
-            })();
+            } catch {
+                if (!isMounted) return;
+                setIsHardwareSupported(false);
+                setHardwareStatusMessage("فشل التحقق من دعم عتاد الجهاز.");
+                setTrustMethod("pin");
+            }
+        })();
 
-            // Check if device trust envelope exists
-            (async () => {
-                try {
-                    const env = await indexedDBManager.getDeviceTrustEnvelope(userId);
-                    if (env && Date.now() <= env.expiresAt && (env.failedAttempts === undefined || env.failedAttempts < 5)) {
-                        setDeviceEnvelope(env);
-                        setIsDeviceTrusted(true);
-                        if (env.trustType === "webauthn_prf") {
-                            setTab("biometric");
-                        } else {
-                            setTab("pin");
-                        }
+        // Check if device trust envelope exists
+        void (async () => {
+            try {
+                const env = await indexedDBManager.getDeviceTrustEnvelope(userId);
+                if (!isMounted) return;
+                if (env && Date.now() <= env.expiresAt && (env.failedAttempts === undefined || env.failedAttempts < 5)) {
+                    setDeviceEnvelope(env);
+                    setIsDeviceTrusted(true);
+                    if (env.trustType === "webauthn_prf") {
+                        setTab("biometric");
                     } else {
-                        setDeviceEnvelope(null);
-                        setIsDeviceTrusted(false);
-                        setTab("password");
+                        setTab("pin");
                     }
-                } catch {
+                } else {
                     setDeviceEnvelope(null);
                     setIsDeviceTrusted(false);
                     setTab("password");
                 }
-            })();
-        }
+            } catch {
+                if (!isMounted) return;
+                setDeviceEnvelope(null);
+                setIsDeviceTrusted(false);
+                setTab("password");
+            }
+        })();
+
+        return () => {
+            isMounted = false;
+        };
     }, [isOpen, userId]);
 
     if (!isOpen) return null;

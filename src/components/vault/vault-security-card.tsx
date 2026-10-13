@@ -62,8 +62,48 @@ export function VaultSecurityCard({ userId }: VaultSecurityCardProps) {
     }, [userId]);
 
     useEffect(() => {
-        refreshDeviceStatus();
-    }, [refreshDeviceStatus]);
+        let isMounted = true;
+        void (async () => {
+            try {
+                const profileRes = await getUserVaultProfile();
+                if (!isMounted) return;
+                if (profileRes.success && profileRes.data) {
+                    setHasVaultProfile(true);
+                    setAllowAI(!!profileRes.data.allowAIOnEncryptedFiles);
+                } else {
+                    setHasVaultProfile(false);
+                    setAllowAI(false);
+                }
+
+                const env = await indexedDBManager.getDeviceTrustEnvelope(userId);
+                if (!isMounted) return;
+                if (env) {
+                    if (Date.now() > env.expiresAt) {
+                        await indexedDBManager.clearDeviceTrustEnvelope(userId);
+                        if (isMounted) setEnvelope(null);
+                    } else if (profileRes.success && profileRes.data?.deviceTrustEpoch && profileRes.data.deviceTrustEpoch !== env.deviceTrustEpoch) {
+                        await indexedDBManager.clearDeviceTrustEnvelope(userId);
+                        if (isMounted) setEnvelope(null);
+                    } else {
+                        if (isMounted) setEnvelope(env);
+                    }
+                } else {
+                    if (isMounted) setEnvelope(null);
+                }
+            } catch (err) {
+                console.warn("[VaultSecurityCard] Error checking device trust:", err);
+                if (isMounted) {
+                    setEnvelope(null);
+                    setHasVaultProfile(false);
+                }
+            } finally {
+                if (isMounted) setIsLoading(false);
+            }
+        })();
+        return () => {
+            isMounted = false;
+        };
+    }, [userId]);
 
     // Revoke this current device
     async function handleRevokeCurrentDevice() {

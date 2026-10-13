@@ -30,7 +30,9 @@ export function TrustDeviceModal({ isOpen, onClose, userId, userEmail, onSuccess
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState(false);
 
-    useEffect(() => {
+    const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
+    if (prevIsOpen !== isOpen) {
+        setPrevIsOpen(isOpen);
         if (isOpen) {
             setPassword("");
             setPin("");
@@ -39,25 +41,34 @@ export function TrustDeviceModal({ isOpen, onClose, userId, userEmail, onSuccess
             setIsLoading(false);
             setError(null);
             setSuccess(false);
+        }
+    }
 
-            // Check hardware support with diagnostic messaging
-            (async () => {
-                try {
-                    const status = await checkWebAuthnSupportStatus();
-                    setIsHardwareSupported(status.supported);
-                    setHardwareStatusMessage(status.message || null);
-                    if (status.supported) {
-                        setTrustMethod("webauthn_prf");
-                    } else {
-                        setTrustMethod("pin");
-                    }
-                } catch {
-                    setIsHardwareSupported(false);
-                    setHardwareStatusMessage("فشل التحقق من دعم عتاد الجهاز.");
+    useEffect(() => {
+        if (!isOpen) return;
+        let isMounted = true;
+        // Check hardware support with diagnostic messaging
+        void (async () => {
+            try {
+                const status = await checkWebAuthnSupportStatus();
+                if (!isMounted) return;
+                setIsHardwareSupported(status.supported);
+                setHardwareStatusMessage(status.message || null);
+                if (status.supported) {
+                    setTrustMethod("webauthn_prf");
+                } else {
                     setTrustMethod("pin");
                 }
-            })();
-        }
+            } catch {
+                if (!isMounted) return;
+                setIsHardwareSupported(false);
+                setHardwareStatusMessage("فشل التحقق من دعم عتاد الجهاز.");
+                setTrustMethod("pin");
+            }
+        })();
+        return () => {
+            isMounted = false;
+        };
     }, [isOpen]);
 
     if (!isOpen) return null;

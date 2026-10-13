@@ -388,6 +388,7 @@ export function diff3Merge(
 
             // Deletion Guard: prune matching lines present in base & remote that were deleted locally
             while (
+                aContent.length < oContent.length &&
                 oContent.length > 0 &&
                 bContent.length > 0 &&
                 oContent[oContent.length - 1] === bContent[bContent.length - 1] &&
@@ -398,6 +399,7 @@ export function diff3Merge(
             }
 
             while (
+                aContent.length < oContent.length &&
                 oContent.length > 0 &&
                 bContent.length > 0 &&
                 oContent[0] === bContent[0] &&

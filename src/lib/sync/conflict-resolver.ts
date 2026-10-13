@@ -763,17 +763,18 @@ export class ConflictResolver {
 
         const processGap = (delLines: string[], insLines: string[]) => {
             // Apply Deletion Guard if baseLines provided:
-            // If a line is present in server and missing in local:
-            // If it was in baseContent and unchanged in server: user deleted it locally! Keep it deleted.
-            // Only treat as server addition if it was NOT in baseContent.
+            // If server has more lines than local in this gap, only surplus lines lacking
+            // a local counterpart that were present in baseContent are marked as locally deleted.
+            // Paired lines (delLines with insLines) represent modifications, NOT deletions!
             let filteredInsLines = insLines;
             const locallyDeletedBaseLines: string[] = [];
 
-            if (baseSet) {
-                filteredInsLines = [];
-                for (const line of insLines) {
+            if (baseSet && insLines.length > delLines.length) {
+                filteredInsLines = insLines.slice(0, delLines.length);
+                const surplusInsLines = insLines.slice(delLines.length);
+                for (const line of surplusInsLines) {
                     if (baseSet.has(line)) {
-                        // User deleted it locally: keep it deleted, do not treat as server addition!
+                        // User deleted it locally without replacement from base
                         locallyDeletedBaseLines.push(line);
                     } else {
                         filteredInsLines.push(line);

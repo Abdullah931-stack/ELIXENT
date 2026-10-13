@@ -24,20 +24,22 @@ export function OcrSettingsCard() {
     const { toast } = useToast();
 
     useEffect(() => {
-        void checkStatus();
-    }, []);
-
-    async function checkStatus() {
-        try {
-            setIsLoading(true);
-            const installed = await isOcrPackageInstalled();
-            setIsInstalled(installed);
-        } catch {
-            setIsInstalled(false);
-        } finally {
-            setIsLoading(false);
+        let isMounted = true;
+        async function checkStatus() {
+            try {
+                const installed = await isOcrPackageInstalled();
+                if (isMounted) setIsInstalled(installed);
+            } catch {
+                if (isMounted) setIsInstalled(false);
+            } finally {
+                if (isMounted) setIsLoading(false);
+            }
         }
-    }
+        void checkStatus();
+        return () => {
+            isMounted = false;
+        };
+    }, []);
 
     async function handleDownload() {
         try {

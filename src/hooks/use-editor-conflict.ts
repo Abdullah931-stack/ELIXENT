@@ -29,6 +29,7 @@ import { classifyRemoteUpdate, type LocalBaseline } from "@/lib/sync/reconciliat
 import { normalizeMarkdownSource } from "@/lib/sync/etag-generator";
 import { SyncCryptoGateway } from "@/lib/sync/sync-crypto-gateway";
 import { sessionKeyStore } from "@/lib/sync/session-key-store";
+import { conflictResolver } from "@/lib/sync/conflict-resolver";
 import { createClient } from "@/lib/supabase/client";
 
 export interface RemoteUpdatePayload {
@@ -573,6 +574,94 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
                 detectedAt: Date.now(),
                 type: "content",
             };
+
+            // LUGX-054: Attempt silent automated 3-way merge for non-overlapping offline/concurrent edits
+            if (conflictObj.baseVersion) {
+                const mergeResult = conflictResolver.attemptThreeWayMerge({
+                    base: conflictObj.baseVersion,
+                    local: conflictObj.localVersion,
+                    remote: conflictObj.serverVersion,
+                });
+
+                if (mergeResult.success && mergeResult.status === "merged_clean" && typeof mergeResult.content === "string") {
+                    console.log("[Conflict] 412 resolved via silent automated 3-way merge:", mergeResult);
+                    const mergedText = mergeResult.content;
+
+                    let mergedContentToSend = mergedText;
+                    let mergedMetaToSend = metaToSend;
+
+                    if (isEncrypted) {
+                        if (sessionKeyStore.hasMasterKey()) {
+                            executeBuildAAD(effectiveUid, fileId);
+                            const enc = await SyncCryptoGateway.encryptOutbound(fileId, mergedText, effectiveUid);
+                            mergedContentToSend = enc.ciphertextBase64;
+                            mergedMetaToSend = enc.encryptionMetadata;
+                            optsRef.current.setEncryptionMetadata(mergedMetaToSend);
+                        }
+                    }
+
+                    const targetExpectedVersion = serverVersion.version ?? optsRef.current.getVersion();
+                    const targetExpectedETag = serverVersion.etag || undefined;
+
+                    const pushRes = isEncrypted
+                        ? await toggleFileEncryption(fileId, true, mergedContentToSend, mergedMetaToSend, {
+                              expectedVersion: targetExpectedVersion,
+                              expectedETag: targetExpectedETag,
+                          })
+                        : await updateFileContent(fileId, mergedContentToSend, {
+                              expectedVersion: targetExpectedVersion,
+                              expectedETag: targetExpectedETag,
+                          });
+
+                    if (pushRes.success && pushRes.version) {
+                        const newVersion = pushRes.version;
+                        const newEtag = pushRes.etag || null;
+
+                        optsRef.current.setVersion(newVersion);
+                        optsRef.current.setEtag(newEtag);
+                        optsRef.current.incrementEditorGeneration();
+
+                        optsRef.current.setEditorContent(mergedText);
+                        optsRef.current.setProgrammaticUpdate(true);
+                        try {
+                            optsRef.current.getAdapter()?.setValue(mergedText);
+                        } finally {
+                            optsRef.current.setProgrammaticUpdate(false);
+                        }
+
+                        optsRef.current.cancelAutosave();
+
+                        // Commit to local IndexedDB first
+                        if (optsRef.current.isSyncInitialized()) {
+                            await optsRef.current.saveLocal({
+                                id: fileId,
+                                content: isEncrypted ? mergedContentToSend : mergedText,
+                                title: optsRef.current.getTitle(),
+                                version: newVersion,
+                                etag: newEtag || "",
+                                isEncrypted,
+                                encryptionMetadata: mergedMetaToSend,
+                                isDirty: false,
+                            });
+                        }
+
+                        // Broadcast cross-tab only after IDB commit
+                        broadcastCrossTabEvent({
+                            type: "file_saved",
+                            fileId,
+                            version: newVersion,
+                            etag: newEtag || undefined,
+                        });
+
+                        optsRef.current.markServerPersisted?.(new Date());
+                        optsRef.current.markClean();
+                        activeConflictRef.current = null;
+                        setActiveConflict(null);
+                        setIsConflictDialogOpen(false);
+                        return;
+                    }
+                }
+            }
 
             activeConflictRef.current = conflictObj;
             setActiveConflict(conflictObj);

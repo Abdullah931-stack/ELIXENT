@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Shield, Copy, Check, AlertTriangle, ArrowLeft, Loader2, Lock } from "lucide-react";
 import { cryptoWorkerBridge, wipeBuffer, arrayBufferToBase64 } from "@/lib/sync/crypto-worker-bridge";
 import { sessionKeyStore } from "@/lib/sync/session-key-store";
@@ -38,7 +38,9 @@ export function CreateVaultModal({ isOpen, onClose, onSuccess, userId }: CreateV
     const [generalError, setGeneralError] = useState<string | null>(null);
 
     // Reset state on modal open
-    useEffect(() => {
+    const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
+    if (prevIsOpen !== isOpen) {
+        setPrevIsOpen(isOpen);
         if (isOpen) {
             setStep("password");
             setPassword("");
@@ -52,7 +54,7 @@ export function CreateVaultModal({ isOpen, onClose, onSuccess, userId }: CreateV
             setIsLoading(false);
             setGeneralError(null);
         }
-    }, [isOpen]);
+    }
 
     if (!isOpen) return null;
 

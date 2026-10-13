@@ -706,15 +706,7 @@ export function useEditorOrchestrator({
                     setLastSaved(new Date());
                     markClean();
 
-                    // Broadcast cross-tab
-                    broadcastCrossTabEvent({
-                        type: "file_saved",
-                        fileId,
-                        version: saveRes.version,
-                        etag: saveRes.etag || undefined,
-                    });
-
-                    // Update local storage clean (always store ciphertext for encrypted files)
+                    // Update local storage clean first (always store ciphertext for encrypted files)
                     if (syncHook.isInitialized) {
                         await syncHook.saveLocal({
                             id: fileId,
@@ -727,6 +719,14 @@ export function useEditorOrchestrator({
                             isDirty: false,
                         });
                     }
+
+                    // Broadcast cross-tab only AFTER IndexedDB commit settles
+                    broadcastCrossTabEvent({
+                        type: "file_saved",
+                        fileId,
+                        version: saveRes.version,
+                        etag: saveRes.etag || undefined,
+                    });
                 } else if (saveRes.status === "conflict" && saveRes.serverVersion) {
                     await handle412Conflict(
                         saveRes.serverVersion,

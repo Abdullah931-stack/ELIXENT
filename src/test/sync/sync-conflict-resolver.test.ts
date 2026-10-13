@@ -887,6 +887,29 @@ describe('Conflict Resolver - Phase 4 Three-Way Conflict Resolution', () => {
                 expect(diffsWithBase.some(d => d.type === 'delete' && d.value === 'Deleted By User')).toBe(true);
                 expect(diffsWithBase.some(d => d.type === 'insert' && d.value === 'Deleted By User')).toBe(false);
             });
+
+            it('should properly pair in-place modifications without duplication or erasure in 4-line scenario', () => {
+                const base = 'Line 1\nLine 2\nLine 3\nLine 4';
+                const local = 'Line 1\nLine 2\nLine 3\nLine 4 local';
+                const remote = 'Line 1\nLine 2 server\nLine 3\nLine 4';
+
+                const diffs = resolver.computeVisualDiff(local, remote, base);
+
+                // Should NOT produce duplicate delete ops for line 4
+                const deleteOps = diffs.filter(d => d.type === 'delete');
+                expect(deleteOps.length).toBe(0);
+
+                // Should have equal ops for Line 1 and Line 3
+                expect(diffs.filter(d => d.type === 'equal').length).toBe(2);
+
+                // Should produce modify ops for Line 2 and Line 4
+                const modifyOps = diffs.filter(d => d.type === 'modify');
+                expect(modifyOps.length).toBe(2);
+                expect(modifyOps[0].oldValue).toBe('Line 2');
+                expect(modifyOps[0].newValue).toBe('Line 2 server');
+                expect(modifyOps[1].oldValue).toBe('Line 4 local');
+                expect(modifyOps[1].newValue).toBe('Line 4');
+            });
         });
 
         describe('Deletion Guard Logic', () => {
