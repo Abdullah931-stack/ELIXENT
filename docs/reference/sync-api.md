@@ -54,6 +54,21 @@ Response shape from `src/app/api/files/sync/route.ts`:
 }
 ```
 
+#### Response (400 Bad Request — Invalid Sync Pull Request)
+Emitted when query parameters breach `syncPullRequestSchema` bounds:
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: application/problem+json
+
+{
+  "type": "urn:problem-type:invalid-sync-pull-request",
+  "title": "Invalid Sync Pull Request",
+  "status": 400,
+  "detail": "Invalid updatedAfter timestamp / cursor",
+  "instance": "/api/files/sync"
+}
+```
+
 Field notes:
 - `next_cursor`: Base64-encoded JSON `{ updatedAt, id }` keyset cursor; pass it
   back as the `cursor` query parameter. `null` when no more pages.
@@ -187,6 +202,21 @@ ETag: "server-etag"
     "encryptionMetadata": null,
     "updatedAt": "2026-02-01T12:25:00.000Z"
   }
+}
+```
+
+#### Response (400 Bad Request — Invalid Storage Payload)
+Emitted when body fails `documentStoragePayloadSchema` validation (e.g. missing IV on encrypted payload):
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: application/problem+json
+
+{
+  "type": "urn:problem-type:invalid-storage-payload",
+  "title": "Invalid Storage Payload",
+  "status": 400,
+  "detail": "Invalid encryptionMetadata for encrypted file",
+  "instance": "/api/files/abc123"
 }
 ```
 
@@ -1017,6 +1047,8 @@ export class SyncManager {
     getQuarantineDiagnostics(): QuarantineDiagnostics;
     discardPendingEncryptedConflict(id: string): Promise<void>;
     resolvePendingEncryptedConflict(id: string): Promise<FileSyncResult>;
+    getMachineState(): SyncState;
+    resolveConflict(resolution?: 'local' | 'remote' | 'merge', mergedContent?: string): void;
 }
 
 export function createSyncManager(config?: SyncManagerConfig): SyncManager;

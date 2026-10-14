@@ -696,13 +696,28 @@ To prevent local data desynchronization and unhandled rejections when browser ta
      // Synchronously consume flag before await to eliminate dual-event burst race conditions
      pendingLocalSyncRef.current = false;
      try {
+         let contentToSave = adapterRef.current.getValue();
+         let encMeta = encryptionMetadataRef.current;
+         if (isEncryptedRef.current) {
+             if (!sessionKeyStore.hasMasterKey()) {
+                 // Vault is locked: keep pendingLocalSyncRef and refuse to save unencrypted text (LUGX-004)
+                 pendingLocalSyncRef.current = true;
+                 return;
+             }
+             const uid = await resolveEffectiveUserId();
+             const outbound = await SyncCryptoGateway.encryptOutbound(fileId, contentToSave, uid);
+             contentToSave = outbound.ciphertextBase64;
+             encMeta = outbound.encryptionMetadata;
+         }
          await syncHookRef.current.saveLocal({
              id: fileId,
-             content: adapterRef.current.getValue(),
+             content: contentToSave,
              title,
              version: fileVersionRef.current,
              etag: fileEtagRef.current || "",
              isDirty: isDirtyRef.current,
+             isEncrypted: isEncryptedRef.current,
+             encryptionMetadata: encMeta,
          });
      } catch (err) {
          pendingLocalSyncRef.current = true; // Revert flag on failure for subsequent retry
@@ -718,14 +733,20 @@ To prevent local data desynchronization and unhandled rejections when browser ta
 
 ---
 
-## 6e. Zero-Knowledge Vault Integration & Dynamic File Conversion Engine (Phase 3)
+## 6e. Zero-Knowledge Vault Integration & Dynamic File Conversion Engine (Phase 3 & v1.46.2)
 
 The editor write and sync pipeline transparently integrates client-side end-to-end encryption with Zero-Knowledge invariants:
 
-1. **Vault Access Gating (`vault_locked`):**
+1. **Vault Access Gating & CodeMirror 6 DOM Preservation (`vault_locked`):**
    - When mounting an encrypted file (`isEncrypted === true`), the orchestrator inspects `sessionKeyStore.hasMasterKey()`.
-   - If the Master Key is absent from ephemeral RAM, `hydration` transitions to `vault_locked`. The CodeMirror editing surface remains completely unpainted and non-editable (`adapter.setEditable(false)`), preventing ciphertext leakage to the viewport, DOM, or clipboard.
-   - The UI displays the locked shield view or mounts `<VaultUnlockModal />`. Upon successful password unwrap or BIP-39 mnemonic recovery, `handleVaultUnlocked(unwrappedKey)` stores the key in `sessionKeyStore`, decrypts the ciphertext envelope via `CryptoWorkerBridge`, mounts the plaintext in the editor, and transitions `hydration` to `ready`.
+   - If the Master Key is absent from ephemeral RAM, `hydration` transitions to `vault_locked`. The CodeMirror editing surface remains non-editable (`adapter.setEditable(false)`).
+   - In `src/app/workspace/editor/[fileId]/page.tsx`, `<MarkdownEditor />` is retained in the DOM tree (`invisible pointer-events-none`) underneath an absolute modal overlay (`absolute inset-0 z-20 bg-zinc-950 flex items-center justify-center`). This completely preserves CodeMirror 6 `EditorView` state, focus, and adapter references without component unmount thrashing.
+   - **In-Memory RAM Zeroization on Lock:** Upon vault lock events (`!isUnlocked && isEncrypted`), `useEditorOrchestrator` immediately wipes sensitive plaintext from RAM:
+     ```typescript
+     runProgrammaticUpdate(() => adapterRef.current?.setValue(""));
+     adapterRef.current?.setEditable(false);
+     ```
+     Preventing plaintext from remaining resident in heap memory or CodeMirror document trees. Upon unlock, plaintext is safely reloaded into memory.
 
 2. **Pre-Save Envelope Encryption (`executeServerWrite`):**
    - When saving an encrypted file (`isEncrypted === true`), `executeServerWrite` intercepts the plaintext from the editor adapter before network dispatch.
@@ -812,7 +833,7 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
   - **Vault Subsystem Total:** 10/10 test files, 178/178 tests passing (100% success rate).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 88 unit suites (1071 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 89 unit suites (1077 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
   - **TypeScript Typecheck:** `npx tsc --noEmit` exits with code 0 (zero errors).

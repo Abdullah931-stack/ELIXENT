@@ -1,5 +1,67 @@
 # Changelog - LUGX Project
 
+## [1.46.2] - 2026-10-14 (Multi-Agent Architectural Remediation & Complete Lifecycle Hardening)
+
+### Cryptographic Hierarchy, AAD Dual-Try & Vault Lifecycle (`src/components/vault/`, `src/lib/sync/`, `src/server/actions/vault-actions.ts`)
+
+- **Dual-Try AAD Unwrapping & Historical Context Compatibility (`src/components/vault/trust-device-modal.tsx`, `src/lib/sync/encryption.ts`, `src/lib/sync/sync-crypto-gateway.ts`):**
+  - Integrated canonical `normalizePassword()` before PBKDF2 derivation to eliminate Unicode casing/diacritics mismatch.
+  - Implemented Dual-Try unwrapping across PIN, password, and file decryption: attempts current standard AAD (`AAD.passwordWrap`, `AAD.deviceWrap`, `AAD.file`) and gracefully falls back to legacy envelopes (`AAD.legacy.passWrap`, `AAD.legacy.deviceWrap`, `computeLegacyAad`) to guarantee zero user lockout during key rotation.
+  - Connected `VaultManager.touchActivity()` directly into `SyncCryptoGateway.decryptInbound` to automatically update session TTL on cryptographic access.
+- **Strict Device Trust & Proof-of-Possession Validation (`src/server/actions/vault-actions.ts`, `src/components/vault/vault-unlock-modal.tsx`):**
+  - Added strict server-side validation enforcing 64-hexadecimal character `proofOfPossession` derived via `deriveProofOfPossession(masterKey, userId)` and required `proofNonce` in `updateVaultPassword`, rejecting missing, non-hex, or malformed parameters to permanently seal vulnerability `LUGX-063`.
+  - Atomically increments `deviceTrustEpoch` on every device trust operation using SQL `sql`${schema.userVaultProfiles.deviceTrustEpoch} + 1`` to invalidate stale authentication envelopes across sibling devices.
+- **Fail-Closed File Decryption & Download Guard (`src/components/files/file-context-menu.tsx`):**
+  - Replaced ad-hoc Web Worker calls with `SyncCryptoGateway.decryptInbound`, guaranteeing strict fail-closed protection against writing corrupted or untrusted ciphertext back into local storage during file export and context menu actions.
+
+### Synchronization Engine, REST Contracts & Conflict Hygiene (`src/lib/sync/sync-manager.ts`, `src/lib/sync/sync-encrypted-conflict-store.ts`, `src/app/api/files/`, `src/hooks/use-editor-conflict.ts`)
+
+- **Pure State Reducer Event Integration in SyncManager (`src/lib/sync/sync-manager.ts`):**
+  - Added internal `machineState: SyncState = { status: 'idle' }` to `SyncManager` class and bound state transitions to `reduceSyncState`.
+  - Dispatches deterministic lifecycle events: `START_SYNC` on initiation, `SYNC_SUCCESS` on completion, `CONFLICT_DETECTED` on 412 or concurrent version drift, `SYNC_ERROR` on network failures, and `RESOLVE_CONFLICT` on user resolution. Exposed `getMachineState()` and `resolveConflict()`.
+- **RFC 7807 Storage & Sync Payload Contract Validation (`src/app/api/files/[id]/route.ts`, `src/app/api/files/sync/route.ts`):**
+  - In `PUT /api/files/[id]`, strictly validates storage payloads against `documentStoragePayloadSchema` from `@/types/storage-payload`, rejecting missing encryption metadata or unencrypted leaks with RFC 7807 400 Problem Details (`urn:problem-type:invalid-storage-payload`).
+  - In `GET /api/files/sync`, validates pagination and cursor query parameters against `syncPullRequestSchema` from `@/types/sync-contracts`, emitting RFC 7807 400 Problem Details (`urn:problem-type:invalid-sync-pull-request`) on invalid bounds.
+- **Encrypted Conflict Re-encryption & Ciphertext Preservation (`src/lib/sync/sync-encrypted-conflict-store.ts`, `src/hooks/use-editor-conflict.ts`):**
+  - Replaced manual Web Worker encryption calls in `SyncEncryptedConflictStore` with `SyncCryptoGateway.decryptInbound` (dual-try AAD) and `SyncCryptoGateway.encryptOutbound` to align conflict resolution with the canonical cryptographic hierarchy.
+  - Preserves untouched `rawServerContent` and `rawServerMeta` before executing diff comparison. When `isIdentical === true` and the file is encrypted, passes `rawServerContent` directly to `saveLocal` instead of decrypted plaintext.
+
+### Editor Lifecycle, Memory Security & React DOM Preservation (`src/hooks/use-editor-orchestrator.ts`, `src/app/workspace/editor/[fileId]/page.tsx`)
+
+- **Zero-Knowledge Memory Zeroization & Safe Unlock Restoration (`src/hooks/use-editor-orchestrator.ts`):**
+  - Enforced instantaneous memory zeroization upon vault locking (`!isUnlocked && isEncryptedRef.current`): wipes CodeMirror 6 memory buffer via `runProgrammaticUpdate(() => adapterRef.current?.setValue(""))`, clears `editorContentRef.current = ""`, and disables editable permissions (`adapterRef.current?.setEditable(false)`).
+  - Implemented unlock reconstruction in `handleVaultUnlocked`: when `pendingEncryptedPayloadRef` is null, retrieves encrypted content from local IndexedDB (`syncHookRef.current.loadLocal`) or server (`getFile`) before decrypting and restoring plaintext into the editor, preventing document loss upon unlock.
+  - Encrypts outbound mutations via `SyncCryptoGateway.encryptOutbound` before persisting during tab wakeup events, deferring `pendingLocalSyncRef` when the vault is locked.
+- **CodeMirror 6 DOM Preservation via Absolute Overlay (`src/app/workspace/editor/[fileId]/page.tsx`):**
+  - Retains `<MarkdownEditor />` mounted in the DOM tree during `hydration === "vault_locked"` with `invisible pointer-events-none` styling, rendering the locked state modal as an absolute overlay (`absolute inset-0 z-20 bg-zinc-950 flex items-center justify-center`).
+  - Preserves CodeMirror 6 `EditorView` state, focus, and adapter references across vault lock and unlock cycles without component re-mount thrashing.
+
+### AI Quota Settlement, Billing Reducer & Database Hygiene (`src/server/services/`, `src/server/actions/`, `src/app/api/stripe/`)
+
+- **Quota Reservation, Settlement & Atomic Commit Retention (`src/server/services/ai-settlement-service.ts`, `src/server/actions/ai-ops.ts`, `src/server/actions/ai-commit.ts`, `src/app/api/ai/stream/route.ts`):**
+  - Connected `reduceQuotaReservationState` and `calculateQuotaSettlement` across AI reservation commit and refund operations.
+  - In `commitAIFileOperation`, removed quota refunds on encryption rejections (`allowAIOnEncryptedFiles: false` or missing IV); consumed streaming quota is permanently retained.
+  - Guarded `getUserTier`, `getTodayUsage`, and `checkQuota` server actions using authenticated session `effectiveUserId`.
+  - Bound `/api/ai/stream` request payload validation to `aiRequestSchema` with RFC 7807 Problem Details. Corrected Arabic word counting heuristic in `src/lib/utils.ts` to `Math.max(spaceCount, Math.ceil(len / 6))`.
+- **Subscription State Machine & Terminal Status Defense (`src/server/services/billing-service.ts`, `src/app/api/stripe/webhook/route.ts`):**
+  - Connected `reduceSubscriptionState` and `isTerminalSubscriptionStatus` to protect terminal subscription states (`canceled`, `incomplete_expired`) against out-of-order webhook replays.
+  - Refactored `getDeletedFiles` in `src/server/actions/files.ts` to use SQL-level `isNotNull(schema.files.deletedAt)` filtering instead of in-memory filtering.
+
+### Document Processing, AST Stripping & Dead Code Purge (`src/components/layout/sidebar.tsx`, `src/lib/parsers/`, `src/lib/exporters/`)
+
+- **Web Worker ArrayBuffer Detachment Guard (`src/components/layout/sidebar.tsx`):**
+  - Cloned binary buffers using `arrayBuffer.slice(0)` before passing them to `detectPdfFontCorruption`, preventing `DataCloneError` and worker transfer detachment.
+  - Unified file import encryption under `SyncCryptoGateway.encryptOutbound`.
+- **Dead Code Purge & Language Detection Integration (`src/lib/parsers/pdf-parser.ts`, `src/lib/parsers/text-parser.ts`):**
+  - Permanently removed dead file `src/lib/parsers/pdf-parser.ts`.
+  - Integrated `detectDocumentLanguage` into `parseTextFile` (`src/lib/parsers/text-parser.ts`) to attach language detection metadata to parsed documents.
+- **Robust Code-Block Preservation & Windows-1256 Fallback (`src/lib/exporters/utils/markdown-stripper.ts`, `src/lib/parsers/text-parser.ts`):**
+  - Replaced simple regex markdown stripping with token placeholder masking to protect code blocks and inline code identifiers with underscores (`snake_case`).
+  - Implemented fatal UTF-8 decoding in `text-parser.ts` with automatic fallback to `windows-1256` for Arabic legacy text encodings.
+- **Environment & Build Configuration (`package.json`, `next.config.ts`):**
+  - Configured `experimental.serverActions.bodySizeLimit: "10mb"` in `next.config.ts`.
+  - Promoted `zod` to a direct root dependency (`^3.24.2`) in `package.json`.
+
 ## [1.46.1] - 2026-10-13 (Offline 3-Way Auto-Merge, Storage-First Cross-Tab Broadcast & Diff3 Deletion Guard Hardening)
 
 ### Core Synchronization & Concurrency Hardening (`src/hooks/use-editor-orchestrator.ts`, `src/hooks/use-editor-conflict.ts`, `src/lib/sync/conflict-resolver.ts`, `src/lib/sync/diff3.ts`)

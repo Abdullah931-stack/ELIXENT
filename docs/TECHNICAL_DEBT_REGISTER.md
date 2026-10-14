@@ -2,10 +2,10 @@
 
 Living register of known technical debt, accepted risks, and deferred work.
 Each entry records the decision owner and the mitigation currently in place.
-Last reviewed: 2026-10-13 (v1.45.1 — TD-18 editor conflict & cross-tab sync extraction into useEditorConflict, reduction of orchestrator, accepted debt of ambient channel broadcasting pending systematic multi-tenant overhaul).
+Last reviewed: 2026-10-14 (v1.46.2 — Multi-agent architectural remediation and complete lifecycle hardening: Dual-Try AAD unwrapping, RAM zeroization on vault lock, and RFC 7807 storage contracts).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 88 unit suites (1071 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 89 unit suites (1077 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ---

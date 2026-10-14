@@ -95,7 +95,8 @@ sequenceDiagram
 
     alt False Conflict (localPlaintext === serverPlaintext via normalizeMarkdownSource)
         Conf->>Orch: Adopt remote version & ETag silently
-        Conf->>Conf: IDB.saveLocal(clean) & markClean()
+        Note over Conf: Raw Ciphertext Preservation: if encrypted, saveLocal persists rawServerContent (not decrypted text)
+        Conf->>Conf: IDB.saveLocal(isEncrypted ? rawServerContent : decryptedContent, clean) & markClean()
     else Base Snapshot Present & Non-Overlapping Mutations (LUGX-054)
         Conf->>Conf: attemptThreeWayMerge(baseSnapshot, localPlaintext, serverPlaintext)
         alt Clean Merge (status === 'merged_clean')
