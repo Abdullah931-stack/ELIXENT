@@ -23,7 +23,6 @@ import { useEditorAutosave, type UseEditorAutosaveReturn } from "@/hooks/use-edi
 import { useEditorConflict, type RemoteUpdatePayload } from "@/hooks/use-editor-conflict";
 import { useAIStream } from "@/hooks/use-ai-stream";
 import { sessionKeyStore } from "@/lib/sync/session-key-store";
-import { cryptoWorkerBridge, wipeBuffer } from "@/lib/sync/crypto-worker-bridge";
 import { createClient } from "@/lib/supabase/client";
 import { AIOperationType } from "@/lib/ai/stream-handler";
 import { SyncConflict } from "@/lib/sync/idb-types";
@@ -180,6 +179,15 @@ export function useEditorOrchestrator({
     const cancelAutosave = useCallback(() => {
         autosaveRef.current?.cancelAutosave();
     }, []);
+
+    const runProgrammaticUpdate = useCallback((fn: () => void) => {
+        isProgrammaticUpdateRef.current = true;
+        try {
+            fn();
+        } finally {
+            isProgrammaticUpdateRef.current = false;
+        }
+    }, []);
     const fileIdRef = useRef<string>(fileId);
     useEffect(() => {
         fileIdRef.current = fileId;
@@ -278,35 +286,18 @@ export function useEditorOrchestrator({
             if (!isEncryptedRef.current) {
                 return { content };
             }
-            const masterKey = sessionKeyStore.getMasterKeyRaw();
-            if (!masterKey) {
+            if (!sessionKeyStore.isVaultUnlocked()) {
                 setError("الخزنة مقفلة. يرجى فتح الخزنة لحفظ تعديلات الذكاء الاصطناعي المشفرة.");
                 setIsVaultLocked(true);
                 setIsUnlockModalOpen(true);
                 throw new Error("Vault master key missing from volatile memory");
             }
-            const ivBytes = await cryptoWorkerBridge.generateRandomBytes(12);
             const effectiveUid = await resolveEffectiveUserId();
-            const aad = `vault:file:${effectiveUid}:${fileId}`;
-            const encResult = await cryptoWorkerBridge.encryptAESGCM(
-                masterKey,
-                content,
-                ivBytes,
-                aad
-            );
-            const metaToSend = {
-                version: 1,
-                algorithm: "AES-GCM-256",
-                keyId: "master-v1",
-                salt: "",
-                iv: encResult.ivBase64,
-                kdfIterations: 600000,
-            };
-            fileEncryptionMetadataRef.current = metaToSend;
-            wipeBuffer(ivBytes);
+            const outbound = await SyncCryptoGateway.encryptOutbound(fileId, content, effectiveUid);
+            fileEncryptionMetadataRef.current = outbound.encryptionMetadata;
             return {
-                content: encResult.ciphertextBase64,
-                encryptionMetadata: metaToSend,
+                content: outbound.ciphertextBase64,
+                encryptionMetadata: outbound.encryptionMetadata,
             };
         },
         onCommitSuccess: async ({ version, etag, committedContent, encryptionMetadata }) => {
@@ -373,7 +364,33 @@ export function useEditorOrchestrator({
         setIsVaultLocked(false);
         setIsUnlockModalOpen(false);
 
-        const pending = pendingEncryptedPayloadRef.current;
+        let pending = pendingEncryptedPayloadRef.current;
+        if (!pending && isEncryptedRef.current) {
+            const localFile = syncHookRef.current?.isInitialized
+                ? await syncHookRef.current.loadLocal(fileId)
+                : null;
+            if (localFile && localFile.content) {
+                pending = {
+                    content: localFile.content,
+                    metadata: localFile.encryptionMetadata || fileEncryptionMetadataRef.current,
+                    title: localFile.title || title,
+                    version: localFile.version || fileVersionRef.current,
+                    etag: localFile.etag || fileEtagRef.current,
+                };
+            } else {
+                const remoteRes = await getFile(fileId);
+                if (remoteRes.success && remoteRes.data) {
+                    pending = {
+                        content: remoteRes.data.content || "",
+                        metadata: remoteRes.data.encryptionMetadata || fileEncryptionMetadataRef.current,
+                        title: remoteRes.data.title || title,
+                        version: remoteRes.data.version || fileVersionRef.current,
+                        etag: remoteRes.data.etag || fileEtagRef.current,
+                    };
+                }
+            }
+        }
+
         if (!pending) {
             hydratedRef.current = true;
             setHydration("ready");
@@ -435,7 +452,7 @@ export function useEditorOrchestrator({
         setHydration("ready");
         if (adapterRef.current) adapterRef.current.setEditable(true);
         pendingEncryptedPayloadRef.current = null;
-    }, [fileId, resolveEffectiveUserId]);
+    }, [fileId, resolveEffectiveUserId, title]);
 
     const conflictHook = useEditorConflict({
         fileId,
@@ -1164,7 +1181,9 @@ export function useEditorOrchestrator({
                 setIsVaultLocked(true);
                 setIsUnlockModalOpen(true);
                 setHydration("vault_locked");
+                editorContentRef.current = "";
                 if (adapterRef.current) {
+                    runProgrammaticUpdate(() => adapterRef.current?.setValue(""));
                     adapterRef.current.setEditable(false);
                 }
             }
@@ -1172,7 +1191,7 @@ export function useEditorOrchestrator({
         return () => {
             unsubscribe();
         };
-    }, []);
+    }, [runProgrammaticUpdate]);
 
 
     // Navigation & Unload Guard
@@ -1205,14 +1224,34 @@ export function useEditorOrchestrator({
                 pendingLocalSyncRef.current = false;
                 console.log("[Orchestrator] Tab became active; retrying pending local IndexedDB persistence...");
                 try {
-                    await syncHookRef.current.saveLocal({
-                        id: fileId,
-                        content: adapterRef.current.getValue(),
-                        title,
-                        version: fileVersionRef.current,
-                        etag: fileEtagRef.current || "",
-                        isDirty: isDirtyRef.current,
-                    });
+                    if (isEncryptedRef.current) {
+                        if (!sessionKeyStore.isVaultUnlocked()) {
+                            console.warn("[Orchestrator] Vault is locked during wakeup; deferring local persistence.");
+                            pendingLocalSyncRef.current = true;
+                            return;
+                        }
+                        const uid = await resolveEffectiveUserId();
+                        const outbound = await SyncCryptoGateway.encryptOutbound(fileId, adapterRef.current.getValue(), uid);
+                        await syncHookRef.current.saveLocal({
+                            id: fileId,
+                            content: outbound.ciphertextBase64,
+                            title,
+                            version: fileVersionRef.current,
+                            etag: fileEtagRef.current || "",
+                            isDirty: isDirtyRef.current,
+                            isEncrypted: true,
+                            encryptionMetadata: outbound.encryptionMetadata,
+                        });
+                    } else {
+                        await syncHookRef.current.saveLocal({
+                            id: fileId,
+                            content: adapterRef.current.getValue(),
+                            title,
+                            version: fileVersionRef.current,
+                            etag: fileEtagRef.current || "",
+                            isDirty: isDirtyRef.current,
+                        });
+                    }
                     console.log("[Orchestrator] Pending local IndexedDB persistence recovered successfully on wakeup.");
                 } catch (err) {
                     console.error("[Orchestrator] Wakeup retry of local IndexedDB persistence failed:", err);
@@ -1228,7 +1267,7 @@ export function useEditorOrchestrator({
             window.removeEventListener("visibilitychange", handleWakeup);
             window.removeEventListener("focus", handleWakeup);
         };
-    }, [fileId, title]);
+    }, [fileId, title, resolveEffectiveUserId]);
 
     // AI Operation Trigger
     const startAIOperation = useCallback(

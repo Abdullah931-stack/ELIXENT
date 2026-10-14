@@ -15,11 +15,22 @@ export function stripMarkdownSyntax(text: string): string {
 
     let cleanText = text;
 
-    // Strip code block fences (```...```) while preserving inner code text
-    cleanText = cleanText.replace(/```[^\n]*\n?([\s\S]*?)\n?```/g, '$1');
+    const codeBlocks: string[] = [];
+    const inlineCodes: string[] = [];
 
-    // Remove inline code (`...`)
-    cleanText = cleanText.replace(/`([^`]+)`/g, '$1');
+    // Protect code blocks (```...```) using placeholders before stripping markdown
+    cleanText = cleanText.replace(/```[^\n]*\n?([\s\S]*?)\n?```/g, (_match, innerCode) => {
+        const placeholder = `\x00CODEBLOCK${codeBlocks.length}\x00`;
+        codeBlocks.push(innerCode);
+        return placeholder;
+    });
+
+    // Protect inline code (`...`) using placeholders
+    cleanText = cleanText.replace(/`([^`]+)`/g, (_match, innerCode) => {
+        const placeholder = `\x00INLINECODE${inlineCodes.length}\x00`;
+        inlineCodes.push(innerCode);
+        return placeholder;
+    });
 
     // Remove images ![alt](url)
     cleanText = cleanText.replace(/!\[([^\]]*)\]\([^\)]+\)/g, '$1');
@@ -36,7 +47,7 @@ export function stripMarkdownSyntax(text: string): string {
 
     // Remove italic (*text* or _text_)
     cleanText = cleanText.replace(/\*([^*]+)\*/g, '$1');
-    cleanText = cleanText.replace(/_([^_]+)_/g, '$1');
+    cleanText = cleanText.replace(/(?<![\p{L}\p{N}_])_([^_\n]+)_(?![\p{L}\p{N}_])/gu, '$1');
 
     // Remove strikethrough (~~text~~)
     cleanText = cleanText.replace(/~~([^~]+)~~/g, '$1');
@@ -64,6 +75,12 @@ export function stripMarkdownSyntax(text: string): string {
 
     // Remove footnotes [^1]
     cleanText = cleanText.replace(/\[\^[^\]]+\]/g, '');
+
+    // Restore protected inline code
+    cleanText = cleanText.replace(/\x00INLINECODE(\d+)\x00/g, (_match, index) => inlineCodes[Number(index)] ?? '');
+
+    // Restore protected code blocks
+    cleanText = cleanText.replace(/\x00CODEBLOCK(\d+)\x00/g, (_match, index) => codeBlocks[Number(index)] ?? '');
 
     // Clean up excessive whitespace
     cleanText = cleanText.replace(/\n{3,}/g, '\n\n'); // Max 2 newlines

@@ -5,7 +5,7 @@ import * as schema from "@/server/db/schema";
 import crypto from "node:crypto";
 import { processWithAI, Tier } from "@/lib/ai/client";
 import { AIOperation } from "@/lib/ai/prompts";
-import { getUser } from "@/lib/supabase/server";
+import { getSessionUser as getUser } from "@/server/auth/session";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { TIER_LIMITS, TierName, isToPromptEnabled } from "@/config/tiers.config";
 import { countWords } from "@/lib/utils";
@@ -22,15 +22,27 @@ import {
 /**
  * Get user's tier from database (read-only query).
  */
-export async function getUserTier(userId: string): Promise<TierName> {
-    return getTierFromService(userId);
+export async function getUserTier(userId?: string): Promise<TierName> {
+    const authUser = await getUser();
+    if (!authUser) throw new Error("Unauthorized");
+    if (userId && userId !== authUser.id) {
+        throw new Error("Unauthorized access to another user's quota");
+    }
+    const effectiveUserId = authUser.id;
+    return getTierFromService(effectiveUserId);
 }
 
 /**
  * Get usage for today (read-only query / ensure record).
  */
-export async function getTodayUsage(userId: string) {
-    return getUsageFromService(userId);
+export async function getTodayUsage(userId?: string) {
+    const authUser = await getUser();
+    if (!authUser) throw new Error("Unauthorized");
+    if (userId && userId !== authUser.id) {
+        throw new Error("Unauthorized access to another user's quota");
+    }
+    const effectiveUserId = authUser.id;
+    return getUsageFromService(effectiveUserId);
 }
 
 // Get start of current week (Sunday) for weekly quota
@@ -71,9 +83,16 @@ export async function checkQuota(
     operation: AIOperation,
     wordCount: number
 ): Promise<{ allowed: boolean; reason?: string }> {
-    const tier = await getUserTier(userId);
+    const authUser = await getUser();
+    if (!authUser) throw new Error("Unauthorized");
+    if (userId && userId !== authUser.id) {
+        throw new Error("Unauthorized access to another user's quota");
+    }
+    const effectiveUserId = authUser.id;
+
+    const tier = await getTierFromService(effectiveUserId);
     const limits = TIER_LIMITS[tier];
-    const usage = await getTodayUsage(userId);
+    const usage = await getUsageFromService(effectiveUserId);
 
     // Check ToPrompt availability
     if (operation === "toPrompt") {
@@ -102,7 +121,7 @@ export async function checkQuota(
 
     // Check Correct/Improve/Translate limits
     if (limits.correctImproveTranslate.period === "weekly") {
-        const weeklyUsage = await getWeeklyWordUsage(userId);
+        const weeklyUsage = await getWeeklyWordUsage(effectiveUserId);
         if (weeklyUsage + wordCount > limits.correctImproveTranslate.words) {
             return {
                 allowed: false,

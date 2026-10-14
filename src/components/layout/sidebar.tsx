@@ -24,7 +24,7 @@ import { validateFile } from "@/lib/parsers/file-validator";
 import { parseFileContent } from "@/lib/parsers/text-parser";
 import { pdfWorkerBridge } from "@/lib/parsers/pdf-worker-bridge";
 import { sessionKeyStore } from "@/lib/sync/session-key-store";
-import { cryptoWorkerBridge } from "@/lib/sync/crypto-worker-bridge";
+import { SyncCryptoGateway } from "@/lib/sync/sync-crypto-gateway";
 import { indexedDBManager } from "@/lib/sync/indexeddb";
 import { createClient } from "@/lib/supabase/client";
 import { VaultUnlockModal } from "@/components/vault";
@@ -277,7 +277,7 @@ export function Sidebar({ userId }: SidebarProps = {}) {
                     // Universal font corruption detection for regular (fast) extraction
                     if (!bypassCorruptionCheck && extractionMode === 'fast') {
                         const { detectPdfFontCorruption } = await import('@/lib/parsers/pdf-corruption-detector');
-                        const corruptionReport = await detectPdfFontCorruption(arrayBuffer, 5);
+                        const corruptionReport = await detectPdfFontCorruption(arrayBuffer.slice(0), 5);
 
                         if (corruptionReport.isCorrupted) {
                             const ocrInstalled = await isOcrPackageInstalled();
@@ -341,29 +341,14 @@ export function Sidebar({ userId }: SidebarProps = {}) {
                 let fileId = "";
 
                 if (importToVault) {
-                    const masterKey = sessionKeyStore.getMasterKeyRaw();
-                    if (!masterKey) throw new Error("Vault master key not available in memory");
-
                     effectiveUid = await resolveEffectiveUserId();
                     fileId = crypto.randomUUID();
-                    const ivBytes = await cryptoWorkerBridge.generateRandomBytes(12);
-                    const aad = `vault:file:${effectiveUid}:${fileId}`;
 
-                    const encResult = await cryptoWorkerBridge.encryptAESGCM(
-                        masterKey,
+                    const encResult = await SyncCryptoGateway.encryptOutbound(
+                        fileId,
                         textContent,
-                        ivBytes,
-                        aad
+                        effectiveUid
                     );
-
-                    const metadata = {
-                        version: 1,
-                        algorithm: "AES-GCM-256",
-                        keyId: "master-v1",
-                        salt: "",
-                        iv: encResult.ivBase64,
-                        kdfIterations: 600000,
-                    };
 
                     // Optimistic offline write to local IndexedDB
                     try {
@@ -376,7 +361,7 @@ export function Sidebar({ userId }: SidebarProps = {}) {
                                 parentFolderId: targetFolderId,
                                 isFolder: false,
                                 isEncrypted: true,
-                                encryptionMetadata: metadata,
+                                encryptionMetadata: encResult.encryptionMetadata,
                                 version: 1,
                                 etag: "",
                                 lastModified: Date.now(),
@@ -395,7 +380,7 @@ export function Sidebar({ userId }: SidebarProps = {}) {
                         targetFolderId,
                         {
                             isEncrypted: true,
-                            encryptionMetadata: metadata,
+                            encryptionMetadata: encResult.encryptionMetadata,
                             fileId,
                         }
                     );

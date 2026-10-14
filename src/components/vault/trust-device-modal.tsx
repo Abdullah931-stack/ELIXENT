@@ -8,6 +8,8 @@ import { wrapMasterKeyWithPin, generateSalt } from "@/lib/sync/encryption";
 import { checkWebAuthnSupportStatus, createWebAuthnPrfEnvelope } from "@/lib/sync/webauthn-prf";
 import { getUserVaultProfile } from "@/server/actions/vault-actions";
 import { cryptoWorkerBridge, wipeBuffer, base64ToUint8Array } from "@/lib/sync/crypto-worker-bridge";
+import { AAD } from "@/lib/crypto/aad";
+import { normalizePassword } from "@/lib/vault/vault-manager";
 import type { DeviceTrustType } from "@/lib/sync/types/vault";
 
 interface TrustDeviceModalProps {
@@ -88,10 +90,12 @@ export function TrustDeviceModal({ isOpen, onClose, userId, userEmail, onSuccess
         }
         const profile = profileRes.data;
 
-        const passBytes = new TextEncoder().encode(password);
+        const passBytes = new TextEncoder().encode(normalizePassword(password));
         const saltBytes = base64ToUint8Array(profile.keySalt);
         let kekPass: Uint8Array | null = null;
         let masterKeyRaw: Uint8Array | null = null;
+        let rawPassBytes: Uint8Array | null = null;
+        let rawKekPass: Uint8Array | null = null;
         try {
             kekPass = await cryptoWorkerBridge.deriveKeyRaw(
                 passBytes,
@@ -103,12 +107,50 @@ export function TrustDeviceModal({ isOpen, onClose, userId, userEmail, onSuccess
             const wrappedObj = JSON.parse(profile.encryptedMasterKey);
             const ivBytes = base64ToUint8Array(wrappedObj.iv);
 
-            masterKeyRaw = await cryptoWorkerBridge.unwrapKeyRaw(
-                kekPass,
-                wrappedObj.ciphertext,
-                ivBytes,
-                `vault:pass:${userId}`
-            );
+            try {
+                masterKeyRaw = await cryptoWorkerBridge.unwrapKeyRaw(
+                    kekPass,
+                    wrappedObj.ciphertext,
+                    ivBytes,
+                    AAD.passwordWrap(userId)
+                );
+            } catch {
+                try {
+                    masterKeyRaw = await cryptoWorkerBridge.unwrapKeyRaw(
+                        kekPass,
+                        wrappedObj.ciphertext,
+                        ivBytes,
+                        AAD.legacy.passWrap(userId)
+                    );
+                } catch (legacyErr) {
+                    if (password !== normalizePassword(password)) {
+                        rawPassBytes = new TextEncoder().encode(password);
+                        rawKekPass = await cryptoWorkerBridge.deriveKeyRaw(
+                            rawPassBytes,
+                            saltBytes,
+                            profile.kdfIterations || 600000,
+                            256
+                        );
+                        try {
+                            masterKeyRaw = await cryptoWorkerBridge.unwrapKeyRaw(
+                                rawKekPass,
+                                wrappedObj.ciphertext,
+                                ivBytes,
+                                AAD.passwordWrap(userId)
+                            );
+                        } catch {
+                            masterKeyRaw = await cryptoWorkerBridge.unwrapKeyRaw(
+                                rawKekPass,
+                                wrappedObj.ciphertext,
+                                ivBytes,
+                                AAD.legacy.passWrap(userId)
+                            );
+                        }
+                    } else {
+                        throw legacyErr;
+                    }
+                }
+            }
             sessionKeyStore.setMasterKey(masterKeyRaw, profile.keyVersion || 1);
             return true;
         } catch {
@@ -119,6 +161,8 @@ export function TrustDeviceModal({ isOpen, onClose, userId, userEmail, onSuccess
             wipeBuffer(saltBytes);
             if (kekPass) wipeBuffer(kekPass);
             if (masterKeyRaw) wipeBuffer(masterKeyRaw);
+            if (rawPassBytes) wipeBuffer(rawPassBytes);
+            if (rawKekPass) wipeBuffer(rawKekPass);
         }
     }
 

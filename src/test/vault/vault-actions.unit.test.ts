@@ -219,6 +219,8 @@ describe("Vault Server Actions (Unit Tests)", () => {
         const updateInput = {
             encryptedMasterKey: "gcm:v1:new-password-wrapped-key",
             keySalt: "new-password-salt-789",
+            proofOfPossession: "a".repeat(64),
+            proofNonce: "nonce-test-123",
         };
 
         it("should return unauthorized when user session is missing", async () => {
@@ -231,13 +233,54 @@ describe("Vault Server Actions (Unit Tests)", () => {
 
         it("should reject input when required parameters are missing or whitespace", async () => {
             vi.mocked(getUser).mockResolvedValueOnce(mockUser as any);
-
             const res1 = await updateVaultPassword({ ...updateInput, encryptedMasterKey: " " });
             expect(res1.success).toBe(false);
+            expect(res1.status).toBe("error");
             expect(res1.error).toContain("Missing required cryptographic parameters");
 
+            vi.mocked(getUser).mockResolvedValueOnce(mockUser as any);
             const res2 = await updateVaultPassword({ ...updateInput, keySalt: "" });
             expect(res2.success).toBe(false);
+            expect(res2.status).toBe("error");
+            expect(res2.error).toContain("Missing required cryptographic parameters");
+
+            vi.mocked(getUser).mockResolvedValueOnce(mockUser as any);
+            const res3 = await updateVaultPassword({ ...updateInput, proofOfPossession: "" });
+            expect(res3.success).toBe(false);
+            expect(res3.status).toBe("error");
+            expect(res3.error).toContain("Missing required cryptographic parameters");
+
+            vi.mocked(getUser).mockResolvedValueOnce(mockUser as any);
+            const res4 = await updateVaultPassword({ ...updateInput, proofNonce: "   " });
+            expect(res4.success).toBe(false);
+            expect(res4.status).toBe("error");
+            expect(res4.error).toContain("Missing required cryptographic parameters");
+
+            vi.mocked(getUser).mockResolvedValueOnce(mockUser as any);
+            const res5 = await updateVaultPassword({ ...updateInput, proofOfPossession: undefined as any });
+            expect(res5.success).toBe(false);
+            expect(res5.status).toBe("error");
+            expect(res5.error).toContain("Missing required cryptographic parameters");
+        });
+
+        it("should reject input when proofOfPossession is malformed or invalid hex", async () => {
+            vi.mocked(getUser).mockResolvedValueOnce(mockUser as any);
+            const res1 = await updateVaultPassword({ ...updateInput, proofOfPossession: "not-hex" });
+            expect(res1.success).toBe(false);
+            expect(res1.status).toBe("error");
+            expect(res1.error).toBe("Invalid cryptographic proof of possession");
+
+            vi.mocked(getUser).mockResolvedValueOnce(mockUser as any);
+            const res2 = await updateVaultPassword({ ...updateInput, proofOfPossession: "a".repeat(63) });
+            expect(res2.success).toBe(false);
+            expect(res2.status).toBe("error");
+            expect(res2.error).toBe("Invalid cryptographic proof of possession");
+
+            vi.mocked(getUser).mockResolvedValueOnce(mockUser as any);
+            const res3 = await updateVaultPassword({ ...updateInput, proofOfPossession: "g".repeat(64) });
+            expect(res3.success).toBe(false);
+            expect(res3.status).toBe("error");
+            expect(res3.error).toBe("Invalid cryptographic proof of possession");
         });
 
         it("should return not_found when profile does not exist", async () => {

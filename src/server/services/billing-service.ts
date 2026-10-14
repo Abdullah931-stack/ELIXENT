@@ -23,6 +23,10 @@ import * as schema from "@/server/db/schema";
 import { eq, desc } from "drizzle-orm";
 import type { TierName } from "@/config/tiers.config";
 import { stripe } from "@/lib/stripe";
+import {
+    reduceSubscriptionState,
+    type SubscriptionState,
+} from "@/lib/stripe/webhook-event-reducer";
 
 export type DbClient = {
     select: typeof db.select;
@@ -59,6 +63,99 @@ function getActiveClient(client?: DbClient): DbClient {
     if (client) return client;
     if (txDb && typeof txDb.transaction === "function") return txDb as unknown as DbClient;
     return db as unknown as DbClient;
+}
+
+/**
+ * Maps an existing database subscription row to a SubscriptionState for the reducer state machine.
+ */
+function toSubscriptionState(row: {
+    status: string;
+    tier?: string | null;
+    stripeSubscriptionId?: string | null;
+    currentPeriodStart?: Date | null;
+    currentPeriodEnd?: Date | null;
+    cancelAtPeriodEnd?: boolean | null;
+    updatedAt?: Date | null;
+}): SubscriptionState {
+    const subscriptionId = row.stripeSubscriptionId ?? "";
+    const currentPeriodStart = row.currentPeriodStart ? row.currentPeriodStart.getTime() : 0;
+    const currentPeriodEnd = row.currentPeriodEnd ? row.currentPeriodEnd.getTime() : 0;
+    const cancelAtPeriodEnd = row.cancelAtPeriodEnd ?? false;
+    const tier = (row.tier as TierName) || "free";
+
+    switch (row.status) {
+        case "active":
+            return {
+                status: "active",
+                tier,
+                subscriptionId,
+                currentPeriodStart,
+                currentPeriodEnd,
+                cancelAtPeriodEnd,
+                isTerminal: false,
+            };
+        case "trialing":
+            return {
+                status: "trialing",
+                tier,
+                subscriptionId,
+                currentPeriodStart,
+                currentPeriodEnd,
+                cancelAtPeriodEnd,
+                isTerminal: false,
+            };
+        case "past_due":
+            return {
+                status: "past_due",
+                tier,
+                subscriptionId,
+                currentPeriodStart,
+                currentPeriodEnd,
+                isTerminal: false,
+            };
+        case "canceled":
+            return {
+                status: "canceled",
+                tier: "free",
+                subscriptionId,
+                canceledAt: row.updatedAt ? row.updatedAt.getTime() : Date.now(),
+                isTerminal: true,
+            };
+        case "incomplete":
+            return {
+                status: "incomplete",
+                tier,
+                subscriptionId,
+                isTerminal: false,
+            };
+        case "incomplete_expired":
+            return {
+                status: "incomplete_expired",
+                tier: "free",
+                subscriptionId,
+                isTerminal: true,
+            };
+        case "unpaid":
+            return {
+                status: "unpaid",
+                tier: "free",
+                subscriptionId,
+                isTerminal: false,
+            };
+        case "paused":
+            return {
+                status: "paused",
+                tier: "free",
+                subscriptionId,
+                isTerminal: false,
+            };
+        default:
+            return {
+                status: "none",
+                tier: "free",
+                isTerminal: false,
+            };
+    }
 }
 
 export class BillingService {
@@ -175,18 +272,40 @@ export class BillingService {
                 .limit(1);
 
             if (existing.length > 0) {
-                await targetDb
-                    .update(schema.subscriptions)
-                    .set({
-                        userId: data.userId,
-                        tier: data.tier,
+                const currentState: SubscriptionState = toSubscriptionState(existing[0]);
+                const transition = reduceSubscriptionState(
+                    currentState,
+                    {
+                        type: 'customer.subscription.updated',
+                        subscriptionId: data.stripeSubscriptionId,
                         status: data.status,
-                        currentPeriodStart: data.currentPeriodStart,
-                        currentPeriodEnd: data.currentPeriodEnd,
-                        cancelAtPeriodEnd: data.cancelAtPeriodEnd ?? false,
-                        updatedAt: new Date(),
-                    })
-                    .where(eq(schema.subscriptions.id, existing[0].id));
+                        tier: data.tier,
+                        currentPeriodStart: data.currentPeriodStart.getTime(),
+                        currentPeriodEnd: data.currentPeriodEnd.getTime(),
+                        cancelAtPeriodEnd: data.cancelAtPeriodEnd,
+                        timestamp: Date.now(),
+                    },
+                    { strict: false }
+                );
+
+                if (transition.action === 'ignored_stale' || transition.action === 'noop') {
+                    console.warn(
+                        `[BillingService] Skipping stale/noop subscription update for ${data.stripeSubscriptionId} (${transition.action}): ${transition.reason ?? 'Protected terminal/unchanged state'}`
+                    );
+                } else {
+                    await targetDb
+                        .update(schema.subscriptions)
+                        .set({
+                            userId: data.userId,
+                            tier: data.tier,
+                            status: data.status,
+                            currentPeriodStart: data.currentPeriodStart,
+                            currentPeriodEnd: data.currentPeriodEnd,
+                            cancelAtPeriodEnd: data.cancelAtPeriodEnd ?? false,
+                            updatedAt: new Date(),
+                        })
+                        .where(eq(schema.subscriptions.id, existing[0].id));
+                }
             } else {
                 await targetDb.insert(schema.subscriptions).values({
                     userId: data.userId,

@@ -9,6 +9,8 @@
 import { sessionKeyStore } from './session-key-store';
 import { cryptoWorkerBridge, wipeBuffer, base64ToUint8Array } from './crypto-worker-bridge';
 import { EncryptedEnvelopeMetadata } from './idb-types';
+import { AAD } from '../crypto/aad';
+import { VaultManager } from '../vault/vault-manager';
 
 export interface InboundPayloadInput {
     fileId: string;
@@ -38,7 +40,17 @@ export class SyncCryptoGateway {
      * Constructs standard authenticated additional data (AAD) binding
      */
     public static computeAad(userId: string | undefined, fileId: string): string {
-        return `vault:file:${userId || ''}:${fileId}`;
+        if (userId && fileId) {
+            return AAD.file(userId, fileId);
+        }
+        return this.computeLegacyAad(userId, fileId);
+    }
+
+    /**
+     * Constructs legacy authenticated additional data (AAD) binding for backward compatibility
+     */
+    public static computeLegacyAad(userId: string | undefined, fileId: string): string {
+        return AAD.legacy.file(userId || '', fileId);
     }
 
     /**
@@ -90,14 +102,28 @@ export class SyncCryptoGateway {
         let ivBytes: Uint8Array | null = null;
         try {
             ivBytes = base64ToUint8Array(ivString);
-            const aad = this.computeAad(userId, fileId);
+            const canonicalAad = this.computeAad(userId, fileId);
 
-            const decryptedPlaintext = await cryptoWorkerBridge.decryptAESGCM(
-                masterKey,
-                content,
-                ivBytes,
-                aad
-            );
+            let decryptedPlaintext: string;
+            try {
+                decryptedPlaintext = await cryptoWorkerBridge.decryptAESGCM(
+                    masterKey,
+                    content,
+                    ivBytes,
+                    canonicalAad
+                );
+            } catch {
+                // Adaptive dual-try fallback to legacy AAD context
+                const legacyAad = this.computeLegacyAad(userId, fileId);
+                decryptedPlaintext = await cryptoWorkerBridge.decryptAESGCM(
+                    masterKey,
+                    content,
+                    ivBytes,
+                    legacyAad
+                );
+            }
+
+            VaultManager.touchActivity();
 
             return {
                 fileId,
@@ -163,6 +189,8 @@ export class SyncCryptoGateway {
                 iv: encResult.ivBase64,
                 kdfIterations: 600000,
             };
+
+            VaultManager.touchActivity();
 
             return {
                 ciphertextBase64: encResult.ciphertextBase64,

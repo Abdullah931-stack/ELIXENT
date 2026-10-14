@@ -7,6 +7,11 @@ import crypto from "node:crypto";
 import { AIOperation } from "@/lib/ai/prompts";
 import { TIER_LIMITS, TierName, isToPromptEnabled } from "@/config/tiers.config";
 import { eq, and, sql } from "drizzle-orm";
+import {
+    calculateQuotaSettlement,
+    reduceQuotaReservationState,
+    type QuotaReservationState,
+} from "@/lib/ai/quota-settlement-reducer";
 
 /**
  * Compute canonical deterministic request fingerprint for replay attack prevention.
@@ -372,12 +377,56 @@ export async function reserveAIQuota(
     return await executeReservation(db);
 }
 
+function reconstructReservationState(reservation: typeof schema.aiReservations.$inferSelect): QuotaReservationState {
+    switch (reservation.status) {
+        case "reserved":
+            return {
+                status: "reserved",
+                reservationId: reservation.id,
+                operationId: reservation.operationId,
+                userId: reservation.userId,
+                reservedUnits: reservation.reservedUnits,
+                expiresAt: reservation.expiresAt.getTime(),
+            };
+        case "committed":
+            return {
+                status: "committed",
+                reservationId: reservation.id,
+                operationId: reservation.operationId,
+                userId: reservation.userId,
+                committedUnits: reservation.committedUnits,
+                refundedUnits: reservation.refundedUnits,
+                settledAt: reservation.updatedAt.getTime(),
+            };
+        case "refunded":
+            return {
+                status: "refunded",
+                reservationId: reservation.id,
+                operationId: reservation.operationId,
+                userId: reservation.userId,
+                refundedUnits: reservation.refundedUnits,
+                refundedAt: reservation.updatedAt.getTime(),
+            };
+        case "expired":
+            return {
+                status: "expired",
+                reservationId: reservation.id,
+                operationId: reservation.operationId,
+                userId: reservation.userId,
+                expiredAt: reservation.expiresAt.getTime(),
+            };
+        default:
+            return { status: "idle" };
+    }
+}
+
 /**
  * Server-Authoritative commit: transitions reservation from reserved -> committed.
  * Idempotent: repeated calls safely return { committed: true, reason: "already_committed" }.
  */
 export async function commitAIReservation(
-    operationId: string
+    operationId: string,
+    consumedUnits?: number
 ): Promise<{ committed: boolean; reason?: string }> {
     const reservation = await db.query.aiReservations.findFirst({
         where: eq(schema.aiReservations.operationId, operationId),
@@ -387,6 +436,13 @@ export async function commitAIReservation(
         return { committed: false, reason: "not_found" };
     }
 
+    const currentState = reconstructReservationState(reservation);
+    reduceQuotaReservationState(
+        currentState,
+        { type: "COMMIT", consumedUnits, timestamp: Date.now() },
+        { strict: false }
+    );
+
     if (reservation.status === "committed") {
         return { committed: true, reason: "already_committed" };
     }
@@ -395,11 +451,17 @@ export async function commitAIReservation(
         return { committed: false, reason: reservation.status };
     }
 
+    const settlement = calculateQuotaSettlement({
+        reservedUnits: reservation.reservedUnits,
+        consumedUnits: consumedUnits ?? reservation.reservedUnits,
+    });
+
     const [updated] = await db
         .update(schema.aiReservations)
         .set({
             status: "committed",
-            committedUnits: reservation.reservedUnits,
+            committedUnits: settlement.toCommit,
+            refundedUnits: settlement.toRefund,
             updatedAt: new Date(),
         })
         .where(
@@ -420,6 +482,36 @@ export async function commitAIReservation(
         return { committed: false, reason: current?.status || "state_conflict" };
     }
 
+    if (settlement.toRefund > 0) {
+        const undoFields: Record<string, unknown> = {};
+        switch (reservation.operation as AIOperation) {
+            case "correct":
+                undoFields.correctWords = sql`GREATEST(correct_words - ${settlement.toRefund}, 0)`;
+                break;
+            case "improve":
+                undoFields.improveWords = sql`GREATEST(improve_words - ${settlement.toRefund}, 0)`;
+                break;
+            case "translate":
+                undoFields.translateWords = sql`GREATEST(translate_words - ${settlement.toRefund}, 0)`;
+                break;
+            case "summarize":
+                undoFields.summarizeWords = sql`GREATEST(summarize_words - ${settlement.toRefund}, 0)`;
+                break;
+        }
+
+        if (Object.keys(undoFields).length > 0) {
+            await db
+                .update(schema.usage)
+                .set(undoFields)
+                .where(
+                    and(
+                        eq(schema.usage.userId, reservation.userId),
+                        eq(schema.usage.date, reservation.periodKey)
+                    )
+                );
+        }
+    }
+
     return { committed: true };
 }
 
@@ -438,6 +530,13 @@ export async function refundAIReservation(
         return { refunded: false, reason: "reservation_not_found" };
     }
 
+    const currentState = reconstructReservationState(reservation);
+    const nextState = reduceQuotaReservationState(
+        currentState,
+        { type: "REFUND", timestamp: Date.now() },
+        { strict: false }
+    );
+
     if (reservation.status === "committed") {
         return { refunded: false, reason: "already_committed" };
     }
@@ -448,6 +547,10 @@ export async function refundAIReservation(
 
     if (reservation.status === "expired") {
         return { refunded: false, reason: "already_expired" };
+    }
+
+    if (nextState.status !== "refunded") {
+        return { refunded: false, reason: reservation.status };
     }
 
     const unitsToRefund = reservation.reservedUnits;

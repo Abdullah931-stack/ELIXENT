@@ -39,6 +39,10 @@ import { stripe } from '@/lib/stripe';
 import { getTierFromPriceId } from '@/lib/stripe/config';
 import { redis } from '@/lib/redis';
 import { BillingService } from '@/server/services/billing-service';
+import {
+    isTerminalSubscriptionStatus,
+    type SubscriptionStatus,
+} from '@/lib/stripe/webhook-event-reducer';
 
 import {
     isEventProcessedInMemory,
@@ -313,11 +317,16 @@ async function handleSubscriptionUpdated(
         return await executeSubscriptionTransition(async (tx) => {
             const currentSub = await getUserSubscription(userId, tx);
 
-            // TERMINAL STATE PROTECTION: If subscription is already canceled in DB,
+            // TERMINAL STATE PROTECTION: If subscription is in terminal state in DB,
             // an incoming out-of-order update event attempting to set it back to active is ignored.
-            if (currentSub?.status === 'canceled' && status === 'active' && (!currentSub?.stripeSubscriptionId || currentSub?.stripeSubscriptionId === subscription.id)) {
+            if (
+                currentSub?.status &&
+                (isTerminalSubscriptionStatus(currentSub.status as SubscriptionStatus) || currentSub.status === 'canceled') &&
+                status === 'active' &&
+                (!currentSub?.stripeSubscriptionId || currentSub?.stripeSubscriptionId === subscription.id)
+            ) {
                 console.warn(
-                    `[WEBHOOK] Stale update event ignored: subscription ${subscription.id} for user ${userId} is already canceled (terminal state protection)`
+                    `[WEBHOOK] Stale update event ignored: subscription ${subscription.id} for user ${userId} is already in terminal state '${currentSub.status}' (terminal state protection)`
                 );
                 await recordSubscriptionEvent(
                     {

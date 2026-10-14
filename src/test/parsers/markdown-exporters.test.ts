@@ -79,6 +79,25 @@ describe("Markdown & Text Exporters (Phase 5 Markdown Source of Truth)", () => {
             expect(text).toContain("console.log(total);");
             expect(text).toContain("Final note.");
         });
+
+        it("should preserve snake_case identifiers and protected code block content from markdown stripping", async () => {
+            const rawMarkdown = `This is a snake_case identifier user_id_value and another item_total_count.\n\nHere is _real italic_ text.\n\n\`\`\`javascript\n# Not a heading\nconst x = 10 * 20;\nconst val_one = 1;\n\`\`\`\n\nAlso \`const inline_val = *ptr;\``;
+
+            const exporter = new TextExporter();
+            const result = await exporter.export(rawMarkdown, "code-hygiene");
+
+            expect(result.success).toBe(true);
+            const text = await result.blob!.text();
+            expect(text).toContain("user_id_value");
+            expect(text).toContain("item_total_count");
+            expect(text).toContain("real italic");
+            expect(text).not.toContain("_real italic_");
+            expect(text).toContain("# Not a heading");
+            expect(text).toContain("const x = 10 * 20;");
+            expect(text).toContain("const val_one = 1;");
+            expect(text).toContain("const inline_val = *ptr;");
+            expect(text).not.toContain("```");
+        });
     });
 
     describe("ExporterFactory & exportContent Facade", () => {

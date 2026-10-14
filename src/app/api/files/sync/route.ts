@@ -15,6 +15,8 @@ import {
     rateLimitExceededResponse
 } from '@/lib/rate-limit';
 import { getOrGenerateCorrelationId, addCorrelationHeader } from '@/lib/utils/correlation';
+import { syncPullRequestSchema } from '@/types/sync-contracts';
+import { createProblemDetails } from '@/types/problem-details';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,7 +24,6 @@ export const dynamic = 'force-dynamic';
  * Default and maximum page sizes
  */
 const DEFAULT_LIMIT = 50;
-const MAX_LIMIT = 100;
 
 /**
  * GET /api/files/sync
@@ -61,27 +62,42 @@ export async function GET(request: NextRequest) {
 
         // Parse query parameters
         const { searchParams } = new URL(request.url);
-        const updatedAfterParam = searchParams.get('updated_after');
-        const limitParam = searchParams.get('limit');
-        const cursor = searchParams.get('cursor');
+        const updatedAfterRaw = searchParams.get('updatedAfter') || searchParams.get('updated_after');
+        const limitRaw = searchParams.get('limit');
+        const cursorRaw = searchParams.get('cursor');
+
+        const pullParams: Record<string, unknown> = {};
+        if (updatedAfterRaw) pullParams.updatedAfter = updatedAfterRaw;
+        if (cursorRaw) pullParams.cursor = cursorRaw;
+        if (limitRaw !== null) {
+            const parsedNum = Number(limitRaw);
+            pullParams.limit = isNaN(parsedNum) ? limitRaw : parsedNum;
+        }
+
+        const pullParsed = syncPullRequestSchema.safeParse(pullParams);
+        if (!pullParsed.success) {
+            const problem = createProblemDetails({
+                type: 'urn:problem-type:invalid-sync-pull-request',
+                title: 'Invalid Sync Pull Request',
+                status: 400,
+                detail: pullParsed.error.issues.map(i => i.message).join(', '),
+                instance: '/api/files/sync',
+                correlationId,
+            });
+            const res = new NextResponse(JSON.stringify(problem), {
+                status: 400,
+                headers: { 'Content-Type': 'application/problem+json' },
+            });
+            addCorrelationHeader(res.headers, correlationId);
+            return res;
+        }
 
         // Parse updated_after timestamp
-        let updatedAfter: Date | null = null;
-        if (updatedAfterParam) {
-            const parsed = new Date(updatedAfterParam);
-            if (!isNaN(parsed.getTime())) {
-                updatedAfter = parsed;
-            }
-        }
+        const updatedAfter = pullParsed.data.updatedAfter ? new Date(pullParsed.data.updatedAfter) : null;
 
         // Parse limit with bounds
-        let limit = DEFAULT_LIMIT;
-        if (limitParam) {
-            const parsedLimit = parseInt(limitParam, 10);
-            if (!isNaN(parsedLimit) && parsedLimit > 0) {
-                limit = Math.min(parsedLimit, MAX_LIMIT);
-            }
-        }
+        const limit = pullParsed.data.limit ?? DEFAULT_LIMIT;
+        const cursor = pullParsed.data.cursor;
 
         // Build query conditions
         const conditions = [

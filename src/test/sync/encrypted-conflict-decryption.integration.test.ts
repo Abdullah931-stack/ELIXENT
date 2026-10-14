@@ -458,8 +458,25 @@ describe("Encrypted Conflict Decryption & Gateway Integration", () => {
         });
         expect(adapter.getValue()).toBe(initialPlaintext);
 
-        // Now LOCK the vault
-        sessionKeyStore.purgeKeys();
+        // Now LOCK the vault: memory must be zeroed
+        act(() => {
+            sessionKeyStore.purgeKeys();
+        });
+        expect(adapter.getValue()).toBe("");
+        expect(result.current.isVaultLocked).toBe(true);
+
+        // Unlock the vault: editor content must be restored from local storage/server
+        sessionKeyStore.setMasterKey(masterKeyRaw);
+        await act(async () => {
+            await result.current.handleVaultUnlocked();
+        });
+        expect(adapter.getValue()).toBe(initialPlaintext);
+
+        // Lock vault again to verify quarantine of inbound remote updates
+        act(() => {
+            sessionKeyStore.purgeKeys();
+        });
+        expect(adapter.getValue()).toBe("");
 
         // An encrypted remote update arrives while vault is locked
         act(() => {
@@ -482,8 +499,8 @@ describe("Encrypted Conflict Decryption & Gateway Integration", () => {
             });
         });
 
-        // Editor must NOT be overwritten with ciphertext!
-        expect(adapter.getValue()).toBe(initialPlaintext);
+        // Editor must NOT be overwritten with ciphertext and memory must remain wiped while locked
+        expect(adapter.getValue()).toBe("");
         expect(adapter.getValue()).not.toContain("new-remote-ciphertext");
         expect(result.current.isVaultLocked).toBe(true);
     });

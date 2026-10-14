@@ -5,12 +5,12 @@ import { Trash2, Edit3, Copy, FolderInput, RotateCcw, Lock, Unlock, Loader2 } fr
 import { deleteFile, restoreFile, renameFile, copyFile, moveFile, getFile, toggleFileEncryption } from "@/server/actions/file-ops";
 import { getUserVaultProfile } from "@/server/actions/vault-actions";
 import { sessionKeyStore } from "@/lib/sync/session-key-store";
-import { cryptoWorkerBridge, wipeBuffer, base64ToUint8Array } from "@/lib/sync/crypto-worker-bridge";
 import { indexedDBManager } from "@/lib/sync/indexeddb";
 import { FolderPickerModal } from "./folder-picker-modal";
 import { CreateVaultModal, VaultUnlockModal } from "@/components/vault";
 import { createClient } from "@/lib/supabase/client";
 import { broadcastCrossTabEvent } from "@/lib/sync/cross-tab-sync";
+import { SyncCryptoGateway } from "@/lib/sync/sync-crypto-gateway";
 
 interface FileContextMenuProps {
     isOpen: boolean;
@@ -171,45 +171,37 @@ export function FileContextMenu({
                 }
 
                 const uid = await resolveEffectiveUserId();
-                const oldAad = `vault:file:${uid}:${fileId}`;
-                const ivBytes = base64ToUint8Array(meta.iv);
 
-                // 1. Decrypt original ciphertext with old AAD
-                const decryptedPlaintext = await cryptoWorkerBridge.decryptAESGCM(
-                    masterKey,
-                    rawCiphertext,
-                    ivBytes,
-                    oldAad
-                );
-                wipeBuffer(ivBytes);
+                // 1. Decrypt original ciphertext using SyncCryptoGateway
+                const inbound = await SyncCryptoGateway.decryptInbound({
+                    fileId,
+                    content: rawCiphertext,
+                    isEncrypted: true,
+                    encryptionMetadata: meta,
+                    userId: uid,
+                });
 
-                // 2. Generate new file UUID and fresh IV
+                if (inbound.status === "error" || inbound.status === "locked") {
+                    throw new Error("تعذر فك تشفير الملف الأصلي؛ يرجى التأكد من سلامة مفتاح الخزنة");
+                }
+                const decryptedPlaintext = inbound.content;
+
+                // 2. Generate new file UUID
                 const newFileId = crypto.randomUUID();
-                const newIvBytes = await cryptoWorkerBridge.generateRandomBytes(12);
-                const newAad = `vault:file:${uid}:${newFileId}`;
 
-                // 3. Re-encrypt with new file UUID AAD
-                const encResult = await cryptoWorkerBridge.encryptAESGCM(
-                    masterKey,
+                // 3. Re-encrypt with new file UUID using SyncCryptoGateway
+                const outbound = await SyncCryptoGateway.encryptOutbound(
+                    newFileId,
                     decryptedPlaintext,
-                    newIvBytes,
-                    newAad
+                    uid
                 );
-                wipeBuffer(newIvBytes);
 
-                const newMeta = {
-                    version: 1,
-                    algorithm: "AES-GCM-256",
-                    keyId: "master-v1",
-                    salt: "",
-                    iv: encResult.ivBase64,
-                    kdfIterations: 600000,
-                };
+                const newMeta = outbound.encryptionMetadata;
 
                 // 4. Dispatch atomic copy with re-encrypted ciphertext and new metadata
                 const result = await copyFile(fileId, targetFolderId, 0, {
                     newFileId,
-                    content: encResult.ciphertextBase64,
+                    content: outbound.ciphertextBase64,
                     encryptionMetadata: newMeta,
                 });
 
@@ -300,7 +292,6 @@ export function FileContextMenu({
 
     async function executeFileEncryption() {
         setIsTransforming(true);
-        let ivBytes: Uint8Array | null = null;
 
         try {
             const effectiveUid = await resolveEffectiveUserId();
@@ -326,28 +317,17 @@ export function FileContextMenu({
                 }
             }
 
-            ivBytes = await cryptoWorkerBridge.generateRandomBytes(12);
-            const aad = `vault:file:${effectiveUid}:${fileId}`;
-            const encResult = await cryptoWorkerBridge.encryptAESGCM(
-                masterKey,
+            const outbound = await SyncCryptoGateway.encryptOutbound(
+                fileId,
                 contentToEncrypt,
-                ivBytes,
-                aad
+                effectiveUid
             );
-
-            const metadata = {
-                version: 1,
-                algorithm: "AES-GCM-256",
-                keyId: "master-v1",
-                salt: "",
-                iv: encResult.ivBase64,
-                kdfIterations: 600000,
-            };
+            const metadata = outbound.encryptionMetadata;
 
             // Sync to server if reachable
             let syncResult: Awaited<ReturnType<typeof toggleFileEncryption>> | null = null;
             try {
-                syncResult = await toggleFileEncryption(fileId, true, encResult.ciphertextBase64, metadata, {
+                syncResult = await toggleFileEncryption(fileId, true, outbound.ciphertextBase64, metadata, {
                     expectedVersion: baseVersion || 1,
                     expectedETag: baseEtag || "",
                 });
@@ -370,7 +350,7 @@ export function FileContextMenu({
             if (localFile) {
                 await indexedDBManager.saveFile({
                     ...localFile,
-                    content: encResult.ciphertextBase64,
+                    content: outbound.ciphertextBase64,
                     isEncrypted: true,
                     encryptionMetadata: metadata,
                     isDirty: !isClean,
@@ -382,7 +362,7 @@ export function FileContextMenu({
             } else {
                 await indexedDBManager.saveFile({
                     id: fileId,
-                    content: encResult.ciphertextBase64,
+                    content: outbound.ciphertextBase64,
                     title: fileName,
                     isFolder: false,
                     parentFolderId: null,
@@ -421,7 +401,6 @@ export function FileContextMenu({
             console.error("[FileContextMenu] Encryption error:", err);
             alert("فشل تشفير الملف: " + ((err as Error)?.message || "خطأ غير معروف"));
         } finally {
-            if (ivBytes) wipeBuffer(ivBytes);
             setIsTransforming(false);
         }
     }
@@ -470,20 +449,22 @@ export function FileContextMenu({
 
             let decryptedContent = rawContent;
 
-            // Decrypt ciphertext if metadata provides IV
-            if (metadata?.iv && rawContent) {
-                try {
-                    const ivBytes = base64ToUint8Array(metadata.iv);
-                    const aad = `vault:file:${effectiveUid}:${fileId}`;
-                    decryptedContent = await cryptoWorkerBridge.decryptAESGCM(
-                        masterKey,
-                        rawContent,
-                        ivBytes,
-                        aad
-                    );
-                } catch {
-                    // Content may already be plaintext from local IndexedDB
+            // Decrypt ciphertext using SyncCryptoGateway.decryptInbound
+            if (rawContent) {
+                const inbound = await SyncCryptoGateway.decryptInbound({
+                    fileId,
+                    content: rawContent,
+                    isEncrypted: true,
+                    encryptionMetadata: metadata,
+                    userId: effectiveUid,
+                });
+
+                if (inbound.status === "error" || inbound.status === "locked") {
+                    alert("تعذر فك تشفير الملف؛ يرجى التأكد من سلامة مفتاح الخزنة");
+                    return;
                 }
+
+                decryptedContent = inbound.content;
             }
 
             // Sync to server if reachable

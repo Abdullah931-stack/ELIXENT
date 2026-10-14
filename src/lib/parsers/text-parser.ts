@@ -1,11 +1,15 @@
 /**
  * Plain Text and Markdown File Parser
- * Reads content from .txt and .md files
+ * Reads content from .txt and .md files with UTF-8 / Windows-1256 encoding support
  */
 
-interface TextParseResult {
+import { countWords } from "@/lib/utils";
+import { detectDocumentLanguage, type LanguageDetectionResult } from "./language-detector";
+
+export interface TextParseResult {
     text: string;
     wordCount: number;
+    language?: LanguageDetectionResult;
 }
 
 /**
@@ -13,14 +17,23 @@ interface TextParseResult {
  * @param file - File object to parse
  * @returns Parsed text content
  */
-async function parseTextFile(file: File): Promise<TextParseResult> {
+export async function parseTextFile(file: File): Promise<TextParseResult> {
     try {
-        const text = await file.text();
-        const wordCount = text.split(/\s+/).filter(Boolean).length;
+        const buffer = await file.arrayBuffer();
+        let text: string;
+        try {
+            text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+        } catch {
+            text = new TextDecoder('windows-1256').decode(buffer);
+        }
+
+        const wordCount = countWords(text);
+        const language = detectDocumentLanguage(text);
 
         return {
             text,
             wordCount,
+            language,
         };
     } catch (error) {
         throw new Error(`Failed to read file: ${error instanceof Error ? error.message : 'Unknown error'}`);

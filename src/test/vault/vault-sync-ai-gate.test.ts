@@ -10,7 +10,7 @@
  *    - Bypasses gatekeeper and streams when allowAIOnEncryptedFiles is true.
  * 4. Atomic AI Commit Guard (commitAIFileOperation):
  *    - Rejects unencrypted plaintext commits to encrypted files.
- *    - Rejects commits when allowAIOnEncryptedFiles is false with reservation refund.
+ *    - Rejects commits when allowAIOnEncryptedFiles is false without reservation refund.
  *    - Commits successfully with re-encrypted ciphertext and fresh IV when allowed.
  * 5. Vault AI Preference Server Action (updateVaultAISetting):
  *    - Persists user opt-in/opt-out status with auth checks.
@@ -27,6 +27,7 @@ import { validateMarkdownSyntaxIntegrity } from '@/lib/sync/syntax-validator';
 import { generateEncryptedETagSync, generateETagSync } from '@/lib/sync/etag-generator';
 import { sessionKeyStore } from '@/lib/sync/session-key-store';
 import { cryptoWorkerBridge } from '@/lib/sync/crypto-worker-bridge';
+import { AAD } from '@/lib/crypto/aad';
 import type { PendingEncryptedConflict } from '@/lib/sync';
 import type { EncryptedEnvelope } from '@/lib/sync/types/vault';
 
@@ -486,7 +487,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
         const fileId = 'file-enc-1';
         const operationId = 'op-ai-commit-1';
 
-        it('should reject commit to encrypted file if allowAIOnEncryptedFiles is false and refund reservation', async () => {
+        it('should reject commit to encrypted file if allowAIOnEncryptedFiles is false without refunding reservation', async () => {
             mockGetUser.mockResolvedValueOnce({ id: userId });
 
             mockDb.query.aiReservations.findFirst.mockResolvedValueOnce({
@@ -522,10 +523,10 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
             } else {
                 expect.fail(`Expected status to be unauthorized, but got ${result.status}`);
             }
-            expect(mockSettlementService.refundAIReservation).toHaveBeenCalledWith(operationId, userId);
+            expect(mockSettlementService.refundAIReservation).not.toHaveBeenCalled();
         });
 
-        it('should reject plaintext commit to encrypted file even if AI is allowed if encryptionMetadata.iv is missing', async () => {
+        it('should reject plaintext commit to encrypted file even if AI is allowed if encryptionMetadata.iv is missing without refunding reservation', async () => {
             mockGetUser.mockResolvedValueOnce({ id: userId });
 
             mockDb.query.aiReservations.findFirst.mockResolvedValueOnce({
@@ -562,7 +563,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
             } else {
                 expect.fail(`Expected status to be error, but got ${result.status}`);
             }
-            expect(mockSettlementService.refundAIReservation).toHaveBeenCalledWith(operationId, userId);
+            expect(mockSettlementService.refundAIReservation).not.toHaveBeenCalled();
         });
 
         it('should commit successfully when AI is allowed and re-encrypted metadata is provided', async () => {
@@ -839,7 +840,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
 
             // Decrypt the persisted merged ciphertext and verify Diff3 3-way merge correctly merged local and remote edits!
             const mergedIv = Buffer.from(persistedFile!.encryptionMetadata!.iv, 'base64');
-            const mergedPlaintext = await cryptoWorkerBridge.decryptAESGCM(rawMasterKey, persistedFile!.content, mergedIv, aad);
+            const mergedPlaintext = await cryptoWorkerBridge.decryptAESGCM(rawMasterKey, persistedFile!.content, mergedIv, AAD.file(userId, encryptedFileId));
             expect(mergedPlaintext).toContain('Section 1 local edit');
             expect(mergedPlaintext).toContain('Section 2 remote edit');
         });

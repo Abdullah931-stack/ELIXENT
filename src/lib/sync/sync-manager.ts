@@ -18,6 +18,7 @@ import type { PendingEncryptedConflict } from './types/vault';
 import { SyncEncryptedConflictStore, type SyncEncryptedConflictStoreOptions } from './sync-encrypted-conflict-store';
 import { SyncQueueWorker, type SyncQueueWorkerOptions } from './sync-queue-worker';
 import { SyncPullEngine, type SyncPullEngineOptions } from './sync-pull-engine';
+import { reduceSyncState, type SyncState, type SyncEvent } from './sync-state-reducer';
 import type {
     QuarantineDiagnostics, SyncStatus, FileSyncResult, SyncResult, RemoteUpdateEvent,
     RemoteUpdateCallback, SyncStatusCallback, ConflictCallback, SyncManagerConfig,
@@ -31,6 +32,7 @@ export {
 };
 
 class SyncManager {
+    private machineState: SyncState = { status: 'idle' };
     private status: SyncStatus = 'stopped';
     private statusCallbacks = new Set<SyncStatusCallback>();
     private remoteUpdateCallbacks = new Set<RemoteUpdateCallback>();
@@ -201,7 +203,22 @@ class SyncManager {
     quarantineEncryptedConflict(c: PendingEncryptedConflict) { this.encryptedConflictStore.quarantineEncryptedConflict(c); }
     getQuarantineDiagnostics(): QuarantineDiagnostics { return this.encryptedConflictStore.getQuarantineDiagnostics(); }
     async discardPendingEncryptedConflict(id: string) { return this.encryptedConflictStore.discardPendingEncryptedConflict(id); }
-    async resolvePendingEncryptedConflict(id: string) { return this.encryptedConflictStore.resolvePendingEncryptedConflict(id); }
+    private dispatchSyncEvent(event: SyncEvent): void {
+        this.machineState = reduceSyncState(this.machineState, event, { strict: false });
+    }
+
+    public getMachineState(): SyncState {
+        return this.machineState;
+    }
+
+    public resolveConflict(resolution: 'local' | 'remote' | 'merge' = 'local'): void {
+        this.dispatchSyncEvent({ type: 'RESOLVE_CONFLICT', resolution, timestamp: Date.now() });
+    }
+
+    async resolvePendingEncryptedConflict(id: string) {
+        this.dispatchSyncEvent({ type: 'RESOLVE_CONFLICT', resolution: 'local', timestamp: Date.now() });
+        return this.encryptedConflictStore.resolvePendingEncryptedConflict(id);
+    }
 
     private setStatus(status: SyncStatus, progress?: number): void {
         if (this.isDestroyed && status !== 'stopped') return;
@@ -255,6 +272,7 @@ class SyncManager {
         this.activeAbortController = new AbortController();
         const signal = this.activeAbortController.signal;
         this.setStatus('syncing', 0);
+        this.dispatchSyncEvent({ type: 'START_SYNC', timestamp: Date.now() });
         const timingId = syncPerformanceMonitor.startTiming('sync_duration');
         const res: SyncResult = { success: true, filesProcessed: 0, filesPushed: 0, filesPulled: 0, conflicts: [], errors: [], timestamp: Date.now() };
 
@@ -276,11 +294,26 @@ class SyncManager {
             res.conflicts.push(...pullRes.conflicts);
             res.errors.push(...pullRes.errors);
 
+            if (res.conflicts.length > 0) {
+                for (const conflictedFileId of res.conflicts) {
+                    this.dispatchSyncEvent({
+                        type: 'CONFLICT_DETECTED',
+                        fileId: conflictedFileId,
+                        conflict: { baseVersion: 1, remoteVersion: 1, remoteEtag: '', detectedAt: Date.now() },
+                        timestamp: Date.now(),
+                    });
+                }
+            }
+
             res.filesProcessed = res.filesPushed + res.filesPulled;
             res.success = res.errors.length === 0;
             await this.idb.updateLastSyncedAt(this.config.userId);
             if (!this.isDestroyed) this.setStatus('idle');
+            if (res.success && res.conflicts.length === 0) {
+                this.dispatchSyncEvent({ type: 'SYNC_SUCCESS', timestamp: Date.now() });
+            }
         } catch (error) {
+            this.dispatchSyncEvent({ type: 'SYNC_ERROR', error: String(error), timestamp: Date.now() });
             if (signal.aborted || this.isDestroyed) {
                 res.success = false; res.errors.push('Sync aborted'); this.setStatus('stopped'); return res;
             }

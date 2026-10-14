@@ -15,6 +15,8 @@ import { AIOperation } from "@/lib/ai/prompts";
 import { FEATURES } from "@/config/features.config";
 import { aiStreamRateLimiter, addRateLimitHeaders, rateLimitExceededResponse, type RateLimitResult } from "@/lib/rate-limit";
 import { getOrGenerateCorrelationId, addCorrelationHeader } from "@/lib/utils/correlation";
+import { aiRequestSchema } from "@/types/ai-contracts";
+import { createProblemDetails } from "@/types/problem-details";
 
 import { sanitizeLogMessage } from "@/lib/sync/log-sanitizer";
 
@@ -66,23 +68,71 @@ export async function POST(req: NextRequest) {
 
         // ADV2-01 Payload Type & Size Validation Guard
         if (typeof text !== "string" || typeof operation !== "string" || !text.trim() || !operation.trim()) {
-            return withCorrelation(new NextResponse("Invalid request: text and operation must be non-empty strings", { status: 400 }));
+            const problem = createProblemDetails({
+                type: "urn:problem-type:bad-request",
+                title: "Invalid Request",
+                status: 400,
+                detail: "Invalid request: text and operation must be non-empty strings",
+                instance: `/api/ai/stream/${operationId}`,
+                correlationId,
+            });
+            return withCorrelation(
+                new NextResponse(JSON.stringify(problem), {
+                    status: 400,
+                    headers: { "Content-Type": "application/problem+json" },
+                })
+            );
         }
 
         const MAX_INPUT_CHARS = 100_000;
         if (text.length > MAX_INPUT_CHARS) {
-            return withCorrelation(new NextResponse(`Payload too large: text exceeds ${MAX_INPUT_CHARS} characters limit`, { status: 400 }));
+            const problem = createProblemDetails({
+                type: "urn:problem-type:payload-too-large",
+                title: "Payload Too Large",
+                status: 400,
+                detail: `Payload too large: text exceeds ${MAX_INPUT_CHARS} characters limit`,
+                instance: `/api/ai/stream/${operationId}`,
+                correlationId,
+            });
+            return withCorrelation(
+                new NextResponse(JSON.stringify(problem), {
+                    status: 400,
+                    headers: { "Content-Type": "application/problem+json" },
+                })
+            );
         }
 
         // PHASE 10 / LUGX-085: Mandatory fileId validation to block unauthenticated / uninspected AI streaming
         if (fileId === undefined || fileId === null) {
+            const problem = createProblemDetails({
+                type: "urn:problem-type:missing-file-id",
+                title: "Missing File Identifier",
+                status: 400,
+                detail: "MISSING_FILE_ID: fileId is required for AI stream operations",
+                instance: `/api/ai/stream/${operationId}`,
+                correlationId,
+            });
             return withCorrelation(
-                new NextResponse("MISSING_FILE_ID: fileId is required for AI stream operations", { status: 400 })
+                new NextResponse(JSON.stringify(problem), {
+                    status: 400,
+                    headers: { "Content-Type": "application/problem+json" },
+                })
             );
         }
         if (typeof fileId !== "string" || !fileId.trim()) {
+            const problem = createProblemDetails({
+                type: "urn:problem-type:invalid-file-id",
+                title: "Invalid File Identifier",
+                status: 400,
+                detail: "Invalid request: fileId must be a non-empty string (MISSING_FILE_ID)",
+                instance: `/api/ai/stream/${operationId}`,
+                correlationId,
+            });
             return withCorrelation(
-                new NextResponse("Invalid request: fileId must be a non-empty string (MISSING_FILE_ID)", { status: 400 })
+                new NextResponse(JSON.stringify(problem), {
+                    status: 400,
+                    headers: { "Content-Type": "application/problem+json" },
+                })
             );
         }
 
@@ -125,6 +175,41 @@ export async function POST(req: NextRequest) {
         // 3. Compute deterministic request fingerprint for Replay Attack Prevention
         const requestHash = computeRequestHash(user.id, operation, cleanFileId, text);
 
+        const requestContract = {
+            operationId: operationId!,
+            requestHash: requestHash && requestHash.length === 64 ? requestHash : (requestHash || "").padEnd(64, "0"),
+            prompt: text,
+            ...(cleanFileId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanFileId) ? { fileId: cleanFileId } : {}),
+            systemPrompt: typeof body.systemPrompt === "string" ? body.systemPrompt : undefined,
+            model: typeof body.model === "string" ? body.model : undefined,
+            stream: true,
+            clientTimestamp: typeof body.clientTimestamp === "number" && body.clientTimestamp > 0
+                ? body.clientTimestamp
+                : Date.now(),
+        };
+
+        const validationResult = aiRequestSchema.safeParse(requestContract);
+        if (!validationResult.success) {
+            const problem = createProblemDetails({
+                type: "urn:problem-type:bad-request",
+                title: "Invalid Request Contract",
+                status: 400,
+                detail: validationResult.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join(", "),
+                instance: `/api/ai/stream/${operationId}`,
+                correlationId,
+                invalidParams: validationResult.error.issues.map(i => ({
+                    name: i.path.join("."),
+                    reason: i.message,
+                })),
+            });
+            return withCorrelation(
+                new NextResponse(JSON.stringify(problem), {
+                    status: 400,
+                    headers: { "Content-Type": "application/problem+json" },
+                })
+            );
+        }
+
         // 4. Atomically reserve quota BEFORE starting the stream
         const resStart = performance.now();
         const reservation = await reserveAIQuota(
@@ -142,13 +227,35 @@ export async function POST(req: NextRequest) {
 
         if (!reservation.reserved) {
             if (reservation.isReplayConflict) {
+                const problem = createProblemDetails({
+                    type: "urn:problem-type:replay-conflict",
+                    title: "Replay Conflict",
+                    status: 409,
+                    detail: reservation.reason || "Replay conflict: operationId already used with different payload",
+                    instance: `/api/ai/stream/${operationId}`,
+                    correlationId,
+                });
                 return withCorrelation(
-                    new NextResponse(reservation.reason || "Replay conflict: operationId already used with different payload", {
+                    new NextResponse(JSON.stringify(problem), {
                         status: 409,
+                        headers: { "Content-Type": "application/problem+json" },
                     })
                 );
             }
-            return withCorrelation(new NextResponse(reservation.reason || "Quota exceeded", { status: 403 }));
+            const problem = createProblemDetails({
+                type: "urn:problem-type:quota-exceeded",
+                title: "Quota Exceeded",
+                status: 403,
+                detail: reservation.reason || "Quota exceeded",
+                instance: `/api/ai/stream/${operationId}`,
+                correlationId,
+            });
+            return withCorrelation(
+                new NextResponse(JSON.stringify(problem), {
+                    status: 403,
+                    headers: { "Content-Type": "application/problem+json" },
+                })
+            );
         }
 
         reserved = true;

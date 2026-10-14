@@ -256,7 +256,7 @@ export async function wrapMasterKeyWithPin(
 ): Promise<DeviceTrustEnvelope> {
   const kek = await deriveKEKFromPin(pin, saltBytes, iterations);
   const iv = await generateIV(12);
-  const aad = `trusted_device:${userId}:${deviceTrustEpoch}`;
+  const aad = AAD.deviceWrap(userId, deviceTrustEpoch);
 
   try {
     const wrapped = await cryptoWorkerBridge.wrapKeyRaw(kek, masterKeyBytes, iv, aad);
@@ -304,10 +304,16 @@ export async function unwrapMasterKeyWithPin(
   }
 
   const iv = base64ToUint8Array(envelope.iv);
-  const aad = `trusted_device:${userId}:${envelope.deviceTrustEpoch || 1}`;
+  const epoch = envelope.deviceTrustEpoch || 1;
+  const legacyAad = `trusted_device:${userId}:${epoch}`;
 
   try {
-    return await cryptoWorkerBridge.unwrapKeyRaw(kek, envelope.encryptedMasterKey, iv, aad);
+    try {
+      const canonicalAad = AAD.deviceWrap(userId, epoch);
+      return await cryptoWorkerBridge.unwrapKeyRaw(kek, envelope.encryptedMasterKey, iv, canonicalAad);
+    } catch {
+      return await cryptoWorkerBridge.unwrapKeyRaw(kek, envelope.encryptedMasterKey, iv, legacyAad);
+    }
   } catch (_err) {
     throw new InvalidPinError(
       'Incorrect PIN provided for trusted device unlock',

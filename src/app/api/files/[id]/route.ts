@@ -10,6 +10,8 @@ import { generateETagSync, parseETagHeader, formatETagHeader, normalizeMarkdownS
 import { fileApiRateLimiter, addRateLimitHeaders, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { getOrGenerateCorrelationId, addCorrelationHeader } from '@/lib/utils/correlation';
 import { getDescendantIds } from '@/server/actions/folders';
+import { documentStoragePayloadSchema } from '@/types/storage-payload';
+import { createProblemDetails } from '@/types/problem-details';
 
 export const dynamic = 'force-dynamic';
 
@@ -119,6 +121,39 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
             isEncrypted?: boolean;
             encryptionMetadata?: FileEncryptionMetadata | null;
         };
+
+        if (content !== undefined || isEncrypted !== undefined) {
+            const validationPayload = isEncrypted
+                ? {
+                      type: "encrypted" as const,
+                      ciphertextBase64: content ?? "",
+                      isEncrypted: true as const,
+                      encryptionMetadata: encryptionMetadata ?? null,
+                  }
+                : {
+                      type: "plaintext" as const,
+                      content: content ?? "",
+                      isEncrypted: false as const,
+                      encryptionMetadata: encryptionMetadata ?? null,
+                  };
+            const payloadParsed = documentStoragePayloadSchema.safeParse(validationPayload);
+            if (!payloadParsed.success) {
+                const problem = createProblemDetails({
+                    type: "urn:problem-type:invalid-storage-payload",
+                    title: "Invalid Storage Payload",
+                    status: 400,
+                    detail: payloadParsed.error.issues.map(i => i.message).join(", "),
+                    instance: `/api/files/${fileId}`,
+                    correlationId,
+                });
+                const res = new NextResponse(JSON.stringify(problem), {
+                    status: 400,
+                    headers: { "Content-Type": "application/problem+json" },
+                });
+                addCorrelationHeader(res.headers, correlationId);
+                return res;
+            }
+        }
 
         const ifMatch = parseETagHeader(request.headers.get('If-Match'));
         const requestedVersion = expectedVersion !== undefined ? expectedVersion : baseVersion;

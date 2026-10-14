@@ -11,7 +11,7 @@ import { unwrapMasterKeyWithWebAuthnPrf, checkWebAuthnSupportStatus, createWebAu
 import { unwrapMasterKeyWithPin, wrapMasterKeyWithPin, generateSalt } from "@/lib/sync/encryption";
 import { DeviceTrustEnvelope, DeviceTrustType, UserVaultProfile } from "@/lib/sync/types/vault";
 import { AAD } from "@/lib/crypto/aad";
-import { normalizePassword } from "@/lib/crypto/key-derivation";
+import { normalizePassword, deriveProofOfPossession } from "@/lib/crypto/key-derivation";
 import { adaptiveUnwrapRecoverySeed } from "@/lib/vault/recovery";
 
 interface VaultUnlockModalProps {
@@ -531,6 +531,9 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
                 AAD.passwordWrap(userId)
             );
 
+            const proofNonce = crypto.randomUUID();
+            const proofOfPossession = await deriveProofOfPossession(masterKey, proofNonce);
+
             const payload = {
                 encryptedMasterKey: JSON.stringify({
                     ciphertext: wrappedPassword.wrappedKeyBase64,
@@ -538,6 +541,8 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
                 }),
                 keySalt: arrayBufferToBase64(newSaltBytes),
                 kdfIterations: 600000,
+                proofOfPossession,
+                proofNonce,
             };
 
             // Update local IDB cache
@@ -546,7 +551,9 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
                 if (currentProfile) {
                     await indexedDBManager.saveCachedVaultProfile({
                         ...currentProfile,
-                        ...payload,
+                        encryptedMasterKey: payload.encryptedMasterKey,
+                        keySalt: payload.keySalt,
+                        kdfIterations: payload.kdfIterations,
                         updatedAt: new Date(),
                     });
                 }
@@ -558,10 +565,16 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
             try {
                 const serverRes = await updateVaultPassword(payload);
                 if (!serverRes.success) {
-                    console.warn("[VaultUnlockModal] Cloud password update deferred:", serverRes.error);
+                    console.error("[VaultUnlockModal] Cloud password update failed:", serverRes.error);
+                    alert("تعذر تحديث كلمة المرور في الخادم: " + (serverRes.error || "خطأ غير متوقع"));
+                    setIsLoading(false);
+                    return;
                 }
             } catch (serverErr) {
-                console.warn("[VaultUnlockModal] Cloud password update deferred:", serverErr);
+                console.error("[VaultUnlockModal] Cloud password update failed:", serverErr);
+                alert("تعذر الاتصال بالخادم لتحديث كلمة المرور: " + ((serverErr as Error)?.message || "خطأ في الشبكة"));
+                setIsLoading(false);
+                return;
             }
 
             broadcastCrossTabEvent({

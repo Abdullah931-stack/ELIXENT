@@ -12,7 +12,11 @@ export function cn(...inputs: ClassValue[]) {
  * Count words in a text string
  */
 export function countWords(text: string): number {
-    return text.trim().split(/\s+/).filter(Boolean).length;
+    const trimmed = text.trim();
+    if (!trimmed) return 0;
+    const spaceSeparatedCount = trimmed.split(/\s+/).filter(Boolean).length;
+    const charBoundCount = Math.ceil(trimmed.length / 6);
+    return Math.max(spaceSeparatedCount, charBoundCount);
 }
 
 /**

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { db, schema, type FileEncryptionMetadata } from "@/server/db";
 import { requireAuthenticatedUser } from "@/server/auth/session";
-import { eq, and, isNull, inArray } from "drizzle-orm";
+import { eq, and, isNull, isNotNull, inArray } from "drizzle-orm";
 import { generateETagSync, normalizeMarkdownSource } from "@/lib/sync/etag-generator";
 import { randomUUID } from "crypto";
 import { generateRestoredTitle, generateCopyTitle } from "@/lib/utils/file-naming";
@@ -972,16 +972,12 @@ export async function getDeletedFiles(): Promise<FileOpResult<typeof schema.file
         const files = await db.query.files.findMany({
             where: and(
                 eq(schema.files.userId, user.id),
-                // isNotNull(deletedAt)
-                eq(schema.files.deletedAt, schema.files.deletedAt)
+                isNotNull(schema.files.deletedAt)
             ),
             orderBy: (files, { desc }) => [desc(files.deletedAt)],
         });
 
-        // Filter out null deletedAt in memory if necessary or query with isNotNull
-        const filtered = files.filter(f => f.deletedAt !== null);
-
-        return { success: true, data: filtered };
+        return { success: true, data: files };
 
     } catch (error) {
         console.error("Get deleted files error:", error);

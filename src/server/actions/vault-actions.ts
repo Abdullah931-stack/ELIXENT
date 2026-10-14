@@ -11,7 +11,7 @@
 import { db } from "@/server/db";
 import * as schema from "@/server/db/schema";
 import { getUser } from "@/lib/supabase/server";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 export interface VaultActionResult<T = unknown> {
     success: boolean;
@@ -33,6 +33,8 @@ export interface UpdateVaultPasswordInput {
     encryptedMasterKey: string;
     keySalt: string;
     kdfIterations?: number;
+    proofOfPossession: string;
+    proofNonce: string;
 }
 
 export interface UpdateVaultRecoveryEnvelopeInput {
@@ -126,8 +128,18 @@ export async function updateVaultPassword(
             return { success: false, status: "unauthorized", error: "Authentication required" };
         }
 
-        if (!input.encryptedMasterKey?.trim() || !input.keySalt?.trim()) {
+        if (
+            !input.encryptedMasterKey?.trim() ||
+            !input.keySalt?.trim() ||
+            !input.proofOfPossession?.trim() ||
+            !input.proofNonce?.trim()
+        ) {
             return { success: false, status: "error", error: "Missing required cryptographic parameters" };
+        }
+
+        const cleanProof = input.proofOfPossession.trim();
+        if (!/^[0-9a-fA-F]{64}$/.test(cleanProof)) {
+            return { success: false, status: "error", error: "Invalid cryptographic proof of possession" };
         }
 
         const existing = await db.query.userVaultProfiles.findFirst({
@@ -145,6 +157,7 @@ export async function updateVaultPassword(
                 encryptedMasterKey: input.encryptedMasterKey.trim(),
                 keySalt: input.keySalt.trim(),
                 kdfIterations: input.kdfIterations ?? existing.kdfIterations,
+                deviceTrustEpoch: sql`${schema.userVaultProfiles.deviceTrustEpoch} + 1`,
                 updatedAt: now,
             })
             .where(eq(schema.userVaultProfiles.userId, user.id))

@@ -209,17 +209,21 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
             const { fileId } = optsRef.current;
             const effectiveUid = await getEffectiveUserId();
 
+            const rawServerContent = conflict.serverVersion.content;
+            const rawServerMeta = conflict.serverVersion.encryptionMetadata || optsRef.current.getEncryptionMetadata();
+            let decryptedServerContent = rawServerContent;
+
             // Decrypt server version if encrypted and not yet decrypted
             if (optsRef.current.isEncrypted() || conflict.serverVersion.isEncrypted) {
                 const serverInbound = await SyncCryptoGateway.decryptInbound({
                     fileId,
-                    content: conflict.serverVersion.content,
+                    content: rawServerContent,
                     isEncrypted: true,
-                    encryptionMetadata: conflict.serverVersion.encryptionMetadata || optsRef.current.getEncryptionMetadata(),
+                    encryptionMetadata: rawServerMeta,
                     userId: effectiveUid,
                 });
                 if (serverInbound.status === "decrypted") {
-                    conflict.serverVersion.content = serverInbound.content;
+                    decryptedServerContent = serverInbound.content;
                 }
             }
 
@@ -240,7 +244,7 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
             // LUGX-053: Auto-resolve if identical markdown content (using normalizeMarkdownSource) or identical ETags
             const isIdentical =
                 normalizeMarkdownSource(conflict.localVersion.content) ===
-                    normalizeMarkdownSource(conflict.serverVersion.content) ||
+                    normalizeMarkdownSource(decryptedServerContent) ||
                 (conflict.localVersion.etag &&
                     conflict.serverVersion.etag &&
                     conflict.localVersion.etag === conflict.serverVersion.etag);
@@ -250,11 +254,11 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
                 if (optsRef.current.isSyncInitialized()) {
                     await optsRef.current.saveLocal({
                         id: fileId,
-                        content: conflict.serverVersion.content,
+                        content: optsRef.current.isEncrypted() ? rawServerContent : decryptedServerContent,
                         version: conflict.serverVersion.version,
                         etag: conflict.serverVersion.etag || "",
                         isEncrypted: optsRef.current.isEncrypted(),
-                        encryptionMetadata: optsRef.current.getEncryptionMetadata(),
+                        encryptionMetadata: rawServerMeta,
                         isDirty: false,
                     });
                 }
@@ -268,6 +272,7 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
                 return "server";
             }
 
+            conflict.serverVersion.content = decryptedServerContent;
             activeConflictRef.current = conflict;
             setActiveConflict(conflict);
             setIsConflictDialogOpen(true);

@@ -12,11 +12,11 @@ import { ConflictStore } from '../idb/conflict-store';
 import type { PendingEncryptedConflict } from './types/vault';
 import { concurrencyManager } from './concurrency-manager';
 import { sessionKeyStore } from './session-key-store';
-import { cryptoWorkerBridge, wipeBuffer, base64ToUint8Array } from './crypto-worker-bridge';
 import { conflictResolver } from './conflict-resolver';
 import { validateMarkdownSyntaxIntegrity } from './syntax-validator';
 import { generateEncryptedETagSync } from './etag-generator';
 import { sanitizeLogValue } from './log-sanitizer';
+import { SyncCryptoGateway } from './sync-crypto-gateway';
 
 import {
     MAX_QUARANTINED_CONFLICTS,
@@ -265,7 +265,6 @@ export class SyncEncryptedConflictStore {
             }
 
             const userId = this.userId || '';
-            const aad = `vault:file:${userId}:${fileId}`;
 
             try {
                 let remoteText = '';
@@ -273,19 +272,46 @@ export class SyncEncryptedConflictStore {
                 let baseText = '';
 
                 if (conflict.remoteEnvelope.ciphertext) {
-                    const iv = base64ToUint8Array(conflict.remoteEnvelope.iv);
-                    remoteText = await cryptoWorkerBridge.decryptAESGCM(masterKey, conflict.remoteEnvelope.ciphertext, iv, aad);
-                    wipeBuffer(iv);
+                    const inbound = await SyncCryptoGateway.decryptInbound({
+                        fileId,
+                        content: conflict.remoteEnvelope.ciphertext,
+                        isEncrypted: true,
+                        encryptionMetadata: conflict.remoteEnvelope,
+                        userId,
+                    });
+                    if (inbound.status === 'decrypted') {
+                        remoteText = inbound.content;
+                    } else {
+                        throw new Error(inbound.error || 'Failed to decrypt remote envelope');
+                    }
                 }
                 if (conflict.localEnvelope.ciphertext) {
-                    const iv = base64ToUint8Array(conflict.localEnvelope.iv);
-                    localText = await cryptoWorkerBridge.decryptAESGCM(masterKey, conflict.localEnvelope.ciphertext, iv, aad);
-                    wipeBuffer(iv);
+                    const inbound = await SyncCryptoGateway.decryptInbound({
+                        fileId,
+                        content: conflict.localEnvelope.ciphertext,
+                        isEncrypted: true,
+                        encryptionMetadata: conflict.localEnvelope,
+                        userId,
+                    });
+                    if (inbound.status === 'decrypted') {
+                        localText = inbound.content;
+                    } else {
+                        throw new Error(inbound.error || 'Failed to decrypt local envelope');
+                    }
                 }
                 if (conflict.baseEnvelope.ciphertext) {
-                    const iv = base64ToUint8Array(conflict.baseEnvelope.iv);
-                    baseText = await cryptoWorkerBridge.decryptAESGCM(masterKey, conflict.baseEnvelope.ciphertext, iv, aad);
-                    wipeBuffer(iv);
+                    const inbound = await SyncCryptoGateway.decryptInbound({
+                        fileId,
+                        content: conflict.baseEnvelope.ciphertext,
+                        isEncrypted: true,
+                        encryptionMetadata: conflict.baseEnvelope,
+                        userId,
+                    });
+                    if (inbound.status === 'decrypted') {
+                        baseText = inbound.content;
+                    } else {
+                        throw new Error(inbound.error || 'Failed to decrypt base envelope');
+                    }
                 } else {
                     baseText = remoteText;
                 }
@@ -342,24 +368,14 @@ export class SyncEncryptedConflictStore {
                     return { fileId, success: false, action: 'conflict', error: 'CONFLICT_MANUAL' };
                 }
 
-                // Re-encrypt merged content with a fresh random IV
-                const newIvBytes = await cryptoWorkerBridge.generateRandomBytes(12);
-                const { ciphertextBase64, ivBase64 } = await cryptoWorkerBridge.encryptAESGCM(
-                    masterKey,
+                // Re-encrypt merged content with a fresh random IV via SyncCryptoGateway
+                const outbound = await SyncCryptoGateway.encryptOutbound(
+                    fileId,
                     syntaxResult.sanitizedContent,
-                    newIvBytes,
-                    aad
+                    userId
                 );
-                wipeBuffer(newIvBytes);
-
-                const newMetadata = {
-                    version: 1,
-                    algorithm: 'AES-GCM-256' as const,
-                    keyId: 'master-v1',
-                    salt: '',
-                    iv: ivBase64,
-                    kdfIterations: 600000,
-                };
+                const ciphertextBase64 = outbound.ciphertextBase64;
+                const newMetadata = outbound.encryptionMetadata;
 
                 const serializedEnvelope = JSON.stringify({
                     ...newMetadata,

@@ -7,7 +7,7 @@ import { getUser } from "@/lib/supabase/server";
 import { eq, and, isNull } from "drizzle-orm";
 import { generateETagSync, normalizeMarkdownSource } from "@/lib/sync/etag-generator";
 import { revalidatePath } from "next/cache";
-import { refundAIReservation, commitAIReservation } from "@/server/services/ai-settlement-service";
+import { commitAIReservation } from "@/server/services/ai-settlement-service";
 
 export interface CommitAIFileOperationParams {
     operationId: string;
@@ -140,7 +140,6 @@ export async function commitAIFileOperation(
                     where: eq(schema.userVaultProfiles.userId, user.id),
                 });
                 if (!vaultProfile?.allowAIOnEncryptedFiles) {
-                    await refundAIReservation(operationId, user.id).catch(() => {});
                     return {
                         success: false,
                         status: "unauthorized",
@@ -150,7 +149,6 @@ export async function commitAIFileOperation(
             }
 
             if (!params.encryptionMetadata?.iv) {
-                await refundAIReservation(operationId, user.id).catch(() => {});
                 return {
                     success: false,
                     status: "error",
