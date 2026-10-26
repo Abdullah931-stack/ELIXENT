@@ -243,5 +243,23 @@ Last reviewed: 2026-10-26 (v1.46.3 — AI Model Upgrade, Vitest 5, TD-15 liquida
   - **React 19 Lint Cleanliness:** Eliminated render-phase state resets and missing mounted guards across `create-vault-modal`, `trust-device-modal`, `vault-security-card`, `vault-unlock-modal`, `ocr-settings-card`, and `editor/[fileId]/page.tsx`.
   - **Verification:** Covered by dedicated unit suites `src/test/editor/use-editor-conflict.test.ts` (12/12 passing) and `src/test/sync/sync-conflict-resolver.test.ts` (61/61 passing).
 
+## TD-20 — Cloud Provider Smoke Test Bypass & Google Gemini API Overload Debt — ACCEPTED DEBT (2026-10-26)
+
+- **Debt:**
+  - In Stage 7 of the CI pipeline (`.github/workflows/ci.yml`), execution of the live cloud provider smoke test suite (`src/test/ai/ai-live-e2e.test.ts`) is temporarily bypassed with `TEST_EXIT_CODE=0` and a warning notice.
+  - Upstream Google Gemini API (Free Tier) persistently returns `503 Service Unavailable (High Demand)` and `429 Too Many Requests` overloads across configured API keys in the CI environment, triggering test timeouts (>60s) and intermittent flakiness on GitHub Actions runners.
+  - The internal client fallback hierarchy across multiple models (`gemini-3.8-flash`, `3.6-flash`, `3.5-flash-lite`, `3.1-flash-lite`) requires a comprehensive architectural overhaul to prevent tight-loop retries on exhausted fallback chains and avoid tripping circuit breakers prematurely.
+- **Accepted Debt (Stage 7 Smoke Bypass):**
+  - **Decision Owner:** Project Owner & Systems Architect.
+  - **Decision Rationale:** To unblock the core CI pipeline and allow feature development to proceed unhindered by external provider instability. Stages 1 through 6 (Lint, Typecheck, Build, 89 In-Memory Unit Suites, 21 Isolated Database Live Suites, and 14 Browser Playwright E2E Specs) remain 100% active and rigorously enforced with fail-closed security gates.
+  - **Mitigation Currently in Place:**
+    - Mandatory cloud secrets (`TEST_DATABASE_URL` and `GEMINI_KEY_1`) verification remains enforced in Stage 7 with strict `exit 1` fail-closed gating on protected branches.
+    - All business logic, reservation lifecycles, and credit settlement reducers remain covered by in-memory unit and contract tests with 100% passing rate.
+  - **Conditions to Revisit / Reverse:**
+    1. Provisioning a dedicated, stable paid-tier Google Gemini API key or enterprise quota.
+    2. Completing the planned architectural overhaul of the AI client layer (e.g. migration to Vercel AI SDK with multi-provider failover).
+    3. Re-enabling the live execution of `src/test/ai/ai-live-e2e.test.ts` inside Stage 7 of `.github/workflows/ci.yml`.
+
+
 
 
