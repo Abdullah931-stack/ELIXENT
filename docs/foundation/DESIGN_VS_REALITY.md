@@ -52,7 +52,7 @@
 | Route groups `(auth)` / `(dashboard)` / `(workspace)` | Flat routes: `/login`, `/auth/callback`, `/dashboard`, `/workspace`, `/workspace/editor/[fileId]`, `/account` | `src/app/` tree |
 | Edge middleware location | Next.js 16 Edge proxy at `src/proxy.ts` (with deep-link query preservation) | `src/proxy.ts` |
 | Components `ai-floating-menu.tsx`, `prompt-dialog.tsx`, `editor-canvas.tsx` | `ai-toolbar.tsx`, `search-replace.tsx`, `streaming-ghost.ts`; `editor-canvas` was deleted (CHANGELOG v1.5.x) | `src/components/editor/` |
-| Models: `gemini-2.0-flash-lite`, `gemini-flash-lite-latest`, `Gemini 2.5 Flash-Lite`, `Gemini-3-flash-preview` | `gemini-3.7-flash` (primary) / `gemini-3.6-flash` (fallback) for all operations in `src/config/models.config.json` | `models.config.json` |
+| Models: `gemini-2.0-flash-lite`, `gemini-flash-lite-latest`, `Gemini 2.5 Flash-Lite`, `Gemini-3-flash-preview` | `gemini-3.8-flash` (primary) / `gemini-3.6-flash` (fallback) for all operations in `src/config/models.config.json` | `models.config.json` |
 | Env naming `GEMINI_KEY_1`, `GEMINI_KEY_2`, … | `GEMINI_API_KEY` + `GEMINI_API_KEY_FALLBACK_1` / `_FALLBACK_2` | README env matrix |
 | Planned file `config/ai-models.config.ts` | `src/config/models.config.json` (decoupled JSON) | `models.config.json` |
 | Planned `server/services/subscription.ts` | `src/server/actions/subscription-actions.ts` + `src/lib/stripe/` | `src/server/actions/` |

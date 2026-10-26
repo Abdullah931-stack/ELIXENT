@@ -171,9 +171,13 @@ describe("LIVE: Encrypted Vault & Zero-Knowledge Security on isolated branch", (
         });
 
         // 4. Invoke /api/ai/stream -> does NOT return 403 AI_PROHIBITED_ON_ENCRYPTED_FILES
+        const abortController = new AbortController();
+        const timeoutTimer = setTimeout(() => abortController.abort(), 5_000);
+
         const streamReq = new NextRequest("http://localhost:3000/api/ai/stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            signal: abortController.signal,
             body: JSON.stringify({
                 fileId,
                 text: "Sample short text to improve",
@@ -182,9 +186,16 @@ describe("LIVE: Encrypted Vault & Zero-Knowledge Security on isolated branch", (
         });
 
         const streamRes = await aiStreamPOST(streamReq);
+        clearTimeout(timeoutTimer);
+
         // It bypassed the 403 gate! (May proceed to quota check / stream, status != 403)
         expect(streamRes.status).not.toBe(403);
-    });
+
+        // Clean up stream to release background provider sockets immediately
+        if (streamRes.body) {
+            await streamRes.body.cancel();
+        }
+    }, 15_000);
 
     it("enforces optimistic concurrency control on encrypted file updates", async () => {
         const createRes = await createFile("Encrypted Concurrency Test");

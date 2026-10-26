@@ -1,5 +1,18 @@
 # Changelog - LUGX Project
 
+## [1.46.3] - 2026-10-26 (AI Model Upgrade, Vitest 5 & Phase 2 Green-Field Baseline)
+
+### Engine Upgrades & Security Hardening (`src/config/models.config.json`, `scripts/ci-audit.mjs`, `package.json`)
+
+- **Primary AI Model Migration:** Upgraded primary model across all operations from `gemini-3.7-flash` to `gemini-3.8-flash` in `src/config/models.config.json`, keeping fallback cascades intact.
+- **TD-15 Resolution & Zero CI Allowlist:** Resolved latent upstream recursion DoS in dev linter (`braces`), cleared `ALLOWLIST` in `scripts/ci-audit.mjs`, and achieved 100% clean `npm run audit:ci` (0 vulnerabilities).
+- **Test Infrastructure & Concurrency:** Upgraded `vitest` to `^5.0.5` and `zod` to `^4.6.7`. Optimized test worker concurrency in `vitest.config.mts` (2 workers locally, 4 on CI) to prevent IPC congestion.
+- **Live Test Socket Cleanup:** Added stream cancellation and abort signals in `src/test/vault/vault-sync.live.test.ts` to release provider sockets immediately and prevent test hangs.
+
+### Phase 2 Green-Field Baseline
+
+- Establishes a completely green baseline (1077 unit tests, 117 live tests, 0 vulnerabilities, 0 lint warnings) preparing the workspace for Phase 2 of the Comprehensive Technical Remediation Plan (`use-editor-orchestrator.ts` refactoring).
+
 ## [1.46.2] - 2026-10-14 (Multi-Agent Architectural Remediation & Complete Lifecycle Hardening)
 
 ### Cryptographic Hierarchy, AAD Dual-Try & Vault Lifecycle (`src/components/vault/`, `src/lib/sync/`, `src/server/actions/vault-actions.ts`)

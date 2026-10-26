@@ -186,7 +186,7 @@ describe('AI Client (Robust & Fault-Tolerant Execution)', () => {
 
         it('should return full cascading fallback chain in getModelHierarchy', () => {
             const hierarchy = getModelHierarchy('correct', 'free');
-            expect(hierarchy.primary).toBe('gemini-3.7-flash');
+            expect(hierarchy.primary).toBe('gemini-3.8-flash');
             expect(hierarchy.fallbacks).toEqual([
                 'gemini-3.6-flash',
                 'gemini-3.5-flash-lite',

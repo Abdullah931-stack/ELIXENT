@@ -1,8 +1,8 @@
 {
   "correct": {
-    "free": "gemini-3.7-flash",
-    "pro": "gemini-3.7-flash",
-    "ultra": "gemini-3.7-flash",
+    "free": "gemini-3.8-flash",
+    "pro": "gemini-3.8-flash",
+    "ultra": "gemini-3.8-flash",
     "fallback": {
       "free": "gemini-3.6-flash",
       "pro": "gemini-3.6-flash",
@@ -22,9 +22,9 @@
     "topP": 0.75
   },
   "improve": {
-    "free": "gemini-3.7-flash",
-    "pro": "gemini-3.7-flash",
-    "ultra": "gemini-3.7-flash",
+    "free": "gemini-3.8-flash",
+    "pro": "gemini-3.8-flash",
+    "ultra": "gemini-3.8-flash",
     "fallback": {
       "free": "gemini-3.6-flash",
       "pro": "gemini-3.6-flash",
@@ -46,9 +46,9 @@
     "presencePenalty": 0.5
   },
   "summarize": {
-    "free": "gemini-3.7-flash",
-    "pro": "gemini-3.7-flash",
-    "ultra": "gemini-3.7-flash",
+    "free": "gemini-3.8-flash",
+    "pro": "gemini-3.8-flash",
+    "ultra": "gemini-3.8-flash",
     "fallback": {
       "free": "gemini-3.6-flash",
       "pro": "gemini-3.6-flash",
@@ -71,8 +71,8 @@
   },
   "toPrompt": {
     "free": null,
-    "pro": "gemini-3.7-flash",
-    "ultra": "gemini-3.7-flash",
+    "pro": "gemini-3.8-flash",
+    "ultra": "gemini-3.8-flash",
     "fallback": {
       "free": null,
       "pro": "gemini-3.6-flash",
@@ -98,9 +98,9 @@
     }
   },
   "translate": {
-    "free": "gemini-3.7-flash",
-    "pro": "gemini-3.7-flash",
-    "ultra": "gemini-3.7-flash",
+    "free": "gemini-3.8-flash",
+    "pro": "gemini-3.8-flash",
+    "ultra": "gemini-3.8-flash",
     "fallback": {
       "free": "gemini-3.6-flash",
       "pro": "gemini-3.6-flash",

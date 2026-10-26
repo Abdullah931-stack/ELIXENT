@@ -52,11 +52,11 @@ This document specifies the decoupled JSON configuration architecture for Gemini
 
 | Operation Key | Description | Primary Model | Fallback #1 | Fallback #2 (Secondary) | Fallback #3 (Emergency) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `correct` | Grammar & spelling correction | `gemini-3.7-flash` | `gemini-3.6-flash` | `gemini-3.5-flash-lite` | `gemini-3.1-flash-lite` |
-| `improve` | Style & phrasing enhancement | `gemini-3.7-flash` | `gemini-3.6-flash` | `gemini-3.5-flash-lite` | `gemini-3.1-flash-lite` |
-| `summarize` | Executive & concise summarization | `gemini-3.7-flash` | `gemini-3.6-flash` | `gemini-3.5-flash-lite` | `gemini-3.1-flash-lite` |
-| `toPrompt` | Text-to-LLM prompt generation | `gemini-3.7-flash` (Pro/Ultra) | `gemini-3.6-flash` | `gemini-3.5-flash-lite` | `gemini-3.1-flash-lite` |
-| `translate` | High-fidelity translation | `gemini-3.7-flash` | `gemini-3.6-flash` | `gemini-3.5-flash-lite` | `gemini-3.1-flash-lite` |
+| `correct` | Grammar & spelling correction | `gemini-3.8-flash` | `gemini-3.6-flash` | `gemini-3.5-flash-lite` | `gemini-3.1-flash-lite` |
+| `improve` | Style & phrasing enhancement | `gemini-3.8-flash` | `gemini-3.6-flash` | `gemini-3.5-flash-lite` | `gemini-3.1-flash-lite` |
+| `summarize` | Executive & concise summarization | `gemini-3.8-flash` | `gemini-3.6-flash` | `gemini-3.5-flash-lite` | `gemini-3.1-flash-lite` |
+| `toPrompt` | Text-to-LLM prompt generation | `gemini-3.8-flash` (Pro/Ultra) | `gemini-3.6-flash` | `gemini-3.5-flash-lite` | `gemini-3.1-flash-lite` |
+| `translate` | High-fidelity translation | `gemini-3.8-flash` | `gemini-3.6-flash` | `gemini-3.5-flash-lite` | `gemini-3.1-flash-lite` |
 
 ---
 

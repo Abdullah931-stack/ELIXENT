@@ -14,9 +14,9 @@ All AI models (primary and cascading fallbacks) are strictly declared within `sr
 ```json
 {
   "correct": {
-    "free": "gemini-3.7-flash",
-    "pro": "gemini-3.7-flash",
-    "ultra": "gemini-3.7-flash",
+    "free": "gemini-3.8-flash",
+    "pro": "gemini-3.8-flash",
+    "ultra": "gemini-3.8-flash",
     "fallback": {
       "free": "gemini-3.6-flash",
       "pro": "gemini-3.6-flash",
@@ -57,7 +57,7 @@ sequenceDiagram
 
     User->>Route: POST /api/ai/stream
     Route->>Client: streamWithAI(operation, text, tier)
-    Client->>Redis: getModelCircuitState("gemini-3.7-flash")
+    Client->>Redis: getModelCircuitState("gemini-3.8-flash")
     
     alt Circuit Breaker is OPEN (Primary Model Overloaded / 10m TTL)
         Redis-->>Client: Open
@@ -71,7 +71,7 @@ sequenceDiagram
         end
     else Circuit Breaker is CLOSED (Normal)
         Redis-->>Client: Closed
-        Client->>Gemini: generateContentStream("gemini-3.7-flash")
+        Client->>Gemini: generateContentStream("gemini-3.8-flash")
         alt HTTP 503 / Primary Model High Demand
             Gemini--xClient: 503 Service Unavailable
             Client->>Redis: recordModelFailure / tripModelCircuit (10m TTL)
@@ -100,7 +100,7 @@ sequenceDiagram
     Gemini-->>Client: Successful Stream
     Client->>Redis: confirmApiKeyUsage(keyIndex)
     Note over Redis: Increments counter; establishes 24h TTL on 1st request
-    Client->>Redis: recordModelSuccess("gemini-3.7-flash")
+    Client->>Redis: recordModelSuccess("gemini-3.8-flash")
     Route->>User: Structured NDJSON Stream (start, chunk, done)
 ```
 

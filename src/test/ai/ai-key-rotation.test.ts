@@ -284,7 +284,7 @@ describe('Key Rotation & Circuit Breaker System (Hardened)', () => {
     // 3-State Distributed Circuit Breaker Management (Atomic Probing)
     // =========================================================================
     describe('3-State Distributed Circuit Breaker', () => {
-        const model = 'gemini-3.7-flash';
+        const model = 'gemini-3.8-flash';
 
         it('should have 5 minutes (300s) cooldown lock for single probe', () => {
             expect(PROBE_LOCK_TTL_SECONDS).toBe(300);

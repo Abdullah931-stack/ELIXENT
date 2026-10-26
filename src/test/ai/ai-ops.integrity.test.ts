@@ -22,8 +22,8 @@ import crypto from "node:crypto";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
-import { getTodayUsage } from "@/server/actions/ai-ops";
 import {
+    getTodayUsage,
     reserveAndUpdateUsage,
     refundAIReservation,
     commitAIReservation,

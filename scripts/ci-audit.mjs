@@ -20,20 +20,7 @@ import { execSync } from "node:child_process";
  * Known, audited, latent upstream advisories permitted exclusively in devDependencies.
  * Each entry must be documented in docs/TECHNICAL_DEBT_REGISTER.md.
  */
-const ALLOWLIST = new Map([
-  [
-    "GHSA-VFJ7-8CJW-P6XM",
-    {
-      cve: "CVE-2026-93687",
-      package: "braces",
-      severity: "high",
-      scope: "dev", // Strictly prohibited from production runtime
-      debtId: "TD-15",
-      reason:
-        "Uncontrolled AST recursion DoS in dev linter dependency chain; no official npm patch published yet; zero production attack surface.",
-    },
-  ],
-]);
+const ALLOWLIST = new Map();
 
 // =============================================================================
 // Helper Functions

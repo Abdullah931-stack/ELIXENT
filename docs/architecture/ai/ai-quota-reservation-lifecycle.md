@@ -69,7 +69,7 @@ flowchart TD
 
 | Cascade Level | Configuration Key | Model Identifier | Role & Failover Trigger |
 | :--- | :--- | :--- | :--- |
-| **Tier 1 (Primary)** | `[tier]` | `gemini-3.7-flash` | Authoritative default for all user prompts; highest reasoning quality. |
+| **Tier 1 (Primary)** | `[tier]` | `gemini-3.8-flash` | Authoritative default for all user prompts; highest reasoning quality. |
 | **Tier 2 (Fallback)** | `fallback` | `gemini-3.6-flash` | Automated primary failover upon 503, high load, or primary circuit trip. |
 | **Tier 3 (Secondary)** | `secondaryFallback` | `gemini-3.5-flash-lite` | Ultra-fast lightweight model ensuring generation under upstream provider saturation. |
 | **Tier 4 (Tertiary)** | `tertiaryFallback` | `gemini-3.1-flash-lite` | Terminal resilience fallback guaranteeing continuity before absolute exhaustion. |

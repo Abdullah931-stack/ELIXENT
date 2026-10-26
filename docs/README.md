@@ -78,7 +78,7 @@ docs/
 | :--- | :--- |
 | [README.md](./README.md) | Structural master index mapping every document in the repository |
 | [DOCUMENTATION_GUIDELINES.md](./DOCUMENTATION_GUIDELINES.md) | Policy on create/update/merge, nested directories, evidence discipline, and dual-track planning governance |
-| [CHANGELOG.md](./CHANGELOG.md) | Append-only chronological release notes covering v1.0.0 through v1.46.1 |
+| [CHANGELOG.md](./CHANGELOG.md) | Append-only chronological release notes covering v1.0.0 through v1.46.3 |
 | [TECHNICAL_DEBT_REGISTER.md](./TECHNICAL_DEBT_REGISTER.md) | Living register of accepted debts, mitigations, and resolution status (TD-01 to TD-19) |
 | [METRICS.json](./METRICS.json) | Centralized single source of truth for test suite counts and verification numbers |
 

@@ -421,7 +421,7 @@ flowchart TD
   - Real-time action controls: `Stop Generation` during active streaming, followed by explicit decision buttons (`Accept`, `Reject`, `Retry`) upon stream completion.
 - **Distributed Circuit Breaker & Key Pool (`src/lib/ai/key-rotation.ts`):**
   - 3-state circuit breaker (`CLOSED`, `OPEN`, `HALF-OPEN`) tracking failures in Upstash Redis.
-  - Multi-key rotation pool with automated 4-tier model cascade: `gemini-3.7-flash` (primary) → `gemini-3.6-flash` (fallback) → `gemini-3.5-flash-lite` (secondary) → `gemini-3.1-flash-lite` (tertiary).
+  - Multi-key rotation pool with automated 4-tier model cascade: `gemini-3.8-flash` (primary) → `gemini-3.6-flash` (fallback) → `gemini-3.5-flash-lite` (secondary) → `gemini-3.1-flash-lite` (tertiary).
 - **Dual-Layer Quota Guard & Information Shielding (`src/lib/rate-limit.ts` & `src/app/api/ai/stream/route.ts`):**
   - Strict 30 requests / 60 seconds rate limiting via `aiStreamRateLimiter` failing closed upon Redis outages with `Retry-After >= 1`.
   - Information disclosure protection: Unhandled upstream model errors are shielded behind safe, standardized HTTP 500 envelopes containing the request's tracking `correlationId`, preventing internal provider stack leakage.
