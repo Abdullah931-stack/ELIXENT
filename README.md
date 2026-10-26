@@ -4,7 +4,7 @@
   </a>
 </p>
 
-<h1 align="center">LUGX</h1>
+<h1 align="center">Elixent</h1>
 
 <p align="center">
   <strong>Enterprise AI Proofreading, Linguistic Enhancement & Intelligent Translation Platform</strong><br />
@@ -154,13 +154,13 @@ lugx/
 │   ├── CHANGELOG.md               # Versioned engineering changelog (v1.0.0 through v1.32.1)
 │   ├── TECHNICAL_DEBT_REGISTER.md # Living register of accepted debts and resolution history
 │   ├── DOCUMENTATION_GUIDELINES.md# Rules for authoring, linking, and updating documentation
-│   ├── Plans/                     # Code-derived roadmap & technical execution plans (English)
-│   ├── architecture/              # Subsystem designs partitioned by domain (sync/, ai/, security/)
+│   ├── Plans/                     # Active technical execution plans (ELIXENT_EXECUTION_PLAN.md)
+│   ├── architecture/              # Elixent architecture suite (01–05) & subsystem designs (sync/, ai/, security/)
 │   ├── reference/                 # Living API contracts (sync-api.md, ui-streaming, test-db isolation)
 │   ├── guides/                    # Operational how-tos partitioned by domain (billing/, editor/, ai/)
 │   ├── specs/                     # Living technical specifications and architectural blueprints
-│   ├── records/                   # Engineering records (incidents/, audits/, closures/, archive/)
-│   └── foundation/                # Verbatim founding design records & DESIGN_VS_REALITY.md
+│   ├── records/                   # Engineering records (incidents/, audits/, closures/, plans/, archive/lugx-v1/)
+│   └── .Plans/                    # Internal candidate planning incubator (Arabic, untracked)
 ├── public/                        # Static brand assets (lugx-icon.svg, icon.svg)
 ├── src/
 │   ├── app/                       # Next.js App Router (flat routing hierarchy)
@@ -624,13 +624,13 @@ Comprehensive architectural designs, specifications, guides, and engineering rec
  
 | Directory | Content Scope | Key Documents |
 | :--- | :--- | :--- |
-| [`docs/architecture/`](./docs/architecture/) | Subsystem architectural designs partitioned by domain (`sync/`, `ai/`, `security/`) | [`sync-lifecycle-architecture.md`](./docs/architecture/sync/sync-lifecycle-architecture.md), [`sync-architecture-overview.md`](./docs/architecture/sync/sync-architecture-overview.md), [`editor-sync-orchestration.md`](./docs/architecture/sync/editor-sync-orchestration.md), [`ai-atomic-commit-architecture.md`](./docs/architecture/ai/ai-atomic-commit-architecture.md), [`ai-quota-reservation-lifecycle.md`](./docs/architecture/ai/ai-quota-reservation-lifecycle.md), [`ai-streaming-protocol.md`](./docs/architecture/ai/ai-streaming-protocol.md), [`three-way-conflict-resolution.md`](./docs/architecture/sync/three-way-conflict-resolution.md), [`security-and-rate-limiting.md`](./docs/architecture/security/security-and-rate-limiting.md) |
-| [`docs/Plans/`](./docs/Plans/) | Active official technical execution roadmaps (English) | [`COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md`](./docs/Plans/COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md) |
+| [`docs/architecture/`](./docs/architecture/) | Elixent architecture suite (`01`–`05`) & subsystem designs (`sync/`, `ai/`, `security/`) | [`01_architecture_vision_and_adrs.md`](./docs/architecture/01_architecture_vision_and_adrs.md), [`02_agent_orchestration_and_decision_engine.md`](./docs/architecture/02_agent_orchestration_and_decision_engine.md), [`03_workspace_ast_editor_and_vault_integration.md`](./docs/architecture/03_workspace_ast_editor_and_vault_integration.md), [`04_credit_metering_and_settlement_architecture.md`](./docs/architecture/04_credit_metering_and_settlement_architecture.md), [`05_data_contracts_and_lugx_migration_plan.md`](./docs/architecture/05_data_contracts_and_lugx_migration_plan.md), [`sync-lifecycle-architecture.md`](./docs/architecture/sync/sync-lifecycle-architecture.md), [`sync-architecture-overview.md`](./docs/architecture/sync/sync-architecture-overview.md), [`editor-sync-orchestration.md`](./docs/architecture/sync/editor-sync-orchestration.md), [`ai-atomic-commit-architecture.md`](./docs/architecture/ai/ai-atomic-commit-architecture.md), [`ai-quota-reservation-lifecycle.md`](./docs/architecture/ai/ai-quota-reservation-lifecycle.md), [`ai-streaming-protocol.md`](./docs/architecture/ai/ai-streaming-protocol.md), [`three-way-conflict-resolution.md`](./docs/architecture/sync/three-way-conflict-resolution.md), [`security-and-rate-limiting.md`](./docs/architecture/security/security-and-rate-limiting.md) |
+| [`docs/Plans/`](./docs/Plans/) | Active official technical execution roadmaps (English) | [`ELIXENT_EXECUTION_PLAN.md`](./docs/Plans/ELIXENT_EXECUTION_PLAN.md) |
 | [`docs/reference/`](./docs/reference/) | Living API contracts & test runner specifications | [`sync-api.md`](./docs/reference/sync-api.md), [`test-database-isolation.md`](./docs/reference/test-database-isolation.md), [`ui-streaming-readiness.md`](./docs/reference/ui-streaming-readiness.md) |
-| [`docs/records/`](./docs/records/) | Engineering records, incident post-mortems, completed plans & closures | [`test-database-safety.md`](./docs/records/incidents/test-database-safety.md), [`unified-security-and-engineering-audit.md`](./docs/records/audits/unified-security-and-engineering-audit.md), [`Completed Plans`](./docs/records/plans/technical-execution-plan.md), [`Phase Closures`](./docs/records/closures/), [`Archive`](./docs/records/archive/) |
+| [`docs/records/`](./docs/records/) | Engineering records, incident post-mortems, completed plans & closures | [`test-database-safety.md`](./docs/records/incidents/test-database-safety.md), [`unified-security-and-engineering-audit.md`](./docs/records/audits/unified-security-and-engineering-audit.md), [`Completed Plans`](./docs/records/plans/comprehensive-technical-remediation-plan-lugx-v1.md), [`Phase Closures`](./docs/records/closures/), [`Archive`](./docs/records/archive/) |
 | [`docs/specs/`](./docs/specs/) | Living technical specifications & blueprints | [`offline-sync-blueprint.md`](./docs/specs/offline-sync-blueprint.md), [`ai-key-rotation-and-resilience.md`](./docs/specs/ai-key-rotation-and-resilience.md), [`ui-streaming-requirements.md`](./docs/specs/ui-streaming-requirements.md) |
 | [`docs/guides/`](./docs/guides/) | Developer & operational how-tos (`billing/`, `editor/`, `ai/`) | [`stripe-integration.md`](./docs/guides/billing/stripe-integration.md), [`stripe-setup.md`](./docs/guides/billing/stripe-setup.md), [`ai-models-config.md`](./docs/guides/ai/ai-models-config.md), [`editor-ui-enhancements.md`](./docs/guides/editor/editor-ui-enhancements.md), [`search-replace-feature.md`](./docs/guides/editor/search-replace-feature.md), [`data-export-guide.md`](./docs/guides/editor/data-export-guide.md) |
-| [`docs/foundation/`](./docs/foundation/) | Verbatim founding design & divergence log | [`DESIGN_VS_REALITY.md`](./docs/foundation/DESIGN_VS_REALITY.md), [`Project_Structure.md`](./docs/foundation/Project_Structure.md), [`LUGX platform subscription plans.md`](<./docs/foundation/LUGX platform subscription plans.md>) |
+| [`docs/records/archive/lugx-v1/`](./docs/records/archive/lugx-v1/) | Historical LUGX v1 baseline archive & living architecture baseline | [`01_architecture_vision_and_adrs.md`](./docs/architecture/01_architecture_vision_and_adrs.md), [`DESIGN_VS_REALITY.md`](./docs/records/archive/lugx-v1/foundation/DESIGN_VS_REALITY.md), [`CHANGELOG-LUGX-v1.md`](./docs/records/archive/lugx-v1/CHANGELOG-LUGX-v1.md), [`LUGX platform subscription plans.md`](<./docs/records/archive/lugx-v1/foundation/LUGX platform subscription plans.md>) |
 | Root Registers | Release history & debt tracking | [`CHANGELOG.md`](./docs/CHANGELOG.md), [`TECHNICAL_DEBT_REGISTER.md`](./docs/TECHNICAL_DEBT_REGISTER.md), [`DOCUMENTATION_GUIDELINES.md`](./docs/DOCUMENTATION_GUIDELINES.md) |
 
 ---

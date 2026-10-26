@@ -152,7 +152,7 @@ To guarantee high cohesion and single-responsibility isolation, file and directo
 - **Chosen Architecture:** Direct persistence in the primary PostgreSQL `files` table (`src/server/db/schema/files.ts`) using the `content` column (`text` / binary-safe string), co-located with version metadata, ETag, and encryption parameters.
 - **Rejected Alternatives:**
   1. **External S3 / Cloudflare R2 Object Storage:** Storing content blobs in S3 buckets and referencing URLs in Postgres.
-  2. **Supabase Storage:** Third-party storage abstraction (formally evaluated and dropped; see [`docs/foundation/DESIGN_VS_REALITY.md`](../../foundation/DESIGN_VS_REALITY.md)).
+  2. **Supabase Storage:** Third-party storage abstraction (formally evaluated and dropped; see [`docs/foundation/DESIGN_VS_REALITY.md`](../../records/archive/lugx-v1/foundation/DESIGN_VS_REALITY.md)).
 - **Trade-off Analysis:**
   | Evaluation Criteria | Chosen Solution (Postgres Direct Storage) | Alternative (External S3 / R2) |
   | :--- | :--- | :--- |

@@ -14,7 +14,6 @@
  *   - docs/reference/ci-pipeline.md
  *   - docs/architecture/sync/editor-sync-orchestration.md
  *   - docs/architecture/sync/file-ownership-and-versioning.md
- *   - docs/foundation/DESIGN_VS_REALITY.md
  *
  * Usage:
  *   node scripts/sync-doc-metrics.mjs --check
@@ -39,7 +38,6 @@ const DB_ISOLATION_PATH = path.join(ROOT, "docs", "reference", "test-database-is
 const CI_PIPELINE_PATH = path.join(ROOT, "docs", "reference", "ci-pipeline.md");
 const SYNC_ORCHESTRATION_PATH = path.join(ROOT, "docs", "architecture", "sync", "editor-sync-orchestration.md");
 const FILE_OWNERSHIP_PATH = path.join(ROOT, "docs", "architecture", "sync", "file-ownership-and-versioning.md");
-const DESIGN_VS_REALITY_PATH = path.join(ROOT, "docs", "foundation", "DESIGN_VS_REALITY.md");
 
 const ALL_MONITORED_PATHS = [
   README_PATH,
@@ -49,7 +47,6 @@ const ALL_MONITORED_PATHS = [
   CI_PIPELINE_PATH,
   SYNC_ORCHESTRATION_PATH,
   FILE_OWNERSHIP_PATH,
-  DESIGN_VS_REALITY_PATH,
 ];
 
 /**
@@ -231,11 +228,6 @@ export function transformFileContent(filePath, content, metrics) {
       .replace(/The \d+ hermetic LIVE suites against the isolated PostgreSQL service container \/ Neon branch\./g, `The ${metrics.liveSuites} hermetic LIVE suites against the isolated PostgreSQL service container / Neon branch.`)
       .replace(/(?:\*\*Active |\*\*)Unit & Contract Suite \(`npm run test`\):\*\* \*\*\d+ files \/ \d+ tests — all passed \(100% pass rate\)\*\*/g, `**Active Unit & Contract Suite (\`npm run test\`):** **${metrics.unitSuites} files / ${metrics.unitTests} tests — all passed (100% pass rate)**`)
       .replace(/(?:\*\*Active |\*\*)Live Multi-System Suite \(`npm run test:live`\):\*\* \*\*\d+ registered suites \/ \d+ tests — all passed \(100% pass rate\)\*\*/g, `**Active Live Multi-System Suite (\`npm run test:live\`):** **${metrics.liveSuites} registered suites / ${metrics.liveTests} tests — all passed (100% pass rate)**`);
-  }
-
-  // 6. docs/foundation/DESIGN_VS_REALITY.md: divergence table cell
-  if (filePath === DESIGN_VS_REALITY_PATH) {
-    updated = updated.replace(/\(\d+ suites, \d+ tests passing\)/g, `(${metrics.unitSuites} suites, ${metrics.unitTests} tests passing)`);
   }
 
   return updated;

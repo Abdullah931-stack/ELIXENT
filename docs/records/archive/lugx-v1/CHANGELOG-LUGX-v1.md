@@ -1,0 +1,2292 @@
+# Changelog - LUGX Project
+
+## [1.46.3] - 2026-10-26 (AI Model Upgrade, Vitest 5 & Phase 2 Green-Field Baseline)
+
+### Engine Upgrades & Security Hardening (`src/config/models.config.json`, `scripts/ci-audit.mjs`, `package.json`)
+
+- **Primary AI Model Migration:** Upgraded primary model across all operations from `gemini-3.7-flash` to `gemini-3.8-flash` in `src/config/models.config.json`, keeping fallback cascades intact.
+- **TD-15 Resolution & Zero CI Allowlist:** Resolved latent upstream recursion DoS in dev linter (`braces`), cleared `ALLOWLIST` in `scripts/ci-audit.mjs`, and achieved 100% clean `npm run audit:ci` (0 vulnerabilities).
+- **Test Infrastructure & Concurrency:** Upgraded `vitest` to `^5.0.5` and `zod` to `^4.6.7`. Optimized test worker concurrency in `vitest.config.mts` (2 workers locally, 4 on CI) to prevent IPC congestion.
+- **Live Test Socket Cleanup:** Added stream cancellation and abort signals in `src/test/vault/vault-sync.live.test.ts` to release provider sockets immediately and prevent test hangs.
+
+### Phase 2 Green-Field Baseline
+
+- Establishes a completely green baseline (1077 unit tests, 117 live tests, 0 vulnerabilities, 0 lint warnings) preparing the workspace for Phase 2 of the Comprehensive Technical Remediation Plan (`use-editor-orchestrator.ts` refactoring).
+
+## [1.46.2] - 2026-10-14 (Multi-Agent Architectural Remediation & Complete Lifecycle Hardening)
+
+### Cryptographic Hierarchy, AAD Dual-Try & Vault Lifecycle (`src/components/vault/`, `src/lib/sync/`, `src/server/actions/vault-actions.ts`)
+
+- **Dual-Try AAD Unwrapping & Historical Context Compatibility (`src/components/vault/trust-device-modal.tsx`, `src/lib/sync/encryption.ts`, `src/lib/sync/sync-crypto-gateway.ts`):**
+  - Integrated canonical `normalizePassword()` before PBKDF2 derivation to eliminate Unicode casing/diacritics mismatch.
+  - Implemented Dual-Try unwrapping across PIN, password, and file decryption: attempts current standard AAD (`AAD.passwordWrap`, `AAD.deviceWrap`, `AAD.file`) and gracefully falls back to legacy envelopes (`AAD.legacy.passWrap`, `AAD.legacy.deviceWrap`, `computeLegacyAad`) to guarantee zero user lockout during key rotation.
+  - Connected `VaultManager.touchActivity()` directly into `SyncCryptoGateway.decryptInbound` to automatically update session TTL on cryptographic access.
+- **Strict Device Trust & Proof-of-Possession Validation (`src/server/actions/vault-actions.ts`, `src/components/vault/vault-unlock-modal.tsx`):**
+  - Added strict server-side validation enforcing 64-hexadecimal character `proofOfPossession` derived via `deriveProofOfPossession(masterKey, userId)` and required `proofNonce` in `updateVaultPassword`, rejecting missing, non-hex, or malformed parameters to permanently seal vulnerability `LUGX-063`.
+  - Atomically increments `deviceTrustEpoch` on every device trust operation using SQL `sql`${schema.userVaultProfiles.deviceTrustEpoch} + 1`` to invalidate stale authentication envelopes across sibling devices.
+- **Fail-Closed File Decryption & Download Guard (`src/components/files/file-context-menu.tsx`):**
+  - Replaced ad-hoc Web Worker calls with `SyncCryptoGateway.decryptInbound`, guaranteeing strict fail-closed protection against writing corrupted or untrusted ciphertext back into local storage during file export and context menu actions.
+
+### Synchronization Engine, REST Contracts & Conflict Hygiene (`src/lib/sync/sync-manager.ts`, `src/lib/sync/sync-encrypted-conflict-store.ts`, `src/app/api/files/`, `src/hooks/use-editor-conflict.ts`)
+
+- **Pure State Reducer Event Integration in SyncManager (`src/lib/sync/sync-manager.ts`):**
+  - Added internal `machineState: SyncState = { status: 'idle' }` to `SyncManager` class and bound state transitions to `reduceSyncState`.
+  - Dispatches deterministic lifecycle events: `START_SYNC` on initiation, `SYNC_SUCCESS` on completion, `CONFLICT_DETECTED` on 412 or concurrent version drift, `SYNC_ERROR` on network failures, and `RESOLVE_CONFLICT` on user resolution. Exposed `getMachineState()` and `resolveConflict()`.
+- **RFC 7807 Storage & Sync Payload Contract Validation (`src/app/api/files/[id]/route.ts`, `src/app/api/files/sync/route.ts`):**
+  - In `PUT /api/files/[id]`, strictly validates storage payloads against `documentStoragePayloadSchema` from `@/types/storage-payload`, rejecting missing encryption metadata or unencrypted leaks with RFC 7807 400 Problem Details (`urn:problem-type:invalid-storage-payload`).
+  - In `GET /api/files/sync`, validates pagination and cursor query parameters against `syncPullRequestSchema` from `@/types/sync-contracts`, emitting RFC 7807 400 Problem Details (`urn:problem-type:invalid-sync-pull-request`) on invalid bounds.
+- **Encrypted Conflict Re-encryption & Ciphertext Preservation (`src/lib/sync/sync-encrypted-conflict-store.ts`, `src/hooks/use-editor-conflict.ts`):**
+  - Replaced manual Web Worker encryption calls in `SyncEncryptedConflictStore` with `SyncCryptoGateway.decryptInbound` (dual-try AAD) and `SyncCryptoGateway.encryptOutbound` to align conflict resolution with the canonical cryptographic hierarchy.
+  - Preserves untouched `rawServerContent` and `rawServerMeta` before executing diff comparison. When `isIdentical === true` and the file is encrypted, passes `rawServerContent` directly to `saveLocal` instead of decrypted plaintext.
+
+### Editor Lifecycle, Memory Security & React DOM Preservation (`src/hooks/use-editor-orchestrator.ts`, `src/app/workspace/editor/[fileId]/page.tsx`)
+
+- **Zero-Knowledge Memory Zeroization & Safe Unlock Restoration (`src/hooks/use-editor-orchestrator.ts`):**
+  - Enforced instantaneous memory zeroization upon vault locking (`!isUnlocked && isEncryptedRef.current`): wipes CodeMirror 6 memory buffer via `runProgrammaticUpdate(() => adapterRef.current?.setValue(""))`, clears `editorContentRef.current = ""`, and disables editable permissions (`adapterRef.current?.setEditable(false)`).
+  - Implemented unlock reconstruction in `handleVaultUnlocked`: when `pendingEncryptedPayloadRef` is null, retrieves encrypted content from local IndexedDB (`syncHookRef.current.loadLocal`) or server (`getFile`) before decrypting and restoring plaintext into the editor, preventing document loss upon unlock.
+  - Encrypts outbound mutations via `SyncCryptoGateway.encryptOutbound` before persisting during tab wakeup events, deferring `pendingLocalSyncRef` when the vault is locked.
+- **CodeMirror 6 DOM Preservation via Absolute Overlay (`src/app/workspace/editor/[fileId]/page.tsx`):**
+  - Retains `<MarkdownEditor />` mounted in the DOM tree during `hydration === "vault_locked"` with `invisible pointer-events-none` styling, rendering the locked state modal as an absolute overlay (`absolute inset-0 z-20 bg-zinc-950 flex items-center justify-center`).
+  - Preserves CodeMirror 6 `EditorView` state, focus, and adapter references across vault lock and unlock cycles without component re-mount thrashing.
+
+### AI Quota Settlement, Billing Reducer & Database Hygiene (`src/server/services/`, `src/server/actions/`, `src/app/api/stripe/`)
+
+- **Quota Reservation, Settlement & Atomic Commit Retention (`src/server/services/ai-settlement-service.ts`, `src/server/actions/ai-ops.ts`, `src/server/actions/ai-commit.ts`, `src/app/api/ai/stream/route.ts`):**
+  - Connected `reduceQuotaReservationState` and `calculateQuotaSettlement` across AI reservation commit and refund operations.
+  - In `commitAIFileOperation`, removed quota refunds on encryption rejections (`allowAIOnEncryptedFiles: false` or missing IV); consumed streaming quota is permanently retained.
+  - Guarded `getUserTier`, `getTodayUsage`, and `checkQuota` server actions using authenticated session `effectiveUserId`.
+  - Bound `/api/ai/stream` request payload validation to `aiRequestSchema` with RFC 7807 Problem Details. Corrected Arabic word counting heuristic in `src/lib/utils.ts` to `Math.max(spaceCount, Math.ceil(len / 6))`.
+- **Subscription State Machine & Terminal Status Defense (`src/server/services/billing-service.ts`, `src/app/api/stripe/webhook/route.ts`):**
+  - Connected `reduceSubscriptionState` and `isTerminalSubscriptionStatus` to protect terminal subscription states (`canceled`, `incomplete_expired`) against out-of-order webhook replays.
+  - Refactored `getDeletedFiles` in `src/server/actions/files.ts` to use SQL-level `isNotNull(schema.files.deletedAt)` filtering instead of in-memory filtering.
+
+### Document Processing, AST Stripping & Dead Code Purge (`src/components/layout/sidebar.tsx`, `src/lib/parsers/`, `src/lib/exporters/`)
+
+- **Web Worker ArrayBuffer Detachment Guard (`src/components/layout/sidebar.tsx`):**
+  - Cloned binary buffers using `arrayBuffer.slice(0)` before passing them to `detectPdfFontCorruption`, preventing `DataCloneError` and worker transfer detachment.
+  - Unified file import encryption under `SyncCryptoGateway.encryptOutbound`.
+- **Dead Code Purge & Language Detection Integration (`src/lib/parsers/pdf-parser.ts`, `src/lib/parsers/text-parser.ts`):**
+  - Permanently removed dead file `src/lib/parsers/pdf-parser.ts`.
+  - Integrated `detectDocumentLanguage` into `parseTextFile` (`src/lib/parsers/text-parser.ts`) to attach language detection metadata to parsed documents.
+- **Robust Code-Block Preservation & Windows-1256 Fallback (`src/lib/exporters/utils/markdown-stripper.ts`, `src/lib/parsers/text-parser.ts`):**
+  - Replaced simple regex markdown stripping with token placeholder masking to protect code blocks and inline code identifiers with underscores (`snake_case`).
+  - Implemented fatal UTF-8 decoding in `text-parser.ts` with automatic fallback to `windows-1256` for Arabic legacy text encodings.
+- **Environment & Build Configuration (`package.json`, `next.config.ts`):**
+  - Configured `experimental.serverActions.bodySizeLimit: "10mb"` in `next.config.ts`.
+  - Promoted `zod` to a direct root dependency (`^3.24.2`) in `package.json`.
+
+## [1.46.1] - 2026-10-13 (Offline 3-Way Auto-Merge, Storage-First Cross-Tab Broadcast & Diff3 Deletion Guard Hardening)
+
+### Core Synchronization & Concurrency Hardening (`src/hooks/use-editor-orchestrator.ts`, `src/hooks/use-editor-conflict.ts`, `src/lib/sync/conflict-resolver.ts`, `src/lib/sync/diff3.ts`)
+
+- **Storage-First Cross-Tab Sequential Broadcast (`src/hooks/use-editor-orchestrator.ts`):**
+  - Resolved asynchronous race condition between IndexedDB disk write and sibling tab notifications: `useEditorOrchestrator` strictly awaits `syncHook.saveLocal()` to settle on disk before emitting `broadcastCrossTabEvent({ type: 'file_saved', ... })`.
+  - Guaranteed that sibling tabs receiving `file_saved` read completely synchronized, fresh document state from local IndexedDB storage rather than stale in-memory buffers or partial writes.
+- **Silent Automated 3-Way Merge on Non-Overlapping HTTP 412 Conflicts (LUGX-054 - `src/hooks/use-editor-conflict.ts`):**
+  - Integrated `conflictResolver.attemptThreeWayMerge()` into `handle412Conflict` when differing server versions collide with local edits and a valid `baseSnapshot` is present.
+  - When mutations do not overlap (`status === 'merged_clean'`), the hook automatically re-encrypts the merged content (if encrypted), dispatches an authoritative CAS save to the server with `expectedVersion: serverVersion.version`, commits clean state to IndexedDB, updates the editor buffer, and transitions to clean state without opening `ConflictDialog` or disrupting offline-to-online editing.
+- **Visual Diff LCS Gap Pairing & Deletion Guard Hardening (`src/lib/sync/conflict-resolver.ts`, `src/lib/sync/diff3.ts`):**
+  - Corrected gap handling in `ConflictResolver.computeVisualDiff`: restricted `baseSet.has(line)` deletion pruning strictly to surplus remote insertions (`insLines.length > delLines.length`).
+  - Guaranteed that in-place line replacements are cleanly paired as `modify` operations with token-level diff spans, eliminating the duplicate strike-through of Line 4 in local view and omission in server view during 4-line concurrent edit scenarios.
+  - Guarded Diff3 Deletion Guard line pruning in `src/lib/sync/diff3.ts` to execute strictly when local line count is less than base line count (`aContent.length < oContent.length`), preserving remote lines on in-place mutations.
+
+### React 19 Strict Compiler Discipline & ESLint Remediation (`src/components/vault/`, `src/components/layout/`, `src/app/workspace/editor/`)
+
+- **Elimination of Render-Phase State Resets:**
+  - In `CreateVaultModal`, `TrustDeviceModal`, and `VaultUnlockModal`, replaced synchronous `setState` resets inside `useEffect` with pure render-time previous-state comparisons (`prevIsOpen !== isOpen`).
+  - Purged unused `useEffect` import from `src/components/vault/create-vault-modal.tsx`.
+- **Cancellation & Async Guard Discipline:**
+  - In `VaultSecurityCard`, `TrustDeviceModal`, `VaultUnlockModal`, and `OCRSettingsCard`, added `isMounted` guards across all asynchronous WebAuthn, IndexedDB, and server profile checks to prevent cascading state updates and memory leaks on unmounted trees.
+  - In `src/app/workspace/editor/[fileId]/page.tsx`, converted synchronous `localStorage` reading in `useEffect` to lazy `useState(() => ...)` initialization.
+- **Static Analysis Scorecard:** Repository-wide `npm run lint` achieves 0 errors and 0 warnings; `npx tsc --noEmit` compiles cleanly with 0 errors.
+
+### Dedicated Test Suites & Regression Contracts (`src/test/editor/`, `src/test/sync/`)
+
+- **Automated 3-Way Merge on 412 Contract (`src/test/editor/use-editor-conflict.test.ts`):**
+  - Added unit test asserting that differing server and local versions on non-overlapping lines cleanly auto-merge, push to server, update editor state, and suppress `ConflictDialog`.
+- **4-Line Visual Diff Pairing Contract (`src/test/sync/sync-conflict-resolver.test.ts`):**
+  - Added unit regression test verifying that modifying Line 4 locally while Line 2 is modified on the server generates valid paired `modify` operations without duplicate `delete` entries or dropped lines.
+
+## [1.45.1] - 2026-10-05 (Static Type Safety & Code Quality Hardening: ESLint and TypeScript Remediation)
+
+### Bug Fixes & Type Safety Hardening (`src/lib/sync/sync-queue-worker.ts`)
+
+- **TypeScript Static Type Alignment in Queue Worker (TS2345):**
+  - Resolved `TS2345` compiler type error in `SyncQueueWorker` where `serverVersion` passed to `onConflictQuarantined` had optional fields (`string | undefined`) incompatible with required interface fields.
+  - Aligned `ServerConflictPayload` with optional field definitions (`content?`, `rawCiphertext?`, `etag?`, `version?`, `title?`, `parentFolderId?`, `updatedAt?`, `isEncrypted?`, `isVaultLocked?`, `encryptionMetadata?`).
+  - Unified the method signature of `quarantineServerConflict` to use `ServerConflictPayload` directly, eliminating ad-hoc parameter typing and removing `@typescript-eslint/no-explicit-any` from `onConflictQuarantined`.
+
+### Linter & Code Health Remediation (`src/app/api/ai/stream/route.ts`, `src/hooks/`, `src/lib/sync/`, `src/server/`)
+
+- **AI Streaming Route `prefer-const` Fix (`src/app/api/ai/stream/route.ts`):**
+  - Initialized `let rateLimitResult: RateLimitResult | undefined = undefined;` explicitly at declaration, resolving ESLint `prefer-const` error while preserving closure-level access for `withCorrelation` on early error exits.
+- **Editor Orchestrator & Autosave React Hooks Discipline (`src/hooks/use-editor-orchestrator.ts`, `src/hooks/use-editor-autosave.ts`):**
+  - Resolved `react-hooks/exhaustive-deps` warnings: added stable callbacks `cancelAutosave` and `markClean` to `handleRemoteUpdate`, added `markClean` to `executeServerWrite`, and added `resolveEffectiveUserId` to the cross-tab sync listener `useEffect`.
+  - Replaced `any` in `pendingRemoteUpdateRef` by defining and applying the `RemoteUpdatePayload` interface.
+  - Purged unused symbols and imports: removed `debounce`, `base64ToUint8Array`, and `EDITOR_AUTOSAVE_DEBOUNCE_MS` from `use-editor-orchestrator.ts`, and removed unused `getContent` destructuring from `use-editor-autosave.ts`.
+- **Sync Engine & Server Quality Hardening (`src/lib/sync/sync-manager.ts`, `src/lib/sync/sync-encrypted-conflict-store.ts`, `src/server/empty.ts`, `src/server/services/ai-settlement-service.ts`):**
+  - In `sync-manager.ts`, replaced `file: any` on `pullFile` with `Parameters<SyncPullEngine['pullFile']>[0]`.
+  - In `sync-encrypted-conflict-store.ts`, removed unused `EncryptedEnvelopeMetadata` import.
+  - In `src/server/empty.ts`, resolved `import/no-anonymous-default-export` by binding the empty object literal to a named constant `empty` before default export.
+  - In `ai-settlement-service.ts`, purged unused `countWords` import and uncalled private helper `getWeeklyWordUsage` (quota verification is enforced via atomic transaction subqueries).
+
+### Test Suite Hygiene & Assertions (`src/test/`)
+
+- **Non-Blocking stopStream Assertion (`src/test/ai/ai-stream-abort-latency.test.ts`):**
+  - Added explicit assertion `expect(commitResolved).toBe(false);` after `stopStream()` invocation, providing regression proof that user cancellation returns immediately without waiting for deferred asynchronous commit settlement promises to resolve.
+- **Test File Import Cleanup:**
+  - Removed unused `vi` and `beforeEach` imports from `src/test/ai/ai-key-rotation-400.test.ts`.
+  - Removed unused `sql` import from `src/test/ai/ai-ops.integrity.test.ts`.
+  - Removed unused `afterEach` and `useSync` imports, and removed dead `editable` variable from `src/test/editor/editor-security-hardening.test.ts`.
+  - Removed unused `afterEach` import from `src/test/export/export-governance.test.ts`.
+  - Removed unused `getFile` import from `src/test/files/file-context-menu.encryption-conflict.test.tsx`.
+
+## [1.45.0] - 2026-10-04 (Phase 17: Editor Decomposition, Standalone Autosave Hook & React 19 Ref Discipline)
+
+### Breaking & Architectural Changes (`src/hooks/use-editor-autosave.ts`, `src/hooks/use-editor-orchestrator.ts`, `src/hooks/use-ai-stream.ts`)
+
+- **Decoupled Standalone Autosave Hook (`useEditorAutosave` - LUGX-020):**
+  - Extracted 178 lines of debounced auto-save timers, dirty tracking, and write-lock gating from `useEditorOrchestrator` into a reusable, zero-dependency hook (`src/hooks/use-editor-autosave.ts`).
+  - Headless architecture using injected pure callbacks: `fileId`, `debounceMs`, `isWriteLocked`, `isBlocked`, `persist`, `flushOnUnmount`, `getContent`, and `onUserEdit`.
+  - Debounce coalescing: rapid successive user keystrokes reset active timers (`timerRef.current`), coalescing edits into a single persistence call with latest document content.
+  - Automatic write-lock suspension: while `isWriteLocked` is active (during AI streaming, reserving, committing, or preview ready), autosave persistence is held; when the write lock releases, an effect checks `isDirtyRef.current` and automatically re-triggers a debounced save.
+  - Safe unmount flush: unmount effect invokes `flushOnUnmount` when dirty, ensuring uncommitted edits are flushed before teardown.
+- **Strict React 19 Ref Discipline:**
+  - Eliminated all mutable `ref.current` writes during the React render phase across `use-editor-autosave.ts`, `use-editor-orchestrator.ts`, and `use-ai-stream.ts`.
+  - Wrapped all callback and option ref synchronizations in `useLayoutEffect`, ensuring full compliance with React 19 concurrent render purity and zero render-phase side effects.
+
+### Security Hardening (`src/hooks/use-editor-orchestrator.ts`)
+
+- **Fail-Closed Unmount Flush on Locked Vault (LUGX-004):**
+  - In `flushOnUnmount`, guarded persistence against locked vault states: if `isEncryptedRef.current` is true and `sessionKeyStore.hasMasterKey()` returns false, persistence to IndexedDB is aborted immediately, preventing plaintext from ever being saved tagged as encrypted.
+  - When the vault is unlocked, `flushOnUnmount` symmetrically encrypts outbound content via `SyncCryptoGateway.encryptOutbound` before persisting dirty state to IndexedDB.
+- **Finally Block Reset Guard in File Hydration (LUGX-047):**
+  - Resolved critical defect in `loadInitialFile` where early returns on `vault_locked` or decryption failures fell through to the `finally` block, unconditionally resetting `hydratedRef.current = true`, `setHydration("ready")`, and unlocking the editor.
+  - Added `isVaultLockedExit` and `isFatalExit` sentinel flags preventing `finally` from resetting state and keeping the editor surface safely locked (`adapter.setEditable(false)`).
+- **Fatal Hydration Isolation on Decryption Failure (LUGX-048):**
+  - When local or server decryption fails in `loadInitialFile`, `handleRemoteUpdate`, or `handleVaultUnlocked`, the orchestrator immediately sets `hydration: "fatal"`, disables editor editing (`adapter.setEditable(false)`), and surfaces a user-facing Arabic error banner. Raw ciphertext or broken decryption strings are never rendered into the editor buffer.
+- **Module-Level AAD Validation (LUGX-056):**
+  - Hoisted `buildFileAAD(userId, fileId)` to module scope in `use-editor-orchestrator.ts`.
+  - Enforced strict non-empty string validation for both `userId` and `fileId`, throwing explicit informative errors on empty, whitespace-only, or non-string parameters to prevent corrupted AAD authentication tags.
+
+### UI Bug Fixes & Concurrency Hardening (`src/components/editor/search-replace.tsx`, `src/components/files/file-context-menu.tsx`, `src/components/layout/sidebar.tsx`)
+
+- **Stale Range Validation in Search & Replace (LUGX-054):**
+  - Fixed cache invalidation bug in `SearchReplace` where concurrent document modifications or delayed timers caused `replaceCurrentMatch` and `replaceAllMatches` to replace incorrect text slices.
+  - Added synchronous verification: `currentDoc.slice(from, to) === searchText` before executing any replacement. If a mismatch is detected, replacement is aborted and matches are re-indexed synchronously via `findMatches()`.
+- **Optimistic Concurrency Control on Encryption Toggle (LUGX-055):**
+  - In `FileContextMenu`, passed `expectedVersion` and `expectedETag` preconditions to `toggleFileEncryption` for both encryption and decryption transitions.
+  - On version conflict (HTTP 412), alerts the user and refreshes directory state, preventing silent overwrites of concurrent remote changes.
+- **Offline-First Vault Import Durability (LUGX-057):**
+  - In `Sidebar`, fixed vault document import to persist dirty encrypted state (`isDirty: true`, `lastSyncedAt: 0`) to local IndexedDB *before* attempting server upload.
+  - Only marks clean (`isDirty: false`) with updated version and ETag after the server responds with HTTP 200, guaranteeing zero document loss if network disconnects during import.
+  - Updated `importFile` server action (`src/server/actions/import-file.ts`) to return canonical `version` and `etag` fields in the response payload.
+
+### Storage & System Resilience Hardening (`src/lib/sync/indexeddb.ts`, `src/app/api/ai/stream/route.ts`)
+
+- **IndexedDB Vault Profile Cache Resilience:**
+  - Wrapped `saveCachedVaultProfile` and `getCachedVaultProfile` in defensive `try/catch` handlers with null-safe initialization checks, preventing unhandled promise rejections if IndexedDB is closed or inaccessible.
+- **AI Streaming Rate Limiting Sequence & Quota Guard:**
+  - Deferred rate limiter evaluation until after preliminary request validations and correlation headers are attached, preventing invalid or malformed requests from consuming rate limit tokens while preserving correlation traceability.
+- **Test Infrastructure Stability (`vitest.config.mts`, `src/test/editor/markdown-editor.ui.test.tsx`):**
+  - Cleaned up dynamic style tags in `markdown-editor.ui.test.tsx` afterEach hooks without wiping base JSDOM head elements.
+  - Adjusted test worker memory allocation (`--max-old-space-size=4096`) and timeout parameters in `vitest.config.mts` for deterministic execution across heavy UI suites.
+
+### Test Suite Normalization (`src/test/`)
+
+- Added 5 new isolated test suites with pure relative path imports (22 passing tests total):
+  - `src/test/editor/use-editor-autosave.test.ts` (10 contract tests)
+  - `src/test/editor/editor-security-hardening.test.ts` (8 regression tests covering LUGX-004, LUGX-047, LUGX-048, LUGX-056)
+  - `src/test/editor/search-replace.stale-ranges.test.tsx` (2 UI tests covering LUGX-054)
+  - `src/test/files/file-context-menu.encryption-conflict.test.tsx` (1 UI test covering LUGX-055)
+  - `src/test/layout/sidebar-import.vault.test.tsx` (1 UI test covering LUGX-057)
+
+## [1.44.1] - 2026-10-04 (Intra-Line Word-Level Diff & Sub-Line 3-Way Merge Upgrade)
+
+### Intra-Line Word-Level Diff & Sub-Line 3-Way Merge Upgrade (`src/lib/sync/diff3.ts`, `src/lib/sync/conflict-resolver.ts`, `src/components/sync/conflict-dialog.tsx`)
+
+- **Native Zero-Dependency Micro-LCS Subsystem:**
+  - Implemented `computeWordSpans` and Unicode tokenization via `tokenizeLine` (`/\s+|[\p{L}\p{N}]+|[^\s\p{L}\p{N}]+/gu`), preserving whitespace, multilingual text (Arabic, Latin, CJK), numbers, and punctuation as atomic tokens without external library overhead.
+  - Generates deterministic `WordSpan` sequences (`equal`, `insert`, `delete`) comparing token streams in sub-millisecond time.
+- **Word-Level Visual Highlighting:**
+  - Extended `DiffOp` union with `{ type: 'modify', oldValue, newValue, spans: WordSpan[] }`.
+  - Upgraded `ConflictDialog` (`DiffLine`, `LocalHighlightedPreview`, `ServerHighlightedPreview`) with inline badge highlighting: red strike-through for deleted tokens and green badges for inserted tokens, completely eliminating coarse whole-line replacements for minor edits.
+- **Sub-Line Disjoint 3-Way Merge (`trySubLineMerge`):**
+  - Enabled fine-grained intra-line 3-way merging controlled via `Diff3Options.subLineMerge` (default: `true`).
+  - Automatically merges non-overlapping token modifications occurring on the same line number relative to base, avoiding false conflict blocks on concurrent sub-line edits.
+  - Fail-closed Markdown syntax protection: candidates validate against `validateMarkdownSyntaxIntegrity`, falling back to safe conflict markers if token merging corrupts code fences or table delimiters.
+- **Deletion Guard Architecture (`applyDeletionGuard`):**
+  - Enforced `baseSnapshot` verification in `diff3Merge` and `computeVisualDiff`: lines present on the server and missing in local that were present in `baseContent` are classified as user deletions and strictly kept deleted, eliminating resurrected lines.
+  - Prunes matching base and server lines while preserving genuine server modifications on deleted lines as true conflicts.
+
+### Atomic Editor Synchronization & Inbound Remote Update Bugfix (`src/hooks/use-editor-orchestrator.ts`, `src/lib/sync/sync-pull-engine.ts`)
+
+- **Atomic Remote Update Pipeline & Race Condition Elimination:**
+  - Fixed race condition where typing immediately after receiving an inbound remote update dropped the server text due to uncanceled in-flight auto-save timers and missing synchronous in-memory editor content reference. Added `editorContentRef`, in-flight timer cancellation, synchronous dirty flag reset, and atomic `baseSnapshot` persistence.
+  - Implemented synchronous in-memory `editorContentRef` bridge preventing editor buffer drop upon user typing.
+  - Added immediate cancellation of in-flight debounced auto-save timers (`debouncedAutoSaveRef.current?.cancel?.()`) preventing stale local overwrites of incoming server content.
+  - Enforced synchronous `isDirtyRef.current = false` reset alongside `setIsDirty(false)`.
+  - Enforced atomic IndexedDB write with `baseSnapshot` and `isDirty: false` in `use-editor-orchestrator.ts` and atomic `baseSnapshot` instantiation and persistence in `sync-pull-engine.ts` during pull ingestion.
+  - Added hydration queuing (`pendingRemoteUpdateRef`) applying buffered remote updates instantly once hydration is ready.
+
+### Documentation Governance & Verification
+
+- **Living Specifications Updated:**
+  - `docs/reference/sync-api.md`: added § 14 documenting `WordSpan`, `DiffOp`, and `Diff3Options` contracts, along with `computeVisualDiff`, `computeWordSpans`, and `applyDeletionGuard`.
+  - `docs/architecture/sync/three-way-conflict-resolution.md`: added § 2.8 Sub-Line Word/Token 3-Way Merge, § 2.9 Word-Level Visual Diffing, and § 2.10 Deletion Guard Architecture with Mermaid diagrams.
+  - `docs/architecture/sync/editor-sync-orchestration.md`: updated § 6d.1 documenting the Atomic Remote Update Pipeline (`editorContentRef`, in-flight timer cancellation, synchronous dirty flag reset, atomic `baseSnapshot` persistence, hydration queuing) with Mermaid sequence diagram.
+  - `docs/records/closures/extensions/intra-line-word-diff-and-sub-line-3way-merge-closure.md`: published milestone closure dossier.
+- **Automated Verification:**
+  - `src/test/sync/diff3-sub-line-merge.test.ts` (37 tests covering Unicode Arabic/emoji tokenization, sub-line disjoint merges, overlapping conflict detection, AST fail-closed syntax protection, and Deletion Guard retention).
+  - `src/test/editor/editor-orchestration.integration.test.ts` (19 tests covering orchestration lifecycle, atomic remote update reflection with post-update typing retention, and auto-lock cancellation).
+  - 362/362 vitest matrix unit and integration tests passed across 22 test files (100% success rate), including 60 tests in `src/test/sync/sync-conflict-resolver.test.ts`, 37 tests in `src/test/sync/diff3-sub-line-merge.test.ts`, and 19 tests in `src/test/editor/editor-orchestration.integration.test.ts` (88 total editor tests passed).
+  - 3/3 live PostgreSQL integration tests passed against isolated Neon test branch (`src/test/sync/conflict-resolution.integration.test.ts`) for 365 total passed tests (100% pass rate).
+  - 0 TypeScript compiler errors (`tsc --noEmit`), 0 ESLint errors (`npm run lint`), 100% Markdown link integrity (`scripts/check-markdown-links.mjs`).
+
+## [1.44.0] - 2026-10-04 (Phase 16: Thin Coordinator SyncManager Decomposition & Subsystem Extraction)
+
+### Thin Coordinator Architecture (`src/lib/sync/sync-manager.ts`)
+
+- **Monolithic Decomposition & Single-File Complexity Reduction (TD-16):**
+  - Decomposed the legacy monolithic `SyncManager` (1,952 lines of code) into a lightweight coordinator pattern measuring 342 lines (304 executable code lines), satisfying the < 350-line target.
+  - Retains 100% backward-compatible public API signatures: `init()`, `destroy()`, `sync()`, `queueSync()`, `syncFile()`, `getStatus()`, `onStatusChange()`, `onRemoteUpdate()`, `setConflictCallback()`, and encrypted conflict delegates.
+  - Coordinates high-level synchronization lifecycle, connection state transitions (`online`/`offline`), auto-sync timers, and reactive vault unlock subscriptions.
+  - Reuses the existing `SyncRollback` implementation (`src/lib/sync/rollback.ts`, 304 lines) without modification, injecting `this.rollback` into all specialized sub-engines.
+
+### Dedicated Sync Queue Worker (`src/lib/sync/sync-queue-worker.ts`)
+
+- **Queue Processing & Outbound Push Extraction:**
+  - Extracted 766 lines of outbound queue processing, batch push dispatching, and exponential backoff retry scheduling.
+  - Single-flight processing guarded via `isQueueProcessing` to prevent overlapping executions.
+  - Computes randomized backoff delays with jitter (`calculateBackoffDelay`) to avoid network retry thundering herds.
+  - Non-destructive checkpoint cleanup: pre-sync checkpoints captured via `rollback.createCheckpoint(file.id, 'pre_sync')` are cleanly discarded via `rollback.removeCheckpoint()` on network errors, preserving local edits without reverting offline work (LUGX-013).
+  - Eliminates double-push anomalies by filtering out files with active `queued`/`syncing` operations and locked encrypted conflicts.
+
+### In-Memory Encrypted Conflict Store (`src/lib/sync/sync-encrypted-conflict-store.ts`)
+
+- **Locked Vault Conflict Quarantine & Reactive Auto-Resolution:**
+  - Extracted 447 lines managing in-memory `CONFLICT_LOCKED` quarantine for encrypted payloads encountering HTTP 412 while the vault is locked.
+  - Bounded memory backpressure: caps quarantined conflicts at `MAX_QUARANTINED_CONFLICTS = 100` with FIFO oldest eviction via linear timestamp scan, while updates to existing keys are false-eviction immune.
+  - Provides real-time quarantine diagnostics (`getQuarantineDiagnostics`), discard routines (`discardPendingEncryptedConflict`), and vault-unlock auto-resolution.
+  - Reactive unlock resolution: decrypts local, base, and server envelopes in RAM upon vault unlock, executes deterministic 3-way Diff3 merge, validates Markdown AST syntax integrity, re-encrypts with a fresh CSPRNG IV, and dispatches the resolved document upstream.
+
+### Incremental Sync Pull Engine (`src/lib/sync/sync-pull-engine.ts`)
+
+- **Cursor Traversal & Inbound Remote Updates Extraction:**
+  - Extracted 537 lines handling incremental server change synchronization (`pullUpdates`), pagination cursor traversal, and per-file updates (`pullFile`).
+  - Remote tombstone reconciliation: applies server deletion tombstones (`deletedAt !== null`) locally, removing local copies and marking pending operations failed.
+  - Inbound pull overwrite protection: strictly aborts `pullFile` if the local document is in `syncStatus === 'conflict'` or actively quarantined within `ConflictStore`, preventing remote overwrites of unmerged local drafts (LUGX-012, LUGX-099).
+  - Integrates `SyncCryptoGateway` to decrypt inbound payloads before broadcasting `RemoteUpdateEvent` to editor listeners.
+
+### Centralized Domain Contracts (`src/lib/sync/sync-manager.types.ts`)
+
+- **Contract Centralization & Circular Dependency Elimination:**
+  - Extracted 126 lines establishing the authoritative type contracts for the sync subsystem.
+  - Standardized `SyncManagerConfig`, `SyncStatus`, `SyncResult`, `FileSyncResult`, `RemoteUpdateEvent`, and callback interfaces (`SyncStatusCallback`, `RemoteUpdateCallback`, `ConflictCallback`).
+  - Decoupled contracts from runtime implementation classes, guaranteeing zero circular import dependencies across all sub-engines.
+  - Re-exported all extracted classes and contracts through `src/lib/sync/index.ts`.
+
+### Technical Debt & Documentation Governance
+
+- **Technical Debt Register (`docs/TECHNICAL_DEBT_REGISTER.md`):**
+  - Marked TD-16 as resolved (Phase 16 / 2026-10-04) with comprehensive documentation of line count reductions, architectural delegation, and zero consumer breakage.
+- **Living Architecture & Reference Specifications Updated:**
+  - `docs/reference/sync-api.md`: updated pull protection guard citations to `SyncPullEngine.pullFile` and added § 13 documenting `SyncManager` Thin Coordinator class.
+  - `docs/architecture/sync/editor-sync-orchestration.md`: synchronized remote update pipeline and push dispatch citations to `SyncPullEngine` and `SyncQueueWorker`.
+  - `docs/architecture/sync/three-way-conflict-resolution.md`: synchronized false conflict elimination and pull overwrite guard references to `SyncPullEngine` and `SyncQueueWorker`.
+  - `docs/architecture/sync/sync-lifecycle-architecture.md`: updated inbound ingestion pipeline attributing `CONFLICT_LOCKED` quarantine to `SyncEncryptedConflictStore` and push filtering to `SyncQueueWorker.pushDirtyFiles`.
+  - `docs/plans/COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md`: transitioned Phase 16 to `✅ COMPLETED` with exact line counts and verification evidence.
+  - `docs/README.md`: updated directory structure and closures table to index Phase 16 closure dossier.
+  - Published closure dossier: `docs/records/closures/core-hardening/phase-16-sync-manager-decomposition-and-thin-coordinator-closure.md`.
+- **Automated Verification:**
+  - 306/306 vitest unit and integration tests passed across 21 test files (100% success rate).
+  - 0 TypeScript compiler errors (`tsc --noEmit`), 0 ESLint errors (`npm run lint`), 100% Markdown link integrity.
+
+## [1.43.1] - 2026-10-03 (Phase 15.1: Deterministic Dependency Security Audit Gate)
+
+### Security & CI - Production Fail-Closed Audit Gate with Developer-Managed Allowlist (TD-15)
+
+- **Root Cause:**
+  - Advisory `GHSA-vfj7-8cjw-p6xm` / `CVE-2026-93687` (`braces <= 3.0.3`, `CWE-674`) disclosed upstream in a pre-existing transitive dev dependency (`eslint-config-next` → `@next/eslint-plugin-next` → `fast-glob` → `micromatch` → `braces`).
+  - `npm audit --audit-level=high` failed CI Stage 1 (`quality-gate`); no patched version published; `npm audit fix --force` would downgrade `eslint-config-next` to `14.2.35` (incompatible with Next.js 16 / ESLint 9).
+
+- **Security Audit Gate (`scripts/ci-audit.mjs`):**
+  - Tier 1: `npm audit --omit=dev` — any production advisory fails CI (zero-tolerance, no allowlist).
+  - Tier 2: full-tree audit compared against an ID-exact `ALLOWLIST` keyed by GHSA ID; any unapproved advisory fails CI.
+  - Each allowlist entry carries `debtId`, `scope`, and `reason`; approved advisories are printed as CI notices.
+  - Unparseable `npm audit` output throws and fails CI.
+
+- **CI & Tooling (`.github/workflows/ci.yml`, `package.json`):**
+  - Replaced `npm audit --audit-level=high` with `node scripts/ci-audit.mjs` in the `Dependency Security Audit` step.
+  - Added `npm run audit:ci` script.
+
+- **Documentation:**
+  - Registered `TD-15` in `docs/TECHNICAL_DEBT_REGISTER.md` with revisit condition (`braces >= 3.0.4` or upstream chain change).
+  - Synced `docs/reference/ci-pipeline.md` (Stage 1 table + diagram; stale unit/live counts corrected to 81/980 and 21/119), `docs/reference/test-database-isolation.md`, and `docs/README.md` verification commands.
+  - Added closure dossier `docs/records/closures/core-hardening/phase-15-1-ci-dependency-security-audit-gate-closure.md`.
+
+- **Verification:**
+  - `node scripts/ci-audit.mjs`: exit 0 — 0 production vulnerabilities; 1 approved dev advisory (TD-15); 0 unapproved.
+  - No `src/**` changes; test baseline unchanged (81 unit suites / 980 tests; 21 live suites / 119 tests).
+
+## [1.43.0] - 2026-10-03 (Phase 15: Durable IDB Conflict Quarantine, Diff3 Hardening & Tab Isolation)
+
+### Added & Hardened - Durable Conflict Quarantine in IndexedDB, Hunt-McIlroy Diff3 Engine & User-Scoped Tab Channels
+
+- **Durable Conflict Quarantine in IndexedDB (`src/lib/idb/conflict-store.ts`, `src/lib/sync/indexeddb.ts`, `src/lib/sync/idb-types.ts`, `src/lib/sync/sync-manager.ts`):**
+  - Remediates audit findings `LUGX-003, LUGX-010, LUGX-089, LUGX-101`.
+  - Added `syncStatus?: 'synced' | 'dirty' | 'conflict'` and `conflictData?: { serverVersion, localVersion, baseVersion, detectedAt }` to `IDBFile`, encrypted at rest with device key and AAD.
+  - Implemented `ConflictStore` managing durable quarantine persistence in IndexedDB.
+  - Hardened `SyncManager.pullFile`: strictly refuses to overwrite, modify, or delete (via tombstone) files in conflict quarantine.
+  - Added clean state transitions upon resolution (`synced` on server adoption, `dirty` with `isDirty = true` on local retention to ensure subsequent push passes upload local edits).
+
+- **Hunt-McIlroy Deterministic Diff3 Engine (`src/lib/sync/diff3.ts`, `src/lib/sync/conflict-resolver.ts`):**
+  - Remediates audit findings `LUGX-045, LUGX-047, LUGX-050, LUGX-051`.
+  - Implemented deterministic Pierce / Hunt-McIlroy 3-way merge engine operating strictly on plaintext tokens.
+  - Solved token erasure bugs on duplicate and repeated lines (such as `D\nC\nC` in `LUGX-045`) and adjacent blank lines.
+  - Added ciphertext execution guard throwing `TypeError` if non-decrypted content is passed.
+
+- **User-Scoped Cross-Tab Synchronization (`src/lib/sync/cross-tab-sync.ts`, `src/lib/sync/tab-sync.ts`):**
+  - Remediates audit finding `LUGX-109`.
+  - Scoped BroadcastChannel names to `lugx_sync_${userId}` to isolate multi-tenant tab sessions.
+  - Created `createUserTabSync(userId)` controller.
+  - Preserved backward-compatible fallback to `textai_cross_tab_sync` for ambient/unauthenticated contexts.
+  - Implemented anti-echo tab ID filtering (`senderTabId !== currentTabId`).
+
+- **Automated Verification:**
+  - Added `src/test/sync/sync-durable-conflict.test.ts` (4/4 tests passed).
+  - Added `src/test/sync/sync-tab-isolation.test.ts` (7/7 tests passed).
+  - Added regression test suite in `src/test/sync/sync-conflict-resolver.test.ts` (42/42 tests passed).
+  - Full project test suite: 81 test files passed, 980 tests passed (100% green).
+  - TypeScript type check (`tsc --noEmit`) 100% clean.
+
+## [1.42.0] - 2026-10-03 (Phase 14: Local Sync Queue & Atomic CAS with localRevision)
+
+### Added & Hardened - Lean CAS Concurrency Control, Monotonic localRevision, Strict Operation Coalescing & Non-Destructive Push Resilience
+
+- **Lean CAS (Compare-And-Swap) Concurrency Control (`src/lib/sync/indexeddb.ts`, `src/lib/sync/sync-manager.ts`):**
+  - Remediates audit findings `LUGX-010, LUGX-011`.
+  - Added atomic CAS check in `IndexedDBManager.commitFileAndOperationSync` and `markFileClean` comparing `sentRevision` with `file.localRevision`.
+  - If `file.localRevision === sentRevision`: confirmed push sets `isDirty = false`, updating server `version` and `etag`.
+  - If `file.localRevision > sentRevision`: local edits occurred while the request was in flight. Retains **`isDirty = true`** and updates server `version`, guaranteeing the newer local edits are never lost and will be delivered on the subsequent sync cycle.
+  - Passes server-returned `version` atomically to eliminate false 412 conflicts and subsequent edit drops.
+
+- **Monotonic Revision Tracking in Client Hook (`src/hooks/use-sync.ts`, `src/lib/sync/idb-types.ts`):**
+  - Remediates audit finding `LUGX-010`.
+  - Added `localRevision?: number` to `IDBFile` and `sentRevision?: number` to `IDBOperation`.
+  - Updated `saveLocal` to monotonically increment `localRevision` on every local modification, binding the revision to the coalesced operation record in IndexedDB.
+
+- **Dedicated & Strict Operation Coalescing Module (`src/lib/sync/coalescing.ts`, `src/lib/sync/index.ts`):**
+  - Remediates audit finding `LUGX-040`.
+  - Extracted pure `canCoalesce` and `coalesceOperations` logic into standalone module `src/lib/sync/coalescing.ts`.
+  - Restricts coalescing strictly to operations in `queued` status (`synced === false`).
+  - Prohibits coalescing into active in-flight `syncing` operations, eliminating concurrent mutation races.
+  - Prohibits merging into operations trapped in `conflict`, `failed`, or `dead_letter` states, preventing fresh user edits from getting stranded.
+  - Resets `attempts` to 0, clears backoff timers (`nextRetryAt = undefined`), and updates `localRevision` on merged operations.
+
+- **Non-Destructive Push Failure Resilience (`src/lib/sync/sync-manager.ts`):**
+  - Remediates audit finding `LUGX-013`.
+  - Excised destructive `rollback.rollback` invocations from network push error handlers in `processSingleOperation` and `pushFile`.
+  - Transient network disconnects preserve local dirty state and schedule backoff retry without overwriting user edits with pre-push checkpoints.
+
+- **Comprehensive Automated Verification (`src/test/sync/sync-cas-concurrency.test.ts`):**
+  - Created dedicated concurrency test suite (9/9 tests passed).
+  - Verified Lean CAS clean transitions, in-flight mutation protection, queued-only coalescing, and non-destructive push failure handling.
+  - Zero regressions across core sync suites: `sync-indexeddb.test.ts` (14/14), `sync-manager.test.ts` (36/36), `sync-rollback.test.ts` (22/22), `use-sync.test.ts` (14/14), `contracts.test.ts` (20/20).
+  - 0 TypeScript errors (`tsc --noEmit`), 0 ESLint errors (`npm run lint`), 100% metrics synchronization (79 suites / 966 tests), and 100% Markdown link integrity.
+
+## [1.41.0] - 2026-10-02 (Phase 13: Redis Fail-Closed Policies & Overlapping Cron Protection)
+
+### Added & Hardened - Dual-Mode Rate Limiting, Upstash REST CI Proxy, Distributed Cron Locking & Hermetic Test Isolation
+
+- **Per-Tier Fail-Closed & Conditional ZADD Limiting (`src/lib/rate-limit.ts`, `src/lib/redis.ts`):**
+  - Remediates audit finding `LUGX-079`.
+  - Configured explicit per-tier policies: `fail-closed` for sensitive routes (`AI_STREAM`, `AUTH`) returning HTTP 503 Service Unavailable with `Retry-After: 10`, and `fail-open` for offline-first continuity (`SYNC_API`, `FILE_API`).
+  - Implemented conditional `zadd`: pipeline checks current token count first via `zcard`, executing `zadd` strictly when under the limit to prevent the client retry lock trap.
+  - Added `isRedisConfigured()` preventing DNS resolution timeouts to `placeholder-redis.upstash.io` in unconfigured environments.
+
+- **CI Upstash REST Compatibility & Protocol Translation (`.github/workflows/ci.yml`, `src/test/infrastructure/redis-mock-server.ts`):**
+  - Remediates audit finding `LUGX-093`.
+  - Deployed `hiett/serverless-redis-http:latest` service container in Stage 4 on port 8079 to translate `@upstash/redis` HTTP REST requests to Redis RESP commands.
+  - Upgraded in-process `UpstashHttpMockServer` to support full Sorted Set primitives (`zadd`, `zcard`, `zremrangebyscore`, `zcount`) for hermetic local testing without Docker dependencies.
+
+- **Distributed Cron Lock & Overlap Protection (`src/lib/cron/lock.ts`, `src/app/api/cron/*`, `.github/workflows/cron.yml`):**
+  - Remediates audit findings `LUGX-096, LUGX-120`.
+  - Implemented `acquireCronLock(jobName, ttlSeconds)` leveraging atomic Redis `SET ... NX EX` with in-memory TTL fallback.
+  - Guarded `/api/cron/expire-reservations` and `/api/cron/purge-deleted` with exclusive distributed locks, safely skipping overlapping executions with HTTP 200 `{ success: true, skipped: true }`.
+  - Exported `POST = GET` on `/api/cron/purge-deleted` for full method parity with scheduler webhooks.
+  - Decoupled `purge-deleted` and `expire-reservations` into independent GitHub Actions jobs, preserved error response bodies with `--fail-with-body`, and introduced a backlog drain loop.
+
+- **Hermetic Test Isolation & Worker Concurrency Regulation (`.env.test`, `src/test/load-test-env.ts`, `vitest.config.mts`, `vitest.live.config.mts`):**
+  - Enforced strict architectural boundary: Unit tests (`npm run test`) never load `.env.local` or `.env` and run exclusively with hermetic dummy placeholders (`placeholder-redis`, dummy DB).
+  - External credentials (isolated Neon test database branch and live Upstash Redis) are loaded strictly and exclusively when running live integration tests (`npm run test:live`).
+  - Added `maxWorkers: 3` to `vitest.config.mts` on Windows developer environments to prevent CPU/memory starvation and eliminate forks worker spawn timeouts.
+
+- **Comprehensive Automated Verification:**
+  - Added `src/test/infrastructure/cron-overlap.test.ts` (4/4 tests passed).
+  - Hardened `src/test/infrastructure/rate-limit.test.ts` (11/11 tests passed).
+  - Hardened `src/test/infrastructure/cron-expire-reservations.test.ts` (6/6 tests passed).
+  - Ran `src/test/infrastructure/cron-expire-reservations.live.test.ts` (3/3 live tests passed on Neon).
+  - Ran `src/test/infrastructure/redis-live-integration.test.ts` (6/6 live tests passed).
+  - All 78 unit test suites and 957 tests passing 100%.
+  - All 21 live integration test suites and 117 tests passing 100%.
+
+## [1.40.0] - 2026-10-02 (Phase 12: Stripe 1:N Subscriptions, Idempotency & Webhook Hardening)
+
+### Added & Hardened - Stripe 1:N Subscriptions, Dynamic MAX(tier) Derivation, Webhook Retry Mandate & Customer Portal
+
+- **Strict Webhook Error Handling & Retry Mandate (`src/app/api/stripe/webhook/route.ts`, `src/server/actions/subscription-actions.ts`):**
+  - Remediates audit findings `LUGX-025, LUGX-148`.
+  - Eliminated error swallowing. Webhook immediately returns HTTP 500 on transient database disconnects/unhandled errors to mandate Stripe retries, and returns HTTP 503 (`Retry-After: 5`) on lock contention. Returns HTTP 200 ONLY on successful transaction commit or genuine idempotent duplicates.
+  - Updated `isSubscriptionEventProcessed` to re-throw database query errors so transient failures never pretend to be successful or silently pass.
+
+- **1:N Multi-Subscription Tracking & MAX(tier) Derivation (`src/server/services/billing-service.ts`, `src/server/actions/subscription-actions.ts`):**
+  - Remediates audit findings `LUGX-027, LUGX-135`.
+  - Implemented authoritative `BillingService` managing 1:N subscriptions per user indexed by `stripe_subscription_id`.
+  - Calculates effective user tier dynamically via `BillingService.calculateEffectiveTier` using numeric hierarchy (`ultra: 2 > pro: 1 > free: 0`).
+  - Recalculates effective tier on cancellation without downgrading users holding other active subscriptions (e.g. canceling Ultra retains Pro).
+
+- **Multi-Source User ID Resolution & Grace Period Preservation (`src/server/services/billing-service.ts`, `src/app/api/stripe/webhook/route.ts`):**
+  - Remediates audit findings `LUGX-026, LUGX-141`.
+  - Resolved user ID via 4 candidate sources: `metadata.userId`, `subscription_details.metadata.userId`, fast indexed lookup on `users.stripeCustomerId`, or existing subscription record matching `stripe_subscription_id`.
+  - Preserved active tier on initial `invoice.payment_failed` by updating status to `past_due` without immediate tier wipe, allowing smart retry windows.
+
+- **Paused Status & Reverse Price-to-Tier Mapping (`src/server/db/schema/subscriptions.ts`, `src/lib/stripe/config.ts`, `src/lib/stripe/webhook-event-reducer.ts`):**
+  - Remediates audit findings `LUGX-068, LUGX-069`.
+  - Added `'paused'` status to `subscription_status` enum in DDL migration `0012_add_paused_to_subscription_status.sql`.
+  - Treated `paused` as non-terminal in `webhook-event-reducer.ts` (`isTerminal: false`) allowing seamless resumption.
+  - Provided `getTierFromPriceId(priceId)` helper for reverse tier lookup from Stripe Price IDs.
+
+- **Stripe Customer Portal Integration (`src/server/services/billing-service.ts`):**
+  - Remediates audit finding `LUGX-149`.
+  - Added `BillingService.createCustomerPortalSession(userId, returnUrl?)` using `stripe.billingPortal.sessions.create` for self-serve subscription management.
+
+- **Comprehensive Automated Verification:**
+  - Added `src/test/server/billing-service.test.ts` (16/16 unit tests passed).
+  - Expanded `src/test/api/stripe-webhook.test.ts` (18/18 unit tests passed).
+  - Expanded `src/test/api/stripe-webhook.live.test.ts` (7/7 live tests passed against Neon branch).
+  - 0 TypeScript compiler errors (`npx tsc --noEmit`), 0 ESLint errors (`npm run lint`), and 100% markdown link integrity.
+
+## [1.39.0] - 2026-10-02 (Phase 11: AI Service & Deterministic Server Settlement)
+
+### Added & Hardened - Revocation of Client Financial Authority, Server-Authoritative Stream Settlement, Replay Defense & Decoupled File Commit
+
+- **Revocation of Client Financial Authority (`src/server/actions/ai-ops.ts`, `src/server/actions/ai-commit.ts`, `src/server/services/ai-settlement-service.ts`):**
+  - Remediates audit findings `LUGX-001, LUGX-002, LUGX-006, LUGX-021, LUGX-030`.
+  - Completely stripped `refundAIReservation`, `commitAIReservation`, `reserveAndUpdateUsage`, and `refundUsage` from public `"use server"` Server Action boundaries, eliminating client-side manipulation of quota balances and database reservations.
+  - Encapsulated atomic reservation and settlement business logic inside new dedicated service `src/server/services/ai-settlement-service.ts`, strictly guarded by `import "server-only"`.
+  - Retained only safe read-only operations as public server actions (`getUserTier`, `getTodayUsage`, `getAIQuota`, and authenticated `getAIReservationStatus`).
+
+- **Server-Authoritative Streaming Settlement (`src/app/api/ai/stream/route.ts`, `src/hooks/use-ai-stream.ts`):**
+  - Remediates audit findings `LUGX-007, LUGX-008, LUGX-009, LUGX-029, LUGX-031, LUGX-032, LUGX-033, LUGX-067`.
+  - **Commit Before Done Frame:** The stream route autonomously commits the reservation (`commitAIReservation(operationId)`) server-side immediately prior to enqueuing the terminal `{ type: "done" }` NDJSON frame.
+  - **Pre-TTFT vs. Post-TTFT Failure Settlement:**
+    - If upstream model generation fails or client disconnects before the first token (`ttftMs === null`), the server automatically refunds the quota reservation (`refundAIReservation`).
+    - If connection drops or errors occur after tokens were streamed (`ttftMs !== null`), the server autonomously settles the reservation as committed, accounting for consumed provider compute.
+  - **Zero-Latency Client Stop:** Cleansed `useAIStream` of all client-side settlement RPC invocations. `stopStream()` aborts instantly (0ms latency) without awaiting network round-trips, letting server stream cancellation handles settle state autonomously.
+
+- **Replay Attack Defense & Request Fingerprint Validation (`src/server/services/ai-settlement-service.ts`, `src/app/api/ai/stream/route.ts`):**
+  - Remediates audit findings `LUGX-115, LUGX-116, LUGX-117, LUGX-118, LUGX-119, LUGX-120`.
+  - Implemented deterministic SHA-256 fingerprinting: `request_hash = sha256(userId + ":" + operation + ":" + fileId + ":" + text)`.
+  - Enforced anti-replay validation: Reusing an existing `operationId` with divergent payload parameters or from a different user session is detected as a replay attack and rejected with `HTTP 409 Conflict` (`Replay attack detected: operationId reused with divergent payload`).
+
+- **Decoupled Document Persistence & Idempotency (`src/server/actions/ai-commit.ts`):**
+  - Remediates audit findings `LUGX-121, LUGX-122, LUGX-123`.
+  - Decoupled `commitAIFileOperation` from requiring active pending `reserved` status, allowing the user's manual "Accept" action to succeed even after the server committed the quota reservation on stream completion.
+  - Implemented document-level idempotency: if `currentFile.version > expectedVersion` or `(currentFile.version === expectedVersion && currentFile.content === resultContent)`, the commit returns idempotent success (`already_committed`) without redundant version increments or transaction rollbacks.
+
+- **Gemini HTTP 400 Key-Failure Error Classification (`src/lib/ai/key-rotation.ts`):**
+  - Remediates audit findings `LUGX-135, LUGX-148`.
+  - Updated `classifyGeminiError` to inspect Google ErrorInfo details and message strings for API key invalidation/suspension signatures (`API_KEY_INVALID`, `SERVICE_DISABLED`, `CONSUMER_SUSPENDED`, `billing not enabled`, `has not been used in project ... before or it is disabled`).
+  - Classifies these errors as `category: 'authentication'` with `retryableWithKey: true`, triggering immediate key rotation to available pool keys instead of prematurely terminating requests as non-rotatable client faults.
+
+- **Comprehensive Automated Verification:**
+  - Added 4 dedicated unit/integration test suites:
+    - `src/test/ai/ai-client-authority-revocation.test.ts` (4/4 passed)
+    - `src/test/ai/ai-stream-replay-prevention.test.ts` (3/3 passed)
+    - `src/test/ai/ai-authoritative-stream-settlement.test.ts` (4/4 passed)
+    - `src/test/ai/ai-key-rotation-400.test.ts` (5/5 passed)
+  - 100% green across all 17 AI test files (156 tests) and 8 editor test files (86 tests).
+  - 0 TypeScript compiler errors (`npx tsc --noEmit`).
+
+## [1.38.0] - 2026-10-02 (Phase 10: Encrypted Content Governance, fileId Mandate & Export Warning)
+
+### Added & Hardened - AI Stream Gatekeeper, Governed Plaintext Export & SyntaxTree Parse Synchronization
+
+- **Mandatory `fileId` on AI Streaming (`src/app/api/ai/stream/route.ts`):**
+  - Remediates audit finding `LUGX-085` (optional `fileId` bypass in AI route gatekeeper).
+  - Enforced strict `fileId` validation in request body, rejecting missing or empty values with HTTP 400 (`MISSING_FILE_ID`).
+  - Added server-side check against `userVaultProfiles.allowAIOnEncryptedFiles`: encrypted documents reject AI streaming requests with HTTP 403 (`AI_PROHIBITED_ON_ENCRYPTED_FILES`) unless explicitly opted in by the user.
+
+- **Governed Document Export & Warning Modal (`src/lib/export/export-service.ts`, `src/components/export/export-warning-modal.tsx`):**
+  - Remediates audit findings `LUGX-004, LUGX-017, LUGX-019`.
+  - Added `exportDocument` facade enforcing fail-closed checks (`ENCRYPTED_EXPORT_UNCONFIRMED`) when attempting to export encrypted documents without explicit confirmation.
+  - Implemented `ExportWarningModal` in the editor workspace, alerting users before decrypted plaintext is written to local storage.
+
+- **CodeMirror 6 AST Parse Budget Synchronization (`src/components/editor/markdown/editor-adapter.ts`):**
+  - Resolved parallel test race condition in `getHeadingCount()` by replacing bare `syntaxTree(state)` with `ensureSyntaxTree(state, doc.length, 100) || syntaxTree(state)`.
+  - Guarantees 100% deterministic AST parsing up to document end under heavy CPU and test concurrency.
+
+## [1.37.0] - 2026-10-02 (Phase 9: Cryptographic Key Hierarchy, Standard AAD Contexts & Adaptive Dual-Try Recovery Migration)
+
+### Added & Hardened - Canonical AAD Contexts, Zero-Lockout Adaptive Recovery Migration & Monotonic Lock Epoch Protection
+
+- **Standardized Authenticated Additional Data (AAD) Framework (`src/lib/crypto/aad.ts`):**
+  - Formulated the uniform domain schema `lugx:v1:<domain>:<userId>[:<resourceId>]` across all cryptographic operations.
+  - Implemented typed context builders: `AAD.file(userId, fileId)`, `AAD.passwordWrap(userId)`, `AAD.recoveryWrap(userId)`, and `AAD.deviceWrap(userId, epoch)`.
+  - Added backward-compatible legacy decorators (`AAD.legacy.*`) enabling graceful fallback during migrations without code fragmentation.
+  - Added `isCanonicalAAD(aad)` runtime schema assertion utility.
+
+- **Audited Canonical BIP-0039 Wordlist (`src/lib/crypto/bip39-wordlist.ts`):**
+  - Remediates audit finding `LUGX-043`.
+  - Replaced corrupted 2052-word array with strictly verified 2,048-word English list from Bitcoin BIP-0039 standard.
+  - Purged 4 non-standard words (`coal`, `paci`, `squad`, `squash`) and restored 4 missing canonical entries (`pact`, `paddle`, `squeeze`, `tragic`).
+  - Integrated with `src/lib/sync/mnemonic.ts` using `BIP39_STANDARD_WORD_MAP` for constant-time index validation.
+
+- **Subkey Derivation & Password Normalization Engine (`src/lib/crypto/key-derivation.ts`):**
+  - Remediates audit finding `LUGX-133`.
+  - Implemented `normalizePassword(password)` applying Unicode Normalization Form KC (`NFKC`) before PBKDF2 derivation, preventing authentication failure across operating systems and input methods.
+  - Implemented high-throughput HKDF-SHA-256 (RFC 5869) subkey derivation for documents (`deriveDocumentKey`), search index keys (`deriveSearchIndexKey`), and challenge proofs (`deriveProofOfPossession`), eliminating CPU-heavy PBKDF2 operations for document-level routines.
+
+- **Adaptive Dual-Try Recovery Migration Service (`src/lib/vault/recovery.ts`):**
+  - Remediates audit finding `LUGX-005` (BIP-39 recovery phrase AAD mismatch locking out user vaults).
+  - Implemented `adaptiveUnwrapRecoverySeed`: attempts canonical context `lugx:v1:recovery:${userId}` (Try 1); on authentication tag failure, falls back to legacy creation context `vault:seed:${userId}` (Try 2).
+  - Automatically re-wraps the master key with canonical AAD and a fresh CSPRNG IV upon legacy success, persisting the upgraded envelope to IndexedDB and cloud PostgreSQL.
+  - Added `updateVaultRecoveryEnvelope` server action in `src/server/actions/vault-actions.ts`.
+
+- **In-Memory Session Key Store Concurrency & RAM Hygiene (`src/lib/sync/session-key-store.ts`):**
+  - Remediates audit finding `LUGX-016`: eliminated internal mutable buffer pointer leakage by returning detached copies (`new Uint8Array(this.masterKeyRaw)`) from `getMasterKeyRaw()`.
+  - Introduced monotonic `lockEpoch` counter and scoped execution wrapper `withMasterKey<T>`, safely aborting in-flight operations if the vault is locked concurrently to prevent encryption with all-zero keys.
+  - Remediates audit finding `LUGX-042`: decoupled programmatic key access (`getMasterKey()`, `getMasterKeyRaw()`) from activity timestamp updates, ensuring background sync and file decryptions do not postpone the 1-hour inactivity auto-lock.
+  - Added non-extractable WebCrypto `CryptoKey` background import (LUGX-084).
+
+- **Hardened Vault UI Modals & Zero-Knowledge Cleanup:**
+  - `src/components/vault/create-vault-modal.tsx`: Immediate RAM sanitization `wipeBuffer(seedBytes)` before network transport (LUGX-127), canonical AAD wrapping, and modal backdrop dismissal lockout while loading (LUGX-128).
+  - `src/components/vault/vault-unlock-modal.tsx`: Wired `adaptiveUnwrapRecoverySeed` with automatic cloud synchronization, NFKC password normalization, and backdrop click suppression while loading.
+
+- **Verification & Test Coverage:**
+  - Added `src/test/vault/adaptive-recovery-migration.test.ts` (21 unit tests covering wordlist validation, AAD assertions, dual-try recovery, re-wrap migration, race condition defense, and NFKC normalization).
+  - Updated `src/test/vault/vault-crypto.test.ts` buffer isolation verification.
+  - 100% test pass rate across all 69 unit test suites (894 tests) and 21 live database suites (118 tests).
+
+## [1.36.1] - 2026-10-01 (Ad-Hoc Milestone: Automated Test & CI Ecosystem Harmonization)
+
+### Hardened & Harmonized - Automated Test Suite Modernization, Zero Mock Clones & Docker Container Verification
+
+- **Production-Test Architectural Harmonization:**
+  - Resolved structural discrepancies between hardened Phase 8 production code and legacy automated test suites across all 6 functional domains.
+  - Purged duplicate local SQL helper functions from [`src/test/ai/ai-ops.integrity.test.ts`](../../../../src/test/ai/ai-ops.integrity.test.ts) and [`src/test/ai/ai-ops.refund.test.ts`](../../../../src/test/ai/ai-ops.refund.test.ts), migrating them to invoke real production server actions against the isolated test database.
+  - Refactored [`src/test/ai/ai-quota-idempotency.test.ts`](../../../../src/test/ai/ai-quota-idempotency.test.ts) into pure, deterministic unit tests of `quota-settlement-reducer.ts` verifying mathematical quota conservation ($U_{final} + R_{active} \equiv \text{constant}$) in $<20\text{ms}$.
+  - Merged redundant live/unit duplicate test files: `ai-server-atomic-commit.live.test.ts` merged into `ai-atomic-commit.integration.test.ts` (7/7 passed), and `ai-client-abort-propagation.test.ts` merged into `ai-client.test.ts` (24/24 passed).
+  - Relocated domain-mismatched test `src/test/parsers/file-conversion.test.ts` to `src/test/sync/file-vault-conversion.test.ts`.
+
+- **Production Scope Boundary Enforcement:**
+  - Enforced strict single-phase lifecycle rules: reverted all algorithmic changes to production code (`subscription-actions.ts`, `arabic-normalizer.ts`, `conflict-resolver.ts`), preserving system runtime stability.
+  - Preserved only minimal additive test-enablement additions: `export getTodayUsage` in `ai-ops.ts` and `DocumentStoragePayload` conversion helpers in `idb-types.ts`.
+  - Mapped discovered production code deficiencies directly to their authoritative phases in `COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md` (Phases 11, 12, 15, and 20).
+
+- **Dual-Environment Test & CI Verification:**
+  - Verified 100% test pass rate in local Vitest engine: 68 unit/contract suites (873 tests passed, 0 failures) and 21 live database suites (118 tests passed, 0 failures).
+  - Verified 100% containerized pipeline in Docker via `act push`: Stage 1 Quality Gate (`EXIT 0`) and Stage 2 Unit Contracts (`EXIT 0`).
+  - Audited documentation SSOT metrics (68 unit suites, 873 tests) and link validity (85 files, 220 links, 0 broken).
+
+## [1.36.0] - 2026-09-30 (Phase 8: Server-Authoritative Identity, Ownership & Cycle Detection)
+
+### Added & Hardened - Identity Barriers, Folder Tree Cycle Detection & Concurrency Locking
+
+- **Server-Authoritative Guard Primitives (`src/server/auth/session.ts`):**
+  - Remediates audit findings `LUGX-006, LUGX-031, LUGX-063, LUGX-067, LUGX-068, LUGX-070, LUGX-071, LUGX-072, LUGX-073, LUGX-074, LUGX-077, LUGX-085, LUGX-115, LUGX-134, LUGX-136, LUGX-137, LUGX-138, LUGX-139, LUGX-140`.
+  - Implemented `requireAuthenticatedUser()` strictly resolving user identity from server sessions, throwing `AuthenticationRequiredError` (401) on missing sessions.
+  - Implemented `requireOwnedFile(fileId, userId)` with UUID validation, enforcing uniform `ResourceNotFoundError` (404) for foreign or deleted records to eliminate resource enumeration vectors.
+
+- **Modular File & Folder Action Architecture (`src/server/actions/*`):**
+  - Modularized `src/server/actions/files.ts` (file lifecycle, mutations, zero-knowledge encryption toggling) and `src/server/actions/folders.ts` (hierarchical traversal, cycle prevention).
+  - Maintained `src/server/actions/file-ops.ts` as a unified facade re-exporting all symbols for 100% backward compatibility across all existing callers.
+
+- **Infinite Cycle Detection & Recursion Hardening (`moveFile`, `copyFile`):**
+  - Replaced the legacy 50-hop cap in `moveFile` (LUGX-073) with unbounded cycle traversal, rejecting self-moves and descendant moves with 409 Conflict.
+  - Clamped `depth` in `copyFile` (LUGX-072) to non-negative bounds and prohibited copying a folder into itself or any of its descendants.
+
+- **Optimistic Concurrency Control on Deletions (`files.ts` & `src/app/api/files/[id]/route.ts`):**
+  - Added support for `expectedVersion` in `deleteFile` server action, rejecting stale mutations with 412 Conflict.
+  - Implemented `DELETE /api/files/[id]` requiring `If-Match` or `expectedVersion` (428 Precondition Required), verifying version matches before cascading tombstones.
+
+- **Test Route Production Isolation (`src/app/api/test/e2e-auth/route.ts` - LUGX-077):**
+  - Hardened test authentication endpoints to unconditionally return 404 in `production` environments even if `PLAYWRIGHT=1` is provided.
+
+- **Ancillary Cluster Remediation:**
+  - **LUGX-067 / LUGX-139:** Hardened `updateUserProfile` with strict allowlists preventing mass assignment of sensitive columns, and preserved existing `displayName` during OAuth upsert in `syncUserToDatabase`.
+  - **LUGX-136:** Replaced non-constant-time bearer secret equality checks with `crypto.timingSafeEqual` in `expire-reservations` and `purge-deleted` cron routes.
+  - **LUGX-137:** Implemented safe JSON parsing in `create-checkout` route returning 400 on malformed payloads with error detail redaction.
+  - **LUGX-138:** Truncated generated copy and restored titles to `<= 500` characters in `src/lib/utils/file-naming.ts` to prevent PostgreSQL `varchar(500)` overflows.
+  - **LUGX-140:** Restricted OAuth `?code=` query parameter interception in `src/proxy.ts` strictly to root and login paths.
+
+- **Live & Unit Test Verification:**
+  - Authored comprehensive test suite `src/test/server/phase-08-ownership-and-cycles.test.ts` (18/18 passing).
+  - 100% test pass rate across repository: 70 unit suites (881 tests passed) and 21 live suites (100 tests passed).
+
+## [1.35.1] - 2026-09-30 (CI Test Partitioning Hardening & Living Documentation Sync)
+
+### Fixed & Hardened - Test Partitioning & Living Documentation Sync
+
+- **Vitest Live Suite Registration (`vitest.constants.mts`):**
+  - Registered `src/test/infrastructure/redis-live-integration.test.ts` in `LIVE_TEST_FILES`, resolving CI Stage 2 (`unit-contracts`) build failure where missing `TEST_DATABASE_URL` triggered fail-closed guard (`assertSafeTestDatabaseUrl`).
+  - Gated the suite exclusively to Stage 4 (`concurrency-and-db-isolation`) against isolated PostgreSQL and Upstash Redis containers.
+
+- **Authoritative Test Metrics Rebalancing (`docs/METRICS.json`):**
+  - Recalibrated SSOT metrics to 69 unit/contract suites (863 tests passed, 100% hermetic) and 21 live database suites (100 tests passed, 100% live verified). E2E specs preserved at 14 specs / 15 user journeys.
+
+- **Living Documentation Modernization:**
+  - Synchronized Stage 4 suite counts (21 live suites) in `docs/reference/ci-pipeline.md` and `docs/reference/test-database-isolation.md`.
+  - Updated test runner command in `docs/guides/billing/stripe-integration.md` (`--config vitest.live.config.mts`) and modernized schema references in `docs/foundation/DESIGN_VS_REALITY.md`.
+
+## [1.35.0] - 2026-09-30 (Phase 7: PostgreSQL Schema, Migrations & Atomic Transactions)
+
+### Added & Hardened - Modular Database Schemas, Foreign Key Cascades & Atomic Interactive Transactions
+
+- **Unified Server Database Architecture (`src/server/db/*`) & Legacy Purge:**
+  - Remediates audit findings `LUGX-025, LUGX-026, LUGX-027, LUGX-030, LUGX-031, LUGX-068, LUGX-069, LUGX-072, LUGX-073, LUGX-074, LUGX-075, LUGX-076, LUGX-135, LUGX-141, LUGX-142, LUGX-143, LUGX-144, LUGX-146, LUGX-148, LUGX-149`.
+  - Unified all database schemas, client factories, transactional drivers, and migrations under `src/server/db/` using `git mv` (`src/server/db/client.ts`, `src/server/db/transactional.ts`, `src/server/db/migrations/`, `src/server/db/schema/*`, and barrel export `src/server/db/index.ts`).
+  - Completely purged the legacy `src/lib/db/` directory, refactoring all 48 production and test caller files to `@/server/db` and `@/server/db/schema`.
+  - Extracted shared client types (`FileEncryptionMetadata`) to `src/types/storage-payload.ts` ensuring clean server/client boundary separation with zero client hook leakage.
+
+- **Subscriptions Schema Hardening (LUGX-027, LUGX-068, LUGX-135, LUGX-141):**
+  - Shifted uniqueness constraint from `userId` to `stripe_subscription_id` (`idx_subscriptions_stripe_id_unique`), enabling 1:N multi-subscription lifecycle per user.
+  - Added indexed `tier` column (`idx_subscriptions_tier`), explicit `user_id` index (`idx_subscriptions_user_id`), and `status` index (`idx_subscriptions_status`).
+  - Added explicit foreign key cascade: `FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`.
+  - Added B-tree index on `users.stripe_customer_id` (`idx_users_stripe_customer_id`) for $O(\log n)$ webhook subscriber lookups.
+
+- **AI Reservations Hardening & Replay Guard (LUGX-030, LUGX-031):**
+  - Enforced composite unique constraint `UNIQUE (user_id, operation_id)` (`idx_ai_reservations_user_op`), preventing duplicate reservation insertion races at database engine level.
+  - Added `request_hash varchar(64) NOT NULL DEFAULT ''` to `ai_reservations` to prevent replay attacks and text tampering.
+  - Added index on `parent_folder_id` in `files` table (`idx_files_parent_folder`) optimizing hierarchical folder queries.
+
+- **Interactive ACID Transactions & Engine-Level Rollback (`src/server/actions/ai-ops.ts`):**
+  - Wrapped `reserveAndUpdateUsage`, `refundAIReservation`, and `expireStaleReservations` within interactive `targetDb.transaction(async (tx) => { ... })` blocks.
+  - Guaranteed zero partial writes: any concurrent duplicate reservation attempt fails closed with a PostgreSQL unique constraint violation (`23505`), triggering complete engine rollback with zero balance corruption.
+
+- **Migration & Live Verification Matrix (`src/test/server/schema-atomic-transactions.live.test.ts`):**
+  - Generated deterministic migration `0011_schema_hardening_and_indexes.sql` and verified 100% equality via `scripts/verify-migrations.mjs`.
+  - Authored 5 automated live database tests validating composite unique constraints, 1:N multi-subscriptions, transaction error rollback, `request_hash` integrity, and atomic refund balance preservation against live Neon PostgreSQL.
+  - Expanded live integration test suite to 20 suites and 94 passing tests.
+
+## [1.34.0] - 2026-09-29 (Phase 6: Pure State Reducers as Contractual Safety Nets)
+
+### Added & Hardened - Pure State Reducers, Terminal State Protection & Quota Conservation
+
+- **Pure Sync State Reducer (`src/lib/sync/sync-state-reducer.ts`):**
+  - Remediates audit findings `LUGX-003, LUGX-010, LUGX-036, LUGX-040`.
+  - Encoded pure, side-effect-free state transitions over `idle | syncing | conflict | error`.
+  - Rejects impossible direct state jumps (e.g. `idle` to `conflict` directly without an active sync response) with `InvalidSyncTransitionError`.
+  - Enforced that conflict resolution with `resolution: 'local'` or `'merge'` immediately transitions to `syncing` (remediating `LUGX-003`), forcing a server push before any local edits can be marked clean.
+  - Implemented pure type guards: `isIdleSyncState`, `isSyncingState`, `isConflictSyncState`, and `isErrorSyncState`.
+
+- **Pure Stripe Webhook Event Reducer & Terminal Protection (`src/lib/stripe/webhook-event-reducer.ts`):**
+  - Remediates audit findings `LUGX-025, LUGX-135`.
+  - Defined subscription lifecycle states `trialing | active | past_due | canceled | incomplete | incomplete_expired | unpaid`.
+  - Implemented strict **Terminal State Protection**: once a subscription enters terminal state (`canceled` or `incomplete_expired`), incoming stale or out-of-order `customer.subscription.updated` events attempting reactivation for the same subscription ID are frozen with `action: 'ignored_stale'` (or rejected via `TerminalSubscriptionStateError` in strict mode).
+  - Enforced payment privilege coupling: non-paid checkouts fail-closed with `action: 'noop'`, and only genuine `active` and `trialing` statuses retain paid tiers.
+
+- **Pure Quota Settlement Reducer & Reservation State Machine (`src/lib/ai/quota-settlement-reducer.ts`):**
+  - Remediates audit findings `LUGX-001, LUGX-115`.
+  - Formalized deterministic integer quota calculation via `calculateQuotaSettlement()`.
+  - Guaranteed mathematical **Conservation Law**: `toCommit + toRefund === reservedUnits` across pre-TTFT aborts (100% refund), partial streaming tokens, exact usage, and overage capping.
+  - Managed immutable reservation lifecycle (`idle | reserved | committed | refunded | expired`), preventing double-refund attacks, double-commit attacks, and commit-after-refund conflicts via `QuotaStateConflictError`.
+
+- **Contract & Purity Verification Suite (`src/test/contracts/state-machines-contracts.test.ts`):**
+  - Authored 23 automated tests with zero external mocks, covering full transition permutation matrices across all three reducers.
+  - Included 100% Purity Assertion test verifying zero calls to `Date.now()`, `fetch()`, or external storage APIs.
+  - Expanded project automated test baseline to 70 suites and 869 passing tests with 100% zero regressions.
+
+## [1.33.0] - 2026-09-29 (Phase 5: Contracts Dictionary, Discriminated Storage Payloads & RFC 7807 Standardization)
+
+### Added & Hardened - Centralized Contracts Dictionary, Strict Discriminated Storage & RFC 7807 Error Standard
+
+- **Discriminated Storage Union Architecture (`src/types/storage-payload.ts`):**
+  - Remediates audit findings `LUGX-004, LUGX-019, LUGX-048, LUGX-070, LUGX-071`.
+  - Enforced a compile-time and runtime discriminated union `DocumentStoragePayload` distinguishing between:
+    - `PlaintextStoragePayload`: `{ type: "plaintext", content: string, isEncrypted: false, encryptionMetadata: null }`
+    - `EncryptedStoragePayload`: `{ type: "encrypted", ciphertextBase64: string, isEncrypted: true, encryptionMetadata: FileEncryptionMetadata }`
+  - Eliminates the vulnerability where callers could pass `isEncrypted: true` alongside unencrypted plaintext Markdown content, or store encrypted ciphertext accompanied by `encryptionMetadata: null`.
+  - Implemented strict Zod validation schemas (`plaintextStoragePayloadSchema`, `encryptedStoragePayloadSchema`, `documentStoragePayloadSchema`) with `.strict()` to reject arbitrary injected attributes fail-closed.
+  - Provided pure type guards: `isPlaintextPayload(payload)` and `isEncryptedPayload(payload)`.
+
+- **Standardized RFC 7807 Problem Details Error Contracts (`src/types/problem-details.ts`):**
+  - Remediates audit findings `LUGX-085, LUGX-119, LUGX-174`.
+  - Standardized all API error responses against the IETF RFC 7807 specification: `type`, `title`, `status` (constrained to 100–599), `detail`, `instance`, and mandatory `correlationId`.
+  - Incorporated optional backoff guidance parameter `retryAfterSeconds` for rate limiting (429) and upstream unavailable (503) error responses.
+  - Added optional RFC 7807 validation error extension `invalidParams: Array<{ name: string; reason: string }>`.
+  - Backed by strict runtime Zod validation schema `problemDetailsSchema` and utility constructor `createProblemDetails()`.
+
+- **Explicit Synchronization Operation Contracts (`src/types/sync-contracts.ts`):**
+  - Remediates audit findings `LUGX-004, LUGX-019, LUGX-174, LUGX-175`.
+  - Standardized `SyncOperationContract` requiring monotonic sequence tracking: mandatory positive integer `localRevision`, mandatory non-negative integer `baseVersion`, optional `sentRevision`, and strict `operationType` enum.
+  - Formalized batch push contracts (`SyncPushBatchContract`) and cursor-based pull request/response contracts (`SyncPullRequestContract`, `SyncPullResponseContract`).
+  - Added matching strict runtime Zod validation schemas for all sync envelope structures.
+
+- **Cryptographic AI Request Fingerprinting & Quota Lifecycle Contracts (`src/types/ai-contracts.ts`):**
+  - Remediates audit findings `LUGX-067, LUGX-115, LUGX-116, LUGX-119`.
+  - Mandated 64-character SHA-256 hexadecimal string `requestHash` and UUID `operationId` on all AI streaming payloads (`AIRequestContract`) to prevent replay attacks and unvalidated mutations.
+  - Formalized strict schemas for the entire quota reservation lifecycle: `AIReservationContract`, `AICommitReservationContract`, `AIRefundReservationContract`, and `AIQuotaStatusContract`.
+
+- **Automated Contract & Invariant Verification Suite (`src/test/types/contracts.test.ts`):**
+  - Added 20 automated Vitest unit and contract tests verifying compile-time narrowing, invariant adherence, and runtime validation.
+  - Proves rejection of `plaintext` payloads with `isEncrypted: true`, rejection of `encrypted` payloads with `metadata: null`, rejection of out-of-bounds HTTP status codes, rejection of non-positive `localRevision`, and rejection of malformed SHA-256 hashes.
+  - Validated across the full test suite (69 suites, 846 tests passed, 0 failures, 0 regressions).
+
+## [1.32.6] - 2026-09-29 (Documentation Governance & Historical Plans Reorganization)
+
+### Changed & Reorganized - Roadmap Lifecycle & Governance Architecture
+
+- **Plans Lifecycle & Historical Separation (`docs/records/plans/` & `docs/records/archive/`):**
+  - Established formal architectural boundaries separating active execution plans from completed and deprecated roadmaps:
+    - Dedicated `docs/Plans/` exclusively to active milestone roadmaps currently undergoing implementation (`COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md`).
+    - Migrated completed, verified milestone roadmaps to `docs/records/plans/` (`technical-execution-plan.md`, `hybrid-encryption-and-vault-plan.md`, `markdown-editor-migration-plan.md`, `production-hardening-and-remediation-plan-m6.md`).
+    - Migrated superseded/halted plans to `docs/records/archive/` (`core-hardening-pre-stage-2-plan.md`) with explicit deprecation banners.
+  - Formalized directory boundaries in `.agents/rules/docs-governance.md` and synchronized `docs/README.md`.
+
+## [1.32.5] - 2026-09-29 (Phase 4: Upstash REST Protocol Emulator, Distributed Lock Contention & Fail-Open Hardening)
+
+### Added & Hardened - In-Memory Upstash REST Mock Server, Concurrency Lock Verification & Fail-Open Degradation
+
+- **In-Memory Upstash REST Protocol Emulator (`src/test/infrastructure/redis-mock-server.ts`):**
+  - Bridged the protocol mismatch between `@upstash/redis` HTTP REST client and standard CI TCP containers (port 6379, RESP).
+  - Built a lightweight in-memory HTTP server (`node:http`) listening on random ephemeral loopback ports (`127.0.0.1:0`).
+  - Implemented `/pipeline` batch array routing and single-command endpoints, complying strictly with the `Upstash-Encoding: base64` header contract.
+  - Implemented atomic `SET ... NX EX`, `GET` (with TTL eviction), and `DEL` primitives, along with programmable delay injection (`setDelay(ms)`) and socket lifecycle termination.
+  - Hardened with normalized pathname routing (`req.url.split('?')[0]`) to tolerate telemetry query strings cleanly.
+
+- **Dedicated Live Integration Test Suite (`src/test/infrastructure/redis-live-integration.test.ts`):**
+  - Authored a comprehensive 6-case live integration test suite against the Upstash mock server and isolated Neon PostgreSQL test branch.
+  - Verified healthy lock acquisition (`stripe:lock:${eventId}` with `nx: true` and `ex: 30`), atomic database transaction, `stripe:dedup` fast-path caching, and lock deletion.
+  - Verified concurrent distributed lock contention (`Promise.all`): proved simultaneous duplicate deliveries are dropped with `{ received: true, deduplicated: true }` at the Redis layer, completely shielding PostgreSQL from connection pool exhaustion.
+  - Verified latency degradation (>1500ms): asserted that `withTimeout` watchdogs cleanly fail open to the PostgreSQL ACID Ledger (`subscription_events`) with zero unhandled rejections or HTTP 500 errors.
+  - Verified complete network outage resilience against unreachable endpoints (`ECONNREFUSED`), proving graceful fail-open degradation.
+
+- **Event Loop Timer Leak Elimination (`src/app/api/stripe/webhook/route.ts`):**
+  - Refactored `withTimeout` to explicitly clear the `setTimeout` timer inside a `.finally()` block via `clearTimeout(timer)`.
+  - Prevented orphaned timer objects from lingering in the libuv / V8 timer wheel under high-throughput webhook delivery spikes.
+
+- **Bounded Upstash Retry Policy & Fail-Open Acceleration (`src/lib/redis.ts`):**
+  - Configured `{ retry: { retries: 1, backoff: () => 50 } }` on the Upstash Redis client.
+  - Eliminated background retry storms (previously defaulting to 5 retries / 4.5s) during network outages, reducing outage fail-open test latency from 3,506ms to 625ms (82% latency reduction).
+
+- **Documentation & Metrics Synchronization (`docs/METRICS.json` & Plans):**
+  - Synchronized Single Source of Truth test metrics: unit suites expanded from 67 to 68, unit tests expanded from 820 to 826 passing tests (100% pass rate).
+  - Synchronized living documents: `docs/README.md`, `docs/foundation/DESIGN_VS_REALITY.md`, `docs/reference/test-database-isolation.md`, and `docs/guides/billing/stripe-integration.md`.
+  - Updated tracked execution plans `docs/Plans/CORE_HARDENING_PRE_STAGE_2_PLAN.md` and `docs/.Plans/خطة تصليد النواة ما قبل المرحلة الثانية من المشروع.md` to `COMPLETED ✅`.
+  - Published authoritative Phase 4 closure dossier in `docs/records/closures/core-hardening/phase-04-redis-integration-and-lock-contention-closure.md`.
+
+## [1.32.4] - 2026-09-26 (CI Skipped Test Elimination, Progressive Fail-Closed Release Gate & GITHUB_STEP_SUMMARY Dashboard)
+
+### Added & Hardened - CI Progressive Release Gating, Adversarial Shell Hardening & Step Summary Reporting
+
+- **Elimination of Silent Skips (`Silent Skip with Exit 0` Purge):**
+  - Refactored Stages 6 (`e2e-browser-testing`) and 7 (`live-provider-smoke`) in `.github/workflows/ci.yml` to eradicate the silent skip vulnerability where missing repository secrets allowed CI to pass with a false green status (`exit 0`).
+  - Implemented progressive fail-closed gating:
+    - **Protected Contexts:** Pushes to production branches (`main`, `master`), release tags (`refs/tags/v*`), published releases, or manual dispatch with `run_live_smoke: true` strictly enforce fail-closed termination (`exit 1`) whenever mandatory secrets are absent, preventing unverified production deployments.
+    - **Permissive Contexts:** External fork pull requests gracefully bypass browser runs (`exit 0`) accompanied by a prominent warning banner in the step summary.
+
+- **Automated Dashboard Step Summaries (`$GITHUB_STEP_SUMMARY`):**
+  - Engineered transparent markdown reporting for Stages 6 and 7, rendering credential availability matrices, execution parameters, browser engine targets, and test counts directly on the GitHub Actions dashboard.
+  - Intercepted test execution exit codes via `set +e` / `set -e` traps (`TEST_EXIT_CODE=$?`), ensuring failure summaries (`FAILED (Test Spec Failures)`) are recorded in `$GITHUB_STEP_SUMMARY` before the runner exits.
+
+- **Adversarial Shell Hardening (YAML Block Scalar vs POSIX Bash Heredoc):**
+  - Conducted an Adversarial Code Audit eliminating fatal heredoc closing delimiter (`EOF`) indentation collisions with YAML block scalars (`run: |`) via standard POSIX `printf "%s\n"` commands.
+  - Verified 100% bash syntax correctness via `bash -n` across all inline scripts.
+
+- **Deterministic Simulation Suite (`scripts/test-ci-gating.mjs`):**
+  - Created a 30-assertion local simulation harness verifying all matrix permutations (main push, release tags, manual smoke, fork PRs, full credentials, failure interception, and heredoc elimination).
+  - Registered `"test:ci-gate": "node scripts/test-ci-gating.mjs"` in `package.json`.
+
+- **Living Contract & Architectural Specification:**
+  - Published [`docs/reference/ci-pipeline.md`](../../../reference/ci-pipeline.md) formalizing the 7-stage CI/CD pipeline, progressive gating decision matrix, and secret requirements.
+  - Indexed the new living contract and verification commands in `docs/README.md`.
+  - Updated Section 7 of [`docs/reference/test-database-isolation.md`](../../../reference/test-database-isolation.md) to link to the new CI pipeline specification.
+
+- **Milestone Closure Dossier (`docs/records/closures/core-hardening/`):**
+  - Published official Phase 3 closure dossier: [`phase-03-ci-skipped-tests-and-release-gate-closure.md`](../../../records/closures/core-hardening/phase-03-ci-skipped-tests-and-release-gate-closure.md).
+
+## [1.32.3] - 2026-09-26 (Internal Markdown Link Audit, CommonMark Encoding Remediation & CI Link Checker Gate)
+
+### Added & Remediated - Deterministic Link Checker, CommonMark Angle Bracket Paths & Stage 1 CI Quality Gate
+
+- **Remediation of Broken & URL-Encoded Links (11 Links Remediated):**
+  - Eliminated URL-encoded whitespace (`%20`) and parentheses (`%28`, `%29`) across `docs/README.md` (6 foundation document links) and root `README.md` (1 link), replacing them with standard filesystem-compatible CommonMark angle-bracket paths (`<./foundation/Product Requirements Document (PRD).md>`).
+  - Purged 4 placeholder dummy link destinations (`[alt](url)`, `[text](url)`, `[Link\](url)`) in `docs/guides/editor/data-export-guide.md`, replacing them with explicit URL syntax examples to avoid false-positive local resolution failures.
+
+- **Deterministic Link Verification Tooling (`scripts/check-markdown-links.mjs`):**
+  - Engineered an ESM CLI link audit utility scanning all 75 tracked Markdown files in the repository.
+  - Implemented strict network isolation bypassing external URLs (`http://`, `https://`, `mailto:`, `tel:`), ensuring deterministic offline execution without CI network flakiness.
+  - Hardened with zero-overhead defense layers:
+    - **Windows Backslash Immunity:** Strictly rejects Windows-style backslashes (`\`) in markdown destinations to prevent OS-specific path leaks.
+    - **Path Traversal Containment:** Verifies that all resolved relative destinations remain bounded within the repository root (`ROOT`).
+    - **Query Parameter Sanitization:** Gracefully strips query strings (`?query`) prior to on-disk filesystem validation.
+    - **Code Span Isolation:** Completely ignores fenced code blocks (` ` `) and inline code spans (` `...` ```) to prevent code documentation snippets from triggering false positives.
+  - Enforced fail-closed termination (`process.exit(1)`) upon detecting any broken local link, un-normalized backslash, or path traversal.
+
+- **Tooling & CI Stage 1 Integration:**
+  - Registered `"lint:links": "node scripts/check-markdown-links.mjs"` in `package.json`.
+  - Embedded `Verify Documentation Internal Links` into `Stage 1: Quality & Security Gate` in `.github/workflows/ci.yml`.
+
+- **Milestone Closure Dossier (`docs/records/closures/core-hardening/`):**
+  - Published official Phase 2 completion dossier: [`phase-02-internal-link-audit-and-ci-closure.md`](../../../records/closures/core-hardening/phase-02-internal-link-audit-and-ci-closure.md) documenting full remediation inventory, Mermaid validation workflow, and verifiable execution evidence.
+
+## [1.32.2] - 2026-09-25 (Documentation Metrics SSOT Unification, Automated Badge Synchronization & Core Hardening Phase 1)
+
+### Added & Automated - SSOT Metrics Contract, Fail-Closed CI Gate & Programmatic Sync Engine
+
+- **Centralized Single Source of Truth (`docs/METRICS.json`):**
+  - Established a machine-readable JSON data contract defining authoritative test counts across the repository: 67 unit/contract test suites (820 tests), 19 live multi-system suites (89 tests), and 14 Playwright E2E specs (15 user journeys).
+  - Indexed `docs/METRICS.json` in `docs/README.md` under Central Registers (Section 2.1).
+
+- **Automated Synchronization Engine (`scripts/sync-doc-metrics.mjs`):**
+  - Implemented an ESM CLI tool providing dual operational modes:
+    - `--check`: Deterministic audit mode scanning 8 living documentation targets using number-agnostic contextual regexes (`README.md`, `docs/README.md`, `docs/TECHNICAL_DEBT_REGISTER.md`, `docs/reference/test-database-isolation.md`, `docs/architecture/sync/editor-sync-orchestration.md`, `docs/architecture/sync/file-ownership-and-versioning.md`, `docs/foundation/DESIGN_VS_REALITY.md`, and `docs/METRICS.json`). Fails closed (exit code 1) on any detected documentation drift.
+    - `--update-docs`: Programmatic updater mode that automatically aligns all living documentation files with the active metrics contract, completely eliminating manual text edits for metric figures.
+    - `--report=<path>`: Automated ingestion of Vitest JSON reports with fail-closed abortion on test failures (`success === false` or `numFailedTests > 0`).
+
+- **Continuous Integration Hardening (`.github/workflows/ci.yml`):**
+  - Integrated `node scripts/sync-doc-metrics.mjs --check` into `Stage 1: Quality Gate`, guaranteeing that any future documentation drift or uncommitted metric discrepancy rejects PRs and pushes immediately.
+
+- **Technical Debt & Isolation Reference Modernization:**
+  - Synchronized `docs/TECHNICAL_DEBT_REGISTER.md` (TD-05, TD-09, TD-11, TD-12) to reflect the active 820 unit tests baseline.
+  - Purged obsolete legacy Phase 10 metrics from `docs/reference/test-database-isolation.md` (Section 5), clearly separating active verified figures (67 unit files / 820 tests, 19 live suites / 89 tests) from historical archival baselines.
+  - Aligned full test suite counts in `docs/architecture/sync/editor-sync-orchestration.md` and `docs/architecture/sync/file-ownership-and-versioning.md`.
+
+- **Milestone Closure Dossier (`docs/records/closures/core-hardening/`):**
+  - Published official Phase 1 closure dossier: [`phase-01-doc-metrics-and-debt-sync-closure.md`](../../../records/closures/core-hardening/phase-01-doc-metrics-and-debt-sync-closure.md) with complete verifiable execution evidence and Mermaid SSOT data flow diagrams.
+
+## [1.32.1] - 2026-09-20 (Co-located Architectural Decision Records & Trade-offs Institutionalization)
+
+### Added & Documented - Co-located Subsystem ADRs, Trade-off Matrices & Zero-Knowledge CRDT Complexity Barrier
+
+- **Root `README.md` Architectural Statement Hardening:**
+  - Synchronized the root `README.md` Architectural Statement with living sync specifications, integrating the 4th pillar justifying the rejection of Yjs/CRDTs:
+    - **Zero-Knowledge Encryption Barrier:** In LUGX's client-side Zero-Knowledge Cloud Vault, state vectors and fine-grained character-level CRDT operations cannot be decrypted by the server, necessitating decentralized peer-to-peer key exchange or encrypted vector synchronization. For a single-user multi-device editor, this introduces severe cryptographic and operational complexity with negative ROI.
+  - Linked the root statement directly to the authoritative synchronization specification in `docs/architecture/sync/three-way-conflict-resolution.md`.
+
+- **Co-located Architectural Decision Records (Rule 6 Implementation):**
+  - Fully institutionalized co-located Architectural Decision Records (ADRs) with comparative evaluation matrices and deterministic Migration Triggers across key architecture specifications:
+  - **Synchronization Subsystem (`docs/architecture/sync/three-way-conflict-resolution.md`):**
+    - `TR-01`: Diff3 Operational 3-Way Merge vs. CRDTs / Yjs (Rationale: deterministic merge, zero tombstone overhead, complete alignment with client-side Zero-Knowledge encryption; Trigger: true multi-user simultaneous real-time collaborative editing).
+    - `TR-02`: IndexedDB (`idb-keyval`) vs. Origin Private File System (OPFS) (Rationale: cross-browser stability, atomic key-value records, Safari compatibility; Trigger: files exceeding 50MB requiring block-level binary streaming).
+    - `TR-03`: `BroadcastChannel` vs. `SharedWorker` for Multi-Tab Sync (Rationale: ubiquitous browser support, zero lifecycle orchestration overhead; Trigger: persistent background network connections shared across tabs).
+  - **Security & Cryptography Subsystem (`docs/architecture/security/security-and-rate-limiting.md`):**
+    - `TR-05`: Native PBKDF2 (600,000 Iterations) vs. WASM Argon2id (Rationale: native Web Crypto API execution with zero WebAssembly payload or CSP overhead; Trigger: GPU brute-force resistance mandate or Web Crypto Argon2 standardization).
+    - `TR-06`: In-Memory `Uint8Array` Key Storage with Synchronous Zeroing vs. Non-Exportable `CryptoKey` Objects (Rationale: direct byte wipe capability during lock/logout, zero leftover memory remnants; Trigger: cross-origin script injection threat profile shift).
+    - `TR-07`: AES-GCM-256 with Authenticated Associated Data (AAD) vs. Envelope Encryption (Rationale: cryptographic tamper detection binding ciphertext to user/file metadata; Trigger: multi-tenant KMS key hierarchies or per-file key delegation).
+  - **AI Subsystem (`docs/architecture/ai/ai-streaming-protocol.md` & `docs/architecture/ai/ai-quota-reservation-lifecycle.md`):**
+    - `TR-08`: Custom NDJSON over `ReadableStream` vs. Server-Sent Events (SSE) vs. WebSockets (Rationale: bi-directional HTTP POST JSON payload transmission with native streaming, zero protocol upgrade complexity; Trigger: duplex bidirectional client-to-server token steering).
+    - `TR-09`: Two-Phase Quota Hold & Commit vs. Optimistic Settlement (Rationale: strict overdraft prevention and token leak protection on aborted streams; Trigger: distributed multi-region token cache clustering).
+  - **Storage & File Ownership Subsystem (`docs/architecture/sync/file-ownership-and-versioning.md`):**
+    - `TR-11`: PostgreSQL Direct `BYTEA` Payload Storage vs. S3/R2 Object Storage (Rationale: transactional ACID consistency, unified atomic file snapshot backups, zero multi-vendor egress costs; Trigger: active vault storage exceeding 20GB or individual file blobs surpassing 20MB).
+
+- **Automated Verification & Link Governance:**
+  - Verified 100% relative link resolution across all 76 markdown documentation files (0 broken links).
+  - Maintained strict TypeScript static compilation integrity (`npx tsc --noEmit` -> 0 errors, exit code 0).
+
+## [1.32.0] - 2026-09-20 (Documentation Ecosystem Restructuring, Nested Domain Hierarchy & Governance Hardening)
+
+### Changed & Reorganized - Documentation Tree Architecture & Governance Protocols
+
+- **Domain-Driven Subdirectory Hierarchy (`docs/`):**
+  - Restructured the entire flat/semi-structured documentation repository into nested domain-driven subdirectories matching codebase subsystems:
+    - `docs/architecture/` organized into functional domain subdirectories: `sync/` (6 specs including `sync-architecture-overview.md` relocated from reference), `ai/` (3 streaming and quota lifecycle specs), and `security/` (rate limiting, proxy, ZK log masking).
+    - `docs/reference/` purged of 21 historical closure files and strictly dedicated to living contracts: `sync-api.md`, `ui-streaming-readiness.md`, and `test-database-isolation.md`.
+    - `docs/records/` structured into 4 distinct categories: `incidents/` (`test-database-safety.md`), `audits/` (`W10-Final-Closure-Round.md`), `closures/` (organized across 5 milestone bundles: Phase 1–6, 11–15, 16, 17–20, and extensions), and `archive/` (legacy development session logs and superseded snapshots).
+    - `docs/guides/` organized into domain subdirectories: `billing/` (`stripe-setup.md`, `stripe-integration.md`), `editor/` (`editor-ui-enhancements.md`, `search-replace-feature.md`, `data-export-guide.md`), and `ai/` (`ai-models-config.md`).
+    - `docs/specs/` standardized with clean kebab-case naming: `offline-sync-blueprint.md`, `ai-key-rotation-and-resilience.md`, `ui-streaming-requirements.md`.
+
+- **Code Directory Purity & Export Documentation Centralization:**
+  - Consolidated data export technical documentation from `src/lib/exporters/README.md` into `docs/guides/editor/data-export-guide.md`.
+  - Completely purged `src/lib/exporters/README.md` from the source tree, enforcing the strict architectural invariant that `src/**` is code-exclusive and must contain zero markdown files.
+  - Removed obsolete redundant `Rules.md` from repository root.
+
+- **Dual-Track Planning Governance & Milestone M6 Plan Publication:**
+  - Established formal separation between `docs/.Plans/` (untracked in git, Arabic internal incubator for candidate future proposals) and `docs/Plans/` (tracked in git, official English execution plans).
+  - Published comprehensive engineering execution plan for Milestone M6: `docs/Plans/PRODUCTION_HARDENING_AND_REMEDIATION_PLAN_M6.md` documenting completed Phases 21–24 (Upstash Redis in-flight webhook distributed locking, synchronous cross-tab volatile RAM zeroing via `BroadcastChannel`, quarantined encrypted conflict governance with 100-item capacity limit, and the 10-gate G1–G10 production verification matrix).
+
+- **Documentation Governance, Permissible Boundaries & ADR Protocol:**
+  - Updated operational rules (`.agents/rules/docs-governance.md`) and repository standards (`docs/DOCUMENTATION_GUIDELINES.md`):
+    - Permissible Modification Boundaries matrix classifying each directory (`IMMUTABLE BASELINE`, `LIVING SPEC/CONTRACT/GUIDE`, `PERMANENT HISTORY`, `INTERNAL INCUBATOR`, `CODE EXCLUSIVE`).
+    - Explicit exemption for `docs/foundation/DESIGN_VS_REALITY.md` as a living reconciler required to co-evolve with active code, while Day-0 foundation baseline artifacts remain strictly immutable.
+    - Operational Trigger-Action decision matrix mapping engineering events directly to required documentation actions.
+    - Rule 6: Formal 4-tier Architectural Decisions, Trade-offs & Migration Triggers governance, mandating quantitative or functional Migration Triggers for all architectural alternatives alongside a standard clean Markdown template.
+
+- **Automated Verification & Zero-Regression Integrity:**
+  - Verified 100% relative link resolution across all 76 markdown files (0 broken relative links).
+  - Verified clean static type check (`npx tsc --noEmit` -> 0 errors, exit code 0).
+  - Verified 100% test pass rate across the full test suite (67 test files, 820 passing tests).
+
+## [1.31.3] - 2026-09-20 (AI Resilience Hardening: Cascading Fallback Chain & In-Flight Model Failover)
+
+### Added & Enhanced - AI Multi-Tier Fallback Chain, In-Flight Failover & Graceful Overload Recovery
+
+- **Multi-Tier Cascading Fallback Hierarchy (`src/config/models.config.json`):**
+  - Expanded AI operation configurations (`correct`, `improve`, `summarize`, `toPrompt`, `translate`) from two-tier (`primary`, `fallback`) to a comprehensive four-tier cascading hierarchy:
+    - Primary Model: `gemini-3.7-flash` (cutting-edge reasoning, fast TTFT)
+    - Fallback #1: `gemini-3.6-flash` (high-stability production fallback)
+    - Secondary Fallback: `gemini-3.5-flash-lite` (lightweight, high-throughput model)
+    - Tertiary Fallback: `gemini-3.1-flash-lite` (maximum capacity resilience fallback)
+  - Enforced full JSON schema compliance across all 5 operational targets with zero runtime overhead.
+
+- **Resilient Fallback Hierarchy & In-Flight Failover Engine (`src/lib/ai/client.ts`):**
+  - Introduced `getModelHierarchy(operation: AIOperation): string[]` to resolve the ordered sequence of candidate models for any given AI operation.
+  - Refactored `getModelPair` to delegate directly to `getModelHierarchy` for complete backward compatibility.
+  - Upgraded `selectModelWithCircuitBreaker` to scan the full candidate model list in sequence, returning the first candidate whose Circuit Breaker is closed.
+  - Implemented dynamic in-flight model failover in both `processWithAI` and `streamWithAI`: when a model fails with a transient 503 or quota rejection, the runtime loops over the remaining hierarchy candidates while tracking `attemptedModels`, preventing duplicate attempts.
+  - Integrated micro-retry with randomized jitter (300ms–700ms) on retryable upstream errors prior to triggering fallback progression, absorbing transient gateway spikes.
+
+- **HTTP 503 Service Unavailable & Client Guidance (`src/app/api/ai/stream/route.ts`):**
+  - Upgraded the streaming route startup error handler: when upstream AI capacity is exhausted across all fallback tiers (e.g., Google GenAI 503 / `UNAVAILABLE`), the route immediately responds with `HTTP 503 Service Unavailable`.
+  - Injected standard `Retry-After: 30` header and user-friendly guidance message (`"AI service is temporarily unavailable due to high demand. Please retry in a few moments."`), preserving client UX without leaking internal infrastructure traces.
+
+- **Automated Verification & Architectural Documentation Synchronization:**
+  - Expanded `src/test/ai/ai-client.test.ts` to 11 tests verifying `getModelHierarchy` resolution, cascading in-flight failover across models on 503 errors, and HTTP 503 service unavailable response generation with `Retry-After: 30`.
+  - Verified 100% test pass rate across the AI test suite: 13 test files passed, 129 tests passed (`npx vitest run src/test/ai/`).
+  - Successfully validated production build with zero TypeScript or route compilation errors (`npm run build`).
+  - Synchronized living documentation in `docs/guides/AI_MODELS_CONFIG.md`, `docs/specs/AI_KEY_ROTATION_AND_STREAMING_RESILIENCE.md`, and `docs/architecture/ai-streaming-protocol.md`.
+
+## [1.31.2] - 2026-09-20 (Modular Test Suite Restructuring & Production Code Clean-up)
+
+### Refactored & Enhanced - Test Harness Architecture & Production Code Clean-up
+
+- **Domain-Specific Modular Subdirectories (`src/test/<domain>/`):**
+  - Reorganized all 87 test files in `src/test/` into 9 modular, domain-specific subdirectories based on functional responsibility:
+    - `src/test/ai/` (21 files): Gemini AI client, streaming NDJSON parser, circuit breaker, key rotation, quota settlement, and live E2E suites.
+    - `src/test/sync/` (16 files): Offline-first synchronization, IndexedDB operations, 3-way Diff3 merge, encrypted conflict quarantine, and queue rollback suites.
+    - `src/test/vault/` (12 files): Zero-Knowledge vault cryptography, WebAuthn PRF biometrics, recovery seeds, storage encryption, and cross-module integration suites.
+    - `src/test/parsers/` (10 files): Web Worker PDF extraction, spatial table reconstruction, Arabic Unicode normalizer, file conversion, and corruption detector suites.
+    - `src/test/editor/` (9 files): Standalone CodeMirror 6 editor, toolbar, bidirectional layout, search-and-replace, and orchestration suites.
+    - `src/test/server/` (6 files): Authenticated Server Actions, file operations, cross-user ownership isolation, and document ingestion pipeline suites.
+    - `src/test/auth/` (5 files): Authentication redirects, sign-out cache invalidation, proxy edge middleware, and distributed correlation tracking suites.
+    - `src/test/infrastructure/` (5 files): Dual-mode Redis rate limiter, automated quota expiration crons, multi-system lifecycle, and isolated database health suites.
+    - `src/test/api/` (3 files): REST API route handlers, optimistic version PUT guard, and Stripe webhook idempotency suites.
+  - Preserved shared root test infrastructure and harness files directly under `src/test/`: `test-db.ts`, `test-db-guard.ts`, `load-test-env.ts`, and `db.setup.ts`.
+
+- **Production Code Directory Cleansing & Git History Provenance:**
+  - Fully purged all 33 scattered `.test.ts` / `.test.tsx` files previously co-located inside production source trees (`src/app/`, `src/components/`, `src/hooks/`, `src/lib/`, `src/server/`).
+  - Executed all moves via `git mv` with 100% rename detection, preserving complete git blame history and commit provenance.
+  - Converted legacy relative path imports (`../lib/...`) to standardized `@/lib/...` alias imports across all relocated suites.
+
+- **Configuration & Living Documentation Synchronization:**
+  - Updated `vitest.constants.mts` to reflect new domain-partitioned paths across all 19 `LIVE_TEST_FILES` and `CLOUD_E2E_FILES`.
+  - Updated `.github/workflows/ci.yml` line 337 to target `src/test/ai/ai-live-e2e.test.ts`.
+  - Updated root `README.md`, `docs/README.md`, `docs/reference/test-database-isolation.md`, `docs/foundation/DESIGN_VS_REALITY.md`, `docs/TECHNICAL_DEBT_REGISTER.md`, and all living architectural documents to reflect current paths and verified passing metrics (67 test files, 817 passing tests).
+
+## [1.31.1] - 2026-09-20 (Phase 23: Encrypted Conflict Quarantine Governance & Queue Backpressure Hardening)
+
+### Added & Enhanced - Phase 23: Encrypted Conflict Quarantine Governance & Queue Backpressure Hardening
+
+- **Bounded In-Memory Quarantine Capacity & Backpressure Protection (`src/lib/sync/sync-manager.ts`):**
+  - Introduced `MAX_QUARANTINED_CONFLICTS = 100` to bound in-memory isolated `CONFLICT_LOCKED` documents, preventing silent heap accumulation when the vault remains locked across prolonged editing sessions.
+  - Implemented `quarantineEncryptedConflict(conflict)` with false-eviction immunity: explicitly verifies `!this.pendingEncryptedConflicts.has(conflict.fileId)` before triggering capacity checks, ensuring repeated inbound pulls of an already quarantined document never evict unrelated conflicts.
+  - Replaced $O(N \log N)$ array sorting with a deterministic $O(N)$ linear scan to find and evict the oldest conflict by `detectedAt` timestamp without generating garbage-collection churn or temporary array allocations.
+
+- **Quarantine Observability & Diagnostics Contract (`src/lib/sync/sync-manager.ts`, `src/lib/sync/index.ts`):**
+  - Defined and exported `QuarantineDiagnostics` interface providing real-time telemetry: `totalQuarantined`, `staleCount` (conflicts isolated for > 24 hours), `oldestQuarantinedAt` (timestamp ms), `newestQuarantinedAt` (timestamp ms), and `isAtCapacity` boolean flag.
+  - Implemented `getQuarantineDiagnostics(): QuarantineDiagnostics` in `SyncManager` with safe zero defaults on empty queues and defensive timestamp conversion for corrupted or stringified date values.
+  - Exported `MAX_QUARANTINED_CONFLICTS` and `QuarantineDiagnostics` from public package entry point `src/lib/sync/index.ts`.
+
+- **Atomic Multi-Tier Conflict Discard & Concurrency Locking (`src/lib/sync/sync-manager.ts`, `src/lib/sync/idb-types.ts`):**
+  - Added `'discarded'` to `OperationStatus` union in `src/lib/sync/idb-types.ts`, establishing a first-class, type-safe lifecycle status for abandoned operations.
+  - Implemented `discardPendingEncryptedConflict(fileId: string): Promise<void>` wrapped under `concurrencyManager.withLock(fileId, ...)` to eliminate race conditions against concurrent vault-unlock auto-resolution (`resolvePendingEncryptedConflict`).
+  - Executes comprehensive multi-tier cleanup: purges the conflict from RAM `pendingEncryptedConflicts`, purges associated checkpoints in `SyncRollback` via `removeCheckpoint()`, and updates linked operations in IndexedDB from `conflict`, `queued`, or `pending` to `'discarded'` via `updateOperationStatus()`.
+  - Strictly adheres to the project's foundational `DATA-SAFETY GUARD` (preserving `localFile.isDirty = true` in IndexedDB) to prevent silent user edit data loss.
+
+- **Automated Verification Suite Expansion & Hardening Audit:**
+  - Expanded `src/test/sync-encrypted-conflict.test.ts` from 3 to 8 comprehensive unit and integration tests covering clean zero defaults, 24-hour stale conflict calculation, FIFO capacity eviction at 100 items, false-eviction immunity on existing conflict updates, and multi-tier atomic discard.
+  - Verified 100% clean compilation under `npx tsc --noEmit` and confirmed zero regressions across `src/test/vault-orchestration.test.ts` (29/29 passed), `src/lib/sync/sync-manager.test.ts` (36/36 passed), `src/lib/sync/rollback.test.ts` (22/22 passed), and `src/lib/sync/indexeddb.test.ts` (14/14 passed).
+
+## [1.31.0] - 2026-09-20 (Phase 22: Cross-Tab Volatile RAM Purge Synchronization & Local Auto-Lock Hardening)
+
+### Added & Enhanced - Phase 22: Cross-Tab Volatile RAM Purge Synchronization
+
+- **Cross-Tab Volatile RAM Purge Synchronization (`src/lib/sync/session-key-store.ts`):**
+  - Integrated `BroadcastChannel('textai_cross_tab_sync')` subscriptions directly into `SessionKeyStore` constructor for instant detection of `vault_locked` events across sibling browser tabs.
+  - Sibling tabs receiving `vault_locked` automatically invoke `this.lock(false)`, immediately zeroing volatile heap buffers (`Uint8Array`) via `wipeBuffer()` (`.fill(0)`), clearing active session storage, and notifying local subscribers without re-broadcasting, eliminating infinite echo loops.
+  - Enhanced method signatures for `lock(broadcast = true)` and `purgeKeys(broadcast = true)` to ensure all programmatic and user-initiated lock transitions automatically dispatch cross-tab notifications while preserving 100% backward compatibility for zero-argument callers.
+  - Added clean resource teardown method `destroy(): void` to cleanly disconnect `BroadcastChannel` listeners and purge volatile state on instance disposal.
+  - Maintained strict 1-hour (`3,600,000 ms`) default inactivity timeout invariant, ensuring full compliance with existing contract assertions.
+
+- **Local SessionKeyStore Lock Lifecycle Synchronization (`src/hooks/use-editor-orchestrator.ts`):**
+  - Bound the editor orchestrator directly to the local `sessionKeyStore.subscribe((isUnlocked) => ...)` lifecycle, eliminating local lock blindness when background inactivity timers fire within the active tab.
+  - Immediately cancels pending debounced auto-save timers (`debouncedAutoSaveRef.current?.cancel?.()`) upon lock transitions, preventing delayed write attempts from throwing unhandled master key extraction errors.
+  - Synchronously updates hydration state to `"vault_locked"`, opens unlock modal dialogs, and freezes the CodeMirror editor editing surface (`adapter.setEditable(false)`).
+
+- **Automated Verification Suite Expansion & Anti-Regression Baseline:**
+  - Expanded `src/test/vault-crypto.test.ts` from 35 to 40 unit tests by adding Section 10 (`10. Cross-Tab Volatile RAM Purge Synchronization (Phase 22 Closure)`), proving 100% buffer zeroing (`.fill(0)`), broadcast dispatch on `lock()`, suppression of echo loops on `lock(false)`, silent auto-lock broadcast via `isUnlocked()` check, and clean teardown on `destroy()`.
+  - Expanded `src/test/editor-orchestration.integration.test.ts` from 16 to 18 integration tests, verifying sibling tab `vault_locked` propagation and local `SessionKeyStore.lock(false)` auto-save cancellation.
+  - Increased project-wide test baseline from **805 tests to 812 tests across 67 test files** (100% passing, 0 failures, 0 regressions) with clean TypeScript compilation (`npx tsc --noEmit` -> 0 errors).
+
+## [1.30.0] - 2026-09-20 (Phase 21: Distributed Webhook Lock, Upstash Redis Fast-Path Deduplication & Node.js 22 CI Hardening)
+
+### Added & Enhanced - Phase 21: Distributed Concurrency Lock & Multi-Tiered Idempotency
+
+- **Distributed In-Flight Webhook Concurrency Lock (`src/app/api/stripe/webhook/route.ts`):**
+  - Integrated `@upstash/redis` distributed locking (`stripe:lock:${eventId}`) with 30-second TTL (`SET ... 1 NX EX 30`).
+  - Concurrent duplicate webhook delivery attempts arriving within milliseconds are immediately intercepted and acknowledged with `200 OK { received: true, deduplicated: true }` before acquiring PostgreSQL database connections.
+- **Least-Cost Cache Inversion & Fast-Path Deduplication (`src/app/api/stripe/webhook/route.ts`):**
+  - Reordered the idempotency pipeline to query Redis deduplication cache (`stripe:dedup:${eventId}`) _before_ issuing PostgreSQL `SELECT` queries (`isSubscriptionEventProcessed`).
+  - Successfully processed events populate the Redis deduplication cache with a 24-hour TTL (86,400s), completely shielding PostgreSQL from repeat read queries on duplicate delivery attempts across serverless restarts and distributed containers.
+  - Events identified in PostgreSQL durable ledger automatically backfill the Redis deduplication cache and cleanly release in-flight locks.
+- **Fast Fail-Open Resilience with Abort Timeout (`withTimeout`):**
+  - Encapsulated all Upstash Redis REST operations (`get`, `set`, `del`) within a 1500ms abort watchdog (`timer.unref()`).
+  - Guarantees immediate fallback to PostgreSQL ACID transaction guarantees (`Fail-Open`) if Upstash REST experiences latency, network timeouts, or unreachability, preventing webhook processing delays beyond Stripe's delivery window.
+- **Deterministic Fail-Release Semantics & Clean Code (DRY):**
+  - Guaranteed automatic deletion of `stripe:lock:${eventId}` upon transaction rollbacks or unhandled exceptions to allow legitimate Stripe retries without lockouts.
+  - Refactored the `switch (event.type)` `default:` branch to eliminate duplicated lock release and cache population logic, unifying post-switch mutation and lock cleanup paths.
+- **Automated Test Suite Expansion & Live Test Key Sanitization:**
+  - Expanded `src/app/api/stripe/webhook/route.test.ts` from 9 to 15 unit tests, asserting lock acquisition, concurrency contention rejection, Redis cache hit with DB query bypass, fail-open on Redis timeout, and fail-release.
+  - Added deterministic Redis key cleanup (`cleanupRedisTestKeys()`) in `beforeAll` and `afterAll` within `src/app/api/stripe/webhook/route.live.test.ts`, ensuring live integration suites on isolated Neon branches execute cleanly without lingering cache interference.
+  - Expanded project-wide unit test baseline to **805 tests across 67 test files** (100% green, 0 regressions).
+
+### Standardized - Node.js 22 LTS Runtime Contract
+
+- **Repository-Wide Node.js 22 LTS Contract:**
+  - Standardized `.nvmrc` to Node.js `22`.
+  - Configured `"engines": { "node": ">=22.0.0", "npm": ">=10.0.0" }` in `package.json`.
+  - Aligned GitHub Actions CI workflow in `.github/workflows/ci.yml` across all build, test, and verification stages.
+
+## [1.29.2] - 2026-09-19 (TD-05 Resolution: Stop-Action Settlement Latency & Autonomous Server Disconnect Inversion)
+
+### Fixed & Resolved - TD-05 Resolution & Zero-Latency Stop Action
+
+- **Non-Blocking Client Stop Action (`src/hooks/use-ai-stream.ts`):**
+  - Eliminated the synchronous blocking `await commitAIReservation(...)` network call inside `stopStream()`.
+  - User-triggered stop actions now execute instantaneously (< 50ms vs ~500ms previously), immediately clearing ghost decorations via `editor.clearStreamingGhost()` and transitioning state to `"aborted"`.
+  - Decoupled quota settlement into a background non-blocking execution (`settleReservationAsConsumed(operationId)`), wrapped with `Promise.resolve(...)` to prevent unhandled rejection crashes under mock or edge runtimes.
+- **Autonomous Server Disconnect Handling (`src/app/api/ai/stream/route.ts`):**
+  - Integrated `request.signal.addEventListener("abort", handleClientDisconnect)` to track client transport terminations deterministically.
+  - **Pre-TTFT Disconnects (`ttftMs === null`):** Automatically releases user quota via `refundAIReservation(reservationId, userId, "client_disconnected_pre_ttft")` if the client disconnects before receiving the first token.
+  - **Post-TTFT Disconnects (`ttftMs !== null`):** Automatically commits quota consumption via `commitAIReservation(operationId, userId)` upon stream interruption, preventing orphaned reservations and closing quota leak vectors if the client tab closes or network drops.
+- **Quota Lifecycle Documentation Synchronization ([`docs/architecture/ai/ai-quota-reservation-lifecycle.md`](../../../architecture/ai/ai-quota-reservation-lifecycle.md)):**
+  - Synchronized architectural documentation and Mermaid sequence diagrams with the Dual-Side Inversion model, clarifying pre-TTFT vs. post-TTFT disconnect guarantees and non-blocking client stop latency.
+- **Automated Test Verification & Type Cleanliness:**
+  - Added dedicated latency and abort behavior test suite `src/test/ai-stream-abort-latency.test.ts` verifying immediate stop execution time (< 50ms) and background settlement dispatch.
+  - Verified full type safety with `npx tsc --noEmit` (0 errors) and regression safety across all AI test suites (28/28 tests passing).
+  - Maintained clean ESLint validation (`0 errors, 0 warnings`).
+- **Technical Debt Register Updated ([`docs/TECHNICAL_DEBT_REGISTER.md`](../../../TECHNICAL_DEBT_REGISTER.md)):**
+  - Formally marked **TD-05** as `✅ RESOLVED (2026-09-19)` with architectural resolution notes and empirical verification evidence.
+
+## [1.29.1] - 2026-09-19 (TD-12 Resolution: Auth Sign-Out Cache Invalidation & Chromium Socket Pool Protection)
+
+### Fixed & Resolved - TD-12 Resolution & Edge Proxy Hardening
+
+- **Auth Sign-Out Layout Invalidation & Explicit Cookie Wiping (`src/server/actions/auth-actions.ts`):**
+  - Equipped `signOut()` with `revalidatePath("/", "layout")` to immediately purge stale RSC layouts and client router cache upon user logout.
+  - Added proactive session purging in `signOut()` iterating through `cookieStore.getAll()` and deleting all Supabase auth cookies (`sb-*`), preventing stale tokens from leaking to subsequent requests.
+- **Edge Proxy Fast-Path Routing & Watchdog Protection (`src/proxy.ts`):**
+  - **Fast-Path Bypass:** Public routes (such as the root `/` homepage and static assets) and `/login` requests without auth cookies now bypass `supabase.auth.getUser()` entirely, eliminating unnecessary network round-trips and ensuring zero-latency loading.
+  - **Watchdog Timeout (`AbortSignal.timeout(2500)`):** Encapsulated `supabase.auth.getUser()` inside a deterministic `Promise.race` watchdog that aborts after 2500ms. If Supabase auth hangs or encounters network latency, the request fails safely to `user = null` instead of hanging for 7.5 seconds.
+  - **Chromium Socket Pool Immunity:** Eliminates client-side aborts and prevents sockets from remaining stuck in `CLOSE_WAIT`, permanently resolving the Chromium per-host socket saturation issue (`kDefaultMaxSocketsPerGroup = 6`).
+  - **Cookie Header Preservation (`copyCookiesAndRedirect`):** Redirect responses (307) and API 401 JSON responses now preserve all `Set-Cookie` headers (including cookie invalidation directives from `@supabase/ssr`), ensuring deletion instructions reach the client browser reliably.
+- **Automated Test Verification & Zero-Warning Determinism:**
+  - Added dedicated unit test suite `src/test/auth-signout.test.ts` asserting layout revalidation, `sb-*` cookie wiping, non-auth cookie retention, and redirect behavior.
+  - Expanded `src/test/proxy.test.ts` with Fast-Path bypass assertions, `Set-Cookie` propagation checks, and simulated 2500ms watchdog timeout verification.
+  - Maintained 100% test pass rate across the full repository test suite: 66 test files and 797 tests passing (`npm test`), with clean ESLint status (`0 errors, 0 warnings`).
+- **Technical Debt Register Updated ([`docs/TECHNICAL_DEBT_REGISTER.md`](../../../TECHNICAL_DEBT_REGISTER.md)):**
+  - Formally marked **TD-12** as `✅ RESOLVED (2026-09-19)` with architectural resolution notes and verification evidence.
+
+## [1.29.0] - 2026-09-19 (Phase 20 Final Closure & Technical Plan Fully Completed)
+
+### Added & Verified - Phase 20 Closure & 100% Technical Plan Completion
+
+- **Final Verification & Technical Plan Closure Dossier ([`docs/records/closures/phase-17-to-20-production-readiness/phase-20-production-readiness-dossier.md`](../../../records/closures/phase-17-to-20-production-readiness/phase-20-production-readiness-dossier.md)):**
+  - Compiled empirical verification evidence across all 11 final verification gates (G1–G11).
+  - Validated database schema invariants and applied migrations (`0001` through `0010`) on Neon PostgreSQL branch.
+  - Documented disaster recovery, fail-open/fail-closed circuit breaking, and atomic checkpoint rollback plans.
+- **Full Empirical Code & Test Verification:**
+  - **Static Type Safety:** Passed 100% with 0 errors via `npx tsc --noEmit`.
+  - **Code Quality Gate:** Passed 100% with 0 problems, 0 errors, 0 warnings via `npm run lint`.
+  - **Unit Test Coverage:** 65 test files, 793 tests passing 100% in 107s (`npm test`).
+  - **Live Integration Testing (Phase 18):** 19 live test suites, 89 tests passing 100% in 95s against isolated Neon test branch (`npm run test:live`).
+  - **Browser-Driven E2E Journeys (Phase 19):** 14 test suites covering all 15 user journeys passing 100% in Chromium Headless in 3.8m with `retries: 0` (`npx playwright test`).
+  - **CI Pipeline E2E Integration (`.github/workflows/ci.yml`):** Added Stage 6 (`e2e-browser-testing`) executing Playwright E2E browser journeys with Chromium dependency installation, isolated environment secret bindings, and automatic artifact reporting on failure.
+  - **Production Compilation:** Next.js App Router static/dynamic generation passing 100% (17 routes compiled in 53s via `npm run build`).
+- **Technical Plan Fully Completed (100% Closed):**
+  - All 20 engineering phases of the LUGX platform technical execution plan are officially closed, tested, and verified in full.
+
+## [1.28.0] - 2026-09-19 (Phase 19 Browser-Driven E2E Testing, TD-07 Resolution & Terminal Error Remediation)
+
+### Added & Verified - Phase 19 Closure & Browser-Driven E2E Testing
+
+- **Automated Real-Browser Test Infrastructure (`@playwright/test` v1.63.0):**
+  - Configured Chromium headless testing harness in `playwright.config.ts` targeting isolated Next.js web server (`port: 3001`) and dedicated Neon PostgreSQL test branch (`TEST_DATABASE_URL`).
+  - Registered test scripts in `package.json`: `"test:e2e": "playwright test"` and `"test:e2e:ui": "playwright test --ui"`.
+  - Implemented 14 test specification suites under `e2e/specs/` covering all 15 comprehensive user journeys:
+    1. `01-auth-session.spec.ts`: Authentication lifecycle, SSR cookies, reload persistence, cross-tab session sharing, and clean logout storage teardown.
+    2. `02-file-tree-trash.spec.ts`: Hierarchical folder navigation, drag-and-drop move/copy, rename, soft deletion, duplicate name coexistence, restore to root, and permanent purge.
+    3. `03-codemirror-bidi.spec.ts`: Native CodeMirror 6 Markdown editing, automatic Arabic RTL detection (`bidiLinePlugin`), LTR code block locking, multi-range search & replace, and debounced autosave.
+    4. `04-offline-sync-conflict.spec.ts`: Offline IndexedDB editing queue, reconnect synchronization, remote concurrent 412 trigger, interactive `ConflictDialog` diff inspection, and 3-way Diff3 merge.
+    5. `05-pdf-ocr-pipeline.spec.ts`: Disguised executable rejection via magic bytes, client-side PDF text extraction, 2D spatial table reconstruction, and 100% roundtrip Markdown export.
+    6. `06-ai-streaming-commit.spec.ts`: NDJSON token streaming with correlation tracking, dynamic `CMStreamingGhostWidget` typing offset tracking, and atomic one-click commit.
+    7. `07-ai-abort-reject.spec.ts`: User-initiated stream abort and preview rejection, asserting zero text leakage and quota settled as consumed (No Refund).
+    8. `08-ai-failure-refund.spec.ts`: Simulated system AI provider 500 error, safe error banner display, and automated full quota refund (`refundedUnits`).
+    9. `09-ai-conflict-412.spec.ts`: Concurrent edit in sibling tab during stream, commit blocked with 412 Precondition Failed, preventing partial text overwrite.
+    10. `10-vault-lifecycle.spec.ts`: 12-word BIP-39 mnemonic setup, 600K PBKDF2 Web Worker key derivation, AES-GCM-256 encryption, and deterministic AAD binding.
+    11. `11-vault-lock-trust.spec.ts`: Inactivity auto-lock, `SessionKeyStore` volatile memory wiping, RAM key zeroing, password unlock, and WebAuthn PRF / 6-digit PIN device trust.
+    12. `12-vault-ai-shield.spec.ts`: Amber AI Shield badge on encrypted note, HTTP 403 route blocking on `/api/ai/stream`, and zero quota deduction.
+    13. `13-stripe-billing.spec.ts`: Account settings tier display, durable `subscription_events` ledger insertion, and instant real-time UI upgrade to Pro.
+    14. `14-tenant-isolation.spec.ts`: Unauthorized direct editor URL bounce to `/workspace`, and API 404 Anti-Enumeration error masking with correlation header.
+- **Zero-Flakiness Validation Proof:**
+  - 100% pass rate achieved across all 15 scenarios across two consecutive automated validation runs (Run 1: 15/15 passed in 2.4m, Run 2: 15/15 passed in 2.1m).
+  - Officially resolved and closed **TD-07** in `docs/TECHNICAL_DEBT_REGISTER.md`.
+  - Published comprehensive Phase 19 closure report: [`docs/records/closures/phase-17-to-20-production-readiness/phase-19-browser-e2e-testing-closure.md`](../../../records/closures/phase-17-to-20-production-readiness/phase-19-browser-e2e-testing-closure.md).
+
+### Fixed & Hardened - Terminal Warnings & Errors Remediation (PID: 3104 Clean Sweep)
+
+- **PostgreSQL Foreign Key 23503 Self-Healing (`src/server/actions/ai-ops.ts`):**
+  - Added user existence pre-check in `getTodayUsage()` before attempting insert into `schema.usage`, returning default counters if absent.
+  - Added self-healing user creation (`onConflictDoNothing()`) in `getRemainingQuota()` to guarantee a record exists in `schema.users` before quota inspection.
+- **Next.js Image Aspect Ratio Standardization:**
+  - Added `style={{ width: "auto" }}` across all 6 `<Image src="/logo.png" ... />` elements in `src/app/workspace/layout.tsx`, `src/app/dashboard/page.tsx`, `src/app/login/page.tsx`, `src/app/account/page.tsx`, and `src/app/page.tsx`, eliminating Next.js height-without-width aspect ratio warnings.
+- **Next.js Smooth Scrolling Attribute Compliance (`src/app/layout.tsx`):**
+  - Added `data-scroll-behavior="smooth"` attribute to `<html lang="en" className="dark">` to satisfy App Router navigation requirements.
+- **Web Worker DOM Polyfill Scoping (`src/lib/workers/pdf.worker.ts`, `src/lib/parsers/pdf-corruption-detector.ts`):**
+  - Scoped DOM polyfills strictly to Worker threads (`WorkerGlobalScope` / `importScripts`), completely eliminating SSR `globalThis.document` pollution in Node.js runtime.
+- **ESLint Code Quality Gate:**
+  - Removed unused imports (`TEST_USER_EMAIL_PATTERN`, `getUser`, `and`, `randomUUID`) across test suites, achieving `0 problems (0 errors, 0 warnings)` under `npm run lint`.
+- **Repository Hygiene (`.gitignore`):**
+  - Ignored Playwright ephemeral artifacts (`/test-results/`, `/playwright-report/`, `/blob-report/`).
+
+## [1.27.0] - 2026-09-19 (Phase 18 Multi-System Integration Testing, Cross-System Lifecycle & Isolated Branch Verification)
+
+### Added & Verified - Phase 18 Closure & Multi-System Integration Verification
+
+- **Live Integration Test Infrastructure Expansion (`vitest.constants.mts`):**
+  - Registered 4 new hermetic live integration test suites in `LIVE_TEST_FILES`, expanding total live database coverage from 15 to 19 suites (89 live tests passing 100%):
+    1. `src/test/cron-expire-reservations.live.test.ts` (3 tests): Validates the automated quota sweeper route (`/api/cron/expire-reservations` - TD-02) against live Neon PostgreSQL rows, asserting stale lease TTL expiration, single-refund idempotency, and `CRON_SECRET` authorization gating.
+    2. `src/test/vault-sync.live.test.ts` (4 tests): Validates client-side AES-GCM-256 vault encryption against live database records, asserting deterministic AAD binding `vault:file:${userId}:${fileId}`, optimistic concurrency control on ciphertext versions, Zero-Knowledge HTTP 403 AI shielding, and cross-user tenant isolation.
+    3. `src/test/document-pipeline.live.test.ts` (4 tests): Validates the client-to-server document ingestion pipeline against real database persistence, asserting disguised binary magic byte rejection (PE/ELF/ZIP), PostgreSQL null-byte (`\0`) scrubbing, and 100% round-trip fidelity (Export -> Read -> Import -> Text Identity).
+    4. `src/test/multi-system-lifecycle.live.test.ts` (1 test): Consolidated 8-stage multi-system integration scenario validating auth session sync, AI quota reservation, ephemeral ghost preview, atomic ACID commit, encrypted vault conversion, OCC collision, 404 tenant masking, and document ingestion in a single sequential execution.
+- **Scythed Test User Cleanup Isolation (`src/server/actions/ai-ops.integrity.test.ts`):**
+  - Scoped user cleanup strictly to `TEST_USER_ID`, preventing global wildcard deletion of concurrent test accounts during serialized suite runs.
+- **Documentation Parity & Technical Debt Synchronization:**
+  - Published comprehensive Phase 18 closure report: [`docs/records/closures/phase-17-to-20-production-readiness/phase-18-multi-system-integration-closure.md`](../../../records/closures/phase-17-to-20-production-readiness/phase-18-multi-system-integration-closure.md).
+  - Updated `docs/reference/test-database-isolation.md` to reflect all 19 LIVE suites.
+  - Updated `docs/TECHNICAL_DEBT_REGISTER.md` recording live database verification of TD-02 and current 89-test live baseline.
+- **Repository Verification Parity:**
+  - 100% pass rate across 19 live database integration suites (89 tests passed) executed twice consecutively on isolated Neon test branch (`ep-dry-rain-b1kfmpgk-pooler`).
+  - 100% pass rate across 65 unit and contract test suites (793 tests passed) in `vitest`.
+  - Zero TypeScript compilation errors (`tsc --noEmit`).
+
+## [1.26.0] - 2026-09-18 (Dual-Mode Rate Limiting, Distributed Correlation IDs, Stale Quota Sweeper & Adversarial Hardening)
+
+### Added & Hardened - Phase 17 Closure & Adversarial Reliability Hardening
+
+- **Dual-Mode Rate Limiting Architecture (`src/lib/rate-limit.ts`):**
+  - Added dedicated `aiStreamRateLimiter` sliding-window counter enforcing **30 requests per 60 seconds** on `/api/ai/stream` (`RATE_LIMITS.AI_STREAM`).
+  - Documented explicit dual-mode policy: Fail-Open for public content, sync, and file routes to preserve offline-first client continuity; Fail-Closed for AI quota deduction in PostgreSQL and upstream key rotation in Redis.
+  - Enforced RFC 7231 compliance in `rateLimitExceededResponse`: guaranteed `Retry-After >= 1` second via `Math.max(1, Math.ceil(result.reset - Date.now() / 1000))`.
+  - Accompanied by unit test coverage in `src/test/rate-limit.test.ts` (7 tests).
+- **Distributed Correlation Tracing Engine (`src/lib/utils/correlation.ts`):**
+  - Standardized `getOrGenerateCorrelationId` with RFC 4122 UUID v4 generation and strict CRLF sanitization (`/[^a-zA-Z0-9_-]/g`, max length 128) preventing HTTP response splitting.
+  - Injected `X-Correlation-ID` header into all HTTP responses (200, 304, 400, 401, 404, 412, 428, 429, 500) across `/api/files/[id]`, `/api/files/sync`, and `/api/ai/stream`.
+  - Injected `correlationId` into structured JSON error payloads and NDJSON streaming frames (`start`, `error`, `cancelled`).
+  - Added non-breaking `correlationId?: string` and `operationId?: string` propagation to `FileOpResult` in `src/server/actions/file-ops.ts`.
+  - Accompanied by unit test coverage in `src/test/correlation.test.ts` (5 tests).
+- **Automated Quota Sweeper & TD-02 Resolution (`src/app/api/cron/expire-reservations/route.ts`):**
+  - Deployed authenticated maintenance route protected by shared secret `Authorization: Bearer $CRON_SECRET`.
+  - Implemented dual HTTP method support (`GET` and `export const POST = GET;`) for broad scheduler compatibility.
+  - Added bounded batch processing (`limit: 100`) on `db.query.aiReservations.findMany` in `src/server/actions/ai-ops.ts`, guaranteeing serverless execution terminates in < 2 seconds and eliminating 504 Gateway Timeouts under accumulated backlogs.
+  - Registered in `.github/workflows/cron.yml` to execute on automated schedule alongside soft-delete tombstone purges.
+  - Formally resolved and closed **TD-02** in `docs/TECHNICAL_DEBT_REGISTER.md`.
+  - Accompanied by unit test coverage in `src/test/cron-expire-reservations.test.ts` (5 tests).
+- **Zero-Knowledge Log Sanitization Hardening (`src/lib/sync/log-sanitizer.ts`):**
+  - Expanded denylist keywords to include `prompt`, `apikey`, `token`, `sessiontoken`, `connectionstring`, `databaseurl`, `authtoken`, `bearertoken`.
+  - Implemented token-boundary isolation to prevent false-positive masking of valid operational properties (`operationId`, `sessionId`, `activity`).
+  - Intercepted error logging in `SyncErrorHandler` and metric metadata ingestion in `SyncPerformanceMonitor`.
+  - Accompanied by unit test coverage in `src/test/log-sanitizer.test.ts` (12 tests).
+- **Adversarial Audit Hardening (Anti-Overengineering Pass):**
+  - **Information Disclosure Prevention:** Replaced raw exception string returns in `/api/ai/stream` 500 catch block with a safe generic error response, preventing database connection string and stack trace leakage. Telemetry errors sanitized via `sanitizeLogMessage(detail)`.
+  - **Corrupted Cursor Protection:** Validated parsed pagination timestamps (`!isNaN(new Date(cursorData.updatedAt).getTime())`) in `/api/files/sync`, eliminating PostgreSQL `NaN` driver crashes.
+  - **Anti-Overengineering:** Empirically verified V8 RegExp compilation speed (8.48ms / 1,000 runs) and rejected stateful global RegExp caching (eliminating `lastIndex` concurrency hazards); rejected serverless in-memory LRU fallbacks to preserve documented Fail-Open semantics.
+- **Repository Verification Parity:**
+  - 100% test pass rate across 65 test suites (793 tests passed) in `vitest`.
+  - Zero TypeScript compilation errors (`tsc --noEmit`).
+
+## [1.25.6] - 2026-09-17 (Content Sanitization, Disguised Binary Detection, GFM Table Hardening & Adversarial Ingestion Defense)
+
+### Added & Hardened - Phase 15 Closure & Adversarial Ingestion Hardening
+
+- **Disguised Executable & Binary Magic Byte Detection (`src/lib/parsers/file-validator.ts`):**
+  - Implemented fast in-memory byte inspector (`isDisguisedBinary`) detecting disguised Windows PE (`MZ` with binary DOS header markers), Linux ELF (`\x7fELF`), macOS Mach-O (32-bit, 64-bit, FAT), ZIP/JAR/Office (`PK\x03\x04`), 7-Zip, and RAR archives disguised as `.md` or `.txt`.
+  - Added binary DOS header marker discrimination ensuring legitimate plain text documents starting with acronyms (such as "MZ") pass safely without false-positive rejection.
+  - Accompanied by unit test suite in `src/lib/parsers/file-validator.test.ts` (23 tests).
+- **GFM Table Line Integrity Protection (`src/lib/parsers/pdf-table-extractor.ts`):**
+  - Updated `formatCellText` to replace embedded carriage returns and newlines (`[\r\n]+`) with spaces while preserving pipe escaping (`\|`).
+  - Guarantees that multi-line cell items extracted from PDF or OCR never break Markdown table rows into isolated text fragments, preserving strict CommonMark / GFM table structure.
+- **Server Action Memory Optimization & Circuit Breakers (`src/server/actions/import-file.ts`):**
+  - Reordered magic byte validation to execute in $O(1)$ memory prior to full-string normalization.
+  - Replaced array-allocating word counting with an $O(1)$ streaming regex scanner (`/\S+/g`), eliminating ~100MB of heap allocation on large 10MB document imports.
+  - Added defensive filename title truncation (`baseTitle.slice(0, 480)`) and iteration circuit breaker (`counter <= 100`) preventing potential infinite loops in title deduplication.
+  - Enforced strict 10MB UTF-8 byte limit and PostgreSQL null-byte (`\0`) scrubbing.
+- **Cross-System Round-Trip Integration Test Suite (`src/test/export-import-roundtrip.integration.test.ts`):**
+  - Added 6 automated end-to-end round-trip integration tests asserting 100% mathematical text identity across complex Markdown structures, Arabic RTL phrasing, 2D spatial GFM tables, fenced code blocks, path traversal sanitization, and adversarial `<script>` injections.
+- **Repository Verification Parity:**
+  - 100% test pass rate across 62 test suites (776 tests passed) in `vitest`.
+  - Zero TypeScript compilation errors (`tsc --noEmit`).
+  - Zero ESLint warnings or errors (`npm run lint`).
+
+## [1.25.5] - 2026-09-17 (Arabic PDF Normalization, Spatial Markdown Table Extraction & On-Demand Bilingual OCR)
+
+### Added & Enhanced - High-Fidelity Arabic PDF Ingestion & Spatial Table Generation
+
+- **Client-Side Arabic Character Normalization Engine (`src/lib/parsers/arabic-normalizer.ts`):**
+  - Implemented pure TypeScript Unicode normalization pipeline eliminating font-encoding corruption without external runtime dependencies.
+  - Added single-character isolated Arabic token lookahead de-spacing to reconstruct words fragmented by PDF character positioning (`ا  ﻮ    ﺔ` -> `الوثيقة`).
+  - Added NFKC un-shaping to map Arabic Presentation Forms-A and Forms-B back to canonical precomposed Unicode letters (`إ`, `أ`, `جدول`).
+  - Added visual BiDi directionality correction to reverse character-mirrored Arabic text while strictly preserving Latin/numerical sequences and dates (`05/01/2026`, `P/2001/5504/26/482160`).
+  - Integrated full unit test suite (`src/lib/parsers/arabic-normalizer.test.ts`) covering presentation forms, de-spacing, mixed Arabic/English text, numbers, and dates.
+- **2D Spatial Markdown Table Extractor (`src/lib/parsers/pdf-table-extractor.ts`):**
+  - Built spatial clustering engine converting PDF 2D coordinates (`x`, `y`, `width`, `height`) into clean GitHub-Flavored Markdown (GFM) tables (`| Col 1 | Col 2 |`).
+  - Groups items along the Y-axis using a configurable tolerance (`yTolerance = 3.5pt`) and partitions columns via X-axis gap clustering (`gap >= 18pt`).
+  - Automatically identifies header rows, separators, and single-line document titles/metadata (`### Section Header`).
+  - Cell-level RTL-aware text joining: formats Arabic cells Right-to-Left while preserving Left-to-Right formatting for Latin/numeric cells.
+  - Added comprehensive unit tests (`src/lib/parsers/pdf-table-extractor.test.ts`) validating 2-column key-value tables and multi-column tabular data.
+- **Embedded CMap & Standard Font Assets (`public/cmaps/`, `public/standard_fonts/`):**
+  - Deployed 169 binary packed CMap files (`UniKS-UTF16-H.bcmap`, etc.) and 16 StandardFonts (`FoxitSerif.pfb`, etc.) directly into `public/`.
+  - Configured `pdf.worker.ts` with `cMapUrl: '/cmaps/'`, `cMapPacked: true`, and `standardFontDataUrl: '/standard_fonts/'`, resolving missing character code mappings (`ToUnicode` CMap fallbacks).
+- **Fast Unicode Language Detector (`src/lib/parsers/language-detector.ts`):**
+  - Ultra-fast $O(1)$ heuristic analysis (<5ms) categorizing documents into `ARABIC_ONLY`, `ENGLISH_ONLY`, or `BILINGUAL_AR_EN`.
+  - Accompanied by unit test coverage (`src/lib/parsers/language-detector.test.ts`).
+- **On-Demand Bilingual Visual OCR Engine (`src/lib/parsers/pdf-ocr-engine.ts`):**
+  - Zero initial bundle bloat: dynamic lazy-loading of `tesseract.js@^5.1.1` exclusively when requested.
+  - Multi-language unified worker (`ara+eng`) recognizing scanned/rasterized documents without text streams.
+  - Extracts word bounding boxes (`x0`, `y0`, `x1`, `y1`) and pipes them directly into `extractSpatialPdfTableContent()` for unified Markdown table generation.
+  - User-facing download management in `/account` (`OcrSettingsCard`) featuring real-time download progress bars (0%–100%) and cache deletion.
+  - Interactive import mode dialog (`PdfImportModeDialog`) offering seamless user choice between Fast Local Vector Extraction (<100ms) and Deep Visual OCR (~1-2s/page).
+- **Worker Scope DOM Compatibility Hardening (`src/lib/workers/pdf.worker.ts`):**
+  - Resolved `ReferenceError: document is not defined` caused by PDF.js internal fallback evaluation of `isValidFetchUrl(..., document.baseURI)` when running within dedicated Web Worker scopes.
+  - Provided worker-safe `globalThis.document` stub and explicitly passed `useWorkerFetch: true`, `useSystemFonts: false`, and `disableFontFace: true` to `pdfjs.getDocument()`.
+- **Universal Font Corruption Detector (`src/lib/parsers/pdf-corruption-detector.ts`):**
+  - Implemented client-side heuristic inspection over the initial $N$ pages (up to 5 pages) detecting unmapped Private Use Area codepoints (`0xE000-0xF8FF`, `0xF0000-0x10FFFD`), Unicode replacement characters (`U+FFFD`), and fragmented Arabic tokens without hardcoding fragile per-document glyph tables.
+  - Produces deterministic `FontCorruptionReport` with corruption ratios and automated routing recommendations (`SHOULD_USE_OCR`, `NORMAL_EXTRACTION`).
+  - Accompanied by unit test suite (`src/lib/parsers/pdf-corruption-detector.test.ts`) covering clean Latin, clean Arabic, PUA codepoints, and real PDF buffers.
+- **Smart Corrupted Font Routing Dialog (`src/components/layout/pdf-corrupted-font-dialog.tsx`):**
+  - Integrated seamlessly into the client import pipeline (`src/components/layout/sidebar.tsx`).
+  - Intercepts corrupted PDF extractions and presents an interactive dialog recommending OCR execution, providing real-time download and execution progress, a bypass option ("المتابعة رغم التشوه"), and clean cancellation.
+- **Bilingual Visual OCR & Spatial Engine Hardening (`src/lib/parsers/pdf-ocr-engine.ts`):**
+  - Configured explicit `{ text: true, blocks: true }` output flags for `tesseract.js@5.x`.
+  - Added spatial item fallbacks to raw OCR text lines when spatial clustering produces empty results, preventing false-positive empty file errors.
+- **Configurable 2D Spatial Table Extraction Settings (`src/lib/parsers/pdf-settings.ts`, `src/components/layout/ocr-settings-card.tsx`):**
+  - Added user-facing control to toggle the 2D Spatial Table Extraction algorithm on or off from `/account`.
+  - When enabled (default), documents generate aligned GitHub-Flavored Markdown tables (`| Col 1 | Col 2 |`).
+  - When disabled, extractions yield linear paragraph text preserving line and RTL/LTR normalization without table syntax.
+  - Seamlessly passed to both Vector (`pdf.worker.ts`) and Visual OCR (`pdf-ocr-engine.ts`) extraction pipelines.
+  - Unit tests in `src/lib/parsers/pdf-settings.test.ts` ensuring resilient `localStorage` state management and SSR compatibility.
+- **Verification Matrix & Regression Parity:**
+  - 100% test pass rate across 60 test suites (740 tests passed) in `vitest`.
+  - Zero TypeScript compilation errors (`tsc --noEmit`).
+  - Zero ESLint warnings or errors (`npm run lint`).
+
+## [1.25.4] - 2026-09-16 (Client-Side Web Worker PDF Text Extraction & Vault Import Pipeline)
+
+### Added & Upgraded - Client-Side Extraction & Zero-Knowledge Vault Import
+
+- **Client-Side PDF Web Worker Extraction Engine (`src/lib/workers/pdf.worker.ts`):**
+  - Implemented isolated Web Worker running `pdfjs-dist` to extract PDF text entirely on the client, eliminating binary Base64 transfers over the network.
+  - Enforced per-page memory reclamation (`page.cleanup()`), document destruction (`pdfDoc.destroy()`), and linear Markdown paragraph normalization.
+  - Added real-time progress reporting (`onProgress` with percentage and page count) and cancellation via `AbortSignal`.
+  - Added detection and explicit user rejection for password-protected PDFs (`PasswordException`) and scanned/image-only PDFs.
+  - Bundled `pdf.worker.mjs` in-process within the worker environment and configured `/pdf.worker.min.mjs` fallback on `GlobalWorkerOptions.workerSrc` for seamless browser runtime execution without sub-worker lookup failures.
+- **Dual-Mode Worker Bridge (`src/lib/parsers/pdf-worker-bridge.ts`):**
+  - Built typed RPC bridge supporting Web Worker in browser environments and in-process direct engine execution (`extractPdfTextDirect`) in Node.js/Vitest test suites without mocking.
+- **Server Action Contract Upgrade (`src/server/actions/import-file.ts`):**
+  - Updated `importFile` signature to receive UTF-8 text strings directly (`textContent: string`) instead of binary Base64.
+  - Enforced 10MB text size limits and PostgreSQL null-byte (`\0`) sanitization.
+  - Completely purged server-side `pdf-parse` dependency and binary buffer parsing from the cloud execution path.
+- **Direct Vault Encrypted Import Pipeline (`sidebar.tsx`, `import-file.ts`):**
+  - Integrated client-side AES-GCM-256 encryption using `cryptoWorkerBridge` for immediate encrypted vault import.
+  - Binds deterministic domain AAD: `vault:file:${userId}:${fileId}` using client pre-generated UUIDs.
+  - Direct atomic insert into Neon PostgreSQL with `isEncrypted: true`, storing ciphertext without ever transmitting or storing plaintext.
+- **Sidebar & File Tree Drag & Drop Support (`sidebar.tsx`, `file-tree-item.tsx`):**
+  - Added external file drop support onto specific folders in `FileTreeItem`, passing target `parentFolderId` to `importFile`.
+  - Added live extraction progress UI card with active page counters and a user cancellation button.
+  - Added "استيراد مشفر للخزنة" toggle in the sidebar with automatic unlock modal invocation if the vault is locked.
+- **Test Matrix & Verification Parity:**
+  - Added `src/lib/parsers/pdf-worker-bridge.test.ts` (8 tests verifying extraction, progress, cancellation, watchdog reset, and direct engine).
+  - Added `src/test/vault-import.integration.test.ts` (3 tests verifying real crypto, zero-plaintext invariant, and tamper resistance).
+  - Updated `src/server/actions/import-file.test.ts` and `src/test/cross-user-ownership.test.ts` to the new contract.
+  - Verified 100% test pass rate across 55 test files (709 passed) and clean TypeScript compilation.
+
+## [1.25.3] - 2026-09-11 (Comprehensive Documentation Audit, Public Plans Tracking & Subsystem Alignment)
+
+### Added & Aligned - Documentation Governance, Public Plans & Architectural Parity
+
+- **Public Plans Directory & Translation (`docs/Plans/`):**
+  - Created tracked `docs/Plans/` directory containing verified, comprehensive English translations of core architectural roadmaps:
+    - `TECHNICAL_EXECUTION_PLAN.md`: 20-phase technical execution roadmap derived directly from active source code, establishing exact phase status (16 phases `CLOSED`, Phase 9 `ACTIVE` session governance standard, Phases 17–18 `IN PROGRESS` / `PARTIALLY DONE`, and Phases 19–20 `PENDING`).
+    - `HYBRID_ENCRYPTION_AND_VAULT_PLAN.md`: Complete architectural plan for the Zero-Knowledge Cloud Vault and Dual-Tier Hybrid Encryption engine, confirming 100% closure of Milestones M1 through M5.
+    - `MARKDOWN_EDITOR_MIGRATION_PLAN.md`: Complete architectural plan for the native CodeMirror 6 Markdown editor migration, confirming 100% closure of Phases 1 through 6 and elimination of legacy `@tiptap/*` dependencies.
+  - Preserved untracked local roadmaps for private planning without Git exposure.
+- **Founding Divergence Register Update (`docs/foundation/DESIGN_VS_REALITY.md`):**
+  - Added the Zero-Knowledge Vault and Client-Side Hybrid Encryption subsystem to Section 1 (_Systems Added After the Founding Design_).
+  - Detailed PBKDF2-SHA256 (600,000 iterations in Web Worker), WebAuthn PRF hardware biometrics, 6-digit Quick PIN, BIP-39 12-word recovery seed, transparent local IndexedDB encryption (`LocalDeviceKey`), domain AAD binding (`vault:file:${userId}:${fileId}`), and AI safety gatekeepers.
+- **Living Documentation Corrections & Technical Debt Remediation:**
+  - **Sync Protocol Parameterization (`docs/reference/SYNC_API.md`, `docs/reference/SYNC_ARCHITECTURE.md`):** Corrected outdated `?since=<number>` Unix timestamp queries to the verified `?updated_after=<ISO_8601_string>` parameter matching `src/app/api/files/sync/route.ts` and `src/lib/sync/sync-manager.ts`.
+  - **Circuit Breaker Cooldown Duration (`docs/architecture/ai/ai-quota-reservation-lifecycle.md`):** Aligned default Redis circuit breaker TTL from 3600s to 600s (10 minutes) matching `DEFAULT_CIRCUIT_TTL_SECONDS` in `src/lib/ai/key-rotation.ts`.
+  - **Search & Replace Debounce & Localization (`docs/guides/Search_Replace_Feature.md`):** Corrected search debounce timeout from 2000ms to 300ms and updated bilingual UI placeholders to match `src/components/editor/search-replace.tsx`.
+  - **User Vault Profile Schema Alignment (`docs/reference/phase-16/vault-phase-3-ui-and-conversion-closure.md`):** Aligned `saveCachedVaultProfile` documentation snippet to match the exact schema of `UserVaultProfile` (`encryptedMasterKey`, `keySalt`, `recoverySalt`, `kdfIterations`).
+  - **Domain AAD Prefix Standard (`docs/reference/phase-16/vault-phase-1-crypto-core-closure.md`):** Documented canonical domain prefix in AAD construction: `vault:file:${userId}:${fileId}` matching `src/lib/sync/sync-manager.ts`.
+  - **AI Stream Parser Test Count (`docs/architecture/ai-streaming-protocol.md`):** Corrected cited test count for `ai-stream-parser.test.ts` from 11 to 9 verified passing tests.
+  - **Relative Link Sanitation (`docs/reference/phase-12-auth-ownership-closure.md`):** Replaced forbidden absolute `file:///` paths with clean relative Markdown links per repository governance rules.
+  - **ASCII Art Elimination to Mermaid (`docs/reference/phase-13-stripe-webhooks-subscriptions-closure.md`, `docs/specs/UI_STREAMING_ARCHITECTURE_REQUIREMENTS.md`):** Replaced box-drawing ASCII diagrams with standardized, clean Mermaid flowcharts.
+  - **Vitest Configuration Filename Parity (`docs/reference/test-database-isolation.md`):** Updated `.ts` extensions to `.mts` (`vitest.config.mts`, `vitest.live.config.mts`) and documented `vitest.constants.mts` as the authoritative source of truth for `LIVE_TEST_FILES`.
+  - **Documentation Master Index Alignment (`docs/README.md`):** Documented `docs/Plans/` directory map, added Section 2 roadmap entries, and updated test suite statistics to 53 test files and 694 passing tests.
+- **Root Repository Master Readme Parity (`README.md`):**
+  - Updated Vitest badge and verification totals to **53 Suites · 694/694 Passing** (100% pass rate).
+  - Added dedicated Core Engineering Subsystem 7 (_Zero-Knowledge Cloud Vault & Client-Side Hybrid Encryption Subsystem_) complete with architectural Mermaid flowchart.
+  - Added Zero-Knowledge client-side encryption and memory sanitization guarantees to the Security Architecture table.
+  - Converted sync and AI streaming ASCII art diagrams to standard Mermaid flowcharts.
+  - Aligned database migrations range to `0001–0010` and expanded project directory tree with `vault/` UI components and `workers/crypto.worker.ts`.
+- **System Verification & Integrity Evidence:**
+  - `npx tsc --noEmit` exited clean with code 0 (zero errors).
+  - `npm run lint` exited clean with code 0 (ESLint 9 pass).
+  - `npm run test` verified 53 test files and 694 passed tests (100% pass rate).
+
+## [1.25.2] - 2026-09-11 (Vault Phase 5 Closure: Hardened Verification, Security Auditing & 10-Point Test Matrix)
+
+### Hardened & Fixed - Zero-Knowledge Defense-in-Depth & Key Store Resilience
+
+- **Formal Closure of Vault Plan Phase 5 ([`docs/records/closures/phase-16-vault-encryption/vault-phase-5-closure-test-matrix.md`](../../../records/closures/phase-16-vault-encryption/vault-phase-5-closure-test-matrix.md)):**
+  - Completed and verified all 10 criteria of the Closure Test Matrix from the Hybrid Vault Execution Plan (§4.5): Lazy-Unlock & Login, First Encrypt Setup with 3-word challenge, Vault Activation, BIP-39 Seed Recovery, RAM Sanitization, AI Hard Block, Worker Offloading (600K PBKDF2), Non-Blocking Conflict Isolation (`CONFLICT_LOCKED`), Syntax-Safe Diff3 Merge, and Zero-Knowledge Log Sanitation.
+  - Formally declared Phase 16 (Hybrid Encryption & Zero-Knowledge Vault - M1 through M5) as **CLOSED**.
+- **Zero-Knowledge Log Hygiene Engine (`src/lib/sync/log-sanitizer.ts`, `src/lib/sync/index.ts`):**
+  - Implemented `LogSanitizer` utility functions (`sanitizeLogMessage`, `sanitizeLogValue`, `sanitizeMetadata`, `isSensitiveLogKey`) and the canonical `REDACTED = '[REDACTED]'` token.
+  - Implemented exact token-boundary regex isolation (`(?:^|[^a-zA-Z0-9_])`) for short cryptographic abbreviations (`iv`, `pin`, `aad`, `kek`, `pwd`), eliminating false-positive redactions on benign operational properties (e.g. `activity`, `archive`, `privacy`).
+  - Implemented multi-word delimiter-bounded secret scrubbing (`[^,;\n}\]]+`), preventing whitespace truncation leaks in 12-word BIP-39 mnemonic seeds.
+  - Resolved circular object recursion using depth-first enter/exit tracking (`seen.delete(obj)` in `finally`), avoiding false redactions of shared diamond references in Directed Acyclic Graphs.
+  - Fixed duplicate quotation wrapping bug (`"$1${fragment}$1": $2${REDACTED}$2`), guaranteeing valid JSON structures post-sanitization.
+  - Preserved diagnostic call stacks on sanitized `Error` instances while stripping embedded credentials and secrets.
+- **Subsystem Log Sanitization Integration (`error-handler.ts`, `performance-monitor.ts`, `sync-manager.ts`, `session-key-store.ts`):**
+  - Sanitized `message`, `metadata`, and `originalError` across all `SyncErrorHandler.createSyncError` and `handle` execution paths, preventing secrets from reaching console output or callback listeners.
+  - Integrated `sanitizeMetadata` into `SyncPerformanceMonitor` (`recordMetric`, `stopTimer`), ensuring in-memory metric collections and diagnostic reports never retain document plaintext, ciphertext, or keys.
+  - Sanitized console error dispatches in `SyncManager` auto-resolution loops and `SessionKeyStore` listener notifications.
+- **Volatile Caller Memory Hygiene & RAM Wiping (`create-vault-modal.tsx`, `vault-unlock-modal.tsx`, `trust-device-modal.tsx`):**
+  - Enforced proactive memory zeroing of temporary derived/unwrapped Master Key buffers (`masterKeyRaw`, `unwrappedMasterKey`) across all unlock pathways (Password, BIP-39 Seed, Biometrics PRF, 6-digit PIN) inside `finally` blocks via `wipeBuffer`/`zeroSensitiveBuffer`.
+  - Refactored `TrustDeviceModal.ensureMasterKey` to return a boolean status, zeroing its local derivation buffer in `finally` while `handleSaveDeviceTrust` retrieves `sessionKeyStore.getMasterKeyRaw()` as a read-only reference without caller-side buffer wiping.
+- **Inactivity Timeout Mutation Elimination (`src/lib/sync/session-key-store.ts`):**
+  - Removed global `this.inactivityTimeoutMs` mutation from `storeMasterKeyRaw(key: Uint8Array)`, strictly locking the inactivity auto-lock window to 1 hour (3,600,000 ms) and eliminating accidental timeout corruption by arbitrary caller parameters.
+- **Centralized Markdown Syntax Integrity Architecture (`src/lib/sync/conflict-resolver.ts`, `src/lib/sync/syntax-validator.ts`):**
+  - Centralized structural Markdown verification in `syntax-validator.ts`, importing `validateMarkdownSyntaxIntegrity as validateSyntax` into `ConflictResolver` and pruning redundant legacy function duplicates.
+- **Comprehensive Verification & Testing:**
+  - Added unit test suite `src/test/log-sanitizer.test.ts` (12 tests passing).
+  - Added RAM sanitization, non-extractable WebCrypto key, and worker offloading tests to `src/test/vault-crypto.test.ts` (section 9).
+  - All 101 tests across vault and sync test suites pass (100% pass rate).
+  - `npx tsc --noEmit` exits clean with 0 errors.
+
+## [1.25.1] - 2026-09-08 (Zero-Knowledge Encrypted Inbound Decryption & Conflict Plaintext Resolution)
+
+### Fixed & Hardened - Encrypted Conflict Ingestion & Editor Surface Integrity
+
+- **Inbound Cryptographic Gateway (`src/lib/sync/sync-crypto-gateway.ts`, `src/lib/sync/index.ts`):**
+  - Implemented `SyncCryptoGateway` providing decoupled, deterministic inbound decryption (`decryptInbound`) and outbound re-encryption (`encryptOutbound`).
+  - Bound cryptographic operations to the volatile Master Key in `SessionKeyStore`, remote IV extraction, and per-file AAD integrity (`vault:file:${userId}:${fileId}`).
+  - Transparently decodes incoming remote updates and conflict payloads into clean Markdown plaintext before delivery to consumers.
+- **Server IV Extraction & Plaintext 412 Conflict Decryption (`src/hooks/use-editor-orchestrator.ts`):**
+  - Fixed cryptographic tag mismatch defect where the orchestrator attempted to decrypt HTTP 412 `serverVersion.content` using the local client IV instead of `saveRes.serverVersion.encryptionMetadata.iv`.
+  - Added plaintext false-conflict elimination: compares decrypted remote Markdown against local dirty plaintext, auto-advancing version/ETag when payloads match.
+  - Populates `SyncConflict.serverVersion.content` with clean Markdown plaintext, restoring Diff3 line-based merge and side-by-side diffing functionality in `ConflictDialog`.
+- **Editor Surface Sanitization & Symmetric Re-Encryption (`src/hooks/use-editor-orchestrator.ts`):**
+  - Replaced legacy flawed server-strategy guard that injected raw ciphertext into CodeMirror with clean plaintext assignment (`adapter.setValue(resolution.content)`).
+  - Enforced universal outbound re-encryption for all conflict resolution strategies (`"mine"`, `"server"`, `"merge"`) using fresh 12-byte CSPRNG IVs, eliminating nested double-encryption hazards (`gcm:v1:gcm:v1:...`).
+- **Remote Inbound Update Decryption (`src/lib/sync/sync-manager.ts`, `src/hooks/use-sync.ts`):**
+  - Extended `RemoteUpdateEvent` and `onRemoteUpdate` callback signatures with `isEncrypted` and `encryptionMetadata`.
+  - Intercepts remote background pulls and polling updates, decrypting to plaintext before CodeMirror insertion and safely isolating updates when the vault is locked.
+- **Verification Evidence & Test Expansion:**
+  - Added unit test suite `src/lib/sync/sync-crypto-gateway.test.ts` (5 tests passing).
+  - Added end-to-end integration suite `src/test/encrypted-conflict-decryption.integration.test.ts` (4 tests passing).
+  - Full automated test suite: **48 passed files (48), 666 passed tests (666)** (100% pass rate).
+  - Strict TypeScript compilation: `npx tsc --noEmit` exits with code 0 (zero errors).
+
+## [1.25.0] - 2026-09-08 (Vault Phase 4: Zero-Knowledge AI Gatekeepers, Non-Blocking Sync with Conflict Isolation & Syntax Integrity)
+
+### Added & Hardened - Zero-Knowledge AI Safety Gatekeepers & Non-Blocking Encrypted Sync
+
+- **Dual-Layer Zero-Knowledge AI Safety Gatekeepers (`src/app/api/ai/stream/route.ts`, `src/hooks/use-editor-orchestrator.ts`, `src/components/editor/ai-toolbar.tsx`):**
+  - Enforced server-side HTTP 403 `AI_PROHIBITED_ON_ENCRYPTED_FILES` prior to quota deduction when targeting encrypted notes without user opt-in.
+  - Added pre-flight client gatekeeper in `useEditorOrchestrator` and amber shield privacy badge (`data-testid="ai-encrypted-badge"`) in `AIToolbar` that suppresses all AI actions on encrypted notes.
+  - Implemented `updateVaultAISetting` server action and interactive toggle switch in `VaultSecurityCard` backed by PostgreSQL migration `0010_add_vault_ai_setting.sql` (`allow_ai_on_encrypted_files`).
+  - Added atomic AI commit validation in `commitAIFileOperation`: automatically triggers `refundAIReservation` and rejects commits of unencrypted plaintext without `encryptionMetadata.iv` to encrypted files.
+- **Deterministic Strong Encrypted ETag Generator (`src/lib/sync/etag-generator.ts`):**
+  - Implemented canonical JSON key sorting (`CANONICAL_ENVELOPE_KEYS`) and 32-character SHA-256 hash generation for `EncryptedEnvelope` payloads:
+    $$\text{ETag} = \text{SHA-256}(\text{serializeEncryptedEnvelope}(\text{envelope}))[0..32]$$
+  - Guarantees deterministic ETag evaluation across client and server runtimes regardless of JSON key serialization ordering.
+- **Non-Blocking Encrypted Sync & Conflict Isolation (`src/lib/sync/sync-manager.ts`):**
+  - Quarantines HTTP 412 Precondition Failed and 409 Conflict responses on encrypted files into `pendingEncryptedConflicts` under `CONFLICT_LOCKED` when the vault is locked.
+  - Preserves dirty unencrypted synchronization: `pushDirtyFiles` explicitly filters out quarantined files, preventing locked encrypted conflicts from blocking independent document synchronization.
+  - Reactive unlock auto-resolution: listens to `sessionKeyStore` unlock events, decrypts 3-way in RAM, executes Diff3 merge, verifies Markdown syntax integrity, re-encrypts with fresh CSPRNG IV, and authoritatively pushes to `/api/files/[id]`.
+  - Implemented safe eviction from quarantine upon push rejection to eliminate infinite retry loops.
+- **Markdown Syntax Integrity Validation (`src/lib/sync/syntax-validator.ts`):**
+  - Validates CommonMark code fence balance (``` and ~~~), GFM table column alignment with escaped pipe support (`\|`), null byte `\0` blocking, and conflict marker detection (`<<<<<<<`, `=======`, `>>>>>>>`).
+  - Integrated into `conflict-resolver.ts` to prevent corrupted 3-way auto-merges and escalate safely to manual UI resolution.
+- **Stateless REST Boundary Check (`src/app/api/files/[id]/route.ts`):**
+  - Enforced `encryptionMetadata.iv` requirement on encrypted PUT requests (HTTP 400), and bypassed redundant `normalizeMarkdownSource` for Base64 ciphertext payloads.
+- **Verification Evidence & Test Suite Expansion:**
+  - Added 28-test comprehensive suite `src/test/vault-sync-ai-gate.test.ts`.
+  - Full automated test suite: **46 passed files (46), 657 passed tests (657)** (100% pass rate).
+  - TypeScript compilation: `npx tsc --noEmit` exits with code 0 (zero errors).
+
+## [1.24.7] - 2026-09-05 (Hardware-Bound Biometric Authentication WebAuthn PRF & In-Place Device Trust)
+
+### Added & Hardened - Hardware-Enclave Key Derivation & Dual Device Trust Architecture
+
+- **WebAuthn PRF Hardware Key Derivation Engine (`src/lib/sync/webauthn-prf.ts`, `src/lib/sync/index.ts`):**
+  - Integrated W3C WebAuthentication Level 3 PRF extension (`extension:prf`) for hardware-bound platform authenticators (Windows Hello TPM 2.0, Apple Touch ID / Face ID Secure Enclave, Android Titan M2 / StrongBox).
+  - Implemented HKDF-SHA-256 derivation to expand raw PRF output into 256-bit AES-GCM Key Encryption Keys (KEK), establishing physical immunity against offline `IndexedDB` extraction attacks.
+  - Universal execution resilience: dynamically resolves `window` vs `globalThis` contexts for seamless execution across browser runtime, Node.js, and Vitest test environments.
+  - Implemented `checkWebAuthnSupportStatus` diagnostic engine: dynamically verifies Secure Context (`isSecureContext`), `PublicKeyCredential`, `isUserVerifyingPlatformAuthenticatorAvailable`, and `"extension:prf"` / `"prf"` client capabilities with actionable user guidance (e.g. Windows Hello PIN configuration reminders).
+- **In-Place Dual Device Trust Selector (`src/components/vault/vault-unlock-modal.tsx`, `src/components/vault/trust-device-modal.tsx`):**
+  - Enhanced `VaultUnlockModal` (Password tab) and `TrustDeviceModal` with dual selector cards: Hardware Biometrics (TPM/Enclave badge) vs 6-Digit PIN (Software protection).
+  - Allowed users to enroll, reconfigure, or switch device trust methods directly during password unlock without requiring separate modal journeys.
+  - Added dedicated biometric unlock tab for one-touch Windows Hello / Touch ID vault unlocking when a `webauthn_prf` envelope is present.
+  - Added explicit error feedback informing users of biometric prompt cancellations or sensor errors instead of silent failure.
+- **PostgreSQL Cloud Schema Migration 0009 (`src/lib/db/migrations/0009_add_device_trust_epoch.sql`):**
+  - Added `device_trust_epoch` column (`INTEGER NOT NULL DEFAULT 1`) to `user_vault_profiles` table.
+  - Resolved `NeonDbError: column "device_trust_epoch" does not exist` (code 42703).
+  - Applied and verified against live Neon database, enabling atomic multi-device revocation via cryptographic AAD binding.
+- **Automated Testing & Full Suite Verification (`src/test/webauthn-prf.unit.test.ts`):**
+  - Added 12 automated unit tests for HKDF expansion, W3C `"extension:prf"` client capability detection, platform checks, and mock enrollment.
+  - Full suite: **45 test files passed, 629/629 tests passed (100% pass rate)**.
+  - TypeScript compilation: `npx tsc --noEmit` exited with code 0 (zero errors).
+
+## [1.24.6] - 2026-09-05 (Native ESM Vitest Architecture & Mixed Exports Resolution)
+
+### Changed & Hardened - Test Environment & Configuration Architecture
+
+- **Eliminated `[MIXED_EXPORTS]` Rollup Warning (`vitest.constants.mts`):**
+  - Extracted shared partitioning arrays (`LIVE_TEST_FILES`, `CLOUD_E2E_FILES`) into a dedicated single-source-of-truth constants file (`vitest.constants.mts`).
+  - Restricted configuration entry points (`vitest.config.mts` and `vitest.live.config.mts`) strictly to default exports (`export default defineConfig(...)`), resolving the Rollup mixed export collision entirely.
+- **Resolved `configLoader: 'native'` Future Vite Warning (`vitest.config.mts`, `vitest.live.config.mts`, `package.json`):**
+  - Migrated configuration files to `.mts` extension to align with native ES module loading semantics without disturbing Next.js CommonJS boundaries in `package.json`.
+  - Replaced legacy Node CommonJS `__dirname` references with native `import.meta.dirname` (supported in Node.js 20.11+ / 24+).
+  - Explicitly specified `.mjs` import specifier (`./vitest.constants.mjs`) to maintain 100% compliance with TypeScript ESM module resolution and modern Vite standards.
+  - Updated `package.json` test script (`test:live`) to point directly to `vitest.live.config.mts`.
+- **Verification Evidence:**
+  - `npm run test`: **44 test files passed, 617/617 tests passed (100% success rate)** with completely clean terminal output and zero warnings.
+  - `tsc --noEmit`: Exited with code 0 (zero TypeScript errors).
+
+## [1.24.5] - 2026-09-05 (Comprehensive Vault Unit & Cross-Module Integration Test Suites)
+
+### Added - Full-Spectrum Unit Testing & Cross-Module End-to-End Test Suite
+
+- **Vault Server Actions Unit Test Suite (`src/test/vault-actions.unit.test.ts`):**
+  - Added 20 isolated unit tests covering `getUserVaultProfile`, `createUserVaultProfile`, `updateVaultPassword`, and `revokeAllTrustedDevices`.
+  - Validated authentication enforcement, input parameter validation, conflict states (409), not-found states (404), default iteration counts, and database exception resilience.
+- **File Operations Vault Unit Test Suite (`src/test/file-ops-vault.unit.test.ts`):**
+  - Added 10 unit tests covering `toggleFileEncryption` and `copyFile` with encrypted override.
+  - Validated folder encryption rejection, optimistic concurrency version checks (412), ETag validation, atomic metadata setting/clearing, title collision avoidance, and prevention of unauthenticated blind server copying.
+- **Cryptographic Resilience & Fault Tolerance Unit Test Suite (`src/test/vault-crypto-resilience.unit.test.ts`):**
+  - Added 17 unit tests verifying 6-digit PIN length constraints, ciphertext byte tampering detection, IV tampering detection, AAD missing/tampered error handling, RAM zeroization (`wipeBuffer`), and `SessionKeyStore` inactivity touch and tab-isolated locking.
+- **Cross-Module Integration Test Suite (`src/test/vault-cross-module.integration.test.ts`):**
+  - Added 5 end-to-end integration flow tests connecting Server Actions, Web Crypto, IndexedDB, and UI Orchestration:
+    - _Flow 1:_ Complete Zero-Knowledge setup, local encryption, server persistence, and round-trip decryption.
+    - _Flow 2:_ Client-side re-encrypted copy pipeline with new UUID, fresh IV, and AAD integrity validation.
+    - _Flow 3:_ AI stream commit zero-knowledge plaintext rejection and atomic encrypted payload commitment.
+    - _Flow 4:_ Conflict 412 double-encryption prevention invariant.
+    - _Flow 5:_ Central device trust revocation and local envelope epoch invalidation.
+- **Verification Evidence:**
+  - Full automated suite: **148/148 tests passed (100% success rate)** across all 9 test suites.
+  - TypeScript compilation: `tsc --noEmit` exited with code 0 (zero errors).
+
+## [1.24.4] - 2026-09-05 (Adversarial Code Audit Closure, 6-Digit PIN Upgrade & Encrypted Copy Engine)
+
+### Added & Hardened - Adversarial Code Audit & Cryptographic Edge-Case Mitigations
+
+- **Cross-File Save Race Condition Prevention (`src/hooks/use-editor-orchestrator.ts`):**
+  - Parameterized `debouncedAutoSaveRef` and `executeServerWrite` with `targetFileId`.
+  - Automatically cancels pending debounce timers and flushes uncommitted dirty edits to local IndexedDB (`saveLocal`) during rapid route switching or component unmount.
+- **Client-Side Re-Encrypted Copy Engine (`src/components/files/file-context-menu.tsx`, `src/server/actions/file-ops.ts`):**
+  - Retained the copy feature for encrypted files with client-side zero-knowledge re-encryption.
+  - Added user confirmation and advisory dialog before re-encrypting large or confidential files.
+  - Decrypts original file locally in volatile RAM, generates new UUID and fresh random IV, re-encrypts with `vault:file:${userId}:${newFileId}`, and dispatches atomic copy.
+  - Protected server action `copyFile` from blind server-side copying of encrypted files without valid client-side re-encryption.
+- **Conflict Encryption Metadata Propagation & Double-Encryption Guard (`src/app/api/files/[id]/route.ts`, `src/server/actions/file-ops.ts`, `src/hooks/use-editor-orchestrator.ts`):**
+  - Included `isEncrypted` and `encryptionMetadata` in 412 conflict response bodies across API routes and Server Actions.
+  - Added false conflict decryption using server IV and added defensive guard against double-encrypting already-authenticated ciphertexts (`gcm:v1:...`) during conflict resolution.
+- **Inactivity Timer Local Activity Touch (`src/hooks/use-editor-orchestrator.ts`):**
+  - Hooked `sessionKeyStore.touch()` to editor input events, keeping the active tab alive during active composition.
+- **6-Digit PIN Upgrade (`src/lib/sync/encryption.ts`, `src/components/vault/`, `src/test/vault-orchestration.test.ts`):**
+  - Upgraded Trusted Device PIN requirement from 4 digits to 6 digits (`/^\d{6}$/`), expanding entropy to 1,000,000 combinations.
+  - Synchronized input validation, placeholders, and automated test assertions.
+- **Automated Verification:**
+  - Expanded `src/test/vault-orchestration.test.ts` to 29 tests covering 6-digit PIN, AAD re-encryption integrity, and double-encryption guards. All 96 automated tests pass (100% pass rate).
+
+## [1.24.3] - 2026-09-05 (Strict Zero-Trace Baseline, Trusted Device 4-Digit PIN Architecture & Global Revocation)
+
+### Added - Strict Zero-Trace Default & Trusted Device PIN Ecosystem
+
+- **Strict Zero-Trace General Default Mode (`src/lib/sync/session-key-store.ts`):**
+  - Refactored `SessionKeyStore` to operate purely in volatile RAM Heap memory by default.
+  - Eliminated naive `sessionStorage` plain key writing, ensuring no plaintext master keys or cryptographic artifacts ever touch client disk or DOM storage.
+  - Retained the 1-hour inactivity timeout with automatic defensive RAM zeroing (`wipeBuffer`).
+- **Trusted Device 4-Digit PIN Key Wrapping (`src/lib/sync/encryption.ts`, `src/lib/sync/types/vault.ts`):**
+  - Implemented `wrapMasterKeyWithPin` and `unwrapMasterKeyWithPin`: master keys on explicitly trusted personal devices are wrapped via PBKDF2-HMAC-SHA256 (600,000 iterations, 16-byte random salt, 12-byte IV, AAD binding with userId and epoch).
+  - Enforced 30-day validity window (`expiresAt`) and anti-brute-force rate limiting: 5 failed PIN attempts automatically destroy the local envelope, forcing full password authentication.
+- **IndexedDB Trusted Envelope Storage (`src/lib/sync/indexeddb.ts`):**
+  - Added `saveDeviceTrustEnvelope`, `getDeviceTrustEnvelope`, and `clearDeviceTrustEnvelope` to persist PIN envelopes in `sync_metadata`.
+- **Global Remote Revocation via `deviceTrustEpoch` (`src/lib/db/schema.ts`, `src/server/actions/vault-actions.ts`):**
+  - Added `deviceTrustEpoch` to `userVaultProfiles`.
+  - Implemented `revokeAllTrustedDevices()` server action: atomically increments `deviceTrustEpoch`, immediately invalidating all PIN envelopes across all trusted devices globally upon next authentication or sync.
+- **Interactive UI Components (`src/components/vault/`, `src/app/account/page.tsx`):**
+  - **`TrustDeviceModal`:** Clean dark modal with prominent security disclaimer, legal agreement checkbox, and 4-digit PIN setup/confirmation.
+  - **`VaultSecurityCard`:** Central security management card in Account Settings (`/account`) showing active device status (Strict vs Trusted Device), local revocation button, and global "Revoke All Trusted Devices" action with confirmation dialog.
+  - **`VaultUnlockModal`:** Seamless PIN tab with auto-detection of trusted device envelopes, 4-digit numeric input, remaining attempt counter, and fallback to password/recovery seed.
+- **Automated Verification Suite (`src/test/vault-orchestration.test.ts`):**
+  - Added 7 automated tests for PIN KEK derivation, envelope wrapping/unwrapping, brute-force lockout, 30-day expiry, and global epoch revocation. All 71 vault tests pass (100% pass rate).
+
+## [1.24.2] - 2026-09-04 (1-Hour Inactivity Auto-Lock, Tab-Scoped Session Persistence & Unmount Key Retention)
+
+### Fixed - Repetitive Password Re-Prompts & Tab Session Key Loss
+
+- **1-Hour Inactivity Auto-Lock & Tab-Scoped Session Persistence (`src/lib/sync/session-key-store.ts`):**
+  - Updated the default vault inactivity auto-lock timeout to exactly 1 hour (`3,600,000` ms = `60 * 60 * 1000`).
+  - Integrated tab-scoped `sessionStorage` (`lugx_vault_session_v1`) to securely retain the active Master Key across page reloads and route navigations within the open tab.
+  - Seamlessly rehydrates the in-memory Master Key on demand (`isUnlocked()`, `constructor`) if volatile RAM is cleared, eliminating unwanted password prompts.
+  - Explicit locks and logouts deterministically wipe both volatile RAM (`wipeBuffer`) and `sessionStorage`.
+- **Decoupled Key Lifecycle from Network Sync Unmount (`src/hooks/use-sync.ts`):**
+  - Removed erroneous `sessionKeyStore.purgeKeys()` from `useSync` unmount cleanup, ensuring switching documents or navigating within the workspace preserves the unlocked vault state.
+- **Cross-Tab & Component Vault State Synchronization (`src/lib/sync/cross-tab-sync.ts`, `src/hooks/use-editor-orchestrator.ts`, `src/components/vault/`):**
+  - Added `vault_unlocked` and `vault_locked` broadcast events to synchronize vault status across open editor tabs and file explorer menus.
+  - Updated `useEditorOrchestrator` to reactively unlock encrypted documents and decrypt pending payloads upon receiving `vault_unlocked`.
+- **Automated Test Coverage (`src/test/vault-orchestration.test.ts`):**
+  - Added comprehensive unit tests for 1-hour inactivity timeout, `sessionStorage` persistence/rehydration, and auto-lock expiration. All 64 vault tests pass.
+
+## [1.24.1] - 2026-09-04 (Elimination of Spurious Encryption Conflicts & Guaranteed Conflict Dialog Dismissal Lifecycle)
+
+### Fixed - Encryption Conflict 412 False Positives & Conflict Modal Dismissal Loop
+
+- **Decryption-Aware False Conflict Detection (`src/hooks/use-editor-orchestrator.ts`):**
+  - Eliminated spurious 412 Precondition Failed conflict popups when encrypting an active document: if remote content is encrypted while local baseline holds plaintext, `executeServerWrite` and `handleSyncConflict` decrypt the server ciphertext using the in-memory Master Key to compare against local plaintext. Matching content is auto-synchronized cleanly without prompting the user with a conflict modal.
+- **AutoSave Debounce Cancellation on Encryption (`src/hooks/use-editor-orchestrator.ts`):**
+  - Canceled pending debounced auto-saves (`debouncedAutoSaveRef.current?.cancel?.()`) and cleared active conflict states upon receiving `file_encrypted` or `file_decrypted` cross-tab events, preventing stale version saves from racing against cloud encryption updates.
+- **IndexedDB Pending Operations Queue Purge (`src/components/files/file-context-menu.tsx`, `src/lib/sync/sync-manager.ts`):**
+  - Upon file encryption/decryption, all pending unsynced operations for that file in IndexedDB are marked `synced: true`, preventing `SyncManager` background workers from pushing superseded plaintext edits and triggering recursive 412 loops.
+  - Implemented comprehensive `resolution === 'local'` handling in `SyncManager.handleConflict`, setting `isDirty: false` and clearing uncommitted operations.
+- **Deterministic Conflict Dialog Dismissal (`src/components/sync/conflict-dialog.tsx`):**
+  - Added explicit, immediate `onClose()` invocation inside `handleResolveClick` after `await onResolve(...)`, ensuring the modal cleanly dismisses upon user resolution without relying solely on parent re-render cycles.
+- **Automated Verification (`src/test/vault-orchestration.test.ts`):**
+  - Added integration tests verifying decryption-aware false conflict recognition, local conflict resolution queue purging, and post-encryption operation cleanup. (61/61 tests passing).
+
+## [1.24.0] - 2026-09-04 (Vault Phase 3: Vault UI Components, Editor Orchestration & Dynamic File Conversion Engine)
+
+### Added - Zero-Knowledge Vault UI, Editor Orchestrator Gating & Dynamic File Conversion Engine
+
+- **Interactive Dark-Themed Vault Modals (`src/components/vault/`):**
+  - **`CreateVaultModal`:** Password setting, 12-word BIP-39 recovery seed generation, randomized 3-word challenge test, dual wrapping (`wrapMasterKeyWithPassword`, `wrapMasterKeyWithRecoverySeed`), local `sync_metadata` caching, and defensive buffer wiping (`wipeBuffer`).
+  - **`VaultUnlockModal`:** Fast password unwrap, seamless 12-word seed recovery fallback, local IDB cache retrieval for offline operations, and new password re-wrap capabilities.
+  - **`RecoveryPhraseModal`:** Standalone secure recovery phrase display with clipboard export and security advisories.
+- **Editor Write Orchestrator Gating (`src/hooks/use-editor-orchestrator.ts`):**
+  - **`hydration === "vault_locked"`:** Suspends CodeMirror painting and editing (`adapter.setEditable(false)`) when mounting encrypted files without the Master Key in ephemeral RAM, preventing ciphertext leakage to DOM or clipboard.
+  - **Pre-Save Envelope Encryption:** Plaintext from the editor is encrypted via Web Worker into an `EncryptedEnvelope` before dispatching local IndexedDB saves or remote PUT requests.
+- **Dynamic Offline File Conversion Engine (`src/components/files/file-context-menu.tsx`, `src/server/actions/file-ops.ts`):**
+  - Direct toggle between plaintext and encrypted state from file tree context menus.
+  - **Offline-First Resilience:** If offline, conversions update `IndexedDB` with `isDirty: true`, queuing deferred push synchronization via `SyncManager`.
+  - **Atomic Server Actions:** `toggleFileEncryption` executes optimistic concurrency checks (`expectedVersion`, `expectedETag`), computes updated ETags, and triggers cache revalidation.
+- **Visual File Tree Indicators (`src/components/files/file-tree-item.tsx`, `src/components/layout/sidebar.tsx`):**
+  - Rendered `Lock` icon for encrypted files across the workspace sidebar and editor header.
+- **Automated Verification Suite (`src/test/vault-orchestration.test.ts`):**
+  - 8 automated tests covering dual key wrapping, password unlock/rejection, mnemonic recovery, offline profile caching, and dynamic file conversion in IndexedDB. All 54 vault tests passing (100% success rate).
+
+## [1.23.3] - 2026-09-04 (Crypto Worker Timeout Elimination, Self-Healing Circuit Breaker, W3C Chunked CSPRNG & Tab Wakeup Durability)
+
+### Fixed - Web Worker Background Suspension, Timeout Cascades & Desynchronization
+
+- **Zero-Latency Direct CSPRNG Generation (`src/lib/sync/crypto-utils.ts`):** Decoupled random byte generation (`generateDirectRandomBytes`) from asynchronous Web Worker IPC. Invokes `globalThis.crypto.getRandomValues` synchronously (<0.001ms execution), eliminating single-point-of-failure 30,000ms timeouts when background browser tabs are throttled or frozen during long-running AI streams.
+- **W3C 64KB Chunking Boundary Enforcement (`src/lib/sync/crypto-utils.ts`):** Enforced automatic slice chunking for random byte requests exceeding 65,536 bytes (`MAX_RANDOM_BYTES_CHUNK`), strictly adhering to W3C Web Cryptography API specifications and preventing runtime `QuotaExceededError` exceptions.
+- **Insecure Context Guard & Diagnostics (`src/lib/sync/crypto-utils.ts`):** Added `isCryptoSubtleAvailable()` and `assertSecureCryptoContext()` to proactively detect non-secure contexts (such as accessing the dev server via local network IP `http://192.168.x.x:3000` without HTTPS) and output actionable guidance rather than cryptic `undefined` dereferences.
+- **Self-Healing Circuit Breaker & Queue Drain (`src/lib/sync/crypto-worker-bridge.ts`):**
+  - Reduced worker task timeout from 30s to 5s (`timeoutMs = 5000`).
+  - Added immediate `drainPendingRequestsToFallback()`: upon worker error or timeout, active timers across all queued requests are cleared and the entire pending task queue is drained and executed concurrently via direct in-process WebCrypto (`executeDirectTask`), preventing dead-worker cascade stalls.
+  - Implemented trip-open circuit breaker (`isTerminated = true`) that routes subsequent cryptographic operations directly to the native WebCrypto engine without attempting worker dispatch.
+- **Circular Dependency Elimination (`src/lib/sync/crypto-utils.ts`, `src/lib/workers/crypto.worker.ts`, `src/lib/sync/mnemonic.ts`):** Extracted `wipeBuffer`, `arrayBufferToBase64`, and `base64ToUint8Array` into `crypto-utils.ts`, breaking the cyclical dependency chain (`crypto.worker` ↔ `mnemonic` ↔ `crypto-worker-bridge`) that previously corrupted ES module initialization under Turbopack in Next.js 16.
+- **Tab Wakeup Auto-Healing & Local Durability Guarantee (`src/hooks/use-editor-orchestrator.ts`):**
+  - In `onCommitSuccess`, prevented premature `setIsDirty(false)` when local IndexedDB writes fail, recording `pendingLocalSyncRef = true` to avert silent offline desynchronization.
+  - Added `visibilitychange` and `focus` event listeners that automatically detect unpersisted local snapshots upon tab reactivations and replay IndexedDB persistence without user intervention.
+  - Synchronously consumed `pendingLocalSyncRef.current = false` before `await` in `handleWakeup` to eliminate dual-event burst race conditions (`visibilitychange` + `focus` firing within milliseconds) without stateful mutex locks.
+  - Preserved cloud dirtiness accurately by removing erroneous `setIsDirty(false)` from tab wakeup persistence handler, preventing visual UI deception of cloud synchronization.
+  - Wrapped secondary recovery writes within defensive `try/catch` blocks to prevent unhandled promise rejections (`unhandledRejection`).
+
+## [1.23.2] - 2026-09-01 (Next.js 16 Production Build Stabilization, Route Export Compliance & allowScripts Supply-Chain Security)
+
+### Fixed - Next.js 16 Production Build & Route Export Violations
+
+- **App Router Route Export Hardening (`src/lib/stripe/webhook-dedupe.ts`):** Extracted `processedEventIds`, `__resetProcessedEventIds`, and `HandlerResult` into an isolated module `@/lib/stripe/webhook-dedupe`. This strictly enforces Next.js App Router route constraints (prohibiting non-HTTP exports from `route.ts` files) and eliminates TypeScript error `TS2344` (`OmitWithTag` type generation constraint violation) during `next build`.
+- **Dynamic Route Prerender Isolation:** Explicitly enforced `export const dynamic = 'force-dynamic'` across all server API routes (`/api/files/sync`, `/api/files/[id]`, `/api/stripe/webhook`, `/api/webhooks/stripe`), preventing unwanted static prerendering evaluations against database/cookie stores during bundle compilation.
+- **Webpack Bundler Stabilization:** Configured `"build": "next build --webpack"` in `package.json`, eliminating silent Turbopack PostCSS worker pool deadlocks (`pool_entry-[turbopack-node]_transforms_postcss_ts`) on Windows and containerized CI runners.
+- **Supply-Chain Lifecycle Script Hardening (`package.json`):** Added the standard `allowScripts` configuration whitelisting `esbuild` and `unrs-resolver` for npm v12/11.16+ deployment environments, guaranteeing pre-built native binaries are linked during `npm ci` rather than triggering 45-minute timeout fallbacks.
+
+## [1.23.1] - 2026-08-31 (Isolated Crypto Worker, Defensive RAM Sanitization, BIP-39 Recovery & Session Key Store)
+
+### Added - Zero-Knowledge Cryptographic Core & Background Web Worker
+
+- **Isolated Crypto Web Worker (`src/lib/workers/crypto.worker.ts`):** Offloaded high-cost cryptographic operations from the main browser thread to a dedicated Web Worker:
+  - **PBKDF2-HMAC-SHA256 Key Derivation:** Fixed at 600,000 iterations for enterprise-grade protection against brute-force attacks.
+  - **AES-GCM-256 Symmetric Encryption:** Authenticated encryption with 12-byte random IVs and mandatory Additional Authenticated Data (`userId:fileId`) binding, preventing payload tampering and file swapping.
+  - **Chunked Base64 Performance:** Implemented 8KB chunked array buffer conversion, eliminating call stack overflow and V8 heap churn on large payloads (500KB+).
+  - **URL-Safe & Unpadded Base64 Support:** Automatic character substitution and padding reconstruction.
+- **Typed Isomorphic RPC Bridge (`src/lib/sync/crypto-worker-bridge.ts`):** Engineered a Promise-based typed RPC bridge with automatic isomorphic routing (Web Worker in browser runtime, direct WebCrypto engine in Node.js/Vitest test suites).
+- **In-Memory Session Key Store (`src/lib/sync/session-key-store.ts`):** Safe volatile RAM key storage for `LocalDeviceKey` and `VaultMasterKey`:
+  - **Deterministic Time-Based Invalidation:** `Date.now() - lastActivityTimestamp > timeout` on every key accessor, neutralizing timer throttling in background tabs and OS sleep wakeups.
+  - **Instant RAM Purging (`purgeKeys`):** Immediate clearing and wiping of stored cryptographic keys on lock or logout.
+- **BIP-39 Standard Recovery Seed Generator (`src/lib/sync/mnemonic.ts`):** 128-bit CSPRNG entropy to 12-word mnemonic with 4-bit SHA-256 checksum verification across the official 2048-word English dictionary.
+- **Unified Encryption Manager Modernization (`src/lib/sync/encryption.ts`):** Enforced Unicode `NFKC` password normalization for cross-platform parity (macOS vs Windows/Linux) and sequential re-initialization memory wiping guards.
+- **Comprehensive Verification Suite (`src/test/vault-crypto.test.ts`):** Added 28 unit and integration tests covering PBKDF2 derivations, AAD integrity, BIP-39 SatoshiLabs official test vectors, Base64 chunking, and RAM sanitization.
+- **Documentation Master Index & Closure Record:** Documented the full architecture in `docs/architecture/security-and-rate-limiting.md`, `docs/reference/phase-15-crypto-worker-and-key-management-closure.md`, and synchronized `docs/README.md`.
+
+## [1.23.0] - 2026-08-29 (Node.js 22 LTS Runtime Upgrade, Smart Hybrid Database Driver, CI Hermeticity & React 19 Hardening)
+
+### Added - Runtime Modernization & Universal Database Driver
+
+- **Upgraded to Node.js 22 (Active LTS):** Fully aligned the GitHub Actions multi-stage CI pipeline and project dependencies with Node.js 22 LTS across all 6 pipeline stages in `.github/workflows/ci.yml`.
+- **Dependency & Typing Modernization:** Upgraded `@types/node` to `^22` and `@testing-library/jest-dom` to `^7.0.1` (natively satisfying its `node: '>=22'` engine requirement and eliminating all `EBADENGINE` installation warnings).
+- **Smart Hybrid Database Client (`src/lib/db/index.ts`):** Engineered an intelligent hybrid database driver that dynamically selects the optimal connection strategy:
+  - **Neon Cloud (`neon.tech`):** Operates via `@neondatabase/serverless` (`neon-http`) for ultra-low latency serverless query dispatching over HTTPS.
+  - **Local, Docker & CI Containers (`localhost` / `127.0.0.1`):** Connects via standard `pg.Pool` (`drizzle-orm/node-postgres`) over TCP on port `5432`, eliminating `ECONNREFUSED ::1:443` connection errors in CI service containers.
+- **Hermetic CI Stage 4 Test Isolation:**
+  - Separated external cloud integration suite `src/test/ai-live-e2e.test.ts` into the gated Stage 6 (`live-provider-smoke`), excluding it from Stage 4 (`LIVE_TEST_FILES`) and default unit suites.
+  - Hermetically mocked external Stripe SDK network calls (`stripe.subscriptions.retrieve`) in `src/app/api/stripe/webhook/route.live.test.ts`, guaranteeing 100% offline determinism while asserting real HMAC signature verification and ACID database transactions.
+- **React 19 Cascading Render Prevention:** Converted synchronous state setters inside `useEffect` to asynchronous schedules in `src/components/editor/search-replace.tsx`, `src/components/files/folder-picker-modal.tsx`, `src/components/sync/conflict-dialog.tsx`, and `src/hooks/use-sync.ts`, eliminating React 19 cascading render warnings.
+- **Security & Vulnerability Hardening:** Upgraded `next` and `eslint-config-next` to `^16.3.3` and locked dependencies, maintaining 0 high/critical vulnerabilities on `npm audit --audit-level=high`.
+
+## [1.22.0] - 2026-08-29 (Adaptive Multi-Driver Transaction Client, Test UUID Namespace Isolation & CI Concurrency Hardening)
+
+### Fixed - Multi-Environment Database Transactions & CI Stage 4 Hardening
+
+- **Adaptive Multi-Driver Transactional Client (`src/lib/db/transactional.ts`):** Resolved Stage 4 CI concurrency failures caused by hardcoded `@neondatabase/serverless` WebSocket pool initialization. Replaced static client with an adaptive multi-driver architecture using a lazy proxy singleton:
+  - **Neon Cloud (`neon.tech`):** Automatically initializes `@neondatabase/serverless` WebSocket Pool with `drizzle-orm/neon-serverless`.
+  - **Local, Docker & CI Container (`localhost` / `127.0.0.1` / standard PostgreSQL):** Automatically connects via `pg.Pool` (`node-postgres`) with `drizzle-orm/node-postgres`, executing full ACID transactions (`BEGIN`, `COMMIT`, `ROLLBACK`) with zero WebSocket overhead or artificial mocking.
+  - **Dynamic Lazy URL Binding:** Evaluates `DATABASE_URL` dynamically on invocation, ensuring seamless runtime binding to `TEST_DATABASE_URL` in live integration tests without stale module-load caching.
+- **Deterministic Namespaced Test User UUIDs (`src/test/` & `src/server/actions/`):** Completely decoupled test user identities across integration suites to prevent cross-suite collisions and cascading teardown deletions (`ON DELETE CASCADE`):
+  - Assigned dedicated RFC-4122 repeating blocks: `cross-user-ownership.test.ts` (`1313...`, `1414...`), `editor-orchestration.live.test.ts` (`1515...`), `ai-server-atomic-commit.live.test.ts` (`1616...`), `ai-quota-idempotency.live.test.ts` (`1717...`), `ai-reservation-status.live.test.ts` (`1818...`, `1919...`), and `stripe/webhook/route.live.test.ts` (`2323...`, `2424...`, `2525...`).
+  - Added resilient idempotent user re-seeding (`onConflictDoNothing()`) in `beforeEach` to guarantee complete independence during parallel or serialized execution.
+- **Editor Orchestrator Hydration Pipeline Resilience (`src/hooks/use-editor-orchestrator.ts`):** Removed premature `pipelineRef.current = Promise.resolve()` assignment in `loadInitialFile()`, ensuring `pipelineRef` tracks the true asynchronous lifecycle promise until resolution and resets cleanly on fileId transitions.
+- **Documentation Synchronization:** Updated `docs/reference/test-database-isolation.md` and `docs/architecture/ai-atomic-commit-architecture.md` to document the adaptive transaction driver and namespaced test data isolation.
+
+## [1.21.0] - 2026-08-28 (Multi-Stage CI Pipeline Architecture, Database Isolation & Concurrency Integrity Verification)
+
+### Added - CI/CD Pipeline & Database Isolation Automation
+
+- **Multi-Stage GitHub Actions CI Pipeline (`.github/workflows/ci.yml`):** Engineered a 6-stage GitHub Actions CI workflow partitioned into Quality Gate (`quality-gate`: ESLint 9, TypeScript strict `tsc --noEmit`, `npm audit`), Unit Contracts (`unit-contracts`: deterministic unit tests with zero network/DB dependencies), Schema Migration Integrity (`migration-integrity`: PostgreSQL 16 container verifying sequential SQL migrations and Drizzle schema sync), Concurrency Integrity & DB Isolation (`concurrency-and-db-isolation`: isolated PostgreSQL 16 + Redis 7 service containers running `npm run test:live` with `TEST_DB_FORBIDDEN_HOSTS` protection), Production Build (`build-verification`: Next.js 16 build verification with cached artifacts), and Gated Live Smoke (`live-provider-smoke`: protected cloud AI/webhook test execution).
+- **Migration & Schema Verification Automation (`scripts/verify-migrations.mjs`):** Implemented an automated verification script that boots a database connection, applies raw SQL migrations (`0001` through `0007`) sequentially, and verifies the existence of all core tables, enums, unique indexes, and constraints.
+- **ESLint & Static Quality Tuning (`eslint.config.mjs`):** Optimized flat ESLint configuration to tune TypeScript rules, exclude test helper any-types, and clean up React 19 callback and effect declaration orders in `search-replace.tsx` and `folder-picker-modal.tsx`.
+- **Documentation Master Index & Isolation Architecture Updates:** Synchronized `docs/README.md` and `docs/reference/test-database-isolation.md` to document the CI multi-stage workflow, execution commands, and service container isolation guarantees.
+
+## [1.20.0] - 2026-08-28 (Build Phase Decoupling from Runtime Secrets & Complete Live Integration Test Isolation)
+
+### Changed - Build & Static Analysis Decoupling
+
+- **Decoupled Stripe Client Initialization (`src/lib/stripe/index.ts`):** Removed module top-level throwing validations (`throw new Error`) on missing `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`. Initialized Stripe instance with build-safe fallback placeholder (`sk_test_placeholder`), deferring strict fail-closed key validation checks (`ensureStripeSecretKey()`) to runtime invocation within operations (`getOrCreateStripeCustomer`, `createCheckoutSession`, `constructWebhookEvent`, etc.).
+- **Safe Database & Neon Pool Initializers (`src/lib/db/index.ts` & `src/lib/db/transactional.ts`):** Provided fallback dummy PostgreSQL connection strings for Neon client and Neon serverless Pool initialization during static analysis and module tracing, preventing module evaluation throws when `DATABASE_URL` is omitted during CI builds.
+- **Resilient Supabase Client Creation (`src/lib/supabase/client.ts`, `src/lib/supabase/server.ts`, `src/proxy.ts`):** Added fallback URL (`https://placeholder.supabase.co`) and anon key strings for browser, server, and Next.js middleware client creation to ensure static page generation and route compilation succeed in clean environments without `.env` or `.env.local`.
+- **Zero-Secret CI & PR Verification:** Verified that `next build` and `npm run build` succeed with exit code `0` in completely clean environments devoid of `.env` or `.env.local` files, generating all 13 routes and performing full TypeScript type-checking without requiring production credentials.
+
+### Fixed - Live Test Suite Isolation
+
+- **Isolated Cross-User Ownership Integration Tests (`vitest.live.config.ts`):** Added `src/test/cross-user-ownership.test.ts` to `LIVE_TEST_FILES` in `vitest.live.config.ts`, ensuring all 16 live integration suites requiring real external databases run exclusively via `npm run test:live` and are 100% excluded from standard unit tests (`npm test`), achieving 37 passing unit suites (487 tests passed).
+
+## [1.19.0] - 2026-08-28 (Editor Interaction & Coordinate Drift Fix, Zero-Layout-Shift Delimiter System, Adversarial Hardening)
+
+### Fixed - Editor Interaction & Vertical Navigation Stability
+
+- **Eliminated CodeMirror 6 Coordinate Drift (`.cm-md-hr` in `src/components/editor/markdown/markdown-theme.ts`):** Replaced vertical margins (`margin: 0.75rem 0`) with internal padding (`paddingTop: 0.75rem; paddingBottom: 0.75rem;`) on horizontal rule line decorations. Because CodeMirror 6 measures line heights using `offsetHeight` (which excludes margins), the previous vertical margin created a 24px physical offset that caused CodeMirror's `HeightMap` to drift out of phase with DOM screen coordinates, creating dead interaction zones and causing vertical arrow navigation (`moveVertically`) to skip lines.
+- **Unblocked Mouse Text Selection & Dragging (`.cm-md-delimiter-hidden` in `src/components/editor/markdown/markdown-theme.ts` & `src/components/editor/markdown/streaming-ghost.ts`):** Removed `pointer-events: none` and `user-select: none` from inline token delimiters and AI streaming ghost marks, ensuring uninterrupted mouse click hit-testing and continuous multi-line drag selection across Markdown delimiters.
+- **Zero-Layout-Shift Delimiter System (`src/components/editor/markdown/markdown-theme.ts`):** Replaced `fontSize: 0px` and `letterSpacing: -1ch` on hidden delimiters with smooth opacity and muted color transitions (`opacity: 0.25; color: #71717a;`), preserving exact line-height and character width metrics to eliminate DOM layout shifts and baseline collapsing when typing or moving the cursor.
+- **Line-Bound Header Token Activation (`HeaderMark` in `src/components/editor/markdown/markdown-extensions.ts`):** Updated heading delimiter visibility detection to check full line boundaries, preventing token jitter while editing heading content.
+- **Read-Only Invariant Enforcement (`TaskCheckboxWidget` in `src/components/editor/markdown/markdown-extensions.ts`):** Added explicit `EditorState.readOnly` facet checks and physical `<input disabled>` rendering to prevent unauthorized document mutations on locked documents.
+- **Zero-Allocation Word Count Engine (`calculateWordCount` in `src/components/editor/markdown/editor-adapter.ts`):** Replaced array allocations with a streaming regex iteration loop, eliminating V8 Heap memory pressure and Major GC jitter during rapid keystrokes and high-frequency AI streaming on massive (50K+ words) documents.
+- **Defensive Boundary Clamping (`markdown-extensions.ts`):** Clamped all `doc.lineAt` coordinates with `Math.min(pos, doc.length)` to guarantee immunity against `RangeError` during rapid deletions and incomplete block streaming.
+- **Test Hardening (`src/test/markdown-editor-interaction.test.ts`):** Added 10 comprehensive unit & integration tests verifying delimiter visibility toggles, multi-line selections across delimiters, precise line selection above and below horizontal rules and headings, read-only checkbox protection, and zero-allocation word count accuracy on 9,000+ word multilingual texts (total 48 passed tests).
+
+## [1.18.0] - 2026-08-28 (CodeMirror 6 Text Direction & Bidi Engine Architecture, Toolbar Direction Menu & Unified Typography)
+
+### Added - Text Direction & Bidi Engine Architecture
+
+- **Line-Level Bidi Isolation Extension (`bidiLinePlugin` in `src/components/editor/markdown/markdown-extensions.ts`):** Resolved the viewport virtualization direction inversion bug where scrolling unmounted top Arabic lines caused the browser to flip the container to LTR. Applied `Decoration.line` with dynamic `dir` attributes (`dir="auto"`, `dir="rtl"`, or `dir="ltr"`) directly to individual DOM lines.
+- **Three Dedicated Direction Modes:** Built explicit support for `auto` (smart content recommendation with stable in-memory document root direction), `rtl` (force global right-to-left layout), and `ltr` (force global left-to-right layout).
+- **Code Blocks LTR Locking (`lockCodeBlocksLTR`):** Added a configuration option to lock `FencedCode` lines to `dir="ltr"` and left text alignment even when the parent document is in `rtl` mode, dynamically togglable from the UI.
+- **Toolbar Direction Menu (`src/components/editor/direction-menu.tsx`):** Designed a Radix UI dropdown menu in the editor toolbar (`AIToolbar`) with status badges, mode selection radio items, code block LTR toggle switch, and keyboard shortcut hints.
+- **Global Keyboard Shortcut (`Ctrl + Alt + D` / `Cmd + Alt + D`):** Registered a window-level key listener in `src/app/workspace/editor/[fileId]/page.tsx` with `e.repeat` throttling for smooth circular mode cycling (`auto` ➔ `rtl` ➔ `ltr` ➔ `auto`).
+- **LocalStorage Preference Persistence:** Stored user text direction preferences under `lugx_editor_direction_pref` to restore previous settings upon file navigation.
+- **Extended `EditorAdapter` Contracts:** Added `getDirectionSettings()` and `setDirectionSettings()` methods to `EditorAdapter` and `CodeMirrorEditorAdapter`.
+
+### Changed - Unified Typography & Weight Consistency
+
+- **Unified Font Stack (`src/components/editor/markdown/markdown-theme.ts` & `src/app/globals.css`):** Combined `var(--font-ibm-plex-arabic)` and `var(--font-geist-sans)` into a single unified font stack, eliminating font switching jumps when toggling direction modes.
+- **Explicit Weight & Smoothing Stabilization:** Enforced `fontWeight: "400"`, `fontSynthesis: "none"`, and `unicodeBidi: "isolate"` across editor theme styles to prevent browser faux-bold artifacting on Arabic glyphs in RTL mode.
+- **Test Hardening (`src/test/markdown-editor.test.ts` & `src/test/markdown-editor-e2e.test.ts`):** Added 5 unit and E2E tests validating bidi isolation, dynamic code block locking, adapter direction mutations, and virtualization stability across 2,000+ lines (total 37 test files, 487 passed).
+
+## [1.17.0] - 2026-08-28 (Complete Dead Code & HTML Converter Purge, TipTap Legacy Style Elimination)
+
+### Removed - Complete Dead Code & HTML Converter Elimination
+
+- **Deleted Dead HTML & Sanitizer Files:** Completely removed `src/lib/parsers/text-to-html.ts` (124 lines), `src/lib/sanitize-client.ts` (66 lines), `src/lib/sanitize.server.ts` (57 lines), and `src/lib/sanitize.test.ts` (72 lines).
+- **Purged Unused HTML Converter Functions:** Removed `formatStreamOutputToHTML` and `sanitizePreviewChunk` from `src/lib/parsers/stream-markdown.ts`, and `htmlToPlainText` from `src/lib/exporters/utils/markdown-stripper.ts`.
+- **Eliminated Dead CSS Styles (`src/app/globals.css`):** Removed 123 lines of legacy `.tiptap-editor` and `.ProseMirror` style declarations and obsolete text-direction utility classes.
+- **Uninstalled Dead Dependency (`dompurify`):** Removed `dompurify` from `package.json` and cleaned up `serverExternalPackages: ["jsdom"]` from `next.config.ts`.
+- **Cleaned Stream Hook (`src/hooks/use-ai-stream.ts`):** Removed unused `formatStreamOutputToHTML` import and dead `safeHtml` variable assignment.
+
+### Changed - Test Modernization & Documentation Synchronization
+
+- **Stream Parser Test Modernization (`src/test/ai-stream-parser.test.ts`):** Focused test suite strictly on `validateStreamMarkdownOutput` and NDJSON wire protocol framing.
+- **Synchronized Documentation (`README.md`, `docs/`):** Updated technical stack tables, security definitions, and exporter guides to reflect pure UTF-8 Markdown single source of truth.
+
+## [1.16.0] - 2026-08-27 (AI Stream Collision Guard, Non-Colliding Edit Tolerance & Clean Documentation Sync)
+
+### Added - AI Stream Collision Guard & Dynamic Range Shifting
+
+- **Collision-Aware Dynamic Selection Shifting (`src/components/editor/markdown/streaming-ghost.ts`):** `codeMirrorStreamingGhostField` tracks all document mutations via `tr.changes.iterChanges`. Non-overlapping edits occurring elsewhere in the document dynamically shift the AI generation bounds `[from, to]` via `mapPos(from, 1)` and `mapPos(to, -1)`, allowing the user to write and edit freely without interrupting AI generation.
+- **Direct Collision Abort Protection:** Direct edits overlapping with the target generation range dismiss the ghost decoration and safely trigger `onStop()` to prevent text corruption.
+- **Orchestrator Manual Edit Policy (`src/hooks/use-editor-orchestrator.ts`):** Updated `handleEditorChange` to query `adapter.getGhostRange()`, preserving active streaming sessions on non-colliding manual edits.
+
+### Changed - Code Hygiene & Test Setup Modernization
+
+- **Dead Code Elimination (`src/lib/sync/conflict-resolver.ts`):** Removed obsolete HTML tag scanning (`isHtml`) from the pure Markdown three-way merge tokenizer.
+- **Centralized JSDOM CodeMirror Polyfills (`vitest.setup.ts`):** Centralized `Range.prototype.getClientRects` and `Range.prototype.getBoundingClientRect` polyfills in the central setup file for unified CodeMirror 6 testing reliability.
+- **Documentation Modernization (`docs/`):** Purged obsolete TipTap and HTML references across `docs/architecture/` and `docs/specs/` to guarantee 100% synchronization with the source code.
+
+## [1.15.0] - 2026-08-27 (Markdown Migration Phase 6: Complete TipTap Purge & Final Verification Closure)
+
+### Removed - Complete TipTap & ProseMirror Dependency Purge
+
+- **Uninstalled 4 `@tiptap/*` packages:** Completely removed `@tiptap/core`, `@tiptap/react`, `@tiptap/pm`, `@tiptap/starter-kit`, and `@tiptap/extension-placeholder` from `package.json` and `package-lock.json` (63 packages removed).
+- **Deleted Legacy TipTap Extensions:** Deleted `src/lib/extensions/direction-extension.ts` and `src/lib/extensions/streaming-ghost-extension.ts` along with the `src/lib/extensions` directory.
+- **Deleted Obsolete HTML Server Converter:** Deleted `src/lib/parsers/text-to-html.server.ts`.
+
+### Added - Standalone CodeMirror 6 Plugins & Comprehensive E2E Tests
+
+- **Standalone Streaming Ghost Plugin (`src/components/editor/markdown/streaming-ghost.ts`):** Encapsulated CodeMirror 6 `StateField`, `WidgetType`, `StateEffect`, and dynamic range tracking with zero external/TipTap dependencies.
+- **Comprehensive Markdown Editor E2E Test Suite (`src/test/markdown-editor-e2e.test.ts`):** Established comprehensive test suite covering file hydration (NFC/LF), rapid typing, remote pull cursor preservation, offline caching & 3-way merge resolution, AI streaming preview & explicit decision flow, and pure Markdown/Text import/export fidelity.
+
+### Changed - Type Modernization & Test Hardening
+
+- **Enforced `EditorAdapter` Across AI Stream Hook (`src/hooks/use-ai-stream.ts`):** Removed all `@tiptap/react` imports and ProseMirror transaction branches; unified `EditorInstance` on `EditorAdapter`.
+- **Modernized Legacy Test Suites:** Upgraded `editor-recovery-reload.test.ts`, `editor-atomic-commit.test.ts`, `ai-preview-decision.test.ts`, `ai-preview-decision.live.test.ts`, and `ai-transaction.test.ts` to pure `EditorAdapter` and CodeMirror 6.
+- **Fixed Live Test Database Isolation:** Fixed user seeding and file title collision handling in `src/test/editor-orchestration.live.test.ts` and `src/test/ai-reservation-status.live.test.ts`.
+- **Full Verification Passed:** 100% test pass rate across 546 total automated tests (477 unit + 69 live) and 0 TypeScript compilation errors with passing Next.js production build.
+
+## [1.14.0] - 2026-08-27 (Markdown Migration Phase 5: Markdown AI Streaming, Direct Exporters & Unified Inline Preview)
+
+### Added - Unified Inline Interactive Streaming Widget & CodeMirror 6 StateField
+
+- **Unified Inline Interactive Preview Card (`CMStreamingGhostWidget` in `src/lib/extensions/streaming-ghost-extension.ts`):** Redesigned the inline ghost widget into a cohesive, high-performance Dark Glassmorphism interactive card (`bg-zinc-900/95 border-emerald-500/40`) positioned at the exact document mutation offset.
+- **Embedded Decision Controls:** Embedded interactive action buttons directly inside the inline card header: `Stop Generation` during active streaming, and the 3 decision buttons (`Accept / Apply`, `Reject`, `Retry`) upon stream completion (`preview_ready`).
+- **Layout Thrashing Elimination (`updateDOM` at 60fps):** Implemented `updateDOM(dom)` on `CMStreamingGhostWidget` to update text and action states in-place, eliminating DOM destruction/recreation overhead during rapid token streaming.
+- **Dynamic Position & Range Tracking (`codeMirrorStreamingGhostField`):** StateField utilizing `tr.changes.mapPos(from, 1)` and `mapPos(to, -1)` to dynamically shift the preview replacement coordinates when concurrent edits occur elsewhere in the document, preventing `RangeError` and offset drift.
+- **Optimistic Concurrency Lock Self-Healing (`src/server/actions/ai-commit.ts`):** Added self-session healing to `commitAIFileOperation`. If `currentFile.version !== expectedVersion` but `currentFile.content` matches the baseline `originalContent`, the server adopts the current version without triggering spurious 412 conflicts. Added ETag normalization to strip quotation differences.
+- **AutoSave Cancellation on AI Launch (`src/hooks/use-editor-orchestrator.ts`):** Added `.cancel()` method to `debounce` in `src/lib/utils.ts` and invoked `debouncedAutoSave.cancel()` on AI start to prevent background save race conditions.
+- **Live Version Reading at Commit (`src/hooks/use-ai-stream.ts`):** Supported `getLatestVersion` and `getLatestETag` getters in `useAIStream` to query live orchestrator versions at commit time.
+
+### Changed - Streaming Pipeline & Exporters
+
+- **Eliminated Top Static Preview Panel (`src/app/workspace/editor/[fileId]/page.tsx`):** Permanently removed the redundant top fixed `<AIStreamPreview />` panel to eliminate UI duplication and focus distraction.
+- **Pure Markdown AI Streaming Model (`src/lib/ai/stream-session.ts` & `src/lib/parsers/stream-markdown.ts`):** Converted session FSM and validator to operate on `originalMarkdown` and `resultMarkdown`. Added `validateStreamMarkdownOutput`.
+- **Pure Markdown Exporters (`src/lib/exporters/`):**
+  - `MarkdownExporter`: Generates `.md` Blobs directly from raw Markdown text without intermediate HTML parsing, guaranteeing 100% fidelity for tables, code blocks, blockquotes, and Arabic RTL text.
+  - `TextExporter`: Strips Markdown syntax directly from source while preserving all code block contents and text structures.
+  - `sanitizeFilename`: Strips control characters `\x00-\x1F\x7F` and enforces a 200-character ceiling.
+- **Comprehensive Test Suites:** Added `src/test/markdown-exporters.test.ts` (6 tests) and updated `src/test/ai-preview-decision.test.ts` and `src/test/ai-server-atomic-commit.test.ts` (469 total tests passing 100%).
+
+## [1.13.0] - 2026-08-26 (Markdown Migration Phase 4: Markdown Sync, Diff3 Syntax Integrity & 3-Way Conflict Resolution)
+
+### Added - Markdown-Native Diff3 Engine & Conflict Handling
+
+- **Pure Markdown 3-Way Merge (`src/lib/sync/reconciliation.ts` & `conflict-resolver.ts`):** Migrated 3-way conflict resolution engine to operate natively on Markdown text via line-based Diff3 algorithms, eliminating HTML serialization artifacts.
+- **Markdown Structural Boundary Preservation:** Diff3 syntax integrity guards preserve Markdown list numbering, table rows, and fenced code block delimiters during merges.
+- **Reconciliation Policy Matrix:** Standardized cold-start and background reconciliation policies (`bootstrap_server`, `apply`, `adopt_metadata`, `keep_local`) on raw Markdown baseline snapshots.
+
+## [1.12.0] - 2026-08-26 (Markdown Migration Phase 3: Content Model, Storage & Internal Import Transformation)
+
+### Added - Universal Markdown Normalization & ETag Determinism
+
+- **Unified Normalization Function (`normalizeMarkdownSource` in `src/lib/sync/etag-generator.ts`):** Canonical normalization converting `\r\n` / `\r` to LF (`\n`), stripping null bytes (`\0`) for PostgreSQL text safety, and applying Unicode NFC normalization before ETag hashing and storage. Prevents spurious 412 Precondition Failed conflicts across operating systems (Windows/macOS/Linux) and Unicode composite encodings.
+- **Deterministic ETag Hashing (`generateETag` / `generateETagSync`):** Integrated `normalizeMarkdownSource` into both asynchronous and synchronous ETag generators to guarantee identical SHA-256 digests across platforms.
+- **Exported `MarkdownSource` Type Definition (`src/lib/sync/idb-types.ts` & `src/lib/sync/index.ts`):** Defined `MarkdownSource` type representing canonical UTF-8 Markdown text across client hooks, IndexedDB layers, operations log, and API payloads.
+- **Dedicated Import Test Suite (`src/server/actions/import-file.test.ts`):** Created 9 automated tests validating pure Markdown extraction for MD, TXT, and PDF files, correct word counting, ETag stability, parent folder checks, 10MB payload size limit rejection, and single-query title collision resolution.
+
+### Changed - Storage & Import Pipeline
+
+- **Purged HTML Conversion from File Imports (`src/server/actions/import-file.ts`):** Removed `smartConvertToHTML`. MD and TXT imports decode base64 directly to normalized Markdown. PDF text extraction applies linear text extraction policy without artificial HTML conversion.
+- **Collision-Free File Import (`import-file.ts`):** Implemented single-query in-memory title deduplication (`Title (1)`, `Title (2)`) preventing database `23505 unique_violation` exceptions on live partial unique index `idx_files_user_parent_title_live`. Added defense-in-depth base64 payload size validation.
+- **Normalized Server Actions & REST API Updates (`file-ops.ts` & `/api/files/[id]/route.ts`):** `createFile`, `updateFileContent`, and `PUT /api/files/[id]` apply `normalizeMarkdownSource` before optimistic locking checks, ETag generation, and PostgreSQL persistence.
+- **IndexedDB & Sync Layer Normalization (`use-sync.ts` & `use-editor-orchestrator.ts`):** `saveLocal` normalizes document text and operation snapshots in IndexedDB. Removed unused `sanitizeHtml` import from `use-editor-orchestrator.ts`.
+- **Editor Adapter AI Stream Support (`src/hooks/use-ai-stream.ts`):** Added native support for `EditorAdapter` (`getSelection`, `getSelectedText`, `getValue`, `replaceRange`) alongside backward-compatible TipTap fallback.
+- **Integration Test Modernization (`src/test/editor-orchestration.integration.test.ts`):** Updated 13 integration tests to use Markdown `EditorAdapter` mocks and pure Markdown strings.
+
+## [1.11.0] - 2026-08-26 (Markdown Migration Phase 2: TipTap Replacement & Editor Tooling Integration)
+
+### Changed - Primary Editor Surface & Tooling Integration
+
+- **Replaced TipTap with Standalone MarkdownEditor (`src/app/workspace/editor/[fileId]/page.tsx`):** Purged `@tiptap/react`, `StarterKit`, `Placeholder`, `AutoDirectionExtension`, and `StreamingGhostExtension` from the workspace editor page. Substituted with `MarkdownEditor` and engine-agnostic `EditorAdapter`.
+- **Pure Markdown Event Loop & Stats:** Replaced `editor.getHTML()` and `editor.on("update")` with synchronous `onChange(markdownText)` and raw Markdown text stats computation (Unicode/RTL-safe word and character counting).
+- **Multi-Range Transaction Search & Replace (`src/components/editor/search-replace.tsx`):** Upgraded `SearchReplace` to operate on exact UTF-16 document offsets from `adapter.getValue()`. Replaced destructive string-rebuilding `replaceAll` with atomic `adapter.replaceRanges()` Multi-Range Transactions in CodeMirror 6, preserving the undo tree and preventing offset drift.
+- **Markdown-Native Toolbar Formatting (`src/components/editor/ai-toolbar.tsx`):** Added native Markdown formatting operations (Headings, Bold, Italic, Inline Code, Lists, Blockquotes, Links) with intelligent cursor placement when selections are empty, plus a Live Preview vs Raw Source mode switcher.
+- **Orchestrator Adapter Support (`src/hooks/use-editor-orchestrator.ts`):** Upgraded `useEditorOrchestrator` to interface with `EditorAdapter`, securing programmatic writes with `isProgrammaticUpdateRef` and dynamic editability toggles (`setEditable`).
+
+## [1.10.0] - 2026-08-26 (Phase 14: Supabase Storage Removal & Database Schema Cleanup)
+
+### Removed - Dead Code Elimination & Schema Cleanup
+
+- **Removed `src/lib/supabase/storage.ts`:** Permanently removed the unused Supabase Storage client wrapper (`uploadFile`, `deleteFile`, `getFileUrl`, `downloadFile`, `assertSafeStoragePath`). All file imports (PDF/MD/TXT) continue to extract text directly into Neon PostgreSQL via `importFile` without storing raw binary files in cloud storage.
+- **Dropped `storage_path` Database Column (`src/lib/db/migrations/0007_drop_storage_path.sql` & `src/lib/db/schema.ts`):** Removed the legacy `storagePath` column from Drizzle ORM schema and added an SQL migration to drop `storage_path` from the PostgreSQL `files` table.
+- **Test Suite Clean-up:** Purged obsolete storage path traversal tests from `src/test/cross-user-ownership.test.ts` and removed `storagePath: null` field mock fixtures across `editor-orchestration.integration.test.ts`, `file-ops.softdelete.test.ts`, `file-ops.lostupdate.test.ts`, and `route.putguard.test.ts`.
+- **Environment & Architecture Documentation Sync:** Updated `.env.example` to reflect Supabase usage solely for Authentication (`@supabase/ssr` / `@supabase/supabase-js`), and synchronized architectural references across `security-and-rate-limiting.md` and `file-ownership-and-versioning.md`.
+
+## [1.9.0] - 2026-08-26 (Phase 13: Stripe Webhook, Durable Idempotency & Subscriptions Hardening)
+
+### Added - Durable Event Ledger & Database Migration (`subscription_events`)
+
+- **Durable Webhook Idempotency Ledger (`src/lib/db/migrations/0006_subscription_events.sql` & `src/lib/db/schema.ts`):** Created the `subscription_events` PostgreSQL table with a unique index on `event_id` (`idx_subscription_events_event_id`). Deduplication is now backed authoritatively by the database ledger, surviving server restarts, worker restarts, and serverless cold starts. Fast-path in-memory caching is retained with zero-allocation Set iteration eviction bounded at 10,000 entries.
+- **Transactional Atomic Transitions (`executeSubscriptionTransition` in `subscription-actions.ts`):** Wrapped user tier updates, subscription upserts, and event recording within single atomic database transactions, guaranteeing complete All-or-Nothing ACID semantics.
+- **Terminal State Protection:** In `handleSubscriptionUpdated`, incoming events attempting to transition a `canceled` subscription back to `active` are rejected and recorded as `ignored_stale`, preventing delayed out-of-order webhook packets from reviving terminated subscriptions.
+- **Local DB Invoice Reconciliation:** `handleInvoicePaymentFailed` queries the user's subscription directly from local PostgreSQL database state by `userId`, eliminating external Stripe API network round-trips and rate limit consumption.
+
+### Fixed - Subscription Billing Period Normalization (3-Location Invariant)
+
+- **Decoupled Period Extraction (`extractPeriod`):** Fixed the legacy defect where `start_date` was duplicated into both `currentPeriodStart` and `currentPeriodEnd`. Billing periods are now accurately extracted from `SubscriptionItem` (`item.current_period_start/end`) or associated `Invoice` line items (`invoice.lines.data[0].period.start/end`), strictly enforcing the invariant `currentPeriodEnd > currentPeriodStart`.
+- **Fail-Closed Unmapped Status Handling:** Any unrecognized subscription status triggers fail-closed error handling, logging the discrepancy without mutating or corrupting the user's tier in the database.
+- **Live Test Suite Expansion (`src/app/api/stripe/webhook/route.live.test.ts`):** Added 6 live integration tests on the isolated Neon test branch verifying real HMAC signatures, durable restart deduplication, period date invariants, fail-closed unmapped status isolation, and live terminal state protection.
+
+## [1.8.0] - 2026-08-25 (Phase 12: Authentication, OAuth & Operation Ownership Hardening)
+
+### Added - Security Hardening & Safe Redirection (`src/lib/auth/safe-redirect.ts`)
+
+- **Deterministic Safe Redirect Path Resolver (`resolveSafeRedirectPath`):** Universal protection against Open Redirect and Host Header Injection vulnerabilities. Enforces `MAX_URL_LENGTH = 2048`, universal backslash rejection, `NFKC` Unicode homograph rejection, control/null-byte stripping, 3-pass decoding, and scheme/pseudo-protocol rejection (`javascript:`, `data:`, `vbscript:`, `blob:`, `file:`, `about:`, `mailto:`, `tel:`, `sms:`, `urn:`).
+- **OAuth Callback Hardening (`/auth/callback`):** Enforces canonical trusted origin resolution (`NEXT_PUBLIC_APP_URL || origin`) and ignores spoofable `x-forwarded-host` headers.
+- **Deep Link & Search Parameter Preservation (`src/middleware.ts`):** Preserves pathname and query string (`${pathname}${search}`) on unauthenticated login redirects, ensuring seamless return to active editor documents.
+- **Atomic UPSERT User Synchronization (`syncUserToDatabase`):** Eliminates race conditions during concurrent OAuth logins with atomic `onConflictDoUpdate` on `users.id` and `onConflictDoNothing` on `(user_id, date)` usage rows.
+
+### Changed - Unified Anti-Enumeration Error Mapping (404 vs 403)
+
+- **Unified 404 Not Found Semantics:** `createFile`, `copyFile`, `moveFile`, `getFile`, `updateFileContent`, `deleteFile`, `restoreFile`, and `importFile` return `404 Not Found` for unauthorized or foreign parent/file resources to prevent attacker resource enumeration.
+- **AI Streaming Route Payload & Ownership Validation (`/api/ai/stream`):** Enforces non-empty string type validation on `fileId` (400 Bad Request on invalid format) and verifies session ownership against database records before quota reservation (404 Not Found if missing/foreign).
+- **Tenant-Isolated Storage Paths (`src/lib/supabase/storage.ts`):** Enforces `${userId}/` path prefix via `assertSafeStoragePath` and blocks directory traversal (`..`) sequences.
+- **Dead Code Cleanup:** Permanently removed unused legacy email authentication functions (`signInWithEmail`, `signUpWithEmail`, `normalizeAuthKey`) from `src/server/actions/auth-actions.ts`.
+- **Subscription Server Action Encapsulation:** Removed `'use server'` directive from `src/server/actions/subscription-actions.ts` to restrict DB mutation helpers to server-internal usage only.
+- **Hierarchy Traversal Cycle Guards:** Added `visited` set guard in `getDescendantIds` and `restoreFile` BFS queues to prevent infinite loops on cyclic parent structures.
+
+## [1.7.0] - 2026-08-25 (Phase 11: Editor Sync Orchestration, Hydration Lifecycle & Reload Recovery)
+
+### Added - Hydration Lifecycle & Sync-Before-Write (`useEditorOrchestrator`)
+
+- **Three-state hydration lifecycle (`hydrating` | `ready` | `fatal`):** TipTap editor surface begins frozen (`setEditable(false)`), and `handleEditorChange` / `canAutoSave` / `executeServerWrite` guard against pre-hydration writes until the initial load pipeline settles.
+- **Offline-First Contract:** A transport/network failure during hydration never freezes the editor (`ready`); offline composition completes locally into durable dirty IndexedDB snapshots, reconciling later through standard optimistic locking. Fatal is strictly reserved for server-answered missing files with no local snapshots.
+- **Tab-Scoped SessionStorage Reload Recovery (`pending-operation-store.ts`):** Tracks in-flight and preview operations across hard page reloads. Remount queries `getAIReservationStatus(operationId)` to settle orphaned quotas idempotently without applying abandoned preview text.
+- **UI Hydration Integration (`page.tsx`):** Added subtle backdrop loader during initial sync, fatal error recovery card with workspace navigation, and real-time status bar sync indicator (`Syncing...`).
+- **Single-Flight Document Switching:** Identity-stable execution keyed on `loadedFileIdRef` with unmount cancellation cleanup (`cancelled = true`).
+
+### Changed - Honest Cold-Start Reconciliation (`reconciliation.ts`)
+
+- `classifyRemoteUpdate` now operates over `localBaseline: LocalBaseline | null`, eliminating fabricated `v1/null` comparisons.
+- Introduced `bootstrap_server` (clean cold start) and `adopt_metadata_keep_edits` (eager in-flight typing preserved).
+- Unified `markServerPersisted(updatedAt)` across bootstrap, apply, and metadata adoption to eliminate persistent red save dot on cold opens.
+
+### Fixed - Technical Debt & Suite Governance
+
+- **TD-04 Resolved:** Fixed legacy test ESLint violations with typed `CycleFolderRow` maps and pruned unused imports.
+- **TD-06 Resolved:** Removed dead `SyncStatus['error']` union member and updated `sync-indicator.tsx`.
+- **Test Scripts Normalized:** Converted default `npm test` to non-interactive `vitest run` to eliminate watch-mode hangs, adding `test:watch` for interactive development.
+
+## [1.6.0] - 2026-08-23 (AI Preview Explicit Decision Model & Data-Safety Hardening)
+
+### Added - Explicit Preview Decision Model (`useAIStream`)
+
+Stream completion no longer auto-commits. The sanitized AI output is parked in
+`preview_ready`, and the user decides via three explicit actions in `AIStreamPreview`
+(`src/hooks/use-ai-stream.ts`, `src/components/editor/ai-stream-preview.tsx`,
+`src/app/workspace/editor/[fileId]/page.tsx`):
+
+- **Accept (`commitPreview`)** — server-first atomic commit (`commitAIFileOperation`)
+  then a single atomic ProseMirror transaction replacing `[from, to]`. Handles the
+  existing 412 conflict rollback path unchanged. The preview panel hides on Accept
+  exactly like on Reject (`setPreviewText` cleared on commit success).
+- **Reject (`rejectPreview`)** — ghost dismantled, document untouched, session released.
+- **Retry (`retryPreview`)** — settles the current preview exactly like a rejection,
+  then starts a brand-new stream with identical inputs (`lastParamsRef`).
+
+### Changed - Quota Policy: Explicit Settlement for User Decisions
+
+Refunds are now reserved strictly for **system failures** (stream startup/mid-stream
+errors, client exceptions, 412 conflicts). Any **user-driven outcome** settles the
+reservation as consumed via idempotent `commitAIReservation(operationId)` — no document
+write, pinned against the TTL sweeper and stray refunds (`already_committed`):
+
+| Outcome                                                   | Quota action                    |
+| --------------------------------------------------------- | ------------------------------- |
+| Stream failure / startup error / exception / 412 conflict | Refund                          |
+| Reject completed preview                                  | Settle as consumed              |
+| Retry (old session; new session reserves fresh quota)     | Settle as consumed              |
+| Stop a running generation (`stopStream`)                  | Settle as consumed BEFORE abort |
+| Teardown/unmount while preview awaits decision            | Settle as consumed              |
+
+Key ordering guarantee: `stopStream` awaits the settlement round-trip **before**
+aborting the fetch, so the server-side disconnect refund handler (`cancel()` in
+`/api/ai/stream/route.ts`) deterministically no-ops with `already_committed` instead
+of winning the race. Full matrix: `docs/architecture/ai/ai-quota-reservation-lifecycle.md` §4-D.
+Autosave suspension gate (`canAutoSave`) extended to cover `preview_ready`.
+
+### Fixed - Sync & Restore Data-Safety
+
+- **`pullFile` tombstone guard (`sync-manager.ts`)** — a server tombstone no longer
+  silently deletes a local copy carrying unsaved edits (`isDirty`); the case escalates
+  to an explicit conflict instead of discarding user content.
+- **`restoreFile` full cascade (`file-ops.ts`)** — restoring a folder now clears
+  tombstones across the entire descendant tree (BFS including deleted nodes),
+  symmetric with the cascading delete depth.
+
+### Changed - Autosave Debounce Constant
+
+- Extracted `EDITOR_AUTOSAVE_DEBOUNCE_MS = 1000` into `src/config/editor.config.ts`
+  (behavioral no-op; documents the earlier 400ms -> 1000ms decision).
+
+### Fixed - Test Database Safety (Root Cause of the Data-Loss Incident)
+
+**Incident:** files created through the app vanished permanently from both the UI and
+the database after a period away. Root cause (closed): integration-test `afterAll`
+hooks in `ai-ops.integrity.test.ts` and `file-ops.softdelete.test.ts` executed
+**unscoped** `DELETE FROM usage` / `DELETE FROM files` statements, and since
+`vitest.setup.ts` loads `.env.local`, they ran against the **live Neon database** —
+wiping every user's rows on every full test run. No production code was at fault.
+
+Remediation (`docs/records/test-database-safety.md`):
+
+- Both wipes are now scoped to their `TEST_USER_ID`.
+- New guarded helper `cleanupTestUsers(ids, { emailPattern? })` deletes ONLY
+  placeholder-pattern test accounts; wired into all 8 user-seeding suites with
+  per-suite ids (parallel-worker safe). Refund suite id de-conflicted to `1212…`.
+
+### Added - Tooling
+
+- `scripts/db-testusers-probe.mjs` — live-DB probe reporting placeholder test
+  accounts vs real users (`node scripts/db-testusers-probe.mjs`).
+
+### Tests
+
+- New suite `src/test/ai-preview-decision.test.ts`: preview_ready parking (no commit,
+  no mutation), reject/settle-no-refund, accept/server-first commit + panel hide,
+  retry settle + fresh session, mid-generation stop settle-no-refund.
+- New `sync-manager.test.ts` cases: clean-copy tombstone deletion preserved;
+  dirty-copy tombstone escalates to conflict without deletion.
+- Full suite green: 36 test files / 371 tests.
+
+## [1.5.0] - 2026-08-23 (Runtime Remediation: AI Streaming & Local-First Editor Sync)
+
+### Fixed - AI Streaming Deadlock & Invisible Ghost Preview
+
+Root-cause remediation for four compounding runtime defects; full analysis in
+`docs/specs/AI_KEY_ROTATION_AND_STREAMING_RESILIENCE.md` (§5a) and
+`docs/reference/UI_STREAMING_ARCHITECTURE_IMPLEMENTATION.md` (§6.3):
+
+- **Detached async completion (`stream-handler.ts`)** — rejections inside the async commit
+  pipeline are now routed into `onError`, guaranteeing exactly one terminal callback per
+  session (previously an unhandled promise rejection stranded the session, leaked the quota
+  reservation, and permanently locked the in-flight trigger mutex).
+- **Provider abort propagation (`client.ts`)** — the downstream `AbortSignal` is forwarded
+  into Gemini SDK request options so user cancellation and client disconnects terminate the
+  upstream socket instead of pinning `reader.read()` until generation finishes server-side.
+- **Runtime watchdogs (`stream-handler.ts`)** — first-chunk (20s) and absolute-duration
+  (120s) ceilings fail closed with structured errors instead of hanging the editor session.
+- **Preview buffer integrity (`use-ai-stream.ts`)** — only the latest delta is appended to
+  the ephemeral buffer (the previous accumulated append grew it quadratically).
+- **Feature-flag enforcement (G10)** — `/api/ai/stream` now branches on
+  `AI_STREAMING_ENABLED` with `processWithAI` as the buffered NDJSON fallback.
+
+### Fixed - UI-Blocking Synchronization (Text Vanishing Mid-Typing)
+
+Full policy specification in `docs/architecture/editor-sync-orchestration.md` (§6a):
+
+- **Stable orchestrator lifecycle** — the navigation callback identity no longer re-triggers
+  the initial-load effect on every render; the IDB-paint + background-fetch + reconciliation
+  pipeline runs exactly once per mounted `fileId`.
+- **Deterministic reconciliation policy** (`src/lib/sync/reconciliation.ts`) replacing the
+  blind content overwrite:
+  - `apply` — fast-forward when local is clean and the remote revision is verified-newer
+    (version advanced + ETag changed + corroborating timestamps), i.e. built on our state;
+  - `adopt_metadata` — identical payload adopts authoritative version/ETag silently;
+  - `keep_local` — dirty divergence or non-newer remote retains local truth without
+    advancing anchors, surfacing a genuine `412` through explicit three-way conflict flow.
+- **Programmatic transaction guard wiring** — AI atomic commits and rollbacks are wrapped by
+  `onProgrammaticTransaction` so post-commit autosave races are eliminated.
+
+### Tests
+
+- New: `reconciliation.test.ts` (8 decision-matrix tests),
+  `ai-stream-completion-terminality.test.ts` (3 terminality/watchdog tests),
+  `ai-client-abort-propagation.test.ts` (SDK request-options assertion).
+- Regression verified clean: parser, session FSM, ai-transaction, editor atomic commit,
+  use-sync (45/45); `tsc --noEmit` 0 errors.
+
+---
+
+## [1.4.0] - 2026-08-21 (Phase 9: TipTap Editor, Auto-save & Sync Orchestration)
+
+### Added - Centralized Editor Orchestration & Authoritative Write Controller
+
+#### Core Architecture & Controller
+
+- **Centralized Editor Orchestrator Hook** (`src/hooks/use-editor-orchestrator.ts`)
+  - Decomposes editor state into 6 isolated state slices: Document, Preview, Dirty, Server Version, Conflict, and Write State.
+  - Acts as the single authoritative write gateway for manual saves, AI commits, conflict resolutions, and sync replays.
+  - Strict AutoSave suspension invariants: auto-save is paused during active streaming (`streaming`, `reserved`), committing (`committing`), active conflicts (`conflict`), sync stoppage (`stopped`), and programmatic updates (`setContent`).
+  - Target-scoped manual edit policy: user modifications inside the active AI streaming selection abort generation, refund quota, and clear ghost decorations immediately; edits to other paragraphs outside the target range proceed without interrupting the AI stream (coordinates mapped automatically via ProseMirror `tr.mapping`).
+
+- **Unified Editor Workspace Page** (`src/app/workspace/editor/[fileId]/page.tsx`)
+  - Refactored page component to delegate all state and write management to `useEditorOrchestrator`.
+  - Integrated `AIStreamPreview`, `AIStreamStatus`, `ConflictDialog`, and `SyncIndicator` directly with the centralized orchestrator.
+  - Sibling tab version synchronization for clean tabs with optimistic version precondition locking for dirty tabs.
+  - Page unload & navigation guards (`beforeunload`) protecting dirty or in-flight committing states.
+
+- **Cleanup of Redundant Editor Instances**
+  - Removed unused duplicate canvas component (`src/components/editor/editor-canvas.tsx`) ensuring zero competing editor paths.
+
+- **Technical Architecture Documentation** (`docs/architecture/editor-sync-orchestration.md`)
+  - Full architectural specifications, state slicing, AutoSave suspension invariants, and target-scoped manual edit policy.
+
+#### Automated Integration Test Suite (48 Tests Passing, 100% Rate)
+
+- `src/test/editor-orchestration.integration.test.ts` (7 Integration tests)
+- `src/test/editor-atomic-commit.test.ts` (4 Editor Atomic Commit tests)
+- `src/hooks/use-sync.test.ts` (13 Sync Hook tests)
+- `src/test/conflict-resolution.integration.test.ts` (3 Conflict Resolution tests)
+- `src/test/ai-stream-session.test.ts` (12 Session tests)
+- `src/test/ai-server-atomic-commit.test.ts` (10 Server Commit tests)
+
+---
+
+## [1.3.0] - 2026-08-21 (Phase 8: AI Atomic Commit & Transactional Settlement)
+
+### Added - AI Atomic Commit Architecture & Real PostgreSQL Verification
+
+#### Core Transactional Architecture
+
+- **Transactional Database Client** (`src/lib/db/transactional.ts`)
+  - WebSocket-enabled Neon Serverless Pool for interactive SQL transactions (`BEGIN` / `COMMIT` / `ROLLBACK`).
+  - Hardened connection limits and timeout boundaries (`max: 5`, `connectionTimeoutMillis: 10_000`, `idleTimeoutMillis: 30_000`) preventing orphaned reservations.
+
+- **Atomic Commit Server Action** (`src/server/actions/ai-commit.ts`)
+  - Atomic transaction executing file content update (`files` table), version increment, ETag calculation, and quota reservation settlement (`aiReservations` table -> `committed`) inside a single database transaction.
+  - Server-side optimistic locking with explicit `412 Conflict` on concurrent modifications (`WHERE version = expectedVersion`).
+  - Production transactional invariant: hard-fails if transaction client is unavailable in production.
+  - Idempotent retries via `operationId` returning current persisted document state.
+  - Lean conflict payload omitting large unneeded document bodies.
+
+- **Editor Server-First Commit Invariant** (`src/hooks/use-ai-stream.ts`)
+  - Server-first transaction: TipTap editor modifications applied as a single history step only after server transaction confirmation.
+  - Ephemeral ghost preview cleanly removed on conflict or error, preserving pristine document state.
+
+- **Technical Architecture Documentation** (`docs/architecture/ai-atomic-commit-architecture.md`)
+  - Comprehensive specification of invariants, sequence diagram, test suites, and technical debt.
+
+#### Automated Test Suite (44 Tests Passing, 100% Rate)
+
+- `src/test/ai-atomic-commit.integration.test.ts` (6 Real PostgreSQL integration tests)
+- `src/test/ai-server-atomic-commit.test.ts` (10 Unit / Contract tests)
+- `src/lib/ai-transaction.test.ts` (5 Editor Unit tests)
+- `src/test/editor-atomic-commit.test.ts` (4 Editor Invariant tests)
+- `src/test/ai-quota-idempotency.test.ts` (8 Quota tests)
+- `src/server/actions/ai-ops.refund.test.ts` (5 Real Quota Refund tests)
+- `src/server/actions/ai-ops.integrity.test.ts` (6 Real Concurrency Integrity tests)
+
+---
+
+## [1.2.0] - 2026-08-21 (Phase 7: NDJSON Streaming & Session State Machine)
+
+### Added - AI NDJSON Streaming & Finite State Machine
+
+#### Core Streaming Architecture
+
+- **Resilient NDJSON Stream Parser** (`src/lib/ai/stream-handler.ts`)
+  - Canonical event framing: `start`, `chunk`, `metadata`, `done`, `error`, `cancelled`.
+  - Multi-byte UTF-8 boundary preservation via `TextDecoder({ stream: true })`.
+  - Incomplete EOF stream detection as `failed_incomplete_stream`.
+  - Duplicate `done` protection and unknown frame resilience.
+  - `MAX_LINE_BUFFER_CHARS` (256KB) line buffer flooding ceiling (ADV-01).
+  - Single terminal callback emission guarantee (ADV-05).
+
+- **Deterministic Session State Machine** (`src/lib/ai/stream-session.ts`)
+  - Canonical state flow: `idle -> reserving -> streaming -> preview_ready -> committing -> committed`.
+  - Terminal failure & cancellation states: `aborted`, `failed`, `conflict`, `rolled_back`.
+  - Editor generation and version mismatch integrity guards (`assertSessionIntegrity`).
+  - Double-decision prevention on late cancellations.
+
+- **Route Handler Hardening & Quota Protection** (`src/app/api/ai/stream/route.ts`)
+  - Emits structured NDJSON event frames with zero prompt/sensitive text leakage in headers.
+  - Automatic quota reservation before stream dispatch and idempotent refund on client abort or mid-stream exceptions.
+  - Strict payload validation and `MAX_INPUT_CHARS = 100,000` ceiling (ADV2-01).
+
+- **Ephemeral Preview & Atomic Commit Hook** (`src/hooks/use-ai-stream.ts`)
+  - Zero TipTap document mutation during streaming (appends strictly to `EphemeralPreviewBuffer` and ghost decoration layer).
+  - Dynamic ProseMirror mapped selection coordinate resolution (`streamingGhostPluginKey`) preventing selection drift (ADV-04).
+  - Non-abortable committing state guard preventing client/server version desynchronization (ADV2-02).
+
+- **DOM XSS Sanitization in TipTap Ghost Widget** (`src/lib/extensions/streaming-ghost-extension.ts`)
+  - DOM node construction via `document.createElement` and `textContent` (ADV-06).
+
+- **AI Stream Status Indicator** (`src/components/editor/ai-stream-status.tsx`)
+  - Accurate cancellation UI state reflecting non-abortable server transactions (ADV2-03).
+
+- **Technical Documentation** (`docs/architecture/ai-streaming-protocol.md`)
+  - Comprehensive specification of NDJSON framing, state transitions, adversarial edge cases, and quota lifecycle.
+
+#### Automated Test Suite
+
+- `src/test/ai-stream-parser.test.ts` (11 unit tests passed)
+- `src/test/ai-stream-session.test.ts` (12 unit tests passed)
+
+---
+
+## [1.0.0] - 2026-01-27
+
+### Added - Stripe Integration
+
+#### Core Infrastructure
+
+- **Stripe Library Wrapper** (`src/lib/stripe/index.ts`)
+  - Customer management functions
+  - Checkout session creation
+  - Webhook signature verification
+  - Subscription cancellation
+
+- **Stripe Configuration** (`src/lib/stripe/config.ts`)
+  - Price ID mappings for Pro and Ultra tiers
+  - Tier validation utilities
+
+#### API Routes
+
+- **Create Checkout Endpoint** (`src/app/api/stripe/create-checkout/route.ts`)
+  - User authentication and validation
+  - Tier upgrade validation
+  - Stripe customer creation/retrieval
+  - Secure checkout session creation
+
+- **Webhook Handler** (`src/app/api/stripe/webhook/route.ts`)
+  - Signature verification for security
+  - Event processing:
+    - `checkout.session.completed` - Updates user tier on successful payment
+    - `customer.subscription.updated` - Syncs subscription status
+    - `customer.subscription.deleted` - Handles cancellations
+  - Comprehensive error logging
+
+#### Server Actions
+
+- **Subscription Actions** (`src/server/actions/subscription-actions.ts`)
+  - `updateUserTier()` - Updates user subscription tier
+  - `updateUserStripeCustomerId()` - Links Stripe customer to user
+  - `upsertSubscription()` - Creates/updates subscription records
+  - `cancelUserSubscription()` - Handles subscription cancellation
+
+#### UI Components
+
+- **UpgradeButton Component** (`src/components/subscription/upgrade-button.tsx`)
+  - Interactive upgrade button with loading states
+  - Error handling with toast notifications
+  - Smart disabled states based on tier hierarchy
+  - Auto-redirect to Stripe Checkout
+
+#### Documentation
+
+- `STRIPE_SETUP.md` - Complete setup guide
+- `FINAL_DOCUMENTATION.md` - Comprehensive technical documentation
+- `CHANGELOG.md` - This file
+
+### Changed
+
+- **Account Page** (`src/app/account/page.tsx`)
+  - Replaced static upgrade button with interactive `UpgradeButton` component
+  - Added dual button display for Pro and Ultra tiers
+  - Conditional rendering based on current tier:
+    - Free: Shows both Pro and Ultra buttons
+    - Pro: Shows Ultra button only
+    - Ultra: Shows no buttons (highest tier)
+
+- **Environment Configuration** (`.env`)
+  - Added `STRIPE_PRO_PRICE_ID`
+  - Added `STRIPE_ULTRA_PRICE_ID`
+
+### Fixed
+
+#### Fix #1: Non-functional Upgrade Button
+
+- **Issue**: Upgrade buttons had no event handlers
+- **Solution**: Created complete Stripe integration with API routes and webhook handling
+- **Status**: ✅ Resolved
+
+#### Fix #2: Webhook Configuration
+
+- **Issue**: Webhooks not reaching correct endpoint
+- **Root Cause**: Stripe CLI forwarding to wrong path (`/api/webhooks/stripe` instead of `/api/stripe/webhook`)
+- **Solution**: Corrected Stripe CLI command and added detailed logging
+- **Status**: ✅ Resolved
+
+#### Fix #3: Tier Upgrade Flow
+
+- **Issue**: Pro users unable to upgrade to Ultra
+- **Root Causes**:
+  - Restrictive disabled logic in UpgradeButton
+  - Missing Ultra button in UI
+  - API validation preventing Pro→Ultra upgrades
+- **Solutions**:
+  - Implemented tier hierarchy system (Free=0, Pro=1, Ultra=2)
+  - Added both Pro and Ultra buttons with smart conditional rendering
+  - Updated button text to show target tier
+  - Fixed API validation logic
+- **Status**: ✅ Resolved
+
+### Security
+
+- ✅ PCI-DSS Compliant (no card data storage)
+- ✅ Webhook signature verification
+- ✅ Server-side validation for all operations
+- ✅ HTTPS required for production webhooks
+- ✅ No hardcoded secrets (environment variables only)
+
+### Supported Upgrade Paths
+
+#### Allowed ✅
+
+- Free → Pro ($0 → $12/month)
+- Free → Ultra ($0 → $120/month)
+- Pro → Ultra ($12 → $120/month)
+
+#### Blocked ❌
+
+- Same tier upgrades (Pro → Pro, Ultra → Ultra)
+- Downgrades (Ultra → Pro, Ultra → Free, Pro → Free)
+
+---
+
+## Testing
+
+### Test Mode Setup Required
+
+1. Create Products in Stripe Dashboard (Test Mode)
+2. Update Price IDs in `.env`
+3. Run Stripe CLI: `stripe listen --forward-to http://localhost:3000/api/stripe/webhook`
+
+### Test Card
+
+- Number: 4242 4242 4242 4242
+- Expiry: Any future date
+- CVC: Any 3 digits
+- ZIP: Any 5 digits
+
+---
+
+## Production Deployment Checklist
+
+- [ ] Create Products in Stripe Live Mode
+- [ ] Obtain Live API Keys (Secret + Publishable)
+- [ ] Update production environment variables
+- [ ] Configure production webhook endpoint
+- [ ] Test in staging environment
+- [ ] Deploy to production
+- [ ] Monitor webhook events in Stripe Dashboard
+
+---
+
+**Version:** 1.0.0  
+**Status:** Production Ready (after production keys setup)  
+**Last Updated:** 2026-01-27

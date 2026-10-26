@@ -3,7 +3,7 @@
 > ⚠️ **HISTORICAL ARCHIVE / SUPERSEDED (September 2026)**  
 > Execution of this plan was halted after Phase 4. Its remaining scope (Phases 5–11)  
 > has been absorbed and expanded into the comprehensive technical remediation plan:  
-> [`../../Plans/COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md`](../../Plans/COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md).
+> [`../../Plans/COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md`](../plans/comprehensive-technical-remediation-plan-lugx-v1.md).
 
 **Plan Identifier:** `PLAN-CORE-HARDENING-PRE-STAGE-2`  
 **Operational Status:** ⚪ SUPERSEDED / ARCHIVED (Phases 1–4 Closed; Phases 5–11 absorbed into `COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md`)  

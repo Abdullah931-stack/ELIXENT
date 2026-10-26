@@ -1,4 +1,4 @@
-# LUGX Documentation — Master Structural Index
+# Elixent Documentation — Master Structural Index
 
 This index maps every document under `docs/`. It is a **structural map only**:
 operational documentation rules live outside this file — see
@@ -19,6 +19,11 @@ docs/
 ├── METRICS.json                       ← automated single source of truth for test & suite metrics
 │
 ├── architecture/                      ← subsystem designs, protocols, state machines
+│   ├── 01_architecture_vision_and_adrs.md
+│   ├── 02_agent_orchestration_and_decision_engine.md
+│   ├── 03_workspace_ast_editor_and_vault_integration.md
+│   ├── 04_credit_metering_and_settlement_architecture.md
+│   ├── 05_data_contracts_and_lugx_migration_plan.md
 │   ├── sync/                          ← offline-first sync engine, concurrency & storage
 │   ├── ai/                            ← Gemini LLM streaming, atomic commit & quota lifecycle
 │   └── security/                      ← rate limiting, edge proxy, crypto workers & ZK log masking
@@ -40,7 +45,7 @@ docs/
 │   └── ui-streaming-requirements.md
 │
 ├── Plans/                             ← active official technical execution roadmaps (English)
-│   └── COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md ← unified technical remediation & hardening plan (Active: Phases 1–16 closed, 17–23 planned)
+│   └── ELIXENT_EXECUTION_PLAN.md      ← unified Elixent multi-agent platform execution plan (Active: Phases 0–7)
 │
 ├── records/                           ← engineering records, incidents, audits, closures & plans archive
 │   ├── incidents/                     ← root-cause post-mortems (test-database-safety.md, codemirror-syntax-tree-parse-budget-race.md)
@@ -52,18 +57,8 @@ docs/
 │   │   ├── phase-17-to-20-production-readiness/
 │   │   ├── extensions/                ← pdf worker extraction, vault import, sub-line diff3 & v1.46.1 offline auto-merge closure
 │   │   └── core-hardening/            ← core hardening dossiers (Phase 1–18: metrics, links, skipped tests, Redis, contracts, reducers, schema, identity, crypto hierarchy, encrypted content governance, AI settlement, Stripe 1:N, Redis fail-closed & cron overlap, local sync queue CAS, durable IDB conflict quarantine, CI dependency audit gate, thin coordinator sync-manager decomposition, use-editor-conflict extraction)
-│   ├── plans/                         ← completed historical execution plans (technical-execution, hybrid-vault, markdown-editor, M6)
-│   └── archive/                       ← superseded, halted, or abandoned specs & plans (core-hardening-pre-stage-2, legacy snapshots)
-│
-├── foundation/                        ← founding pre-implementation baseline record (strictly immutable)
-│   ├── DESIGN_VS_REALITY.md           ← living divergence tracker measuring design vs reality
-│   ├── Project_Structure.md
-│   ├── System Architecture Design.md
-│   ├── Product Requirements Document (PRD).md
-│   ├── LUGX platform subscription plans.md
-│   ├── UI_UX Guidelines.md
-│   ├── Implementation_Master_Plan.md
-│   └── Using AI/                      ← original prompt specs (AI Key Document, correct, improve...)
+│   ├── plans/                         ← completed historical execution plans (comprehensive-technical-remediation-plan-lugx-v1, technical-execution, hybrid-vault, markdown-editor, M6)
+│   └── archive/                       ← superseded, halted, or abandoned specs & LUGX v1 historical baseline (lugx-v1/foundation/, CHANGELOG-LUGX-v1.md)
 │
 └── .Plans/                            ← internal candidate planning incubator (Arabic, untracked via .gitignore)
 ```
@@ -85,6 +80,16 @@ docs/
 ---
 
 ### 2.2. Architecture (`architecture/`) — Living Subsystem Documentation
+
+#### Elixent Platform Architecture Suite (`architecture/01`–`05`)
+
+| Document | Scope |
+| :--- | :--- |
+| [01_architecture_vision_and_adrs.md](./architecture/01_architecture_vision_and_adrs.md) | Authoritative system vision, high-level topology, and Architectural Decision Records (ADRs 01–07) |
+| [02_agent_orchestration_and_decision_engine.md](./architecture/02_agent_orchestration_and_decision_engine.md) | Multi-agent orchestration pipeline, router-critic loop, and deterministic decision engine |
+| [03_workspace_ast_editor_and_vault_integration.md](./architecture/03_workspace_ast_editor_and_vault_integration.md) | CodeMirror 6 AST surgical patching, bidirectional isolation, and Zero-Knowledge vault boundary |
+| [04_credit_metering_and_settlement_architecture.md](./architecture/04_credit_metering_and_settlement_architecture.md) | Token-to-credit metering, dual-phase atomic reservation leases, and financial settlement ledger |
+| [05_data_contracts_and_lugx_migration_plan.md](./architecture/05_data_contracts_and_lugx_migration_plan.md) | Canonical data contracts, Drizzle PostgreSQL schema evolution, and LUGX v1 to Elixent migration blueprint |
 
 #### Sync & Storage Engine (`architecture/sync/`)
 
@@ -163,7 +168,7 @@ docs/
 
 | Document | Scope | Status |
 | :--- | :--- | :--- |
-| [COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md](./Plans/COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md) | Unified technical remediation & hardening plan (23 isolated SRP phases, 100% audit findings closure) | 🟢 Active (Phases 1–15 Closed, 16–23 Planned) |
+| [ELIXENT_EXECUTION_PLAN.md](./Plans/ELIXENT_EXECUTION_PLAN.md) | Master architectural transition & multi-agent engineering execution plan (Phases 0–7) | 🟢 Active |
 
 > **Dual-Track Planning Policy:** The `.Plans/` directory in the repository root is an **internal candidate planning incubator** (written in Arabic, untracked in Git via `.gitignore`). It serves as a scratchpad for drafting, evaluating, and incubating future ideas. Once an engineering plan is approved and executed, its authoritative English edition is published and tracked here under `docs/Plans/`.
 
@@ -200,6 +205,7 @@ docs/
 
 | Document | Scope | Status |
 | :--- | :--- | :--- |
+| [comprehensive-technical-remediation-plan-lugx-v1.md](./records/plans/comprehensive-technical-remediation-plan-lugx-v1.md) | Unified technical remediation & core hardening plan for LUGX v1 (23 isolated SRP phases) | ✅ Completed |
 | [technical-execution-plan.md](./records/plans/technical-execution-plan.md) | Code-based technical execution plan covering all 20 phases | ✅ Completed |
 | [hybrid-encryption-and-vault-plan.md](./records/plans/hybrid-encryption-and-vault-plan.md) | Dual-tier hybrid encryption & zero-knowledge vault execution plan | ✅ Completed |
 | [markdown-editor-migration-plan.md](./records/plans/markdown-editor-migration-plan.md) | Native CodeMirror 6 Markdown editor migration plan (Phases 1–6) | ✅ Completed |
@@ -213,29 +219,17 @@ docs/
 | [technical-fix-documentation-security-hardening.md](./records/archive/technical-fix-documentation-security-hardening.md) | Early W1–W8 hardening record (branch `merge`, 2026-08-16) |
 | [sync-unit-tests-fixes.md](./records/archive/sync-unit-tests-fixes.md) | Early sync unit test fixes snapshot (February 2026) |
 | [sync-system-legacy-snapshot.md](./records/archive/sync-system-legacy-snapshot.md) | Legacy initial sync delivery snapshot with historical deprecation banner |
-| [core-hardening-pre-stage-2-plan.md](./records/archive/core-hardening-pre-stage-2-plan.md) | Pre-Stage 2 core hardening plan (Phases 1–4 closed; superseded & absorbed into COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md) |
-
----
-
-### 2.8. Foundation (`foundation/`) — Founding Baseline Record
-
-> **Immutable historical methodology record** — authored before any code was
-> written. Preserved verbatim; it documents how the project's pillars were
-> established, **not** the current system behavior. For divergences between this
-> founding design and the implemented reality, see
-> [`foundation/DESIGN_VS_REALITY.md`](./foundation/DESIGN_VS_REALITY.md).
-
-| Document | Scope |
-| :--- | :--- |
-| [DESIGN_VS_REALITY.md](./foundation/DESIGN_VS_REALITY.md) | **Living Divergence Tracker:** Documents every architectural divergence between founding design and implemented reality |
-| [Product Requirements Document (PRD).md](<./foundation/Product Requirements Document (PRD).md>) | Founding product requirements |
-| [System Architecture Design.md](<./foundation/System Architecture Design.md>) | Original architecture: IAM, data layer, key rotation, risk analysis |
-| [Project_Structure.md](./foundation/Project_Structure.md) | Planned directory tree and component responsibilities |
-| [Implementation_Master_Plan.md](./foundation/Implementation_Master_Plan.md) | Founding master implementation plan |
-| [LUGX platform subscription plans.md](<./foundation/LUGX platform subscription plans.md>) | Tier definitions, quotas, pricing |
-| [UI_UX Guidelines.md](<./foundation/UI_UX Guidelines.md>) | Visual direction, design system, components |
-| [Using AI/AI Key Document.md](<./foundation/Using AI/AI Key Document.md>) | AI model matrix & generation parameters per operation |
-| [Using AI/correct.md](<./foundation/Using AI/correct.md>) · `improve` · `summarize` · `toPrompt` · `translate` | Original system prompts (source material for `src/lib/ai/prompts.ts`) |
+| [core-hardening-pre-stage-2-plan.md](./records/archive/core-hardening-pre-stage-2-plan.md) | Pre-Stage 2 core hardening plan (Phases 1–4 closed; superseded & absorbed into comprehensive-technical-remediation-plan-lugx-v1.md) |
+| [CHANGELOG-LUGX-v1.md](./records/archive/lugx-v1/CHANGELOG-LUGX-v1.md) | Historical LUGX v1 release notes archive (v1.0.0 through v1.46.3) |
+| [DESIGN_VS_REALITY.md](./records/archive/lugx-v1/foundation/DESIGN_VS_REALITY.md) | Historical LUGX v1 divergence tracker between Day-0 design and implemented reality |
+| [Product Requirements Document (PRD).md](<./records/archive/lugx-v1/foundation/Product Requirements Document (PRD).md>) | Founding LUGX v1 product requirements |
+| [System Architecture Design.md](<./records/archive/lugx-v1/foundation/System Architecture Design.md>) | Original LUGX v1 architecture: IAM, data layer, key rotation, risk analysis |
+| [Project_Structure.md](./records/archive/lugx-v1/foundation/Project_Structure.md) | Planned LUGX v1 directory tree and component responsibilities |
+| [Implementation_Master_Plan.md](./records/archive/lugx-v1/foundation/Implementation_Master_Plan.md) | Founding LUGX v1 master implementation plan |
+| [LUGX platform subscription plans.md](<./records/archive/lugx-v1/foundation/LUGX platform subscription plans.md>) | Original LUGX v1 tier definitions, quotas, pricing |
+| [UI_UX Guidelines.md](<./records/archive/lugx-v1/foundation/UI_UX Guidelines.md>) | Original LUGX v1 visual direction, design system, components |
+| [Using AI/AI Key Document.md](<./records/archive/lugx-v1/foundation/Using AI/AI Key Document.md>) | Original LUGX v1 AI model matrix & generation parameters per operation |
+| [Using AI/correct.md](<./records/archive/lugx-v1/foundation/Using AI/correct.md>) · `improve` · `summarize` · `toPrompt` · `translate` | Original LUGX v1 system prompts (historical source material) |
 
 ---
 

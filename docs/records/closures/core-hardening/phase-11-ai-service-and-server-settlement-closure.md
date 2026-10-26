@@ -149,6 +149,6 @@ flowchart TD
 - **Changelog:** Added release notes for `[1.39.0]` in [docs/CHANGELOG.md](../../../CHANGELOG.md).
 - **Living Architectural Spec:** Updated [docs/architecture/ai/ai-quota-reservation-lifecycle.md](../../../architecture/ai/ai-quota-reservation-lifecycle.md) and [docs/architecture/ai/ai-atomic-commit-architecture.md](../../../architecture/ai/ai-atomic-commit-architecture.md).
 - **Living Reference Contract:** Updated [docs/reference/ui-streaming-readiness.md](../../../reference/ui-streaming-readiness.md).
-- **Living Reality Reconciler:** Updated [docs/foundation/DESIGN_VS_REALITY.md](../../../foundation/DESIGN_VS_REALITY.md).
+- **Living Reality Reconciler:** Updated [docs/foundation/DESIGN_VS_REALITY.md](../../archive/lugx-v1/foundation/DESIGN_VS_REALITY.md).
 - **Technical Debt Register:** Synchronized TD-05 in [docs/TECHNICAL_DEBT_REGISTER.md](../../../TECHNICAL_DEBT_REGISTER.md).
 - **Active Remediation Plan:** Updated Phase 11 status to `COMPLETED` in `docs/.Plans/خطة الإصلاح التقنية.md`.

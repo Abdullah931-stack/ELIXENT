@@ -112,7 +112,7 @@ flowchart TD
 
 ## 4. Mapping of Discovered Production Deficiencies to Strategic Plan
 
-In strict compliance with the **No Production Refactoring in Ad-Hoc Test Sessions** directive, production bugs discovered during the audit were not patched with quick workarounds. Instead, algorithmic changes were reverted and mapped to their authoritative phases in [`COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md`](../../../Plans/COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md):
+In strict compliance with the **No Production Refactoring in Ad-Hoc Test Sessions** directive, production bugs discovered during the audit were not patched with quick workarounds. Instead, algorithmic changes were reverted and mapped to their authoritative phases in [`COMPREHENSIVE_TECHNICAL_REMEDIATION_PLAN.md`](../../plans/comprehensive-technical-remediation-plan-lugx-v1.md):
 
 | Finding # | Component | Discovered Defect | Authoritative Resolution Phase in Strategic Plan |
 |---|---|---|---|

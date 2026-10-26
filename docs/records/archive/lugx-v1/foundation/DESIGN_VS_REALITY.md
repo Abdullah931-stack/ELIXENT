@@ -1,3 +1,6 @@
+> **[ARCHIVED HISTORICAL RECORD — LUGX v1.46.3 Baseline (2026-10-26)]**
+> This document is preserved read-only as part of the historical `LUGX v1.46.3` baseline archive. Active living architecture specifications and Architectural Decision Records (ADRs) for the **Elixent** platform now reside under `docs/architecture/` (see [`01_architecture_vision_and_adrs.md`](../../../../architecture/01_architecture_vision_and_adrs.md)).
+
 # Founding Design vs. Implemented Reality — Divergence Record
 
 > **Purpose:** this folder (`docs/foundation/`) preserves the project's founding
@@ -88,7 +91,7 @@
 ## 4. Reading Guidance
 
 - Treat everything in this folder as a **historical methodology record**.
-- For current behavior, always start from [`../README.md`](../README.md) and the living
+- For current behavior, always start from [`../README.md`](../../../../README.md) and the living
   documents under `../architecture/` and `../reference/`.
 - Never "fix" a founding document to match reality — record the divergence here instead.
 

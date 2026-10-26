@@ -20,7 +20,7 @@
 - [`docs/architecture/sync/editor-sync-orchestration.md`](../../../architecture/sync/editor-sync-orchestration.md) (Updated SyncManager state machine lifecycle and Editor lock in-memory zeroization)  
 - [`docs/architecture/sync/three-way-conflict-resolution.md`](../../../architecture/sync/three-way-conflict-resolution.md) (Updated identical conflict raw-ciphertext preservation)  
 - [`docs/reference/sync-api.md`](../../../reference/sync-api.md) (Updated RFC 7807 storage and sync query validation contracts)  
-- [`docs/foundation/DESIGN_VS_REALITY.md`](../../../foundation/DESIGN_VS_REALITY.md) (Documented Release v1.46.2 cryptographic evolution and zero-knowledge memory discipline)  
+- [`docs/foundation/DESIGN_VS_REALITY.md`](../../archive/lugx-v1/foundation/DESIGN_VS_REALITY.md) (Documented Release v1.46.2 cryptographic evolution and zero-knowledge memory discipline)  
 - [`docs/CHANGELOG.md`](../../../CHANGELOG.md) (Documented Release v1.46.2)  
 - [`docs/METRICS.json`](../../../METRICS.json) (Authoritative SSOT test baseline synchronized to 89 unit suites and 1076 tests)  
 
