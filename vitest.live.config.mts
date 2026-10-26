@@ -18,6 +18,8 @@ export default defineConfig({
         // External providers (Gemini) can legitimately take >30s under load;
         // 60s removes provider-latency flakiness without hiding real hangs.
         testTimeout: 60_000,
+        // Cloud provider smoke retry gate: absorbs transient upstream 503 spikes
+        retry: 1,
         // Serialized against the shared isolated branch (strict sequential execution).
         pool: 'forks',
         fileParallelism: false,

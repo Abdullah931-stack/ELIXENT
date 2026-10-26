@@ -45,7 +45,7 @@ docs/
 │   └── ui-streaming-requirements.md
 │
 ├── Plans/                             ← active official technical execution roadmaps (English)
-│   └── ELIXENT_EXECUTION_PLAN.md      ← unified Elixent multi-agent platform execution plan (Active: Phases 0–7)
+│   └── ELIXENT_EXECUTION_PLAN.md      ← unified Elixent multi-agent platform execution plan (Active: 12 Commit-Sized SRP Phases)
 │
 ├── records/                           ← engineering records, incidents, audits, closures & plans archive
 │   ├── incidents/                     ← root-cause post-mortems (test-database-safety.md, codemirror-syntax-tree-parse-budget-race.md)
@@ -73,7 +73,7 @@ docs/
 | :--- | :--- |
 | [README.md](./README.md) | Structural master index mapping every document in the repository |
 | [DOCUMENTATION_GUIDELINES.md](./DOCUMENTATION_GUIDELINES.md) | Policy on create/update/merge, nested directories, evidence discipline, and dual-track planning governance |
-| [CHANGELOG.md](./CHANGELOG.md) | Append-only chronological release notes covering v1.0.0 through v1.46.3 |
+| [CHANGELOG.md](./CHANGELOG.md) | Append-only chronological release notes starting at Elixent v0.0.1 (with LUGX v1.0.0–v1.46.3 archived) |
 | [TECHNICAL_DEBT_REGISTER.md](./TECHNICAL_DEBT_REGISTER.md) | Living register of accepted debts, mitigations, and resolution status (TD-01 to TD-19) |
 | [METRICS.json](./METRICS.json) | Centralized single source of truth for test suite counts and verification numbers |
 
@@ -85,7 +85,7 @@ docs/
 
 | Document | Scope |
 | :--- | :--- |
-| [01_architecture_vision_and_adrs.md](./architecture/01_architecture_vision_and_adrs.md) | Authoritative system vision, high-level topology, and Architectural Decision Records (ADRs 01–07) |
+| [01_architecture_vision_and_adrs.md](./architecture/01_architecture_vision_and_adrs.md) | Authoritative system vision, high-level topology, and Architectural Decision Records (ADR-001 to ADR-005) |
 | [02_agent_orchestration_and_decision_engine.md](./architecture/02_agent_orchestration_and_decision_engine.md) | Multi-agent orchestration pipeline, router-critic loop, and deterministic decision engine |
 | [03_workspace_ast_editor_and_vault_integration.md](./architecture/03_workspace_ast_editor_and_vault_integration.md) | CodeMirror 6 AST surgical patching, bidirectional isolation, and Zero-Knowledge vault boundary |
 | [04_credit_metering_and_settlement_architecture.md](./architecture/04_credit_metering_and_settlement_architecture.md) | Token-to-credit metering, dual-phase atomic reservation leases, and financial settlement ledger |
@@ -168,7 +168,7 @@ docs/
 
 | Document | Scope | Status |
 | :--- | :--- | :--- |
-| [ELIXENT_EXECUTION_PLAN.md](./Plans/ELIXENT_EXECUTION_PLAN.md) | Master architectural transition & multi-agent engineering execution plan (Phases 0–7) | 🟢 Active |
+| [ELIXENT_EXECUTION_PLAN.md](./Plans/ELIXENT_EXECUTION_PLAN.md) | Master architectural transition & multi-agent engineering execution plan (12 Commit-Sized SRP Phases) | 🟢 Active |
 
 > **Dual-Track Planning Policy:** The `.Plans/` directory in the repository root is an **internal candidate planning incubator** (written in Arabic, untracked in Git via `.gitignore`). It serves as a scratchpad for drafting, evaluating, and incubating future ideas. Once an engineering plan is approved and executed, its authoritative English edition is published and tracked here under `docs/Plans/`.
 

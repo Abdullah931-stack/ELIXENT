@@ -27,6 +27,53 @@ export const MODEL_CONFIG = modelsConfig;
 
 export type Tier = "free" | "pro" | "ultra";
 
+const ATTEMPT_TIMEOUT_MS = 15000;
+
+/**
+ * Creates an attempt AbortSignal that aborts if either:
+ * 1. The downstream client signal aborts (user cancellation)
+ * 2. The per-attempt watchdog timeout expires (provider stall / 503 hang)
+ */
+function createAttemptSignal(callerSignal?: AbortSignal, timeoutMs = ATTEMPT_TIMEOUT_MS): {
+    attemptSignal: AbortSignal;
+    cleanup: () => void;
+    didTimeout: () => boolean;
+} {
+    const controller = new AbortController();
+    let timedOut = false;
+
+    const timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort(new Error(`Attempt timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    const onCallerAbort = () => {
+        controller.abort(callerSignal?.reason);
+    };
+
+    if (callerSignal) {
+        if (callerSignal.aborted) {
+            clearTimeout(timer);
+            controller.abort(callerSignal.reason);
+        } else {
+            callerSignal.addEventListener("abort", onCallerAbort, { once: true });
+        }
+    }
+
+    const cleanup = () => {
+        clearTimeout(timer);
+        if (callerSignal) {
+            callerSignal.removeEventListener("abort", onCallerAbort);
+        }
+    };
+
+    return {
+        attemptSignal: controller.signal,
+        cleanup,
+        didTimeout: () => timedOut && (!callerSignal || !callerSignal.aborted),
+    };
+}
+
 /**
  * Dynamically resolve maximum retry attempts based on the configured key pool size.
  * Allows larger key pools (e.g. 10-20 keys) to rotate through healthy keys without early abortion.
@@ -258,6 +305,7 @@ export async function processWithAI(
             throw new Error(`No available model configured for operation '${operation}' in ${tier} tier`);
         }
 
+        let attemptScope: ReturnType<typeof createAttemptSignal> | null = null;
         try {
             // Get active healthy API key from Redis pool
             keyInfo = keyInfo || (await getApiKeyForRequest());
@@ -272,13 +320,25 @@ export async function processWithAI(
 
             // Generate content — propagate the downstream abort signal to the provider
             // HTTP request so cancellation terminates the upstream socket immediately.
-            const result = await model.generateContent(
-                [
-                    { text: systemPrompt },
-                    { text: text },
-                ],
-                { signal }
-            );
+            // If caller did not provide an AbortSignal, attach a 15s watchdog to avoid indefinite hangs on upstream 503 stalls.
+            let requestSignal: AbortSignal | undefined = signal;
+            if (!requestSignal) {
+                attemptScope = createAttemptSignal(undefined, ATTEMPT_TIMEOUT_MS);
+                requestSignal = attemptScope.attemptSignal;
+            }
+
+            let result;
+            try {
+                result = await model.generateContent(
+                    [
+                        { text: systemPrompt },
+                        { text: text },
+                    ],
+                    requestSignal ? { signal: requestSignal } : undefined
+                );
+            } finally {
+                attemptScope?.cleanup();
+            }
 
             if (signal?.aborted) {
                 if (isProbe && primary) releaseProbeLock(primary).catch(() => {});
@@ -301,13 +361,15 @@ export async function processWithAI(
             return processedText;
 
         } catch (error: unknown) {
+            const isAttemptTimeout = Boolean(attemptScope?.didTimeout());
+            attemptScope?.cleanup();
             lastError = error as Error;
 
             // Classify error
             const classification = classifyGeminiError(error);
 
-            // 1. Cancellation -> Fail fast without retrying
-            if (classification.category === "cancelled" || signal?.aborted) {
+            // 1. User Cancellation -> Fail fast without retrying (only if caller aborted, not attempt timeout)
+            if (signal?.aborted || (classification.category === "cancelled" && !isAttemptTimeout)) {
                 if (isProbe && primary) releaseProbeLock(primary).catch(() => {});
                 const abortErr = new Error("The operation was aborted");
                 abortErr.name = "AbortError";
@@ -321,8 +383,9 @@ export async function processWithAI(
                 throw error;
             }
 
-            // 3. Model Overload / 503 -> Failover immediately to next fallback model in chain
+            // 3. Model Overload / 503 / Attempt Timeout -> Failover immediately to next fallback model in chain
             if (
+                isAttemptTimeout ||
                 classification.category === "overload" ||
                 is503OrOverloadError(error)
             ) {
@@ -443,6 +506,7 @@ export async function streamWithAI(
             throw new Error(`No available model configured for operation '${operation}' in ${tier} tier`);
         }
 
+        let attemptScope: ReturnType<typeof createAttemptSignal> | null = null;
         try {
             // Get active healthy API key from Redis pool
             keyInfo = keyInfo || (await getApiKeyForRequest());
@@ -458,13 +522,25 @@ export async function streamWithAI(
             // provider HTTP request. Without this, client disconnects and user aborts
             // never cancel the upstream Gemini socket and the server stays pinned
             // (reader.read() blocks) until the model finishes generating on its own.
-            const result = await model.generateContentStream(
-                [
-                    { text: systemPrompt },
-                    { text: text },
-                ],
-                { signal }
-            );
+            // If caller did not provide an AbortSignal, attach a 15s watchdog to avoid indefinite hangs on upstream 503 stalls.
+            let requestSignal: AbortSignal | undefined = signal;
+            if (!requestSignal) {
+                attemptScope = createAttemptSignal(undefined, ATTEMPT_TIMEOUT_MS);
+                requestSignal = attemptScope.attemptSignal;
+            }
+
+            let result;
+            try {
+                result = await model.generateContentStream(
+                    [
+                        { text: systemPrompt },
+                        { text: text },
+                    ],
+                    requestSignal ? { signal: requestSignal } : undefined
+                );
+            } finally {
+                attemptScope?.cleanup();
+            }
 
             // Prevent unhandled promise rejection on SDK response promise
             if (result && result.response && typeof result.response.catch === "function") {
@@ -530,12 +606,14 @@ export async function streamWithAI(
             });
 
         } catch (error: unknown) {
+            const isAttemptTimeout = Boolean(attemptScope?.didTimeout());
+            attemptScope?.cleanup();
             lastError = error as Error;
 
             const classification = classifyGeminiError(error);
 
-            // 1. Cancellation -> Fail fast
-            if (classification.category === "cancelled" || signal?.aborted) {
+            // 1. User Cancellation -> Fail fast (only if caller aborted, not attempt timeout)
+            if (signal?.aborted || (classification.category === "cancelled" && !isAttemptTimeout)) {
                 if (isProbe && primary) releaseProbeLock(primary).catch(() => {});
                 const abortErr = new Error("Stream aborted");
                 abortErr.name = "AbortError";
@@ -549,8 +627,9 @@ export async function streamWithAI(
                 throw error;
             }
 
-            // 3. In-flight 503 / Overload -> Immediately failover to fallback model in chain
+            // 3. In-flight 503 / Overload / Attempt Timeout -> Immediately failover to fallback model in chain
             if (
+                isAttemptTimeout ||
                 classification.category === "overload" ||
                 is503OrOverloadError(error)
             ) {

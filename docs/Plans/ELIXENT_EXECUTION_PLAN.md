@@ -150,7 +150,7 @@ flowchart TB
 
         subgraph P12 ["Phase 12: Final Legacy 5-Op Purge, Test Migration & Documentation Sync"]
             T12A["12.A [PARALLEL]: Final deletion of legacy 5-operation files & client.ts cleanup"]:::parallelTask
-            T12B["12.B [SEQUENTIAL: 12.A]: Migrate integration tests, update DESIGN_VS_REALITY.md & link check"]:::seqTask
+            T12B["12.B [SEQUENTIAL: 12.A]: Migrate integration tests, sync living architecture docs & link check"]:::seqTask
             G12(["Final Project Closure Gate 12"]):::gateNode
             T12A --> T12B --> G12
         end
@@ -1142,7 +1142,7 @@ flowchart LR
         SA_12A["Sub-Agent 12.A [PARALLEL]<br/>Final deletion of legacy 5-operation files & client.ts cleanup"]
     end
     subgraph Wave_12_2 ["Wave 12.2: Test Migration & Documentation Sync"]
-        SA_12B["Sub-Agent 12.B [SEQUENTIAL: 12.A]<br/>Migrate integration tests, update DESIGN_VS_REALITY.md & link check"]
+        SA_12B["Sub-Agent 12.B [SEQUENTIAL: 12.A]<br/>Migrate integration tests, sync living architecture docs & link check"]
     end
     Gate_12(["Final Project Closure Gate (Final Closure Gate 12)"])
 
@@ -1183,7 +1183,7 @@ flowchart LR
 - **Exact Implementation Actions:**
   1. Update test files across `src/test/ai/*`, `src/test/contracts/*`, `src/test/types/*`, `src/test/editor/*`, `src/test/sync/*`, `src/test/vault/*`, and `e2e/specs/*` to bind to `/api/agent/stream`, micro-credit settlement, the `403 VAULT_AI_ACCESS_DENIED` vault gate, and `Multi-Hunk Ghost` incremental synchronization.
   2. Update `LIVE_TEST_FILES` in `vitest.constants.mts`, and update `docs/foundation/DESIGN_VS_REALITY.md` to document the complete architectural transformation from the legacy 5-operation model in `LUGX` to the `Elixent v3.2` architectural agent engine.
-  3. Generate the actual JSON report from Vitest and pass it to `scripts/sync-doc-metrics.mjs` to update both `unitSuites` and `unitTests` in `docs/METRICS.json` and across all eight monitored documentation files:
+  3. Generate the actual JSON report from Vitest and pass it to `scripts/sync-doc-metrics.mjs` to update both `unitSuites` and `unitTests` in `docs/METRICS.json` and across all seven monitored documentation files:
      ```bash
      npx vitest run --reporter=json --outputFile=/tmp/vitest-report.json
      node scripts/sync-doc-metrics.mjs --report=/tmp/vitest-report.json

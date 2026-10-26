@@ -3,7 +3,7 @@ name: CI — Multi-Stage Quality, Concurrency & Database Isolation
 on:
   push:
     branches: [main, master, develop]
-    tags: ['v*']
+    tags: ["v*"]
   pull_request:
     branches: [main, master, develop]
   release:
@@ -293,6 +293,10 @@ jobs:
           UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL || vars.UPSTASH_REDIS_REST_URL }}
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN || vars.UPSTASH_REDIS_REST_TOKEN }}
           GEMINI_KEY_1: ${{ secrets.GEMINI_KEY_1 || vars.GEMINI_KEY_1 }}
+          GEMINI_KEY_2: ${{ secrets.GEMINI_KEY_2 || vars.GEMINI_KEY_2 }}
+          GEMINI_KEY_3: ${{ secrets.GEMINI_KEY_3 || vars.GEMINI_KEY_3 }}
+          GEMINI_KEY_4: ${{ secrets.GEMINI_KEY_4 || vars.GEMINI_KEY_4 }}
+          GEMINI_KEY_5: ${{ secrets.GEMINI_KEY_5 || vars.GEMINI_KEY_5 }}
           CI: "true"
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
@@ -466,6 +470,13 @@ jobs:
           TEST_DATABASE_URL: ${{ secrets.TEST_DATABASE_URL || vars.TEST_DATABASE_URL }}
           DATABASE_URL: ${{ secrets.TEST_DATABASE_URL || vars.TEST_DATABASE_URL }}
           GEMINI_KEY_1: ${{ secrets.GEMINI_KEY_1 || vars.GEMINI_KEY_1 }}
+          GEMINI_KEY_2: ${{ secrets.GEMINI_KEY_2 || vars.GEMINI_KEY_2 }}
+          GEMINI_KEY_3: ${{ secrets.GEMINI_KEY_3 || vars.GEMINI_KEY_3 }}
+          GEMINI_KEY_4: ${{ secrets.GEMINI_KEY_4 || vars.GEMINI_KEY_4 }}
+          GEMINI_KEY_5: ${{ secrets.GEMINI_KEY_5 || vars.GEMINI_KEY_5 }}
+          GEMINI_KEY_6: ${{ secrets.GEMINI_KEY_6 || vars.GEMINI_KEY_6 }}
+          GEMINI_KEY_7: ${{ secrets.GEMINI_KEY_7 || vars.GEMINI_KEY_7 }}
+          GEMINI_KEY_8: ${{ secrets.GEMINI_KEY_8 || vars.GEMINI_KEY_8 }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY || vars.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET || vars.STRIPE_WEBHOOK_SECRET }}
           UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL || vars.UPSTASH_REDIS_REST_URL }}
@@ -476,7 +487,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           REF: ${{ github.ref }}
           RUN_LIVE_SMOKE: ${{ github.event.inputs.run_live_smoke || 'false' }}
-          CLOUD_SMOKE: 'true'
+          CLOUD_SMOKE: "true"
         run: |
           status_icon() {
             if [ -n "$1" ]; then echo "✅ Configured"; else echo "❌ Missing"; fi
