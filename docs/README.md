@@ -14,7 +14,7 @@ automated tests remain the single source of truth for all technical claims.
 docs/
 ├── README.md                          ← you are here (structural master index)
 ├── DOCUMENTATION_GUIDELINES.md        ← repository-visible authoring standards & planning governance
-├── CHANGELOG.md                       ← release history (v1.0.0 through v1.39.0)
+├── CHANGELOG.md                       ← release history (Elixent v0.1.0, v0.2.0; archived LUGX v1.0.0–v1.46.3)
 ├── TECHNICAL_DEBT_REGISTER.md         ← living technical debt & architectural decisions (TD-01 to TD-12)
 ├── METRICS.json                       ← automated single source of truth for test & suite metrics
 │
@@ -57,7 +57,7 @@ docs/
 │   │   ├── phase-17-to-20-production-readiness/
 │   │   ├── extensions/                ← pdf worker extraction, vault import, sub-line diff3 & v1.46.1 offline auto-merge closure
 │   │   ├── core-hardening/            ← core hardening dossiers (Phase 1–18: metrics, links, skipped tests, Redis, contracts, reducers, schema, identity, crypto hierarchy, encrypted content governance, AI settlement, Stripe 1:N, Redis fail-closed & cron overlap, local sync queue CAS, durable IDB conflict quarantine, CI dependency audit gate, thin coordinator sync-manager decomposition, use-editor-conflict extraction)
-│   │   └── elixent-execution/         ← Elixent 12-phase execution plan closures (Phase 1 core hardening dossier)
+│   │   └── elixent-execution/         ← Elixent 12-phase execution plan closures (Phase 1 core hardening & Phase 2 dependencies, pool and schema migration dossiers)
 │   ├── plans/                         ← completed historical execution plans (comprehensive-technical-remediation-plan-lugx-v1, technical-execution, hybrid-vault, markdown-editor, M6)
 │   └── archive/                       ← superseded, halted, or abandoned specs & LUGX v1 historical baseline (lugx-v1/foundation/, CHANGELOG-LUGX-v1.md)
 │
@@ -247,7 +247,7 @@ docs/
 ## 4. Verification Commands
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 90 unit suites (1081 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 90 unit suites (1081 tests) · 21 live suites (118 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ```bash
@@ -257,7 +257,7 @@ npm run test:ci-gate    # deterministic CI gating simulation matrix (30 assertio
 npx tsc --noEmit        # strict TypeScript type-checking (0 errors)
 npm run audit:ci        # dependency security gate: production fail-closed (0 vulnerabilities) + dev allowlist (TD-15)
 npm run test            # pure unit, contract, and vault cryptographic test suites (90 files, 1081 tests via vitest.config.mts)
-npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (21 files, 117 tests via vitest.live.config.mts)
+npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (21 files, 118 tests via vitest.live.config.mts)
 npm run test:e2e        # browser-driven E2E user journeys (14 specs, 15 scenarios via Playwright / Chromium)
 npm run test:all        # full suite execution (unit + live)
 npm run build           # Next.js 16 production bundle compilation

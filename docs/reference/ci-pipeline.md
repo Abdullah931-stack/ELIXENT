@@ -22,7 +22,7 @@ Phase 3 introduces:
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
 | **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 90 | 1081 | 100% ✅ |
-| **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 117 | 100% ✅ |
+| **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 118 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
 
@@ -45,7 +45,7 @@ flowchart TD
     end
 
     subgraph S4 ["Stage 4: Concurrency & DB Isolation"]
-        CDI["PostgreSQL 16 + Redis 7 Alpine Services<br/>npm run test:live (21 suites, 117 tests)<br/>TEST_DB_FORBIDDEN_HOSTS Guard"]
+        CDI["PostgreSQL 16 + Redis 7 Alpine Services<br/>npm run test:live (21 suites, 118 tests)<br/>TEST_DB_FORBIDDEN_HOSTS Guard"]
     end
 
     subgraph S5 ["Stage 5: Production Build"]

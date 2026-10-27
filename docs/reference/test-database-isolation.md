@@ -91,7 +91,7 @@ Database operations across the application and testing harness utilize an intell
 To guarantee 100% isolation when integration test suites run against a shared test database:
 - Strict Sequential Suite Execution: Enforced via `fileParallelism: false` in `vitest.live.config.mts`, eliminating concurrent transaction interleaving and PostgreSQL cascading foreign key deadlocks (`40P01`).
 - Deterministic Placeholder UUID Namespaces: Every suite is allocated a deterministic, non-overlapping placeholder UUID range matching `/^(\d{4})\1-\1-\1-\1-\1{3}$/` (e.g. `1111...` for `ai-ops.integrity`, `1313...`/`1414...` for `cross-user-ownership`, `1515...` for `editor-orchestration`, `1616...` for `ai-server-atomic-commit`, `2323...`/`2424...`/`2525...` for `stripe/webhook`).
-- Resilient Hierarchical Cleanup: `cleanupTestUsers` in `src/test/test-db.ts` explicitly deletes dependent child rows (`subscriptions`, `ai_reservations`, `files`, `usage`, `user_vault_profiles`) prior to removing user records, and guards against transient lock contention with an exponential backoff retry loop.
+- Resilient Hierarchical Cleanup: `cleanupTestUsers` in `src/test/test-db.ts` explicitly deletes dependent child rows (`subscriptions`, `creditLedgerTransactions`, `projectDecisionLedger`, `checkpointWrites`, `checkpointBlobs`, `checkpoints`, `files`, `userVaultProfiles`) prior to removing user records, and guards against transient lock contention with an exponential backoff retry loop.
 - Suites seed their test user rows in `beforeEach` with `onConflictDoNothing()`, preventing cross-suite `CASCADE` deletions when sibling test suites tear down.
 
 ### CI Upstash REST Service Container & Worker Concurrency (Phase 13 / LUGX-093)
@@ -139,11 +139,11 @@ to a live URL; push failures surface immediately).
 ## 5. Evidence of isolation
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 90 unit suites (1081 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 90 unit suites (1081 tests) · 21 live suites (118 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 - **Active Unit & Contract Suite (`npm run test`):** **90 files / 1081 tests — all passed (100% pass rate)**, zero LIVE files included.
-- **Active Live Multi-System Suite (`npm run test:live`):** **21 registered suites / 117 tests — all passed (100% pass rate)** on isolated Neon branch (`ep-dry-rain-b1kfmpgk-pooler`).
+- **Active Live Multi-System Suite (`npm run test:live`):** **21 registered suites / 118 tests — all passed (100% pass rate)** on isolated Neon branch (`ep-dry-rain-b1kfmpgk-pooler`).
 - **Guard unit tests (`src/test/infrastructure/test-db.isolation.test.ts`):** **8/8 passed** (main-branch refusal, missing-URL refusal, mismatch refusal, loader leak prevention, shell-value precedence, and `-pooler` endpoint refusal).
 - **Historical Milestone Baseline (Phase 10 Archive):** Initially verified at 37 unit files / 488 tests and 16 live suites; systematically expanded through Phase 18 and Phase 20 hardening rounds to current active levels.
 - Mandatory identity line printed at the start of every live run:
@@ -173,7 +173,7 @@ node -e "
 const { Pool } = require('pg'); require('dotenv').config({ path: '.env.local', override: true });
 const p = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 (async () => {
-  for (const t of ['users','files','usage','ai_reservations','subscriptions']) {
+  for (const t of ['users','files','subscriptions','credit_ledger_transactions','project_decision_ledger']) {
     const r = await p.query('select count(*)::int as n from ' + t);
     console.log(t, r.rows[0].n);
   }

@@ -14,7 +14,7 @@ This document specifies the architecture and implementation of the **Hybrid Stre
 
 | Gate | Specification | Implementation File(s) | Status |
 | :--- | :--- | :--- | :--- |
-| **G1** | Idempotent reservation record (`ai_reservations`) with unique `operationId` constraint and conditional state transitions. | `src/server/db/schema/ai-reservations.ts`<br>`src/server/db/migrations/0005_ai_reservations.sql`<br>`src/server/actions/ai-ops.ts` | **Implemented** |
+| **G1** | Idempotent transaction record (`credit_ledger_transactions`, replacing legacy `ai_reservations`) with unique `operationId` constraint and conditional state transitions (`SETTLED`, `ABORTED`). | `src/server/db/schema/credit-ledger.ts`<br>`src/server/db/migrations/0013_migrate_to_credit_ledger.sql`<br>`src/server/actions/ai-ops.ts` | **Implemented** |
 | **G2** | Server atomic commit endpoint/action combining file update and reservation settlement with version lock. | `src/server/actions/ai-commit.ts` | **Implemented** |
 | **G3** | Dual-Side Inversion Stop Protocol (TD-05): Instant client abort (< 50ms), reader cleanup, server-side pre-TTFT refund and post-TTFT autonomous commit. | `src/hooks/use-ai-stream.ts`<br>`src/lib/ai/stream-handler.ts`<br>`src/app/api/ai/stream/route.ts`<br>`src/test/ai/ai-stream-abort-latency.test.ts` | **Implemented & Hardened (v1.29.2)** |
 | **G4** | Deterministic UTC-based `periodKey` (`UTC_YYYY-MM-DD`) assigned at reservation time and preserved across transitions. | `src/server/actions/ai-ops.ts` | **Implemented** |
@@ -42,7 +42,7 @@ flowchart TD
     Step1 --> VerifyOwnership["Verify Document & Reservation Ownership"]
     Step1 --> VerifyZK["Verify Vault Opt-In & Encryption Metadata (if encrypted)"]
     
-    VerifyVer & VerifyOwnership & VerifyZK --> TxCommit["UPDATE files (content, version + 1, new etag)<br/>UPDATE ai_reservations (status = 'committed' - idempotent)"]
+    VerifyVer & VerifyOwnership & VerifyZK --> TxCommit["UPDATE files (content, version + 1, new etag)<br/>UPDATE credit_ledger_transactions (status = 'SETTLED' - idempotent)"]
     
     TxCommit -->|Version Conflict / 412 or Security Error| Rollback["Rollback ephemeral state locally (tokens already settled as consumed)"]
     TxCommit -->|Success (200 OK)| Step2["Step 2: Local Commit (Single Atomic Transaction)"]
@@ -138,7 +138,7 @@ Client financial authority is revoked: `refundAIReservation` and `commitAIReserv
 - **Decoupled Document Commit (`commitAIFileOperation`):** User acceptance commits the file independently of whether the reservation was already settled as `committed` by the server stream handler.
 
 ### 6.2 Stale Reservation Sweeper (TTL)
-`expireStaleReservations()` in `ai-settlement-service.ts` queries all `ai_reservations` where `status = 'reserved'` AND `expires_at <= now()`. It transitions them to `expired` and restores the quota, ensuring abandoned client tabs do not leak quota balances. Authorized via `CRON_SECRET` on `/api/cron/expire-reservations`.
+`expireStaleReservations()` in `ai-settlement-service.ts` queries all `credit_ledger_transactions` where `status = 'SETTLED'`, `nodeName LIKE 'reserved:%'`, and `createdAt <= cutoff` (5-minute TTL). It transitions them to `ABORTED` with nodeName prefix `expired:` and refunds the reserved micro-credit amount back to `users.creditBalanceMicro`, ensuring abandoned client tabs do not leak quota balances. Authorized via `CRON_SECRET` on `/api/cron/expire-reservations`.
 
 ### 6.3 Streaming Terminality & Watchdogs (v1.5.0 Amendment)
 

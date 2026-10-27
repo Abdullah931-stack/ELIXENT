@@ -20,7 +20,7 @@
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
   <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-90%20Suites%20·%201081%2F1081%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 1081 Passing" /></a>
-  <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-21%20Suites%20·%20117%2F117%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 117 Passing" /></a>
+  <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-21%20Suites%20·%20118%2F118%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 118 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
 </p>
@@ -67,7 +67,7 @@
 
 - ✍️ **Native Markdown Editor & Bidi Engine:** Built on CodeMirror 6 with live AST token decorations, line-level bidirectional isolation (`bidiLinePlugin`), three direction modes (`auto`, `rtl`, `ltr`), and code block LTR locking.
 - 📴 **Custom Offline-First Synchronization:** User-partitioned IndexedDB storage (`textai_db_${userId}`), deterministic 3-way linear diff merge, SHA-256 ETag verification, bounded worker queues, automatic GC compaction, root-move null preservation (`saveLocal`), atomic soft-delete folder cascade restoration (`restoreFile`), and atomic rollback snapshots.
-- ⚡ **Dual-Phase Atomic Quota Reservation:** Eliminates TOCTOU race conditions with database-level conditional leases (`ai_reservations`), 60s TTL safety, and zero-bounded atomic refunds (`GREATEST(column - n, 0)`).
+- ⚡ **Micro-Credit Ledger & Dual-Phase Quota Settlement:** Eliminates TOCTOU race conditions with database-level conditional transactions (`credit_ledger_transactions`), non-negative balance constraints (`users.credit_balance_micro >= 0`), 5-minute TTL safety, and zero-bounded atomic refunds.
 - 🤖 **Resilient AI NDJSON Streaming:** High-performance inline preview card (`CMStreamingGhostWidget`) positioned at exact document offsets with 60fps in-place DOM updates, 3-state decision triggers (`Accept`, `Reject`, `Retry`), and a distributed 3-state circuit breaker with multi-key API rotation.
 - 💳 **Fail-Closed Stripe Subscriptions:** 8-state exhaustive webhook state machine with database-level uniqueness constraints preventing duplicate entitlements.
 - 🛡️ **Smart Hybrid Database Client:** Dual-protocol architecture supporting `@neondatabase/serverless` (HTTP/WebSocket) for Neon Cloud serverless edges and `pg.Pool` (TCP) for local Docker, CI, and development environments.
@@ -296,7 +296,7 @@ npm run start
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
 | **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 90 | 1081 | 100% ✅ |
-| **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 117 | 100% ✅ |
+| **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 118 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
 
@@ -313,7 +313,7 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 # Execute unit/contract test suites (90 test files, 1081 tests)
 npm run test
 
-# Execute live database integration test suites on isolated Neon branch (21 test files, 117 tests)
+# Execute live database integration test suites on isolated Neon branch (21 test files, 118 tests)
 npm run test:live
 
 # Execute browser-driven Playwright E2E tests (14 spec files, 15 user journeys)
@@ -389,7 +389,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A["User AI Request"] --> B["1. Reserve Quota<br/>(ai_reservations Lease in PostgreSQL)"]
+    A["User AI Request"] --> B["1. Reserve Credits<br/>(credit_ledger_transactions Lease in PostgreSQL)"]
     B -->|Insufficient Quota| C["Return HTTP 429 Rate Limit"]
     B -->|Quota Reserved| D["2. Stream Gemini NDJSON via Route Handler"]
     D -->|Stream / Provider Failure| E["Atomic Quota Refund<br/>GREATEST(usage - n, 0)"]
@@ -411,8 +411,8 @@ flowchart TD
     style J fill:#FFF9C4,stroke:#FBC02D,stroke-width:1.5px
 ```
 
-- **Dual-Phase Quota Reservation (`src/server/actions/ai-ops.ts`):**
-  - Words are reserved prior to generation by creating an active lease in `ai_reservations` with a 60-second TTL.
+- **Micro-Credit Dual-Phase Settlement (`src/server/actions/ai-ops.ts` & `src/server/services/ai-settlement-service.ts`):**
+  - Credits are reserved prior to generation by creating an active lease in `credit_ledger_transactions` with a 5-minute TTL and debiting `users.credit_balance_micro`.
   - Eliminates TOCTOU race conditions across distributed serverless functions.
   - Downstream system stream failures, timeouts, or pre-TTFT client aborts immediately trigger atomic, zero-bounded refunds (`GREATEST(column - n, 0)`). User-initiated aborts (`stopStream`) execute instantaneously (< 50ms) without blocking network calls, dismantling ghost decorations immediately while the server autonomously commits post-TTFT consumption per the Dual-Side Inversion Protocol (TD-05 & Explicit Settlement Policy §4-D).
 - **Unified Inline Interactive Preview Card (`src/components/editor/markdown/streaming-ghost.ts`):**
@@ -447,7 +447,7 @@ flowchart TD
 LUGX features fully automated, cryptographically secured background maintenance routines:
 
 - **Automated Soft-Delete Purge (`src/app/api/cron/purge-deleted/route.ts`):** Permanently purges documents and folders marked as deleted (`deletedAt`) beyond the 30-day retention window.
-- **Automated Expired Quota Reservation Sweeper (`src/app/api/cron/expire-reservations/route.ts`):** Continuously scans and expires orphaned `ai_reservations` held for longer than 60 seconds (resolving **TD-02**), releasing held quota back to users without manual intervention.
+- **Automated Expired Quota Reservation Sweeper (`src/app/api/cron/expire-reservations/route.ts`):** Continuously scans and expires orphaned `credit_ledger_transactions` held for longer than 5 minutes (resolving **TD-02**), releasing held credits back to `users.credit_balance_micro` without manual intervention.
 - **Secure Dual-Verb Dispatch:** Both endpoints support dual HTTP methods (`GET` for Vercel Cron, `POST` with Bearer token authentication against `CRON_SECRET` for GitHub Actions and external cron monitors) and are dispatched via `.github/workflows/cron.yml`.
 
 ### 7. Zero-Knowledge Cloud Vault & Client-Side Hybrid Encryption Subsystem

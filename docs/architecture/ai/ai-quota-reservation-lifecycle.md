@@ -1,5 +1,8 @@
 # AI Quota Reservation, Deduplication & Key Rotation Lifecycle
 
+> [!NOTE]
+> **Elixent Platform Migration Note:** In Elixent v0.2.0 (Phase 2), the legacy word counter (`usage`) and word quota reservation (`ai_reservations`) tables were formally deprecated and dropped via migration `0013_migrate_to_credit_ledger.sql`. They have been superseded by the micro-credit ledger architecture (`credit_ledger_transactions`, `users.credit_balance_micro`, and `project_decision_ledger`). For the active Elixent credit metering and agent state machine specifications, refer to [04_credit_metering_and_settlement_architecture.md](../04_credit_metering_and_settlement_architecture.md) and [05_data_contracts_and_lugx_migration_plan.md](../05_data_contracts_and_lugx_migration_plan.md).
+
 This document describes the technical architecture, database schema, concurrency controls, multi-key rotation algorithms, and high-load production resilience guarantees for the AI System (Phases 5 & 6).
 
 ---
@@ -125,9 +128,9 @@ Quota refunds are reserved strictly for **system failures** occurring pre-TTFT. 
 
 ---
 
-## 5. Database Schema (`ai_reservations`)
+## 5. Historical Database Schema (`ai_reservations` — Superseded by Migration 0013)
 
-Managed in `src/server/db/schema/ai-reservations.ts` and migration `src/server/db/migrations/0005_ai_reservations.sql`:
+Originally managed in `src/server/db/schema/ai-reservations.ts` and migration `src/server/db/migrations/0005_ai_reservations.sql` (formally dropped in migration `0013_migrate_to_credit_ledger.sql` and superseded by `src/server/db/schema/credit-ledger.ts`):
 
 ```typescript
 export const aiReservationStatusEnum = pgEnum("ai_reservation_status", [

@@ -4,6 +4,33 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.2.0] - 2026-10-27 (Phase 2: NPM Dependencies, Database Schema Migration & Pool Export)
+
+### Agentic & AI Orchestration Dependencies (`package.json`, `package-lock.json`)
+
+- **Installed 7 Modern Multi-Agent & LLM Packages:** Added `@langchain/langgraph` (agent graph orchestration), `@langchain/core` (LangChain base interfaces), `@langchain/langgraph-checkpoint-postgres` (PostgreSQL state persistence for agent graphs), `ai` (Vercel AI SDK core runtime), `@ai-sdk/google` (Google Gemini provider adapter), `@ai-sdk/openai` (OpenAI provider adapter), and `js-tiktoken` (tokenization and token counting foundation).
+
+### Database Connection Pool Reuse & Export (`src/server/db/transactional.ts`, `src/server/db/index.ts`)
+
+- **Direct Export of `getPgPool()`:** Exported `getPgPool(): pg.Pool` from both `src/server/db/transactional.ts` and `src/server/db/index.ts`. Retained the existing `activePool` singleton instance, guaranteeing zero connection pool proliferation when instantiating `PostgresSaver` in LangGraph agent workflows while preserving strict test database isolation across TCP and Neon WebSocket protocols.
+
+### Database Schema Evolution & Migration `0013` (`src/server/db/migrations/0013_migrate_to_credit_ledger.sql`, `src/server/db/schema/*`)
+
+- **Micro-Credit Balance (`users.credit_balance_micro`):** Added `credit_balance_micro` (`BIGINT NOT NULL DEFAULT 0`) to `users` table protected by a database check constraint (`users_credit_balance_non_negative`: `credit_balance_micro >= 0`). Initialized existing user balances by subscription tier (`ultra`: 3,500,000,000 micro-credits, `pro`: 1,000,000,000 micro-credits, `free`/`starter`: 50,000,000 micro-credits).
+- **Credit Ledger Transactions (`credit_ledger_transactions`):** Established immutable double-entry credit ledger schema (`src/server/db/schema/credit-ledger.ts`) with enums `ai_execution_mode` (`SINGLE_PASS_DECISION`, `DISCRETE_THINKING`, `STREAMING_GENERATIVE`, `CREDIT_TOPUP`) and `ledger_settlement_status` (`SETTLED`, `ABORTED`, `TOPUP_APPLIED`), indexed by `(user_id, created_at)` and `thread_id`.
+- **Project Decision Architecture Ledger (`project_decision_ledger`):** Added schema (`src/server/db/schema/project-decision-ledger.ts`) recording agentic architectural decisions, evaluated alternatives, rationale, and concept tags, indexed by `(user_id, project_id)`.
+- **PostgresSaver Checkpointing Tables:** Added four dedicated LangGraph persistence tables (`checkpoint_migrations`, `checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) matching `@langchain/langgraph-checkpoint-postgres` requirements for multi-turn graph checkpoints.
+- **Dropped Legacy Quota Tables:** Formally dropped obsolete `usage` and `ai_reservations` tables (`CASCADE`) via migration `0013` and deleted legacy schema files (`src/server/db/schema/usage.ts`, `src/server/db/schema/ai-reservations.ts`).
+
+### Callers, Verification Script & Transitional Compatibility Bridge
+
+- **Zero-Breakage Compatibility Bridge (`src/server/services/ai-settlement-service.ts`):** Refactored settlement and reservation services to debit, commit, and refund against `users.creditBalanceMicro` and `creditLedgerTransactions`, preserving existing function signatures (`reserveAndUpdateUsage`, `commitAIReservation`, `refundAIReservation`, `expireStaleReservations`, `getTodayUsage`) while eliminating all dependencies on dropped legacy tables.
+- **Server Actions & Test Fixtures Alignment:** Removed legacy `schema.usage` and `schema.aiReservations` inserts and queries from `auth-actions.ts`, `e2e-auth/route.ts`, `src/test/test-db.ts`, and `e2e/fixtures/test-db.ts`. Initialized `creditBalanceMicro: 50_000_000n` for newly registered users on the starter tier.
+- **Migration Verification Hardening (`scripts/verify-migrations.mjs`):** Updated migration integrity assertions to check all 9 active tables, 14 canonical indexes, and verify `users.credit_balance_micro` column existence, ensuring CI Stages 3 and 4 remain fully gated.
+- **Comprehensive Verification Baseline:** Verified 90 unit suites (1081 tests), 21 live database integration suites (118 tests), and 14 Playwright E2E specs (15 journeys) passing 100%, with clean TypeScript (`npx tsc --noEmit`) and ESLint checks.
+
+---
+
 ## [0.1.0] - 2026-10-27 (Phase 1: Core Cryptographic, Sync & Server Actions Hardening)
 
 ### Cryptographic Context & AAD Standardization (`src/lib/sync/webauthn-prf.ts`, `src/hooks/*`)

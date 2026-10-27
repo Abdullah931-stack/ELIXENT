@@ -99,8 +99,8 @@ The platform enforces explicit, deterministic failure policies per service tier:
 3. **Conditional Token Consumption (LUGX-079):**
    - The limiter executes a 2-phase pipeline: Phase 1 evaluates `zremrangebyscore` and `zcard`. Phase 2 executes `zadd` strictly if `currentCount < limit`.
    - Rejected requests never append members to the sorted set, completely eliminating the client retry lock trap.
-4. **Database-Enforced ACID User Quotas:**
-   - User consumption limits (words, daily summarize, ToPrompt) are tracked and enforced in PostgreSQL via `schema.usage` and `schema.aiReservations` with atomic SQL condition guards (`reserveAndUpdateUsage`).
+4. **Database-Enforced ACID User Quotas & Credit Ledger:**
+   - User consumption and credit balances are tracked and enforced in PostgreSQL via `users.credit_balance_micro` (with a non-negative check constraint `users_credit_balance_non_negative`) and `credit_ledger_transactions` (migration `0013_migrate_to_credit_ledger.sql`), replacing the legacy `usage` and `ai_reservations` tables.
 5. **Hybrid Fail-Open Distributed Lock (Stripe Webhook Concurrency / Phase 21):**
    - Implemented in `src/app/api/stripe/webhook/route.ts` via in-flight Redis lock `stripe:lock:${eventId}` (`nx: true, ex: 30`) bounded by a 1500ms watchdog (`withTimeout`).
    - If Redis is unreachable or times out, the lock fails open to PostgreSQL ACID transactions (`executeSubscriptionTransition`) and database-level idempotency (`subscription_events`).
