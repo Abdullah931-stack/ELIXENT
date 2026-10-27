@@ -93,8 +93,8 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
         try {
             await testDb.delete(schema.files).where(eq(schema.files.userId, USER_A_ID));
             await testDb.delete(schema.files).where(eq(schema.files.userId, USER_B_ID));
-            await testDb.delete(schema.aiReservations).where(eq(schema.aiReservations.userId, USER_A_ID));
-            await testDb.delete(schema.aiReservations).where(eq(schema.aiReservations.userId, USER_B_ID));
+            await testDb.delete(schema.creditLedgerTransactions).where(eq(schema.creditLedgerTransactions.userId, USER_A_ID));
+            await testDb.delete(schema.creditLedgerTransactions).where(eq(schema.creditLedgerTransactions.userId, USER_B_ID));
         } catch {
             /* ignore */
         }
@@ -118,8 +118,8 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
         try {
             await testDb.delete(schema.files).where(eq(schema.files.userId, USER_A_ID));
             await testDb.delete(schema.files).where(eq(schema.files.userId, USER_B_ID));
-            await testDb.delete(schema.aiReservations).where(eq(schema.aiReservations.userId, USER_A_ID));
-            await testDb.delete(schema.aiReservations).where(eq(schema.aiReservations.userId, USER_B_ID));
+            await testDb.delete(schema.creditLedgerTransactions).where(eq(schema.creditLedgerTransactions.userId, USER_A_ID));
+            await testDb.delete(schema.creditLedgerTransactions).where(eq(schema.creditLedgerTransactions.userId, USER_B_ID));
             await cleanupTestUsers([USER_A_ID, USER_B_ID]);
         } catch {
             /* ignore */
@@ -262,16 +262,13 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
     describe("AI Operations, Reservations & Stream Isolation", () => {
         it("[DB] getAIReservationStatus: returns found: false (not_found) for foreign reservation", async () => {
             const opId = `op_b_${randomUUID()}`;
-            await testDb.insert(schema.aiReservations).values({
+            await testDb.insert(schema.creditLedgerTransactions).values({
                 operationId: opId,
                 userId: USER_B_ID,
-                operation: "improve",
-                reservedUnits: 50,
-                committedUnits: 0,
-                refundedUnits: 0,
-                periodKey: new Date().toISOString().split("T")[0],
-                status: "reserved",
-                expiresAt: new Date(Date.now() + 60000),
+                modelId: "claude-3-5-sonnet",
+                executionMode: "STREAMING_GENERATIVE",
+                deltaMicro: BigInt(-50000),
+                status: "SETTLED",
             });
 
             currentSessionUser = { id: USER_A_ID, email: "user-a-phase12@example.com" };
@@ -298,17 +295,13 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
                 updatedAt: new Date(),
             });
 
-            await testDb.insert(schema.aiReservations).values({
+            await testDb.insert(schema.creditLedgerTransactions).values({
                 operationId: opId,
                 userId: USER_B_ID,
-                fileId,
-                operation: "improve",
-                reservedUnits: 20,
-                committedUnits: 0,
-                refundedUnits: 0,
-                periodKey: new Date().toISOString().split("T")[0],
-                status: "reserved",
-                expiresAt: new Date(Date.now() + 60000),
+                modelId: "claude-3-5-sonnet",
+                executionMode: "STREAMING_GENERATIVE",
+                deltaMicro: BigInt(-20000),
+                status: "SETTLED",
             });
 
             currentSessionUser = { id: USER_A_ID, email: "user-a-phase12@example.com" };
@@ -394,7 +387,7 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
                 expect(res.error).toBeUndefined();
             }
 
-            // Verify exactly one user record and one usage record exist
+            // Verify exactly one user record exists
             const userRows = await testDb.query.users.findMany({
                 where: eq(schema.users.id, newUserId),
             });
@@ -402,12 +395,13 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
             expect(userRows[0].email).toBe(newUserEmail);
             expect(userRows[0].displayName).toBe("Concurrent User");
 
-            const usageRows = await testDb.query.usage.findMany({
-                where: eq(schema.usage.userId, newUserId),
+            const ledgerRows = await testDb.query.creditLedgerTransactions.findMany({
+                where: eq(schema.creditLedgerTransactions.userId, newUserId),
             });
-            expect(usageRows).toHaveLength(1);
+            expect(ledgerRows).toHaveLength(0);
 
             // Cleanup
+            await testDb.delete(schema.creditLedgerTransactions).where(eq(schema.creditLedgerTransactions.userId, newUserId));
             await testDb.delete(schema.users).where(eq(schema.users.id, newUserId));
         });
     });

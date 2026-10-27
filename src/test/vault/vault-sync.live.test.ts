@@ -3,7 +3,7 @@
  * against the isolated Neon test branch.
  *
  * Real boundaries:
- * 1. REAL database tables (`user_vault_profiles`, `files`, `ai_reservations`, `users`).
+ * 1. REAL database tables (`user_vault_profiles`, `files`, `credit_ledger_transactions`, `users`).
  * 2. REAL deterministic AAD binding `vault:file:${userId}:${fileId}` persistence.
  * 3. REAL Zero-Knowledge AI gatekeeper in `/api/ai/stream` returning HTTP 403.
  * 4. REAL optimistic concurrency on ciphertext mutations.
@@ -51,8 +51,8 @@ describe("LIVE: Encrypted Vault & Zero-Knowledge Security on isolated branch", (
         await testDb
             .insert(schema.users)
             .values([
-                { id: USER_A_ID, email: `${USER_A_ID}@live.test`, tier: "pro" },
-                { id: USER_B_ID, email: `${USER_B_ID}@live.test`, tier: "pro" },
+                { id: USER_A_ID, email: `${USER_A_ID}@live.test`, tier: "pro", creditBalanceMicro: BigInt(10000000) },
+                { id: USER_B_ID, email: `${USER_B_ID}@live.test`, tier: "pro", creditBalanceMicro: BigInt(10000000) },
             ])
             .onConflictDoNothing();
     });
@@ -62,7 +62,7 @@ describe("LIVE: Encrypted Vault & Zero-Knowledge Security on isolated branch", (
             await testDb.delete(schema.userVaultProfiles).where(eq(schema.userVaultProfiles.userId, USER_A_ID));
             await testDb.delete(schema.files).where(eq(schema.files.userId, USER_A_ID));
             await testDb.delete(schema.files).where(eq(schema.files.userId, USER_B_ID));
-            await testDb.delete(schema.aiReservations).where(eq(schema.aiReservations.userId, USER_A_ID));
+            await testDb.delete(schema.creditLedgerTransactions).where(eq(schema.creditLedgerTransactions.userId, USER_A_ID));
         } catch {
             /* ignore */
         }
@@ -74,14 +74,18 @@ describe("LIVE: Encrypted Vault & Zero-Knowledge Security on isolated branch", (
         await testDb
             .insert(schema.users)
             .values([
-                { id: USER_A_ID, email: `${USER_A_ID}@vault.live.test`, tier: "pro" },
-                { id: USER_B_ID, email: `${USER_B_ID}@vault.live.test`, tier: "pro" },
+                { id: USER_A_ID, email: `${USER_A_ID}@vault.live.test`, tier: "pro", creditBalanceMicro: BigInt(10000000) },
+                { id: USER_B_ID, email: `${USER_B_ID}@vault.live.test`, tier: "pro", creditBalanceMicro: BigInt(10000000) },
             ])
             .onConflictDoNothing();
+        await testDb
+            .update(schema.users)
+            .set({ creditBalanceMicro: BigInt(10000000), tier: "pro" })
+            .where(eq(schema.users.id, USER_A_ID));
         await testDb.delete(schema.userVaultProfiles).where(eq(schema.userVaultProfiles.userId, USER_A_ID));
         await testDb.delete(schema.files).where(eq(schema.files.userId, USER_A_ID));
         await testDb.delete(schema.files).where(eq(schema.files.userId, USER_B_ID));
-        await testDb.delete(schema.aiReservations).where(eq(schema.aiReservations.userId, USER_A_ID));
+        await testDb.delete(schema.creditLedgerTransactions).where(eq(schema.creditLedgerTransactions.userId, USER_A_ID));
     });
 
     it("creates vault profile and enforces Zero-Knowledge AI Gatekeeper (HTTP 403) on encrypted files", async () => {
@@ -137,12 +141,12 @@ describe("LIVE: Encrypted Vault & Zero-Knowledge Security on isolated branch", (
         const errorText = await streamRes.text();
         expect(errorText).toContain("AI_PROHIBITED_ON_ENCRYPTED_FILES");
 
-        // 4. Assert ZERO reservations created in DB and ZERO quota consumed
-        const reservations = await testDb
+        // 4. Assert ZERO credit ledger transactions created in DB and ZERO quota consumed
+        const transactions = await testDb
             .select()
-            .from(schema.aiReservations)
-            .where(eq(schema.aiReservations.fileId, fileId));
-        expect(reservations.length).toBe(0);
+            .from(schema.creditLedgerTransactions)
+            .where(eq(schema.creditLedgerTransactions.userId, USER_A_ID));
+        expect(transactions.length).toBe(0);
     });
 
     it("allows AI stream bypass when user explicitly opts in via updateVaultAISetting", async () => {

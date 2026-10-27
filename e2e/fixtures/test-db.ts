@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import * as schema from "../../src/server/db/schema";
 import dotenv from "dotenv";
 import path from "path";
@@ -46,13 +46,6 @@ export async function seedE2EUser(userId: string, email: string, displayName = "
             set: { displayName, updatedAt: new Date() },
         });
 
-    await e2eDb
-        .insert(schema.usage)
-        .values({
-            userId,
-            date: new Date().toISOString().split("T")[0],
-        })
-        .onConflictDoNothing();
 }
 
 /**
@@ -61,8 +54,11 @@ export async function seedE2EUser(userId: string, email: string, displayName = "
 export async function cleanupE2EUser(userId: string) {
     try {
         await e2eDb.delete(schema.files).where(eq(schema.files.userId, userId));
-        await e2eDb.delete(schema.aiReservations).where(eq(schema.aiReservations.userId, userId));
-        await e2eDb.delete(schema.usage).where(eq(schema.usage.userId, userId));
+        await e2eDb.delete(schema.creditLedgerTransactions).where(eq(schema.creditLedgerTransactions.userId, userId));
+        await e2eDb.delete(schema.projectDecisionLedger).where(eq(schema.projectDecisionLedger.userId, userId));
+        await e2eDb.delete(schema.checkpointWrites);
+        await e2eDb.delete(schema.checkpointBlobs);
+        await e2eDb.delete(schema.checkpoints);
         await e2eDb.delete(schema.subscriptionEvents).where(eq(schema.subscriptionEvents.userId, userId));
         await e2eDb.delete(schema.userVaultProfiles).where(eq(schema.userVaultProfiles.userId, userId));
         await e2eDb.delete(schema.users).where(eq(schema.users.id, userId));
@@ -95,22 +91,35 @@ export async function simulateRemoteFileUpdate(fileId: string, newContent: strin
 }
 
 /**
- * Retrieve user usage row
+ * Retrieve user usage / credit balance row
  */
 export async function getDbUsage(userId: string) {
-    const today = new Date().toISOString().split("T")[0];
-    return e2eDb.query.usage.findFirst({
-        where: and(eq(schema.usage.userId, userId), eq(schema.usage.date, today)),
+    const user = await e2eDb.query.users.findFirst({
+        where: eq(schema.users.id, userId),
     });
+    return {
+        userId,
+        date: new Date().toISOString().split("T")[0],
+        creditBalanceMicro: user?.creditBalanceMicro ?? BigInt(0),
+    };
 }
 
 /**
- * Retrieve AI reservations for user
+ * Retrieve AI reservations / credit ledger transactions for user
  */
 export async function getDbReservations(userId: string) {
-    return e2eDb.query.aiReservations.findMany({
-        where: eq(schema.aiReservations.userId, userId),
+    const rows = await e2eDb.query.creditLedgerTransactions.findMany({
+        where: eq(schema.creditLedgerTransactions.userId, userId),
     });
+    return rows.map((r) => ({
+        id: r.operationId,
+        operationId: r.operationId,
+        userId: r.userId,
+        status: r.status === "SETTLED" ? "committed" : r.status === "ABORTED" ? "refunded" : r.status,
+        refundedUnits: r.status === "ABORTED" ? Math.abs(Number(r.deltaMicro)) : 0,
+        committedUnits: r.status === "SETTLED" ? Math.abs(Number(r.deltaMicro)) : 0,
+        raw: r,
+    }));
 }
 
 /**

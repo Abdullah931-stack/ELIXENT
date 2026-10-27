@@ -8,20 +8,19 @@ const mockDb = vi.hoisted(() => ({
     query: {
         users: { findFirst: vi.fn() },
         files: { findFirst: vi.fn() },
-        usage: { findFirst: vi.fn() },
-        aiReservations: { findFirst: vi.fn() },
+        creditLedgerTransactions: { findFirst: vi.fn() },
         userVaultProfiles: { findFirst: vi.fn() },
     },
     insert: vi.fn(() => ({
         values: vi.fn(() => ({
             onConflictDoNothing: vi.fn(() => Promise.resolve()),
-            returning: vi.fn(() => Promise.resolve([{ id: "res-new" }])),
+            returning: vi.fn(() => Promise.resolve([{ operationId: "res-new" }])),
         })),
     })),
     update: vi.fn(() => ({
         set: vi.fn(() => ({
             where: vi.fn(() => ({
-                returning: vi.fn(() => Promise.resolve([{ id: "usage-1" }])),
+                returning: vi.fn(() => Promise.resolve([{ operationId: "tx-1" }])),
             })),
         })),
     })),
@@ -36,8 +35,7 @@ vi.mock("@/server/db", () => ({
     schema: {
         users: { id: "id" },
         files: { id: "id", userId: "user_id", isEncrypted: "is_encrypted", deletedAt: "deleted_at" },
-        usage: { id: "id", userId: "user_id", date: "date" },
-        aiReservations: { id: "id", operationId: "operation_id", userId: "user_id", status: "status" },
+        creditLedgerTransactions: { operationId: "operation_id", userId: "user_id", status: "status" },
         userVaultProfiles: { userId: "user_id" },
     },
 }));
@@ -95,15 +93,12 @@ describe("Phase 11: Replay Attack Defense & Request Fingerprint Validation", () 
         const legitimateHash = computeRequestHash("u1", "correct", "f1", "Original Text");
         const maliciousHash = computeRequestHash("u1", "correct", "f1", "Tampered Text");
 
-        // Existing reservation has legitimateHash
-        mockDb.query.aiReservations.findFirst.mockResolvedValueOnce({
-            id: "res-1",
+        // Existing transaction has legitimateHash
+        mockDb.query.creditLedgerTransactions.findFirst.mockResolvedValueOnce({
             operationId,
             userId: "u1",
-            fileId: "f1",
             requestHash: legitimateHash,
-            status: "reserved",
-            periodKey: "2026-10-02",
+            status: "SETTLED",
         });
 
         const result = await reserveAIQuota("u1", "correct", 10, "free", {
@@ -125,14 +120,12 @@ describe("Phase 11: Replay Attack Defense & Request Fingerprint Validation", () 
             isEncrypted: false,
         });
 
-        // Simulate existing reservation with different requestHash
-        mockDb.query.aiReservations.findFirst.mockResolvedValueOnce({
-            id: "res-exist",
+        // Simulate existing transaction with different requestHash
+        mockDb.query.creditLedgerTransactions.findFirst.mockResolvedValueOnce({
             operationId: "op_fixed_123",
             userId: "user_test_replay",
-            fileId: "f_test",
             requestHash: "different_hash_from_past_request",
-            status: "reserved",
+            status: "SETTLED",
         });
 
         const req = new NextRequest("http://localhost/api/ai/stream", {

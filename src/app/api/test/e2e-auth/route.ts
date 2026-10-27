@@ -64,6 +64,13 @@ export async function POST(request: NextRequest) {
             );
         }
 
+        const tier = body.tier || "free";
+        const creditBalanceMicro = tier === "ultra"
+            ? BigInt(3500000000)
+            : tier === "pro"
+                ? BigInt(1000000000)
+                : BigInt(50000000);
+
         // Sync user to isolated Neon database
         await db
             .insert(schema.users)
@@ -71,25 +78,17 @@ export async function POST(request: NextRequest) {
                 id: user.id,
                 email: user.email || email,
                 displayName,
-                tier: body.tier || "free",
+                tier: tier as "free" | "pro" | "ultra",
+                creditBalanceMicro,
             })
             .onConflictDoUpdate({
                 target: schema.users.id,
                 set: {
                     displayName,
-                    tier: body.tier || "free",
+                    tier: tier as "free" | "pro" | "ultra",
+                    creditBalanceMicro,
                     updatedAt: new Date(),
                 },
-            });
-
-        await db
-            .insert(schema.usage)
-            .values({
-                userId: user.id,
-                date: new Date().toISOString().split("T")[0],
-            })
-            .onConflictDoNothing({
-                target: [schema.usage.userId, schema.usage.date],
             });
 
         const cookiesForClient: Array<{

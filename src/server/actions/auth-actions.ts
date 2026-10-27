@@ -102,6 +102,7 @@ export async function syncUserToDatabase(): Promise<{ success: boolean; error?: 
             displayName: defaultDisplayName,
             avatarUrl,
             tier: "free",
+            creditBalanceMicro: BigInt(50000000),
         }).onConflictDoUpdate({
             target: schema.users.id,
             set: {
@@ -110,14 +111,6 @@ export async function syncUserToDatabase(): Promise<{ success: boolean; error?: 
                 avatarUrl: avatarUrl ? avatarUrl : schema.users.avatarUrl,
                 updatedAt: new Date(),
             },
-        });
-
-        // Atomic ensure: inserts initial usage record idempotently
-        await db.insert(schema.usage).values({
-            userId: user.id,
-            date: new Date().toISOString().split("T")[0],
-        }).onConflictDoNothing({
-            target: [schema.usage.userId, schema.usage.date],
         });
 
         return { success: true };

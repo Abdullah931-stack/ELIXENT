@@ -55,7 +55,7 @@ vi.mock("@/server/db", () => {
                 files: {
                     findFirst: vi.fn(),
                 },
-                aiReservations: {
+                creditLedgerTransactions: {
                     findFirst: vi.fn(),
                 },
             },
@@ -90,7 +90,7 @@ vi.mock("@/server/db", () => {
                 createdAt: "created_at",
                 updatedAt: "updated_at",
             },
-            aiReservations: {
+            creditLedgerTransactions: {
                 id: "id",
                 operationId: "operation_id",
                 userId: "user_id",
@@ -380,6 +380,8 @@ describe("Cross-Module Integration Suite (Vault Ecosystem)", () => {
             operationId: "op-ai-456",
             userId: testUserId,
             fileId: testFileId,
+            threadId: testFileId,
+            nodeName: "reserved:general",
             status: "reserved",
             reservedUnits: 10,
         };
@@ -391,7 +393,7 @@ describe("Cross-Module Integration Suite (Vault Ecosystem)", () => {
         } as any);
 
         // 1. Invariant: Committing plaintext to an encrypted file without metadata must be rejected
-        vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce(reservationRecord as any);
+        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce(reservationRecord as any);
         vi.mocked(db.query.files.findFirst).mockResolvedValueOnce(encryptedFileRecord as any);
 
         const unencryptedCommitAttempt = await commitAIFileOperation({
@@ -423,7 +425,7 @@ describe("Cross-Module Integration Suite (Vault Ecosystem)", () => {
         };
 
         // 3. Commit with encrypted payload inside database transaction
-        vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce(reservationRecord as any);
+        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce(reservationRecord as any);
         vi.mocked(db.query.files.findFirst).mockResolvedValueOnce(encryptedFileRecord as any);
 
         const committedFileRow = {

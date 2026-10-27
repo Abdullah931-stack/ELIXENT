@@ -53,7 +53,6 @@ vi.mock("@/server/db", () => ({
     },
     schema: {
         users: { id: "id" },
-        usage: { userId: "userId", date: "date" },
     },
 }));
 

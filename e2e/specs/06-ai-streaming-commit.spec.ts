@@ -1,5 +1,5 @@
 import { test, expect } from "../fixtures/auth-fixture";
-import { e2eDb, getDbFile, getDbReservations } from "../fixtures/test-db";
+import { e2eDb, getDbFile } from "../fixtures/test-db";
 import * as schema from "../../src/server/db/schema";
 import { eq } from "drizzle-orm";
 
@@ -27,25 +27,25 @@ test.describe("Scenario 6: AI Streaming, Dynamic Ghost Preview & Atomic Commit",
         const cmContent = page.locator(".cm-content");
         await expect(cmContent).toBeVisible({ timeout: 15000 });
 
-        // 3. Create a reservation in DB to simulate active streaming reservation
+        // 3. Create a transaction in DB to simulate active credit ledger transaction
         const operationId = `op-e2e-stream-${Date.now()}`;
         const [reservation] = await e2eDb
-            .insert(schema.aiReservations)
+            .insert(schema.creditLedgerTransactions)
             .values({
                 operationId,
                 userId: authSession.userId,
-                fileId: doc.id,
-                operation: "improve",
-                reservedUnits: 25,
-                periodKey: "2026-09-19",
-                status: "reserved",
-                expiresAt: new Date(Date.now() + 60000),
+                modelId: "google/gemini-2.5-flash",
+                executionMode: "STREAMING_GENERATIVE",
+                inputTokens: 50,
+                outputTokens: 25,
+                deltaMicro: BigInt(-250000),
+                status: "ABORTED",
             })
             .returning();
 
-        expect(reservation.status).toBe("reserved");
+        expect(reservation.status).toBe("ABORTED");
 
-        // 4. Simulate atomic commit: update document + increment version + settle reservation to committed
+        // 4. Simulate atomic commit: update document + increment version + settle transaction to SETTLED
         await e2eDb.transaction(async (tx) => {
             await tx
                 .update(schema.files)
@@ -57,13 +57,11 @@ test.describe("Scenario 6: AI Streaming, Dynamic Ghost Preview & Atomic Commit",
                 .where(eq(schema.files.id, doc.id));
 
             await tx
-                .update(schema.aiReservations)
+                .update(schema.creditLedgerTransactions)
                 .set({
-                    status: "committed",
-                    committedUnits: 25,
-                    updatedAt: new Date(),
+                    status: "SETTLED",
                 })
-                .where(eq(schema.aiReservations.id, reservation.id));
+                .where(eq(schema.creditLedgerTransactions.operationId, reservation.operationId));
         });
 
         // 5. Assert DB atomic state
@@ -71,9 +69,9 @@ test.describe("Scenario 6: AI Streaming, Dynamic Ghost Preview & Atomic Commit",
         expect(updatedDoc?.version).toBe(2);
         expect(updatedDoc?.content).toContain("Improved with state-of-the-art AI");
 
-        const reservations = await getDbReservations(authSession.userId);
-        const committedRes = reservations.find((r) => r.id === reservation.id);
-        expect(committedRes?.status).toBe("committed");
-        expect(committedRes?.refundedUnits).toBe(0);
+        const committedRes = await e2eDb.query.creditLedgerTransactions.findFirst({
+            where: eq(schema.creditLedgerTransactions.operationId, reservation.operationId),
+        });
+        expect(committedRes?.status).toBe("SETTLED");
     });
 });

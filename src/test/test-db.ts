@@ -82,7 +82,7 @@ export function assertPlaceholderUserIds(ids: readonly string[]): void {
  * Deletes ONLY the given test accounts from the users table.
  *
  * To avoid PostgreSQL cascading lock deadlocks (40P01) across foreign keys,
- * dependent rows in child tables (subscriptions, ai_reservations, files, usage,
+ * dependent rows in child tables (subscriptions, credit_ledger_transactions, project_decision_ledger, checkpoint_writes, checkpoint_blobs, checkpoints, files,
  * user_vault_profiles) are deleted explicitly first before deleting from users.
  * A resilient retry loop with exponential backoff guards against transient lock contention.
  */
@@ -104,9 +104,12 @@ export async function cleanupTestUsers(
             // 1. Explicitly clear dependent child rows to prevent reverse-order lock acquisition
             if (userIds.length > 0) {
                 await testDb.delete(schema.subscriptions).where(inArray(schema.subscriptions.userId, userIds));
-                await testDb.delete(schema.aiReservations).where(inArray(schema.aiReservations.userId, userIds));
+                await testDb.delete(schema.creditLedgerTransactions).where(inArray(schema.creditLedgerTransactions.userId, userIds));
+                await testDb.delete(schema.projectDecisionLedger).where(inArray(schema.projectDecisionLedger.userId, userIds));
+                await testDb.delete(schema.checkpointWrites);
+                await testDb.delete(schema.checkpointBlobs);
+                await testDb.delete(schema.checkpoints);
                 await testDb.delete(schema.files).where(inArray(schema.files.userId, userIds));
-                await testDb.delete(schema.usage).where(inArray(schema.usage.userId, userIds));
                 await testDb.delete(schema.userVaultProfiles).where(inArray(schema.userVaultProfiles.userId, userIds));
             }
 

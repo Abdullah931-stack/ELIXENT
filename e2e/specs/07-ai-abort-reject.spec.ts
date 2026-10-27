@@ -1,5 +1,5 @@
 import { test, expect } from "../fixtures/auth-fixture";
-import { e2eDb, getDbFile, getDbReservations } from "../fixtures/test-db";
+import { e2eDb, getDbFile } from "../fixtures/test-db";
 import * as schema from "../../src/server/db/schema";
 import { eq } from "drizzle-orm";
 
@@ -20,41 +20,38 @@ test.describe("Scenarios 7 & 8: User AI Abort and Preview Reject (No Refund Poli
 
         const abortOpId = `op-abort-${Date.now()}`;
         const [reservation] = await e2eDb
-            .insert(schema.aiReservations)
+            .insert(schema.creditLedgerTransactions)
             .values({
                 operationId: abortOpId,
                 userId: authSession.userId,
-                fileId: doc.id,
-                operation: "abort",
-                reservedUnits: 30,
-                periodKey: "2026-09-19",
-                status: "reserved",
-                expiresAt: new Date(Date.now() + 60000),
+                modelId: "google/gemini-2.5-flash",
+                executionMode: "STREAMING_GENERATIVE",
+                inputTokens: 50,
+                outputTokens: 30,
+                deltaMicro: BigInt(-300000),
+                status: "SETTLED",
             })
             .returning();
 
         // Simulate user clicking Stop:
-        // Policy §4-D mandates: status = 'committed', committedUnits = reservedUnits, refundedUnits = 0
+        // Transaction settled as ABORTED
         await e2eDb
-            .update(schema.aiReservations)
+            .update(schema.creditLedgerTransactions)
             .set({
-                status: "committed",
-                committedUnits: 30,
-                refundedUnits: 0,
-                updatedAt: new Date(),
+                status: "ABORTED",
             })
-            .where(eq(schema.aiReservations.id, reservation.id));
+            .where(eq(schema.creditLedgerTransactions.operationId, reservation.operationId));
 
         // Verify document was NOT altered (zero text leakage)
         const currentDoc = await getDbFile(doc.id);
         expect(currentDoc?.content).toBe("# Original Unaltered Content");
         expect(currentDoc?.version).toBe(1);
 
-        // Verify quota settlement: strictly NO refund
-        const reservations = await getDbReservations(authSession.userId);
-        const settledRes = reservations.find((r) => r.id === reservation.id);
-        expect(settledRes?.status).toBe("committed");
-        expect(settledRes?.refundedUnits).toBe(0);
+        // Verify transaction settlement: ABORTED
+        const settledRes = await e2eDb.query.creditLedgerTransactions.findFirst({
+            where: eq(schema.creditLedgerTransactions.operationId, reservation.operationId),
+        });
+        expect(settledRes?.status).toBe("ABORTED");
     });
 
     test("Scenario 8: User preview rejection leaves document untouched and settles quota with NO refund", async ({
@@ -73,40 +70,36 @@ test.describe("Scenarios 7 & 8: User AI Abort and Preview Reject (No Refund Poli
 
         const rejectOpId = `op-reject-${Date.now()}`;
         const [reservation] = await e2eDb
-            .insert(schema.aiReservations)
+            .insert(schema.creditLedgerTransactions)
             .values({
                 operationId: rejectOpId,
                 userId: authSession.userId,
-                fileId: doc.id,
-                operation: "reject",
-                reservedUnits: 40,
-                periodKey: "2026-09-19",
-                status: "reserved",
-                expiresAt: new Date(Date.now() + 60000),
+                modelId: "google/gemini-2.5-flash",
+                executionMode: "STREAMING_GENERATIVE",
+                inputTokens: 50,
+                outputTokens: 40,
+                deltaMicro: BigInt(-400000),
+                status: "SETTLED",
             })
             .returning();
 
         // Simulate user clicking Reject:
-        // Policy §4-D mandates: status = 'committed', committedUnits = reservedUnits, refundedUnits = 0
         await e2eDb
-            .update(schema.aiReservations)
+            .update(schema.creditLedgerTransactions)
             .set({
-                status: "committed",
-                committedUnits: 40,
-                refundedUnits: 0,
-                updatedAt: new Date(),
+                status: "ABORTED",
             })
-            .where(eq(schema.aiReservations.id, reservation.id));
+            .where(eq(schema.creditLedgerTransactions.operationId, reservation.operationId));
 
         // Verify document is untouched
         const currentDoc = await getDbFile(doc.id);
         expect(currentDoc?.content).toBe("# Safe Baseline Text");
         expect(currentDoc?.version).toBe(1);
 
-        // Verify quota is NOT refunded
-        const reservations = await getDbReservations(authSession.userId);
-        const settledRes = reservations.find((r) => r.id === reservation.id);
-        expect(settledRes?.status).toBe("committed");
-        expect(settledRes?.refundedUnits).toBe(0);
+        // Verify transaction settlement: ABORTED
+        const settledRes = await e2eDb.query.creditLedgerTransactions.findFirst({
+            where: eq(schema.creditLedgerTransactions.operationId, reservation.operationId),
+        });
+        expect(settledRes?.status).toBe("ABORTED");
     });
 });

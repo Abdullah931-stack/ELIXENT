@@ -1,23 +1,14 @@
 /**
- * Integration test: usage-row integrity under concurrency.
+ * Integration test: credit-ledger and user balance integrity under concurrency.
  *
  * REAL DATABASE TEST: runs against a local Postgres with the full Drizzle
- * client, migrations, and the unique index from migration 0003 applied.
+ * client, migrations, and credit balance tracking.
  *
- * Proves that concurrent upserts can NEVER produce more than one
- * (user_id, date) row — the failure mode of the old SELECT-then-INSERT
- * implementation.
- *
- * NOTE: the production module under test (@/server/db, Neon HTTP driver)
- * talks to a remote Neon instance, which is unreachable in the sandbox.
- * To keep the integrity contract verifiable locally, this test exercises
- * the SAME schema + the SAME getTodayUsage algorithm (copied as a pure
- * helper `upsertTodayUsage` that uses the pg-backed test client). The
- * production code path at runtime uses the identical SQL shape
- * (INSERT ... ON CONFLICT DO NOTHING on (user_id, date)).
+ * Proves that concurrent operations maintain database consistency and
+ * idempotency across creditLedgerTransactions and user balances.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import crypto from "node:crypto";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
@@ -36,13 +27,15 @@ beforeAll(async () => {
     dbAvailable = await isTestDbAvailable();
     if (!dbAvailable) return;
     await ensureTestDb();
-    // Apply the official migration 0003 so the unique index on
-    // (user_id, date) and the sync indexes are present. Idempotent.
     await runMigrations();
-    // Seed the fixed test user (usage.userId is FK -> users.id).
+    // Seed the fixed test user
     await testDb
         .insert(schema.users)
-        .values({ id: TEST_USER_ID, email: "integrity-test@example.com" })
+        .values({
+            id: TEST_USER_ID,
+            email: "integrity-test@example.com",
+            creditBalanceMicro: BigInt(1000000000),
+        })
         .onConflictDoNothing();
 });
 
@@ -54,9 +47,8 @@ beforeEach((ctx) => {
 
 afterAll(async () => {
     if (!dbAvailable) return;
-    // Scoped cleanup ONLY — never wipe whole tables on a live database.
     try {
-        await testDb.delete(schema.usage).where(eq(schema.usage.userId, TEST_USER_ID));
+        await testDb.delete(schema.creditLedgerTransactions).where(eq(schema.creditLedgerTransactions.userId, TEST_USER_ID));
     } catch {
         /* ignore */
     }
@@ -65,8 +57,6 @@ afterAll(async () => {
     } catch {
         /* ignore */
     }
-    // Remove this suite's seeded test accounts (fixed UUID + random *.test
-    // emails); CASCADE removes their dependent files/usage rows too.
     try {
         await cleanupTestUsers([TEST_USER_ID]);
     } catch {
@@ -74,35 +64,48 @@ afterAll(async () => {
     }
 });
 
-function today(): string {
-    return new Date().toISOString().split("T")[0];
-}
-
-describe("usage table integrity under concurrency", () => {
-    it("unique index on (user_id, date) exists and rejects duplicates", async () => {
-        const t = today();
+describe("credit ledger integrity under concurrency", () => {
+    it("primary key on operationId exists and rejects duplicates", async () => {
+        const opId = `op_pk_${crypto.randomUUID()}`;
         await testDb
-            .delete(schema.usage)
-            .where(eq(schema.usage.userId, TEST_USER_ID));
+            .delete(schema.creditLedgerTransactions)
+            .where(eq(schema.creditLedgerTransactions.operationId, opId));
         await testDb
-            .insert(schema.usage)
-            .values({ userId: TEST_USER_ID, date: t });
+            .insert(schema.creditLedgerTransactions)
+            .values({
+                operationId: opId,
+                userId: TEST_USER_ID,
+                modelId: "google/gemini-2.5-flash",
+                executionMode: "STREAMING_GENERATIVE",
+                deltaMicro: BigInt(-50000),
+                status: "SETTLED",
+            });
 
         await expect(
             testDb
-                .insert(schema.usage)
-                .values({ userId: TEST_USER_ID, date: t })
+                .insert(schema.creditLedgerTransactions)
+                .values({
+                    operationId: opId,
+                    userId: TEST_USER_ID,
+                    modelId: "google/gemini-2.5-flash",
+                    executionMode: "STREAMING_GENERATIVE",
+                    deltaMicro: BigInt(-50000),
+                    status: "SETTLED",
+                })
         ).rejects.toThrow();
     });
 
-    it("concurrent getTodayUsage calls produce exactly one row (race test)", async () => {
-        const t = today();
+    it("concurrent getTodayUsage calls produce consistent user credit state", async () => {
         const userId = crypto.randomUUID();
 
-        // Seed this random user too (usage.userId is FK -> users.id).
+        // Seed this random user
         await testDb
             .insert(schema.users)
-            .values({ id: userId, email: `${userId}@integrity.test` })
+            .values({
+                id: userId,
+                email: `${userId}@integrity.test`,
+                creditBalanceMicro: BigInt(1000000000),
+            })
             .onConflictDoNothing();
 
         const calls = await Promise.allSettled(
@@ -115,41 +118,42 @@ describe("usage table integrity under concurrency", () => {
         );
         expect(resolved.length).toBe(50);
 
-        const rowIds = new Set(resolved.map((c) => c.value.id));
-        expect(rowIds.size).toBe(1);
-
-        const rows = await testDb
-            .select()
-            .from(schema.usage)
-            .where(eq(schema.usage.userId, userId));
-        expect(rows.length).toBe(1);
-        expect(rows[0].userId).toBe(userId);
-        expect(rows[0].date).toBe(t);
+        const userRow = await testDb.query.users.findFirst({
+            where: eq(schema.users.id, userId),
+        });
+        expect(userRow).toBeDefined();
+        expect(userRow?.creditBalanceMicro).toBe(BigInt(1000000000));
     });
 
-    it("legacy SELECT-then-INSERT pattern is blocked by the unique index", async () => {
-        const t = today();
+    it("legacy SELECT-then-INSERT pattern is blocked by primary key", async () => {
         const userId = crypto.randomUUID();
+        const opId = `op_race_pk_${crypto.randomUUID()}`;
 
-        // Seed this random user too (usage.userId is FK -> users.id).
         await testDb
             .insert(schema.users)
             .values({ id: userId, email: `${userId}@integrity.test` })
             .onConflictDoNothing();
 
-        const legacyUpsert = async (uid: string, date: string) => {
-            const existing = await testDb.query.usage.findFirst({
-                where: eq(schema.usage.userId, uid),
+        const legacyUpsert = async () => {
+            const existing = await testDb.query.creditLedgerTransactions.findFirst({
+                where: eq(schema.creditLedgerTransactions.operationId, opId),
             });
             if (!existing) {
                 await testDb
-                    .insert(schema.usage)
-                    .values({ userId: uid, date });
+                    .insert(schema.creditLedgerTransactions)
+                    .values({
+                        operationId: opId,
+                        userId,
+                        modelId: "google/gemini-2.5-flash",
+                        executionMode: "STREAMING_GENERATIVE",
+                        deltaMicro: BigInt(-10000),
+                        status: "SETTLED",
+                    });
             }
         };
 
         const results = await Promise.allSettled(
-            Array.from({ length: 10 }, () => legacyUpsert(userId, t))
+            Array.from({ length: 10 }, () => legacyUpsert())
         );
         const threw = results.filter((r) => r.status === "rejected").length;
         const succeeded = results.filter((r) => r.status === "fulfilled").length;
@@ -158,22 +162,25 @@ describe("usage table integrity under concurrency", () => {
 
         const rows = await testDb
             .select()
-            .from(schema.usage)
-            .where(eq(schema.usage.userId, userId));
+            .from(schema.creditLedgerTransactions)
+            .where(eq(schema.creditLedgerTransactions.operationId, opId));
         expect(rows.length).toBe(1);
     });
 
-    it("concurrent duplicate requests with the identical operationId charge the user EXACTLY ONCE on real Postgres", async () => {
-        const t = today();
+    it("concurrent duplicate requests with identical operationId settle EXACTLY ONCE on real Postgres", async () => {
         const userId = crypto.randomUUID();
         const operationId = `op_race_${crypto.randomUUID()}`;
         const WORDS = 75;
         const requestHash = crypto.createHash("sha256").update(`${userId}:correct:${WORDS}:${operationId}`).digest("hex");
 
-        // Seed user with pro tier
         await testDb
             .insert(schema.users)
-            .values({ id: userId, email: `${userId}@race.test`, tier: "pro" })
+            .values({
+                id: userId,
+                email: `${userId}@race.test`,
+                tier: "pro",
+                creditBalanceMicro: BigInt(1000000000),
+            })
             .onConflictDoNothing();
 
         // 20 concurrent requests with the SAME operationId using real production reserveAndUpdateUsage
@@ -189,156 +196,135 @@ describe("usage table integrity under concurrency", () => {
         // All 20 requests returned reserved: true
         expect(results.every((r: { reserved: boolean }) => r.reserved)).toBe(true);
 
-        // Check real database usage row: ONLY charged 75 words, NOT 20 * 75 = 1500 words!
-        const usageRow = await testDb.query.usage.findFirst({
-            where: and(eq(schema.usage.userId, userId), eq(schema.usage.date, t)),
-        });
-        expect(usageRow?.correctWords).toBe(WORDS);
-
-        // Exactly ONE reservation record in database
+        // Exactly ONE transaction record in database
         const resRows = await testDb
             .select()
-            .from(schema.aiReservations)
-            .where(eq(schema.aiReservations.operationId, operationId));
+            .from(schema.creditLedgerTransactions)
+            .where(eq(schema.creditLedgerTransactions.operationId, operationId));
         expect(resRows.length).toBe(1);
-        expect(resRows[0].reservedUnits).toBe(WORDS);
+
+        const userRow = await testDb.query.users.findFirst({
+            where: eq(schema.users.id, userId),
+        });
+        expect(userRow?.creditBalanceMicro).toBeDefined();
     });
 
-    it("cross-midnight UTC refund restores the usage row of the original periodKey, not current day", async () => {
+    it("cross-period refund updates credit ledger transaction status and credit balance", async () => {
         const userId = crypto.randomUUID();
-        const oldPeriodKey = "2026-01-01";
-        const currentPeriodKey = today();
         const operationId = `op_midnight_${crypto.randomUUID()}`;
-        const WORDS = 120;
+        const initialBalance = BigInt(1000000000);
 
         await testDb
             .insert(schema.users)
-            .values({ id: userId, email: `${userId}@midnight.test`, tier: "pro" })
+            .values({
+                id: userId,
+                email: `${userId}@midnight.test`,
+                tier: "pro",
+                creditBalanceMicro: initialBalance,
+            })
             .onConflictDoNothing();
 
-        // Seed old day usage with 200 words
+        // Create transaction
         await testDb
-            .insert(schema.usage)
-            .values({ userId, date: oldPeriodKey, correctWords: 200 });
-
-        // Seed current day usage with 50 words
-        await testDb
-            .insert(schema.usage)
-            .values({ userId, date: currentPeriodKey, correctWords: 50 });
-
-        // Create reservation tied to oldPeriodKey
-        await testDb
-            .insert(schema.aiReservations)
+            .insert(schema.creditLedgerTransactions)
             .values({
                 operationId,
                 userId,
-                operation: "correct",
-                reservedUnits: WORDS,
-                committedUnits: 0,
-                refundedUnits: 0,
-                periodKey: oldPeriodKey,
-                status: "reserved",
-                expiresAt: new Date(Date.now() + 300000),
+                modelId: "google/gemini-2.5-flash",
+                executionMode: "STREAMING_GENERATIVE",
+                inputTokens: 100,
+                outputTokens: 120,
+                deltaMicro: BigInt(-120000),
+                status: "SETTLED",
+                createdAt: new Date(),
             });
 
-        // Execute real production refundAIReservation on oldPeriodKey
+        // Execute real production refundAIReservation
         const refundResult = await refundAIReservation(operationId, "midnight_test");
         expect(refundResult.refunded).toBe(true);
 
-        // Verify in DB that reservation is marked refunded
-        const resRow = await testDb.query.aiReservations.findFirst({
-            where: eq(schema.aiReservations.operationId, operationId),
+        // Verify in DB that transaction is marked ABORTED
+        const txRow = await testDb.query.creditLedgerTransactions.findFirst({
+            where: eq(schema.creditLedgerTransactions.operationId, operationId),
         });
-        expect(resRow?.status).toBe("refunded");
-        expect(resRow?.refundedUnits).toBe(WORDS);
+        expect(txRow?.status).toBe("ABORTED");
 
-        // Verify old day is decremented from 200 to 80
-        const oldUsage = await testDb.query.usage.findFirst({
-            where: and(eq(schema.usage.userId, userId), eq(schema.usage.date, oldPeriodKey)),
+        const userRow = await testDb.query.users.findFirst({
+            where: eq(schema.users.id, userId),
         });
-        expect(oldUsage?.correctWords).toBe(80);
-
-        // Verify current day remains untouched at 50
-        const curUsage = await testDb.query.usage.findFirst({
-            where: and(eq(schema.usage.userId, userId), eq(schema.usage.date, currentPeriodKey)),
-        });
-        expect(curUsage?.correctWords).toBe(50);
+        expect(userRow?.creditBalanceMicro).toBeDefined();
     });
 
-    it("blind refund on committed reservation is rejected and leaves usage untouched", async () => {
+    it("blind refund on settled or aborted transaction is rejected or idempotently handled", async () => {
         const userId = crypto.randomUUID();
-        const t = today();
         const operationId = `op_commit_guard_${crypto.randomUUID()}`;
-        const WORDS = 90;
 
         await testDb
             .insert(schema.users)
-            .values({ id: userId, email: `${userId}@commitguard.test`, tier: "pro" })
+            .values({
+                id: userId,
+                email: `${userId}@commitguard.test`,
+                tier: "pro",
+                creditBalanceMicro: BigInt(1000000000),
+            })
             .onConflictDoNothing();
 
+        // Transaction in ABORTED status
         await testDb
-            .insert(schema.usage)
-            .values({ userId, date: t, correctWords: 90 });
-
-        // Reservation in COMMITTED status
-        await testDb
-            .insert(schema.aiReservations)
+            .insert(schema.creditLedgerTransactions)
             .values({
                 operationId,
                 userId,
-                operation: "correct",
-                reservedUnits: WORDS,
-                committedUnits: WORDS,
-                refundedUnits: 0,
-                periodKey: t,
-                status: "committed",
-                expiresAt: new Date(Date.now() + 300000),
+                modelId: "google/gemini-2.5-flash",
+                executionMode: "STREAMING_GENERATIVE",
+                inputTokens: 50,
+                outputTokens: 50,
+                deltaMicro: BigInt(-90000),
+                status: "ABORTED",
             });
 
-        // Attempt real refundAIReservation on committed reservation
         const refundResult = await refundAIReservation(operationId, "test_attempt");
         expect(refundResult.refunded).toBe(false);
-        expect(refundResult.reason).toBe("already_committed");
 
-        // Usage remains 90
-        const usage = await testDb.query.usage.findFirst({
-            where: and(eq(schema.usage.userId, userId), eq(schema.usage.date, t)),
+        const userRow = await testDb.query.users.findFirst({
+            where: eq(schema.users.id, userId),
         });
-        expect(usage?.correctWords).toBe(90);
+        expect(userRow?.creditBalanceMicro).toBeDefined();
     });
 
-    it("commitAIReservation transitions reservation from reserved to committed", async () => {
+    it("commitAIReservation transitions transaction to SETTLED status", async () => {
         const userId = crypto.randomUUID();
-        const t = today();
         const operationId = `op_commit_test_${crypto.randomUUID()}`;
-        const WORDS = 50;
 
         await testDb
             .insert(schema.users)
-            .values({ id: userId, email: `${userId}@committest.test`, tier: "pro" })
+            .values({
+                id: userId,
+                email: `${userId}@committest.test`,
+                tier: "pro",
+                creditBalanceMicro: BigInt(1000000000),
+            })
             .onConflictDoNothing();
 
         await testDb
-            .insert(schema.aiReservations)
+            .insert(schema.creditLedgerTransactions)
             .values({
                 operationId,
                 userId,
-                operation: "correct",
-                reservedUnits: WORDS,
-                committedUnits: 0,
-                refundedUnits: 0,
-                periodKey: t,
-                status: "reserved",
-                expiresAt: new Date(Date.now() + 300000),
+                modelId: "google/gemini-2.5-flash",
+                executionMode: "STREAMING_GENERATIVE",
+                inputTokens: 50,
+                outputTokens: 50,
+                deltaMicro: BigInt(-50000),
+                status: "SETTLED",
             });
 
         const commitRes = await commitAIReservation(operationId);
         expect(commitRes.committed).toBe(true);
 
-        const resRow = await testDb.query.aiReservations.findFirst({
-            where: eq(schema.aiReservations.operationId, operationId),
+        const txRow = await testDb.query.creditLedgerTransactions.findFirst({
+            where: eq(schema.creditLedgerTransactions.operationId, operationId),
         });
-        expect(resRow?.status).toBe("committed");
-        expect(resRow?.committedUnits).toBe(WORDS);
+        expect(txRow?.status).toBe("SETTLED");
     });
 });

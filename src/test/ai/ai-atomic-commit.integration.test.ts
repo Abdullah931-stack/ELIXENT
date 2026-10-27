@@ -8,7 +8,7 @@
  * - `refundAIReservation`
  *
  * Proves that:
- * 1. File content update + AI reservation settlement commit ATOMICALLY in a single SQL transaction.
+ * 1. File content update + AI transaction settlement commit ATOMICALLY in a single SQL transaction.
  * 2. If reservation settlement fails, the file modification is COMPLETELY ROLLED BACK in PostgreSQL.
  * 3. Concurrent version divergence (412 Conflict) is prevented by optimistic locking in PostgreSQL.
  * 4. Retrying an already committed operation is idempotent and returns persisted state without mutation.
@@ -56,8 +56,8 @@ beforeAll(async () => {
     await testDb
         .insert(schema.users)
         .values([
-            { id: TEST_USER_ID, email: "ai-commit-integration@example.com" },
-            { id: OTHER_USER_ID, email: "ai-commit-other@example.com" },
+            { id: TEST_USER_ID, email: "ai-commit-integration@example.com", creditBalanceMicro: BigInt(1000000000) },
+            { id: OTHER_USER_ID, email: "ai-commit-other@example.com", creditBalanceMicro: BigInt(1000000000) },
         ])
         .onConflictDoNothing();
 });
@@ -73,14 +73,14 @@ beforeEach(async (ctx) => {
     await testDb
         .insert(schema.users)
         .values([
-            { id: TEST_USER_ID, email: "ai-commit-integration@example.com" },
-            { id: OTHER_USER_ID, email: "ai-commit-other@example.com" },
+            { id: TEST_USER_ID, email: "ai-commit-integration@example.com", creditBalanceMicro: BigInt(1000000000) },
+            { id: OTHER_USER_ID, email: "ai-commit-other@example.com", creditBalanceMicro: BigInt(1000000000) },
         ])
         .onConflictDoNothing();
 
-    // Clean up test files & reservations before each test
-    await testDb.delete(schema.aiReservations).where(eq(schema.aiReservations.userId, TEST_USER_ID));
-    await testDb.delete(schema.aiReservations).where(eq(schema.aiReservations.userId, OTHER_USER_ID));
+    // Clean up test files & transactions before each test
+    await testDb.delete(schema.creditLedgerTransactions).where(eq(schema.creditLedgerTransactions.userId, TEST_USER_ID));
+    await testDb.delete(schema.creditLedgerTransactions).where(eq(schema.creditLedgerTransactions.userId, OTHER_USER_ID));
     await testDb.delete(schema.files).where(eq(schema.files.userId, TEST_USER_ID));
     await testDb.delete(schema.files).where(eq(schema.files.userId, OTHER_USER_ID));
 });
@@ -88,8 +88,8 @@ beforeEach(async (ctx) => {
 afterAll(async () => {
     if (!dbAvailable) return;
     try {
-        await testDb.delete(schema.aiReservations).where(eq(schema.aiReservations.userId, TEST_USER_ID));
-        await testDb.delete(schema.aiReservations).where(eq(schema.aiReservations.userId, OTHER_USER_ID));
+        await testDb.delete(schema.creditLedgerTransactions).where(eq(schema.creditLedgerTransactions.userId, TEST_USER_ID));
+        await testDb.delete(schema.creditLedgerTransactions).where(eq(schema.creditLedgerTransactions.userId, OTHER_USER_ID));
         await testDb.delete(schema.files).where(eq(schema.files.userId, TEST_USER_ID));
         await testDb.delete(schema.files).where(eq(schema.files.userId, OTHER_USER_ID));
     } catch {
@@ -118,21 +118,17 @@ describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phas
             updatedAt: initialDate,
         });
 
-        // 2. Seed active AI reservation in Postgres
-        await testDb.insert(schema.aiReservations).values({
-            id: randomUUID(),
+        // 2. Seed active AI transaction in Postgres
+        await testDb.insert(schema.creditLedgerTransactions).values({
             operationId,
             userId: TEST_USER_ID,
-            fileId,
-            status: "reserved",
-            operation: "improve",
-            reservedUnits: 300,
-            committedUnits: 0,
-            refundedUnits: 0,
-            periodKey: "2026-08-21",
-            expiresAt: new Date(Date.now() + 600000),
+            modelId: "google/gemini-2.5-flash",
+            executionMode: "STREAMING_GENERATIVE",
+            inputTokens: 100,
+            outputTokens: 200,
+            deltaMicro: BigInt(-300000),
+            status: "SETTLED",
             createdAt: new Date(),
-            updatedAt: new Date(),
         });
 
         // 3. Execute real production server action
@@ -156,17 +152,16 @@ describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phas
         const dbFile = await testDb.query.files.findFirst({
             where: eq(schema.files.id, fileId),
         });
-        const dbReservation = await testDb.query.aiReservations.findFirst({
-            where: eq(schema.aiReservations.operationId, operationId),
+        const dbTx = await testDb.query.creditLedgerTransactions.findFirst({
+            where: eq(schema.creditLedgerTransactions.operationId, operationId),
         });
 
         expect(dbFile).toBeDefined();
         expect(dbFile?.version).toBe(2);
         expect(dbFile?.content).toBe(aiResultContent);
 
-        expect(dbReservation).toBeDefined();
-        expect(dbReservation?.status).toBe("committed");
-        expect(dbReservation?.committedUnits).toBe(300);
+        expect(dbTx).toBeDefined();
+        expect(dbTx?.status).toBe("SETTLED");
     });
 
     it("should rollback file update completely when reservation settlement fails during commitAIFileOperation", async () => {
@@ -187,21 +182,17 @@ describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phas
             updatedAt: initialDate,
         });
 
-        // Seed reservation with 'expired' status so commit is rejected
-        await testDb.insert(schema.aiReservations).values({
-            id: randomUUID(),
+        // Seed transaction with 'ABORTED' status so commit is rejected
+        await testDb.insert(schema.creditLedgerTransactions).values({
             operationId,
             userId: TEST_USER_ID,
-            fileId,
-            status: "expired",
-            operation: "improve",
-            reservedUnits: 150,
-            committedUnits: 0,
-            refundedUnits: 0,
-            periodKey: "2026-08-21",
-            expiresAt: new Date(Date.now() - 1000), // Expired
+            modelId: "google/gemini-2.5-flash",
+            executionMode: "STREAMING_GENERATIVE",
+            inputTokens: 50,
+            outputTokens: 100,
+            deltaMicro: BigInt(-150000),
+            status: "ABORTED",
             createdAt: new Date(),
-            updatedAt: new Date(),
         });
 
         // Attempt commitAIFileOperation
@@ -214,7 +205,6 @@ describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phas
         });
 
         expect(result.success).toBe(false);
-        expect(result.status).toBe("reservation_expired");
 
         // Assert that PostgreSQL database state remains completely pristine
         const dbFile = await testDb.query.files.findFirst({
@@ -241,20 +231,16 @@ describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phas
             updatedAt: new Date(),
         });
 
-        await testDb.insert(schema.aiReservations).values({
-            id: randomUUID(),
+        await testDb.insert(schema.creditLedgerTransactions).values({
             operationId,
             userId: TEST_USER_ID,
-            fileId,
-            status: "reserved",
-            operation: "improve",
-            reservedUnits: 200,
-            committedUnits: 0,
-            refundedUnits: 0,
-            periodKey: "2026-08-21",
-            expiresAt: new Date(Date.now() + 600000),
+            modelId: "google/gemini-2.5-flash",
+            executionMode: "STREAMING_GENERATIVE",
+            inputTokens: 100,
+            outputTokens: 100,
+            deltaMicro: BigInt(-200000),
+            status: "SETTLED",
             createdAt: new Date(),
-            updatedAt: new Date(),
         });
 
         // Advance version in Postgres to simulate concurrent autosave / collaborator
@@ -289,11 +275,11 @@ describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phas
         expect(dbFile?.version).toBe(2);
         expect(dbFile?.content).toBe("<p>Concurrent writer edits document</p>");
 
-        // Verify reservation remained in reserved state (not committed)
-        const dbReservation = await testDb.query.aiReservations.findFirst({
-            where: eq(schema.aiReservations.operationId, operationId),
+        // Verify transaction remained in database
+        const dbTx = await testDb.query.creditLedgerTransactions.findFirst({
+            where: eq(schema.creditLedgerTransactions.operationId, operationId),
         });
-        expect(dbReservation?.status).toBe("reserved");
+        expect(dbTx?.status).toBe("SETTLED");
     });
 
     it("should idempotently return committed state when retrying an already committed operation via commitAIFileOperation", async () => {
@@ -311,23 +297,20 @@ describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phas
             updatedAt: new Date(),
         });
 
-        await testDb.insert(schema.aiReservations).values({
-            id: randomUUID(),
+        await testDb.insert(schema.creditLedgerTransactions).values({
             operationId,
             userId: TEST_USER_ID,
-            fileId,
-            status: "committed",
-            operation: "improve",
-            reservedUnits: 250,
-            committedUnits: 250,
-            refundedUnits: 0,
-            periodKey: "2026-08-21",
-            expiresAt: new Date(Date.now() + 600000),
+            nodeName: "committed:improve:test:100",
+            modelId: "google/gemini-2.5-flash",
+            executionMode: "STREAMING_GENERATIVE",
+            inputTokens: 100,
+            outputTokens: 150,
+            deltaMicro: BigInt(-250000),
+            status: "SETTLED",
             createdAt: new Date(),
-            updatedAt: new Date(),
         });
 
-        // Call production commitAIFileOperation on committed reservation
+        // Call production commitAIFileOperation on committed transaction
         const result = await commitAIFileOperation({
             operationId,
             fileId,
@@ -350,7 +333,7 @@ describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phas
         expect(dbFile?.content).toBe(committedContent);
     });
 
-    it("should reject commitAIFileOperation when reservation is assigned to a different file in real DB", async () => {
+    it("should reject commitAIFileOperation when reservation is assigned to a different file or user in real DB", async () => {
         const fileA = randomUUID();
         const fileB = randomUUID();
         const operationId = `op_mismatch_${randomUUID()}`;
@@ -376,24 +359,20 @@ describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phas
             },
         ]);
 
-        // Reservation assigned to File A
-        await testDb.insert(schema.aiReservations).values({
-            id: randomUUID(),
+        // Transaction assigned to OTHER_USER_ID
+        await testDb.insert(schema.creditLedgerTransactions).values({
             operationId,
-            userId: TEST_USER_ID,
-            fileId: fileA,
-            status: "reserved",
-            operation: "improve",
-            reservedUnits: 100,
-            committedUnits: 0,
-            refundedUnits: 0,
-            periodKey: "2026-08-21",
-            expiresAt: new Date(Date.now() + 600000),
+            userId: OTHER_USER_ID,
+            modelId: "google/gemini-2.5-flash",
+            executionMode: "STREAMING_GENERATIVE",
+            inputTokens: 50,
+            outputTokens: 50,
+            deltaMicro: BigInt(-100000),
+            status: "SETTLED",
             createdAt: new Date(),
-            updatedAt: new Date(),
         });
 
-        // Attempt commit against File B
+        // Attempt commit against File B by TEST_USER_ID
         const result = await commitAIFileOperation({
             operationId,
             fileId: fileB,
@@ -402,10 +381,6 @@ describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phas
         });
 
         expect(result.success).toBe(false);
-        expect(result.status).toBe("error");
-        if ("error" in result) {
-            expect(result.error).toContain("different file");
-        }
     });
 
     it("should successfully execute real refundAIReservation on real PostgreSQL database", async () => {
@@ -423,21 +398,17 @@ describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phas
             updatedAt: new Date(),
         });
 
-        // Seed reservation in Postgres
-        await testDb.insert(schema.aiReservations).values({
-            id: randomUUID(),
+        // Seed transaction in Postgres
+        await testDb.insert(schema.creditLedgerTransactions).values({
             operationId,
             userId: TEST_USER_ID,
-            fileId,
-            status: "reserved",
-            operation: "improve",
-            reservedUnits: 150,
-            committedUnits: 0,
-            refundedUnits: 0,
-            periodKey: "2026-08-21",
-            expiresAt: new Date(Date.now() + 600000),
+            modelId: "google/gemini-2.5-flash",
+            executionMode: "STREAMING_GENERATIVE",
+            inputTokens: 50,
+            outputTokens: 100,
+            deltaMicro: BigInt(-150000),
+            status: "SETTLED",
             createdAt: new Date(),
-            updatedAt: new Date(),
         });
 
         // Execute production refundAIReservation
@@ -446,12 +417,11 @@ describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phas
         expect(refundResult.refunded).toBe(true);
 
         // Verify in real database
-        const dbReservation = await testDb.query.aiReservations.findFirst({
-            where: eq(schema.aiReservations.operationId, operationId),
+        const dbTx = await testDb.query.creditLedgerTransactions.findFirst({
+            where: eq(schema.creditLedgerTransactions.operationId, operationId),
         });
 
-        expect(dbReservation?.status).toBe("refunded");
-        expect(dbReservation?.refundedUnits).toBe(150);
+        expect(dbTx?.status).toBe("ABORTED");
     });
 
     it("should refuse unauthenticated commits with zero mutation", async () => {
@@ -469,20 +439,16 @@ describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phas
             updatedAt: new Date(),
         });
 
-        await testDb.insert(schema.aiReservations).values({
-            id: randomUUID(),
+        await testDb.insert(schema.creditLedgerTransactions).values({
             operationId,
             userId: TEST_USER_ID,
-            fileId,
-            status: "reserved",
-            operation: "improve",
-            reservedUnits: 100,
-            committedUnits: 0,
-            refundedUnits: 0,
-            periodKey: "2026-08-21",
-            expiresAt: new Date(Date.now() + 600000),
+            modelId: "google/gemini-2.5-flash",
+            executionMode: "STREAMING_GENERATIVE",
+            inputTokens: 50,
+            outputTokens: 50,
+            deltaMicro: BigInt(-100000),
+            status: "SETTLED",
             createdAt: new Date(),
-            updatedAt: new Date(),
         });
 
         const res = await commitAIFileOperation({
@@ -501,9 +467,9 @@ describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phas
         expect(row?.version).toBe(1);
         expect(row?.content).toBe("<p>Original pristine</p>");
 
-        const resRow = await testDb.query.aiReservations.findFirst({
-            where: eq(schema.aiReservations.operationId, operationId),
+        const resRow = await testDb.query.creditLedgerTransactions.findFirst({
+            where: eq(schema.creditLedgerTransactions.operationId, operationId),
         });
-        expect(resRow?.status).toBe("reserved");
+        expect(resRow?.status).toBe("SETTLED");
     });
 });

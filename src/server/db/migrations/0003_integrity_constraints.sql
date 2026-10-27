@@ -8,11 +8,16 @@
 --    where two concurrent upserts could previously insert duplicate daily
 --    rows. It also makes INSERT ... ON CONFLICT DO UPDATE safe and idempotent.
 -- ---------------------------------------------------------------------------
-CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_user_date_unique
-    ON usage USING btree (user_id, date);
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'usage') THEN
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_user_date_unique
+            ON usage USING btree (user_id, date);
 
-CREATE INDEX IF NOT EXISTS idx_usage_user_date
-    ON usage USING btree (user_id, date);
+        CREATE INDEX IF NOT EXISTS idx_usage_user_date
+            ON usage USING btree (user_id, date);
+    END IF;
+END $$;
 
 -- ---------------------------------------------------------------------------
 -- 2. Files: sync query performance indexes.

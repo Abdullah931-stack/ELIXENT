@@ -17,7 +17,7 @@ vi.mock('@/server/db/transactional', () => ({
 vi.mock('@/server/db', () => ({
     db: {
         query: {
-            aiReservations: {
+            creditLedgerTransactions: {
                 findFirst: vi.fn(),
             },
             files: {
@@ -27,7 +27,7 @@ vi.mock('@/server/db', () => ({
         update: vi.fn(),
     },
     schema: {
-        aiReservations: {
+        creditLedgerTransactions: {
             id: 'id',
             operationId: 'operation_id',
             userId: 'user_id',
@@ -82,7 +82,7 @@ describe('Server Atomic Commit & Optimistic Version Guard (Gate G2 / Phase 8)', 
 
     it('should return reservation_not_found when operationId is invalid', async () => {
         vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
-        vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce(undefined as any);
+        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce(undefined as any);
 
         const res = await commitAIFileOperation({
             operationId: 'non-existent-op-id',
@@ -97,11 +97,12 @@ describe('Server Atomic Commit & Optimistic Version Guard (Gate G2 / Phase 8)', 
 
     it('should reject commit if reservation belongs to a different fileId', async () => {
         vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
-        vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
+        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
             id: 'res-diff',
             operationId: 'op-diff-file',
             userId: 'user-1',
             fileId: 'other-file-id',
+            threadId: 'other-file-id',
             status: 'reserved',
         } as any);
 
@@ -121,12 +122,14 @@ describe('Server Atomic Commit & Optimistic Version Guard (Gate G2 / Phase 8)', 
 
     it('should return already_committed with current file state if reservation is already committed (Idempotent Retry)', async () => {
         vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
-        vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
+        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
             id: 'res-1',
             operationId: 'op-committed',
             userId: 'user-1',
             fileId: 'file-1',
+            threadId: 'file-1',
             status: 'committed',
+            nodeName: 'committed:general',
         } as any);
 
         vi.mocked(db.query.files.findFirst).mockResolvedValueOnce({
@@ -154,11 +157,12 @@ describe('Server Atomic Commit & Optimistic Version Guard (Gate G2 / Phase 8)', 
 
     it('should return reservation_expired if reservation status is expired or refunded', async () => {
         vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
-        vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
+        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
             id: 'res-2',
             operationId: 'op-expired',
             userId: 'user-1',
-            status: 'expired',
+            status: 'ABORTED',
+            nodeName: 'expired:general',
         } as any);
 
         const res = await commitAIFileOperation({
@@ -174,7 +178,7 @@ describe('Server Atomic Commit & Optimistic Version Guard (Gate G2 / Phase 8)', 
 
     it('should return 412 conflict when file version does not match expectedVersion', async () => {
         vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
-        vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
+        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
             id: 'res-3',
             operationId: 'op-conflict',
             userId: 'user-1',
@@ -208,7 +212,7 @@ describe('Server Atomic Commit & Optimistic Version Guard (Gate G2 / Phase 8)', 
 
     it('should return 412 conflict when expectedETag does not match server ETag', async () => {
         vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
-        vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
+        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
             id: 'res-etag',
             operationId: 'op-etag-conflict',
             userId: 'user-1',
@@ -242,7 +246,7 @@ describe('Server Atomic Commit & Optimistic Version Guard (Gate G2 / Phase 8)', 
 
     it('should self-heal and succeed when expectedVersion differs but originalContent matches server content', async () => {
         vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
-        vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
+        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
             id: 'res-heal',
             operationId: 'op-heal',
             userId: 'user-1',
@@ -296,7 +300,7 @@ describe('Server Atomic Commit & Optimistic Version Guard (Gate G2 / Phase 8)', 
 
     it('should atomically commit file and reservation via transactional DB when versions match', async () => {
         vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
-        vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
+        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
             id: 'res-4',
             operationId: 'op-success',
             userId: 'user-1',
@@ -351,7 +355,7 @@ describe('Server Atomic Commit & Optimistic Version Guard (Gate G2 / Phase 8)', 
 
     it('should rollback transaction and return error if reservation settlement fails', async () => {
         vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
-        vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
+        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
             id: 'res-fail',
             operationId: 'op-tx-fail',
             userId: 'user-1',
@@ -388,7 +392,7 @@ describe('Server Atomic Commit & Optimistic Version Guard (Gate G2 / Phase 8)', 
     it('should reject commitAIFileOperation if file is encrypted and no encryptionMetadata is provided', async () => {
         vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
 
-        vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
+        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
             id: 'res-enc-1',
             operationId: 'op-enc-plain',
             userId: 'user-1',
@@ -423,7 +427,7 @@ describe('Server Atomic Commit & Optimistic Version Guard (Gate G2 / Phase 8)', 
     it('should successfully commit encrypted content and persist encryptionMetadata for encrypted files', async () => {
         vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
 
-        vi.mocked(db.query.aiReservations.findFirst).mockResolvedValueOnce({
+        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
             id: 'res-enc-2',
             operationId: 'op-enc-valid',
             userId: 'user-1',

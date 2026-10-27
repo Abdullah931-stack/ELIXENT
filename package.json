@@ -7,6 +7,8 @@
     "npm": ">=10.0.0"
   },
   "scripts": {
+    "docs:sync": "node scripts/sync-doc-metrics.mjs --update-docs",
+    "docs:check": "node scripts/sync-doc-metrics.mjs --check",
     "dev": "next dev",
     "build": "next build --webpack",
     "start": "next start",
@@ -26,6 +28,8 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@ai-sdk/google": "^4.0.0",
+    "@ai-sdk/openai": "^4.0.0",
     "@codemirror/commands": "^6.11.0",
     "@codemirror/lang-markdown": "^6.5.2",
     "@codemirror/language": "^6.12.4",
@@ -33,6 +37,9 @@
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.9",
     "@google/generative-ai": "^0.24.1",
+    "@langchain/core": "^1.2.0",
+    "@langchain/langgraph": "^1.5.0",
+    "@langchain/langgraph-checkpoint-postgres": "^1.1.0",
     "@lezer/common": "^1.5.2",
     "@lezer/highlight": "^1.2.3",
     "@lezer/markdown": "^1.7.2",
@@ -42,9 +49,11 @@
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.91.1",
     "@upstash/redis": "^1.36.1",
+    "ai": "^7.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.1",
+    "js-tiktoken": "^1.0.21",
     "lucide-react": "^0.563.0",
     "next": "^16.3.8",
     "pdfjs-dist": "^4.10.38",

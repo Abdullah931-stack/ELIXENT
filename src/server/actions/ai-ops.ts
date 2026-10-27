@@ -58,21 +58,22 @@ function getWeekStart(): string {
  * Get weekly word usage for free tier
  */
 async function getWeeklyWordUsage(userId: string): Promise<number> {
-    const weekStart = getWeekStart();
+    const weekStart = new Date(getWeekStart());
 
     const result = await db
         .select({
-            total: sql<number>`COALESCE(SUM(correct_words + improve_words + translate_words), 0)`,
+            total: sql<number>`COALESCE(SUM(input_tokens + output_tokens), 0)`,
         })
-        .from(schema.usage)
+        .from(schema.creditLedgerTransactions)
         .where(
             and(
-                eq(schema.usage.userId, userId),
-                sql`date >= ${weekStart}`
+                eq(schema.creditLedgerTransactions.userId, userId),
+                sql`${schema.creditLedgerTransactions.status} != 'ABORTED'`,
+                sql`${schema.creditLedgerTransactions.createdAt} >= ${weekStart}`
             )
         );
 
-    return result[0]?.total || 0;
+    return Number(result[0]?.total || 0);
 }
 
 /**
@@ -229,6 +230,7 @@ export async function getRemainingQuota(): Promise<{
                 displayName,
                 avatarUrl,
                 tier: "free",
+                creditBalanceMicro: BigInt(50000000),
             }).onConflictDoNothing();
         } catch {
             // Non-fatal if concurrency or conflict occurred

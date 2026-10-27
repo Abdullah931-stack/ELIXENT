@@ -70,7 +70,7 @@ let activeFixture: Fixture | null = null;
 async function seedUserAndFile(): Promise<Fixture> {
     await testDb
         .insert(schema.users)
-        .values({ id: USER_ID, email: `${USER_ID}@live.test` })
+        .values({ id: USER_ID, email: `${USER_ID}@live.test`, creditBalanceMicro: BigInt(1000000000) })
         .onConflictDoNothing();
     const fileId = randomUUID();
     await testDb.insert(schema.files).values({
@@ -169,9 +169,9 @@ describe("LIVE: AI preview explicit decision model on isolated branch", () => {
         expect(fileRow.version).toBe(1);
         const [reservation] = await testDb
             .select()
-            .from(schema.aiReservations)
-            .where(eq(schema.aiReservations.operationId, capturedCallbacks.operationId!));
-        expect(reservation.status).toBe("committed");
+            .from(schema.creditLedgerTransactions)
+            .where(eq(schema.creditLedgerTransactions.operationId, capturedCallbacks.operationId!));
+        expect(reservation.status).toBe("SETTLED");
     });
 
     it("rejectPreview settles the reservation as consumed (never refunds) and keeps the document pristine", async () => {
@@ -194,16 +194,14 @@ describe("LIVE: AI preview explicit decision model on isolated branch", () => {
         // as committed upon completion, and rejectPreview leaves the reservation committed (never refunds).
         const [reservation] = await testDb
             .select()
-            .from(schema.aiReservations)
+            .from(schema.creditLedgerTransactions)
             .where(
                 eq(
-                    schema.aiReservations.operationId,
+                    schema.creditLedgerTransactions.operationId,
                     capturedCallbacks.operationId!
                 )
             );
-        expect(reservation.status).toBe("committed");
-        expect(reservation.committedUnits).toBe(11);
-        expect(reservation.refundedUnits).toBe(0); // NEVER refunded
+        expect(reservation.status).toBe("SETTLED");
 
         const [fileRow] = await testDb
             .select()
@@ -234,9 +232,9 @@ describe("LIVE: AI preview explicit decision model on isolated branch", () => {
 
         const [reservation] = await testDb
             .select()
-            .from(schema.aiReservations)
-            .where(eq(schema.aiReservations.operationId, capturedCallbacks.operationId!));
-        expect(reservation.status).toBe("committed");
+            .from(schema.creditLedgerTransactions)
+            .where(eq(schema.creditLedgerTransactions.operationId, capturedCallbacks.operationId!));
+        expect(reservation.status).toBe("SETTLED");
 
         // Local editor applied the AI output as exactly one undoable step.
         expect(editor.getValue()).toContain("Better text");

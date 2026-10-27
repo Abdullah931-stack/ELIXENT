@@ -73,14 +73,14 @@ export async function commitAIFileOperation(
         }
 
         // 1. Verify reservation existence & user/file association
-        const reservation = await db.query.aiReservations.findFirst({
+        const tx = await db.query.creditLedgerTransactions.findFirst({
             where: and(
-                eq(schema.aiReservations.operationId, operationId),
-                eq(schema.aiReservations.userId, user.id)
+                eq(schema.creditLedgerTransactions.operationId, operationId),
+                eq(schema.creditLedgerTransactions.userId, user.id)
             ),
         });
 
-        if (!reservation) {
+        if (!tx) {
             return {
                 success: false,
                 status: "reservation_not_found",
@@ -89,7 +89,7 @@ export async function commitAIFileOperation(
         }
 
         // Reservation file association check
-        if (reservation.fileId && reservation.fileId !== fileId) {
+        if (tx.threadId && tx.threadId !== "f_default" && tx.threadId !== fileId) {
             return {
                 success: false,
                 status: "error",
@@ -97,11 +97,12 @@ export async function commitAIFileOperation(
             };
         }
 
-        if (reservation.status === "refunded" || reservation.status === "expired") {
+        const isAborted = tx.status === "ABORTED" || tx.nodeName?.startsWith("refunded:") || tx.nodeName?.startsWith("expired:");
+        if (isAborted) {
             return {
                 success: false,
                 status: "reservation_expired",
-                error: `Reservation is already ${reservation.status}`,
+                error: "Reservation is already expired or refunded",
             };
         }
 
@@ -120,8 +121,9 @@ export async function commitAIFileOperation(
 
         // Idempotency: If reservation was committed and file has already advanced past expectedVersion,
         // or if current file content already matches target content at or above expectedVersion.
+        const isCommitted = tx.nodeName?.startsWith("committed:");
         if (
-            reservation.status === "committed" &&
+            isCommitted &&
             ((currentFile.version ?? 0) > expectedVersion || currentFile.content === resultContent)
         ) {
             return {
@@ -318,7 +320,7 @@ export async function commitAIFileOperation(
             // Ignore static generation store missing error during standalone unit testing
         }
 
-        if (reservation.status === "reserved") {
+        if (!isCommitted) {
             await commitAIReservation(operationId).catch(() => {});
         }
 

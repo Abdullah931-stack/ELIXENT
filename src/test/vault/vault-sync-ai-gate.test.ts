@@ -41,7 +41,7 @@ const mockDb = vi.hoisted(() => ({
         userVaultProfiles: {
             findFirst: vi.fn(),
         },
-        aiReservations: {
+        creditLedgerTransactions: {
             findFirst: vi.fn(),
         },
     },
@@ -130,11 +130,10 @@ vi.mock('@/server/db', () => ({
             allowAIOnEncryptedFiles: 'allow_ai_on_encrypted_files',
             updatedAt: 'updated_at',
         },
-        aiReservations: {
-            id: 'id',
+        creditLedgerTransactions: {
             operationId: 'operation_id',
             userId: 'user_id',
-            fileId: 'file_id',
+            threadId: 'thread_id',
             status: 'status',
         },
     },
@@ -490,12 +489,11 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
         it('should reject commit to encrypted file if allowAIOnEncryptedFiles is false without refunding reservation', async () => {
             mockGetUser.mockResolvedValueOnce({ id: userId });
 
-            mockDb.query.aiReservations.findFirst.mockResolvedValueOnce({
-                id: 'res-1',
+            mockDb.query.creditLedgerTransactions.findFirst.mockResolvedValueOnce({
                 operationId,
                 userId,
-                fileId,
-                status: 'reserved',
+                threadId: fileId,
+                status: 'SETTLED',
             });
 
             mockDb.query.files.findFirst.mockResolvedValueOnce({
@@ -529,12 +527,11 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
         it('should reject plaintext commit to encrypted file even if AI is allowed if encryptionMetadata.iv is missing without refunding reservation', async () => {
             mockGetUser.mockResolvedValueOnce({ id: userId });
 
-            mockDb.query.aiReservations.findFirst.mockResolvedValueOnce({
-                id: 'res-1',
+            mockDb.query.creditLedgerTransactions.findFirst.mockResolvedValueOnce({
                 operationId,
                 userId,
-                fileId,
-                status: 'reserved',
+                threadId: fileId,
+                status: 'SETTLED',
             });
 
             mockDb.query.files.findFirst.mockResolvedValueOnce({
@@ -569,12 +566,11 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
         it('should commit successfully when AI is allowed and re-encrypted metadata is provided', async () => {
             mockGetUser.mockResolvedValueOnce({ id: userId });
 
-            mockDb.query.aiReservations.findFirst.mockResolvedValueOnce({
-                id: 'res-1',
+            mockDb.query.creditLedgerTransactions.findFirst.mockResolvedValueOnce({
                 operationId,
                 userId,
-                fileId,
-                status: 'reserved',
+                threadId: fileId,
+                status: 'SETTLED',
             });
 
             mockDb.query.files.findFirst.mockResolvedValueOnce({

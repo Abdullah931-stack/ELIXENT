@@ -149,8 +149,12 @@ async function main() {
             "users",
             "files",
             "subscriptions",
-            "usage",
-            "ai_reservations",
+            "credit_ledger_transactions",
+            "project_decision_ledger",
+            "checkpoint_migrations",
+            "checkpoints",
+            "checkpoint_blobs",
+            "checkpoint_writes",
             "subscription_events",
             "user_vault_profiles",
         ];
@@ -177,11 +181,10 @@ async function main() {
 
         const requiredIndexes = [
             "idx_files_user_parent_title_live",
-            "idx_ai_reservations_user_op_period",
-            "idx_ai_reservations_user_op",
-            "idx_ai_reservations_request_hash",
+            "idx_credit_ledger_user_created",
+            "idx_credit_ledger_thread",
+            "idx_project_decision_user_project",
             "idx_subscription_events_event_id",
-            "idx_usage_user_date_unique",
             "idx_subscriptions_stripe_id_unique",
             "idx_subscriptions_tier",
             "idx_users_stripe_customer_id",
@@ -197,14 +200,14 @@ async function main() {
         }
 
         // 6. Verify hardened columns
-        const { rows: reqHashCol } = await pool.query(`
+        const { rows: creditBalanceCol } = await pool.query(`
             SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'ai_reservations' AND column_name = 'request_hash'
+            WHERE table_name = 'users' AND column_name = 'credit_balance_micro'
         `);
-        if (reqHashCol.length === 0) {
-            throw new Error("[verify-migrations] Column 'request_hash' is missing from 'ai_reservations'");
+        if (creditBalanceCol.length === 0) {
+            throw new Error("[verify-migrations] Column 'credit_balance_micro' is missing from 'users'");
         }
-        console.log("[verify-migrations] Verified column: ai_reservations.request_hash");
+        console.log("[verify-migrations] Verified column: users.credit_balance_micro");
 
         console.log("[verify-migrations] SUCCESS: All migrations applied and verified without errors.");
     } catch (err) {

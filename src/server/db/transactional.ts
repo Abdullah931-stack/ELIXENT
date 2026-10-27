@@ -6,6 +6,7 @@ import * as schema from "./schema";
 
 let instance: ReturnType<typeof drizzleNodePg<typeof schema>> | null = null;
 let currentDbUrl: string | null = null;
+let activePool: NeonPool | NodePgPool | null = null;
 
 export function getTxDb() {
     const dbUrl =
@@ -31,6 +32,7 @@ export function getTxDb() {
             connectionTimeoutMillis: 10_000,
             idleTimeoutMillis: 30_000,
         });
+        activePool = pool;
         instance = drizzleNeonServerless(pool, { schema }) as unknown as ReturnType<typeof drizzleNodePg<typeof schema>>;
     } else {
         const isSsl =
@@ -45,10 +47,19 @@ export function getTxDb() {
             connectionTimeoutMillis: 10_000,
             idleTimeoutMillis: 30_000,
         });
+        activePool = pool;
         instance = drizzleNodePg(pool, { schema });
     }
 
     return instance;
+}
+
+export function getPgPool(): NeonPool | NodePgPool {
+    getTxDb(); // Ensures activePool is initialized and matches current DATABASE_URL
+    if (!activePool) {
+        throw new Error("PostgreSQL connection pool failed to initialize");
+    }
+    return activePool;
 }
 
 /**
@@ -70,4 +81,3 @@ export const txDb = new Proxy({} as ReturnType<typeof drizzleNodePg<typeof schem
 });
 
 export { schema };
-

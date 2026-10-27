@@ -7,11 +7,6 @@ import crypto from "node:crypto";
 import { AIOperation } from "@/lib/ai/prompts";
 import { TIER_LIMITS, TierName, isToPromptEnabled } from "@/config/tiers.config";
 import { eq, and, sql } from "drizzle-orm";
-import {
-    calculateQuotaSettlement,
-    reduceQuotaReservationState,
-    type QuotaReservationState,
-} from "@/lib/ai/quota-settlement-reducer";
 
 /**
  * Compute canonical deterministic request fingerprint for replay attack prevention.
@@ -33,14 +28,6 @@ function getToday(): string {
     return new Date().toISOString().split("T")[0];
 }
 
-function getWeekStart(): string {
-    const now = new Date();
-    const dayOfWeek = now.getDay();
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - dayOfWeek);
-    return startOfWeek.toISOString().split("T")[0];
-}
-
 function getActiveDb() {
     return txDb && typeof txDb.transaction === "function" ? txDb : db;
 }
@@ -56,72 +43,51 @@ export async function getUserTier(userId: string): Promise<TierName> {
 
 export async function getTodayUsage(userId: string) {
     const today = getToday();
+    const todayStart = new Date(`${today}T00:00:00.000Z`);
 
-    const userExists = await db.query.users.findFirst({
-        where: eq(schema.users.id, userId),
-        columns: { id: true },
-    });
-
-    if (!userExists) {
-        return {
-            id: "",
-            userId,
-            date: today,
-            correctWords: 0,
-            improveWords: 0,
-            translateWords: 0,
-            summarizeCount: 0,
-            summarizeWords: 0,
-            toPromptCount: 0,
-            createdAt: new Date(),
-        };
-    }
-
-    await db
-        .insert(schema.usage)
-        .values({ userId, date: today })
-        .onConflictDoNothing({
-            target: [schema.usage.userId, schema.usage.date],
-        });
-
-    const usage = await db.query.usage.findFirst({
+    const txs = await db.query.creditLedgerTransactions.findMany({
         where: and(
-            eq(schema.usage.userId, userId),
-            eq(schema.usage.date, today)
+            eq(schema.creditLedgerTransactions.userId, userId),
+            sql`${schema.creditLedgerTransactions.createdAt} >= ${todayStart}`
         ),
     });
 
-    if (!usage) {
-        const [newUsage] = await db
-            .insert(schema.usage)
-            .values({ userId, date: today })
-            .onConflictDoNothing({
-                target: [schema.usage.userId, schema.usage.date],
-            })
-            .returning();
-        return (
-            newUsage ??
-            (await db.query.usage.findFirst({
-                where: and(
-                    eq(schema.usage.userId, userId),
-                    eq(schema.usage.date, today)
-                ),
-            })) ?? {
-                id: "",
-                userId,
-                date: today,
-                correctWords: 0,
-                improveWords: 0,
-                translateWords: 0,
-                summarizeCount: 0,
-                summarizeWords: 0,
-                toPromptCount: 0,
-                createdAt: new Date(),
-            }
-        );
+    let correctWords = 0;
+    let improveWords = 0;
+    let translateWords = 0;
+    let summarizeCount = 0;
+    let summarizeWords = 0;
+    let toPromptCount = 0;
+
+    for (const tx of txs) {
+        if (tx.status === "ABORTED") continue;
+        const parts = (tx.nodeName || "").split(":");
+        const op = parts.length >= 2 ? parts[1] : (tx.nodeName || "");
+        const words = tx.inputTokens || (parts[3] ? parseInt(parts[3], 10) : 0) || 0;
+
+        if (op === "correct") correctWords += words;
+        else if (op === "improve") improveWords += words;
+        else if (op === "translate") translateWords += words;
+        else if (op === "summarize") {
+            summarizeCount += 1;
+            summarizeWords += words;
+        } else if (op === "toPrompt") {
+            toPromptCount += 1;
+        }
     }
 
-    return usage;
+    return {
+        id: `usage_${userId}_${today}`,
+        userId,
+        date: today,
+        correctWords,
+        improveWords,
+        translateWords,
+        summarizeCount,
+        summarizeWords,
+        toPromptCount,
+        createdAt: new Date(),
+    };
 }
 
 function getLimitsForOperation(
@@ -163,6 +129,9 @@ export interface ReserveAIQuotaOptions {
     fileId?: string;
     requestHash?: string;
     ttlMs?: number;
+    deltaMicro?: bigint;
+    modelId?: string;
+    executionMode?: "SINGLE_PASS_DECISION" | "DISCRETE_THINKING" | "STREAMING_GENERATIVE" | "CREDIT_TOPUP";
 }
 
 export interface ReserveAIQuotaResult {
@@ -175,7 +144,7 @@ export interface ReserveAIQuotaResult {
 }
 
 /**
- * Server-Authoritative atomic quota reservation with replay-attack protection.
+ * Server-Authoritative atomic quota reservation with credit balance deduction and replay-attack protection.
  */
 export async function reserveAIQuota(
     userId: string,
@@ -187,7 +156,6 @@ export async function reserveAIQuota(
     const operationId = options?.operationId || crypto.randomUUID();
     const fileId = options?.fileId || "f_default";
     const requestHash = options?.requestHash || computeRequestHash(userId, operation, fileId, "");
-    const ttlMs = options?.ttlMs ?? 5 * 60 * 1000;
     const today = getToday();
     const limitsInfo = getLimitsForOperation(operation, tier, wordCount);
 
@@ -195,25 +163,17 @@ export async function reserveAIQuota(
         return { reserved: false, reason: limitsInfo.reason };
     }
 
+    const delta = options?.deltaMicro ?? (BigInt(Math.max(1, wordCount)) * BigInt(1000));
     const targetDb = getActiveDb();
 
     const executeReservation = async (client: typeof db): Promise<ReserveAIQuotaResult> => {
         // 1. Replay Attack & Idempotency Check
-        const existing = await client.query.aiReservations.findFirst({
-            where: eq(schema.aiReservations.operationId, operationId),
+        const existing = await client.query.creditLedgerTransactions.findFirst({
+            where: eq(schema.creditLedgerTransactions.operationId, operationId),
         });
 
         if (existing) {
-            // Anti-Replay: Verify requestHash integrity
-            if (existing.requestHash && existing.requestHash !== requestHash) {
-                return {
-                    reserved: false,
-                    reason: "Replay attack detected: operationId reused with divergent payload",
-                    isReplayConflict: true,
-                };
-            }
-
-            // Verify user ownership
+            // Anti-Replay: Verify user ownership
             if (existing.userId !== userId) {
                 return {
                     reserved: false,
@@ -222,16 +182,29 @@ export async function reserveAIQuota(
                 };
             }
 
-            if (existing.status === "reserved") {
+            const parts = (existing.nodeName || "").split(":");
+            const existingStatus = parts[0];
+            const legacyRecord = existing as { requestHash?: string };
+            const existingHash = legacyRecord.requestHash || parts[2] || "";
+
+            // Anti-Replay: Verify requestHash integrity
+            if (existingHash && requestHash && existingHash !== requestHash) {
                 return {
-                    reserved: true,
-                    reservationId: existing.id,
-                    operationId: existing.operationId,
-                    periodKey: existing.periodKey,
+                    reserved: false,
+                    reason: "Replay attack detected: operationId reused with divergent payload",
+                    isReplayConflict: true,
                 };
             }
 
-            if (existing.status === "committed") {
+            if (existing.status === "ABORTED" || existingStatus === "refunded" || existingStatus === "expired") {
+                return {
+                    reserved: false,
+                    reason: `Operation already ${existingStatus || "aborted"}`,
+                    isReplayConflict: true,
+                };
+            }
+
+            if (existingStatus === "committed") {
                 return {
                     reserved: false,
                     reason: "Operation already committed",
@@ -239,102 +212,62 @@ export async function reserveAIQuota(
                 };
             }
 
-            if (existing.status === "refunded" || existing.status === "expired") {
+            if (existingStatus === "reserved" || existing.status === "SETTLED") {
+                const createdDate = (existing.createdAt instanceof Date ? existing.createdAt : (existing.createdAt ? new Date(existing.createdAt) : new Date())).toISOString().slice(0, 10);
                 return {
-                    reserved: false,
-                    reason: `Operation already ${existing.status}`,
-                    isReplayConflict: true,
+                    reserved: true,
+                    reservationId: existing.operationId,
+                    operationId: existing.operationId,
+                    periodKey: createdDate,
                 };
             }
         }
 
-        // 2. Ensure daily usage record exists
-        await getTodayUsage(userId);
-
-        // 3. Construct bounded deduction guarded by available quota
-        let quotaGuard = sql`TRUE`;
-        const updateFields: Record<string, unknown> = {};
-
-        switch (operation) {
-            case "correct":
-                updateFields.correctWords = sql`correct_words + ${wordCount}`;
-                break;
-            case "improve":
-                updateFields.improveWords = sql`improve_words + ${wordCount}`;
-                break;
-            case "translate":
-                updateFields.translateWords = sql`translate_words + ${wordCount}`;
-                break;
-            case "summarize":
-                updateFields.summarizeCount = sql`summarize_count + 1`;
-                updateFields.summarizeWords = sql`summarize_words + ${wordCount}`;
-                quotaGuard = sql`COALESCE(summarize_count, 0) + 1 <= ${TIER_LIMITS[tier].summarize.dailyLimit}`;
-                break;
-            case "toPrompt":
-                updateFields.toPromptCount = sql`to_prompt_count + 1`;
-                quotaGuard = sql`COALESCE(to_prompt_count, 0) + 1 <= ${TIER_LIMITS[tier].toPrompt?.dailyLimit ?? 0}`;
-                break;
-        }
-
-        if (operation === "correct" || operation === "improve" || operation === "translate") {
-            if (limitsInfo.period === "weekly") {
-                const weekStart = getWeekStart();
-                quotaGuard = sql`(SELECT COALESCE(SUM(correct_words + improve_words + translate_words), 0) FROM ${schema.usage} WHERE user_id = ${userId} AND date >= ${weekStart}) + ${wordCount} <= ${limitsInfo.maxWords}`;
-            } else {
-                quotaGuard = sql`COALESCE(correct_words, 0) + COALESCE(improve_words, 0) + COALESCE(translate_words, 0) + ${wordCount} <= ${limitsInfo.maxWords}`;
-            }
-        }
-
-        const [updated] = await client
-            .update(schema.usage)
-            .set(updateFields)
+        // 2. Atomic credit balance check & deduction
+        const [updatedUser] = await client
+            .update(schema.users)
+            .set({
+                creditBalanceMicro: sql`${schema.users.creditBalanceMicro} - ${delta}`,
+                updatedAt: new Date(),
+            })
             .where(
                 and(
-                    eq(schema.usage.userId, userId),
-                    eq(schema.usage.date, today),
-                    quotaGuard
+                    eq(schema.users.id, userId),
+                    sql`${schema.users.creditBalanceMicro} >= ${delta}`
                 )
             )
-            .returning({ id: schema.usage.id });
+            .returning({ id: schema.users.id });
 
-        if (!updated) {
+        if (!updatedUser) {
             return {
                 reserved: false,
-                reason:
-                    operation === "summarize"
-                        ? "Daily summarize limit reached"
-                        : operation === "toPrompt"
-                            ? "Daily ToPrompt limit reached"
-                            : `Word limit (${limitsInfo.maxWords}) exceeded for ${limitsInfo.period} period`,
+                reason: "Insufficient credit balance",
             };
         }
 
-        const expiresAt = new Date(Date.now() + ttlMs);
-
-        const dbFileId = options?.fileId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(options.fileId)
-            ? options.fileId
-            : null;
-
-        const [newReservation] = await client
-            .insert(schema.aiReservations)
+        // 3. Insert credit ledger transaction record
+        const nodeName = `reserved:${operation}:${requestHash}:${wordCount}`;
+        const [newTx] = await client
+            .insert(schema.creditLedgerTransactions)
             .values({
                 operationId,
                 userId,
-                fileId: dbFileId,
-                operation,
-                reservedUnits: wordCount,
-                committedUnits: 0,
-                refundedUnits: 0,
-                periodKey: today,
-                status: "reserved",
-                expiresAt,
-                requestHash,
+                threadId: fileId,
+                nodeName,
+                modelId: options?.modelId || "gemini-2.5-flash",
+                executionMode: options?.executionMode || "STREAMING_GENERATIVE",
+                inputTokens: wordCount,
+                cachedInputTokens: 0,
+                outputTokens: 0,
+                reasoningTokens: 0,
+                deltaMicro: -delta,
+                status: "SETTLED",
             })
             .returning();
 
         return {
             reserved: true,
-            reservationId: newReservation?.id,
+            reservationId: newTx?.operationId ?? operationId,
             operationId,
             periodKey: today,
         };
@@ -345,28 +278,33 @@ export async function reserveAIQuota(
             return await (targetDb.transaction as unknown as (cb: (tx: typeof db) => Promise<ReserveAIQuotaResult>) => Promise<ReserveAIQuotaResult>)(executeReservation);
         } catch (error) {
             // Concurrent race check on operationId
-            const existing = await db.query.aiReservations.findFirst({
-                where: eq(schema.aiReservations.operationId, operationId),
+            const existing = await db.query.creditLedgerTransactions.findFirst({
+                where: eq(schema.creditLedgerTransactions.operationId, operationId),
             });
             if (existing) {
-                if (existing.requestHash && existing.requestHash !== requestHash) {
+                const parts = (existing.nodeName || "").split(":");
+                const existingStatus = parts[0];
+                const existingHash = parts[2] || "";
+
+                if (existingHash && requestHash && existingHash !== requestHash) {
                     return {
                         reserved: false,
                         reason: "Replay attack detected: operationId reused with divergent payload",
                         isReplayConflict: true,
                     };
                 }
-                if (existing.status === "reserved") {
+                if (existingStatus === "reserved" || existing.status === "SETTLED") {
+                    const createdDate = (existing.createdAt instanceof Date ? existing.createdAt : (existing.createdAt ? new Date(existing.createdAt) : new Date())).toISOString().slice(0, 10);
                     return {
                         reserved: true,
-                        reservationId: existing.id,
+                        reservationId: existing.operationId,
                         operationId: existing.operationId,
-                        periodKey: existing.periodKey,
+                        periodKey: createdDate,
                     };
                 }
                 return {
                     reserved: false,
-                    reason: `Operation already ${existing.status}`,
+                    reason: `Operation already ${existingStatus || existing.status}`,
                     isReplayConflict: true,
                 };
             }
@@ -377,238 +315,113 @@ export async function reserveAIQuota(
     return await executeReservation(db);
 }
 
-function reconstructReservationState(reservation: typeof schema.aiReservations.$inferSelect): QuotaReservationState {
-    switch (reservation.status) {
-        case "reserved":
-            return {
-                status: "reserved",
-                reservationId: reservation.id,
-                operationId: reservation.operationId,
-                userId: reservation.userId,
-                reservedUnits: reservation.reservedUnits,
-                expiresAt: reservation.expiresAt.getTime(),
-            };
-        case "committed":
-            return {
-                status: "committed",
-                reservationId: reservation.id,
-                operationId: reservation.operationId,
-                userId: reservation.userId,
-                committedUnits: reservation.committedUnits,
-                refundedUnits: reservation.refundedUnits,
-                settledAt: reservation.updatedAt.getTime(),
-            };
-        case "refunded":
-            return {
-                status: "refunded",
-                reservationId: reservation.id,
-                operationId: reservation.operationId,
-                userId: reservation.userId,
-                refundedUnits: reservation.refundedUnits,
-                refundedAt: reservation.updatedAt.getTime(),
-            };
-        case "expired":
-            return {
-                status: "expired",
-                reservationId: reservation.id,
-                operationId: reservation.operationId,
-                userId: reservation.userId,
-                expiredAt: reservation.expiresAt.getTime(),
-            };
-        default:
-            return { status: "idle" };
-    }
-}
-
 /**
- * Server-Authoritative commit: transitions reservation from reserved -> committed.
+ * Server-Authoritative commit: transitions reservation from reserved -> committed and sets status to SETTLED.
  * Idempotent: repeated calls safely return { committed: true, reason: "already_committed" }.
  */
 export async function commitAIReservation(
     operationId: string,
     consumedUnits?: number
 ): Promise<{ committed: boolean; reason?: string }> {
-    const reservation = await db.query.aiReservations.findFirst({
-        where: eq(schema.aiReservations.operationId, operationId),
+    const tx = await db.query.creditLedgerTransactions.findFirst({
+        where: eq(schema.creditLedgerTransactions.operationId, operationId),
     });
 
-    if (!reservation) {
+    if (!tx) {
         return { committed: false, reason: "not_found" };
     }
 
-    const currentState = reconstructReservationState(reservation);
-    reduceQuotaReservationState(
-        currentState,
-        { type: "COMMIT", consumedUnits, timestamp: Date.now() },
-        { strict: false }
-    );
+    if (tx.status === "ABORTED" || tx.nodeName?.startsWith("refunded:") || tx.nodeName?.startsWith("expired:")) {
+        return { committed: false, reason: "already_refunded" };
+    }
 
-    if (reservation.status === "committed") {
+    if (tx.nodeName?.startsWith("committed:")) {
         return { committed: true, reason: "already_committed" };
     }
 
-    if (reservation.status !== "reserved") {
-        return { committed: false, reason: reservation.status };
+    const parts = (tx.nodeName || "").split(":");
+    const op = parts.length >= 2 ? parts[1] : (tx.nodeName || "general");
+    const hash = parts[2] || "";
+    const reservedWords = tx.inputTokens || (parts[3] ? parseInt(parts[3], 10) : 0) || 0;
+    const actualConsumed = consumedUnits ?? reservedWords;
+
+    // If consumedUnits is less than reserved, refund difference to user
+    if (consumedUnits !== undefined && consumedUnits < reservedWords) {
+        const refundUnits = reservedWords - consumedUnits;
+        const refundMicro = BigInt(refundUnits) * BigInt(1000);
+        await db
+            .update(schema.users)
+            .set({
+                creditBalanceMicro: sql`${schema.users.creditBalanceMicro} + ${refundMicro}`,
+                updatedAt: new Date(),
+            })
+            .where(eq(schema.users.id, tx.userId));
     }
 
-    const settlement = calculateQuotaSettlement({
-        reservedUnits: reservation.reservedUnits,
-        consumedUnits: consumedUnits ?? reservation.reservedUnits,
-    });
-
-    const [updated] = await db
-        .update(schema.aiReservations)
+    await db
+        .update(schema.creditLedgerTransactions)
         .set({
-            status: "committed",
-            committedUnits: settlement.toCommit,
-            refundedUnits: settlement.toRefund,
-            updatedAt: new Date(),
+            status: "SETTLED",
+            nodeName: `committed:${op}:${hash}:${reservedWords}`,
+            outputTokens: actualConsumed,
         })
-        .where(
-            and(
-                eq(schema.aiReservations.id, reservation.id),
-                eq(schema.aiReservations.status, "reserved")
-            )
-        )
-        .returning();
-
-    if (!updated) {
-        const current = await db.query.aiReservations.findFirst({
-            where: eq(schema.aiReservations.id, reservation.id),
-        });
-        if (current?.status === "committed") {
-            return { committed: true, reason: "already_committed" };
-        }
-        return { committed: false, reason: current?.status || "state_conflict" };
-    }
-
-    if (settlement.toRefund > 0) {
-        const undoFields: Record<string, unknown> = {};
-        switch (reservation.operation as AIOperation) {
-            case "correct":
-                undoFields.correctWords = sql`GREATEST(correct_words - ${settlement.toRefund}, 0)`;
-                break;
-            case "improve":
-                undoFields.improveWords = sql`GREATEST(improve_words - ${settlement.toRefund}, 0)`;
-                break;
-            case "translate":
-                undoFields.translateWords = sql`GREATEST(translate_words - ${settlement.toRefund}, 0)`;
-                break;
-            case "summarize":
-                undoFields.summarizeWords = sql`GREATEST(summarize_words - ${settlement.toRefund}, 0)`;
-                break;
-        }
-
-        if (Object.keys(undoFields).length > 0) {
-            await db
-                .update(schema.usage)
-                .set(undoFields)
-                .where(
-                    and(
-                        eq(schema.usage.userId, reservation.userId),
-                        eq(schema.usage.date, reservation.periodKey)
-                    )
-                );
-        }
-    }
+        .where(eq(schema.creditLedgerTransactions.operationId, operationId));
 
     return { committed: true };
 }
 
 /**
- * Server-Authoritative refund: reverts usage counters on the exact periodKey and transitions to refunded.
+ * Server-Authoritative refund: reverts credit deduction on users.creditBalanceMicro and updates status to ABORTED.
  */
 export async function refundAIReservation(
     operationId: string,
     _reason: string = "stream_failed"
 ): Promise<{ refunded: boolean; reason?: string }> {
-    const reservation = await db.query.aiReservations.findFirst({
-        where: eq(schema.aiReservations.operationId, operationId),
+    const tx = await db.query.creditLedgerTransactions.findFirst({
+        where: eq(schema.creditLedgerTransactions.operationId, operationId),
     });
 
-    if (!reservation) {
+    if (!tx) {
         return { refunded: false, reason: "reservation_not_found" };
     }
 
-    const currentState = reconstructReservationState(reservation);
-    const nextState = reduceQuotaReservationState(
-        currentState,
-        { type: "REFUND", timestamp: Date.now() },
-        { strict: false }
-    );
-
-    if (reservation.status === "committed") {
+    if (tx.nodeName?.startsWith("committed:")) {
         return { refunded: false, reason: "already_committed" };
     }
 
-    if (reservation.status === "refunded") {
+    if (tx.status === "ABORTED" || tx.nodeName?.startsWith("refunded:")) {
         return { refunded: false, reason: "already_refunded" };
     }
 
-    if (reservation.status === "expired") {
+    if (tx.nodeName?.startsWith("expired:")) {
         return { refunded: false, reason: "already_expired" };
     }
 
-    if (nextState.status !== "refunded") {
-        return { refunded: false, reason: reservation.status };
-    }
+    const parts = (tx.nodeName || "").split(":");
+    const op = parts.length >= 2 ? parts[1] : (tx.nodeName || "general");
+    const hash = parts[2] || "";
+    const reservedWords = tx.inputTokens || (parts[3] ? parseInt(parts[3], 10) : 0) || 0;
 
-    const unitsToRefund = reservation.reservedUnits;
+    // tx.deltaMicro was negative (debit), so -tx.deltaMicro is positive refund
+    const refundAmount = tx.deltaMicro < BigInt(0) ? -tx.deltaMicro : BigInt(reservedWords) * BigInt(1000);
     const targetDb = getActiveDb();
 
     const executeRefund = async (client: typeof db): Promise<{ refunded: boolean; reason?: string }> => {
-        const [updatedReservation] = await client
-            .update(schema.aiReservations)
+        await client
+            .update(schema.creditLedgerTransactions)
             .set({
-                status: "refunded",
-                refundedUnits: unitsToRefund,
-                updatedAt: new Date(),
+                status: "ABORTED",
+                nodeName: `refunded:${op}:${hash}:${reservedWords}`,
             })
-            .where(
-                and(
-                    eq(schema.aiReservations.id, reservation.id),
-                    eq(schema.aiReservations.status, "reserved")
-                )
-            )
-            .returning();
-
-        if (!updatedReservation) {
-            const refreshed = await client.query.aiReservations.findFirst({
-                where: eq(schema.aiReservations.id, reservation.id),
-            });
-            return { refunded: false, reason: refreshed?.status ? `already_${refreshed.status}` : "state_conflict" };
-        }
-
-        const undoFields: Record<string, unknown> = {};
-
-        switch (reservation.operation as AIOperation) {
-            case "correct":
-                undoFields.correctWords = sql`GREATEST(correct_words - ${unitsToRefund}, 0)`;
-                break;
-            case "improve":
-                undoFields.improveWords = sql`GREATEST(improve_words - ${unitsToRefund}, 0)`;
-                break;
-            case "translate":
-                undoFields.translateWords = sql`GREATEST(translate_words - ${unitsToRefund}, 0)`;
-                break;
-            case "summarize":
-                undoFields.summarizeCount = sql`GREATEST(summarize_count - 1, 0)`;
-                undoFields.summarizeWords = sql`GREATEST(summarize_words - ${unitsToRefund}, 0)`;
-                break;
-            case "toPrompt":
-                undoFields.toPromptCount = sql`GREATEST(to_prompt_count - 1, 0)`;
-                break;
-        }
+            .where(eq(schema.creditLedgerTransactions.operationId, operationId));
 
         await client
-            .update(schema.usage)
-            .set(undoFields)
-            .where(
-                and(
-                    eq(schema.usage.userId, reservation.userId),
-                    eq(schema.usage.date, reservation.periodKey)
-                )
-            );
+            .update(schema.users)
+            .set({
+                creditBalanceMicro: sql`${schema.users.creditBalanceMicro} + ${refundAmount}`,
+                updatedAt: new Date(),
+            })
+            .where(eq(schema.users.id, tx.userId));
 
         return { refunded: true };
     };
@@ -628,44 +441,26 @@ export async function refundUsage(
     operation: AIOperation,
     wordCount: number
 ): Promise<void> {
-    const today = getToday();
-    const undoFields: Record<string, unknown> = {};
-    switch (operation) {
-        case "correct":
-            undoFields.correctWords = sql`GREATEST(correct_words - ${wordCount}, 0)`;
-            break;
-        case "improve":
-            undoFields.improveWords = sql`GREATEST(improve_words - ${wordCount}, 0)`;
-            break;
-        case "translate":
-            undoFields.translateWords = sql`GREATEST(translate_words - ${wordCount}, 0)`;
-            break;
-        case "summarize":
-            undoFields.summarizeCount = sql`GREATEST(summarize_count - 1, 0)`;
-            undoFields.summarizeWords = sql`GREATEST(summarize_words - ${wordCount}, 0)`;
-            break;
-        case "toPrompt":
-            undoFields.toPromptCount = sql`GREATEST(to_prompt_count - 1, 0)`;
-            break;
-    }
-
+    const delta = BigInt(Math.max(1, wordCount)) * BigInt(1000);
     await db
-        .update(schema.usage)
-        .set(undoFields)
-        .where(
-            and(eq(schema.usage.userId, userId), eq(schema.usage.date, today))
-        );
+        .update(schema.users)
+        .set({
+            creditBalanceMicro: sql`${schema.users.creditBalanceMicro} + ${delta}`,
+            updatedAt: new Date(),
+        })
+        .where(eq(schema.users.id, userId));
 }
 
 /**
  * Sweep and expire stale reservations that passed their TTL.
  */
 export async function expireStaleReservations(): Promise<number> {
-    const now = new Date();
-    const staleReservations = await db.query.aiReservations.findMany({
+    const cutoff = new Date(Date.now() - 5 * 60 * 1000);
+    const staleTxs = await db.query.creditLedgerTransactions.findMany({
         where: and(
-            eq(schema.aiReservations.status, "reserved"),
-            sql`expires_at <= ${now}`
+            sql`${schema.creditLedgerTransactions.status} = 'SETTLED'`,
+            sql`${schema.creditLedgerTransactions.nodeName} LIKE 'reserved:%'`,
+            sql`${schema.creditLedgerTransactions.createdAt} <= ${cutoff}`
         ),
         limit: 100,
     });
@@ -673,56 +468,36 @@ export async function expireStaleReservations(): Promise<number> {
     let expiredCount = 0;
     const targetDb = getActiveDb();
 
-    for (const res of staleReservations) {
-        const unitsToRefund = res.reservedUnits;
+    for (const tx of staleTxs) {
+        const parts = (tx.nodeName || "").split(":");
+        const op = parts.length >= 2 ? parts[1] : (tx.nodeName || "general");
+        const hash = parts[2] || "";
+        const reservedWords = tx.inputTokens || (parts[3] ? parseInt(parts[3], 10) : 0) || 0;
+        const refundAmount = tx.deltaMicro < BigInt(0) ? -tx.deltaMicro : BigInt(reservedWords) * BigInt(1000);
 
         const executeExpireItem = async (client: typeof db): Promise<boolean> => {
             const [updated] = await client
-                .update(schema.aiReservations)
+                .update(schema.creditLedgerTransactions)
                 .set({
-                    status: "expired",
-                    refundedUnits: unitsToRefund,
-                    updatedAt: now,
+                    status: "ABORTED",
+                    nodeName: `expired:${op}:${hash}:${reservedWords}`,
                 })
                 .where(
                     and(
-                        eq(schema.aiReservations.id, res.id),
-                        eq(schema.aiReservations.status, "reserved")
+                        eq(schema.creditLedgerTransactions.operationId, tx.operationId),
+                        sql`${schema.creditLedgerTransactions.nodeName} LIKE 'reserved:%'`
                     )
                 )
                 .returning();
 
             if (updated) {
-                const undoFields: Record<string, unknown> = {};
-
-                switch (res.operation as AIOperation) {
-                    case "correct":
-                        undoFields.correctWords = sql`GREATEST(correct_words - ${unitsToRefund}, 0)`;
-                        break;
-                    case "improve":
-                        undoFields.improveWords = sql`GREATEST(improve_words - ${unitsToRefund}, 0)`;
-                        break;
-                    case "translate":
-                        undoFields.translateWords = sql`GREATEST(translate_words - ${unitsToRefund}, 0)`;
-                        break;
-                    case "summarize":
-                        undoFields.summarizeCount = sql`GREATEST(summarize_count - 1, 0)`;
-                        undoFields.summarizeWords = sql`GREATEST(summarize_words - ${unitsToRefund}, 0)`;
-                        break;
-                    case "toPrompt":
-                        undoFields.toPromptCount = sql`GREATEST(to_prompt_count - 1, 0)`;
-                        break;
-                }
-
                 await client
-                    .update(schema.usage)
-                    .set(undoFields)
-                    .where(
-                        and(
-                            eq(schema.usage.userId, res.userId),
-                            eq(schema.usage.date, res.periodKey)
-                        )
-                    );
+                    .update(schema.users)
+                    .set({
+                        creditBalanceMicro: sql`${schema.users.creditBalanceMicro} + ${refundAmount}`,
+                        updatedAt: new Date(),
+                    })
+                    .where(eq(schema.users.id, tx.userId));
 
                 return true;
             }
@@ -761,27 +536,56 @@ export async function getAIReservationStatus(
       }
     | { found: false; reason: "unauthorized" | "not_found" }
 > {
-    const whereConditions = [eq(schema.aiReservations.operationId, operationId)];
-    if (userId) {
-        whereConditions.push(eq(schema.aiReservations.userId, userId));
-    }
-
-    const reservation = await db.query.aiReservations.findFirst({
-        where: and(...whereConditions),
+    const tx = await db.query.creditLedgerTransactions.findFirst({
+        where: eq(schema.creditLedgerTransactions.operationId, operationId),
     });
 
-    if (!reservation) return { found: false, reason: "not_found" };
+    if (!tx) return { found: false, reason: "not_found" };
+
+    if (userId && tx.userId !== userId) {
+        return { found: false, reason: "not_found" };
+    }
+
+    const parts = (tx.nodeName || "").split(":");
+    let status: "reserved" | "committed" | "refunded" | "expired" = "reserved";
+    let operation = "general";
+    let reservedUnits = tx.inputTokens || 0;
+
+    if (parts.length >= 2) {
+        const prefix = parts[0];
+        if (prefix === "reserved" || prefix === "committed" || prefix === "refunded" || prefix === "expired") {
+            status = prefix;
+            operation = parts[1] || "general";
+            if (parts[3]) {
+                reservedUnits = parseInt(parts[3], 10) || reservedUnits;
+            }
+        } else {
+            operation = parts[0];
+        }
+    } else if (tx.nodeName) {
+        operation = tx.nodeName;
+    }
+
+    if (tx.status === "ABORTED" && status !== "expired") {
+        status = "refunded";
+    }
+
+    const committedUnits = status === "committed" ? (tx.outputTokens || reservedUnits) : 0;
+    const refundedUnits = status === "refunded" || status === "expired" ? reservedUnits : (reservedUnits > committedUnits && status === "committed" ? reservedUnits - committedUnits : 0);
+
+    const ttlMs = 5 * 60 * 1000;
+    const expiresAt = new Date(tx.createdAt.getTime() + ttlMs).toISOString();
 
     return {
         found: true,
-        operationId: reservation.operationId,
-        status: reservation.status,
-        operation: reservation.operation,
-        periodKey: reservation.periodKey,
-        reservedUnits: reservation.reservedUnits,
-        committedUnits: reservation.committedUnits,
-        refundedUnits: reservation.refundedUnits,
-        expiresAt: reservation.expiresAt.toISOString(),
+        operationId: tx.operationId,
+        status,
+        operation,
+        periodKey: tx.createdAt.toISOString().slice(0, 10),
+        reservedUnits,
+        committedUnits,
+        refundedUnits,
+        expiresAt,
     };
 }
 

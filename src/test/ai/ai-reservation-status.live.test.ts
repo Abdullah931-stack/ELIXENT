@@ -36,10 +36,15 @@ async function seed(): Promise<void> {
     await testDb
         .insert(schema.users)
         .values([
-            { id: USER_ID, email: USER_ID + "@live.test" },
-            { id: OTHER_USER_ID, email: OTHER_USER_ID + "@live.test" },
+            { id: USER_ID, email: USER_ID + "@live.test", creditBalanceMicro: BigInt(1000000000) },
+            { id: OTHER_USER_ID, email: OTHER_USER_ID + "@live.test", creditBalanceMicro: BigInt(1000000000) },
         ])
-        .onConflictDoNothing();
+        .onConflictDoUpdate({
+            target: schema.users.id,
+            set: {
+                creditBalanceMicro: BigInt(1000000000),
+            },
+        });
 }
 
 beforeEach(async () => {

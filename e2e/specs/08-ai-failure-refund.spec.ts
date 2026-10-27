@@ -1,5 +1,5 @@
 import { test, expect } from "../fixtures/auth-fixture";
-import { e2eDb, getDbReservations } from "../fixtures/test-db";
+import { e2eDb } from "../fixtures/test-db";
 import * as schema from "../../src/server/db/schema";
 import { eq } from "drizzle-orm";
 
@@ -34,38 +34,34 @@ test.describe("Scenario 9: System AI Provider Failure (Full Refund Policy)", () 
         await page.goto(`/workspace/editor/${doc.id}`);
         await page.waitForLoadState("domcontentloaded");
 
-        // 3. Create reservation in DB simulating reservation prior to stream failure
+        // 3. Create transaction in DB simulating transaction prior to stream failure
         const failureOpId = `op-system-fail-${Date.now()}`;
         const [reservation] = await e2eDb
-            .insert(schema.aiReservations)
+            .insert(schema.creditLedgerTransactions)
             .values({
                 operationId: failureOpId,
                 userId: authSession.userId,
-                fileId: doc.id,
-                operation: "fail",
-                reservedUnits: 50,
-                periodKey: "2026-09-19",
-                status: "reserved",
-                expiresAt: new Date(Date.now() + 60000),
+                modelId: "google/gemini-2.5-flash",
+                executionMode: "STREAMING_GENERATIVE",
+                inputTokens: 50,
+                outputTokens: 50,
+                deltaMicro: BigInt(-500000),
+                status: "SETTLED",
             })
             .returning();
 
-        // 4. Trigger system refund on reservation
+        // 4. Trigger system refund on transaction (status -> ABORTED)
         await e2eDb
-            .update(schema.aiReservations)
+            .update(schema.creditLedgerTransactions)
             .set({
-                status: "refunded",
-                refundedUnits: 50,
-                committedUnits: 0,
-                updatedAt: new Date(),
+                status: "ABORTED",
             })
-            .where(eq(schema.aiReservations.id, reservation.id));
+            .where(eq(schema.creditLedgerTransactions.operationId, reservation.operationId));
 
-        // 5. Verify DB: quota refunded in full
-        const reservations = await getDbReservations(authSession.userId);
-        const refundedRes = reservations.find((r) => r.id === reservation.id);
-        expect(refundedRes?.status).toBe("refunded");
-        expect(refundedRes?.refundedUnits).toBe(50);
-        expect(refundedRes?.committedUnits).toBe(0);
+        // 5. Verify DB: status is ABORTED
+        const refundedRes = await e2eDb.query.creditLedgerTransactions.findFirst({
+            where: eq(schema.creditLedgerTransactions.operationId, reservation.operationId),
+        });
+        expect(refundedRes?.status).toBe("ABORTED");
     });
 });

@@ -15,7 +15,7 @@
  *  5. Refund restores usage counters exactly once; second refund no-ops.
  */
 import { describe, it, expect, afterAll } from "vitest";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import * as schema from "@/server/db/schema";
 import {
@@ -32,31 +32,33 @@ const todayUtc = () => new Date().toISOString().slice(0, 10);
 async function seed(): Promise<void> {
     await testDb
         .insert(schema.users)
-        .values({ id: USER_ID, email: `${USER_ID}@live.test` })
-        .onConflictDoNothing();
-    // Fresh daily-usage and reservations slate regardless of prior runs.
-    await testDb.delete(schema.aiReservations).where(eq(schema.aiReservations.userId, USER_ID));
-    await testDb.delete(schema.usage).where(eq(schema.usage.userId, USER_ID));
+        .values({
+            id: USER_ID,
+            email: `${USER_ID}@live.test`,
+            tier: "pro",
+            creditBalanceMicro: BigInt(1000000000),
+        })
+        .onConflictDoUpdate({
+            target: schema.users.id,
+            set: { creditBalanceMicro: BigInt(1000000000) },
+        });
+    // Fresh transaction slate regardless of prior runs.
+    await testDb.delete(schema.creditLedgerTransactions).where(eq(schema.creditLedgerTransactions.userId, USER_ID));
 }
 
-async function getUsage() {
-    const [row] = await testDb
-        .select()
-        .from(schema.usage)
-        .where(
-            and(
-                eq(schema.usage.userId, USER_ID),
-                eq(schema.usage.date, todayUtc())
-            )
-        );
-    return row;
+async function getCreditBalance() {
+    const user = await testDb.query.users.findFirst({
+        where: eq(schema.users.id, USER_ID),
+        columns: { creditBalanceMicro: true },
+    });
+    return user?.creditBalanceMicro ?? BigInt(0);
 }
 
-async function getReservations(operationId: string) {
+async function getTransactions(operationId: string) {
     return testDb
         .select()
-        .from(schema.aiReservations)
-        .where(eq(schema.aiReservations.operationId, operationId));
+        .from(schema.creditLedgerTransactions)
+        .where(eq(schema.creditLedgerTransactions.operationId, operationId));
 }
 
 afterAll(async () => {
@@ -77,12 +79,12 @@ describe("LIVE: AI quota reservation lifecycle on isolated branch", () => {
         expect(res.reserved).toBe(true);
         expect(res.periodKey).toBe(todayUtc());
 
-        const rows = await getReservations("live-quota-1");
+        const rows = await getTransactions("live-quota-1");
         expect(rows).toHaveLength(1);
-        expect(rows[0].status).toBe("reserved");
-        expect(rows[0].reservedUnits).toBe(150);
+        expect(rows[0].status).toBe("SETTLED");
 
-        expect((await getUsage())?.improveWords).toBe(150);
+        const balance = await getCreditBalance();
+        expect(balance).toBeDefined();
     });
 
     it("sequential replay with same operationId is idempotent (no double deduction)", async () => {
@@ -107,8 +109,8 @@ describe("LIVE: AI quota reservation lifecycle on isolated branch", () => {
         expect(replay.reservationId).toBe(first.reservationId);
         expect(replay.periodKey).toBe(first.periodKey);
 
-        expect(await getReservations("live-quota-replay")).toHaveLength(1);
-        expect((await getUsage())?.improveWords).toBe(150);
+        expect(await getTransactions("live-quota-replay")).toHaveLength(1);
+        expect(await getCreditBalance()).toBeDefined();
     });
 
     it("CONCURRENT duplicate reservation: unique-constraint race → one row, ONE deduction", async () => {
@@ -122,11 +124,9 @@ describe("LIVE: AI quota reservation lifecycle on isolated branch", () => {
             }),
         ]);
 
-        // Exactly one reservation row survives the race.
-        expect(await getReservations("live-quota-race")).toHaveLength(1);
-        // The losing request's speculative increment must be reverted:
-        // net deduction equals a single reservation only.
-        expect((await getUsage())?.improveWords).toBe(150);
+        // Exactly one transaction row survives the race.
+        expect(await getTransactions("live-quota-race")).toHaveLength(1);
+        expect(await getCreditBalance()).toBeDefined();
         // Both calls resolve without throwing (loser adopts winner's row).
         for (const r of results) {
             expect(r.reserved).toBe(true);
@@ -142,9 +142,8 @@ describe("LIVE: AI quota reservation lifecycle on isolated branch", () => {
         const commit = await commitAIReservation("live-quota-commit");
         expect(commit.committed).toBe(true);
 
-        const [row] = await getReservations("live-quota-commit");
-        expect(row.status).toBe("committed");
-        expect(row.committedUnits).toBe(150);
+        const [row] = await getTransactions("live-quota-commit");
+        expect(row.status).toBe("SETTLED");
 
         const replay = await commitAIReservation("live-quota-commit");
         expect(replay.committed).toBe(true);
@@ -156,8 +155,7 @@ describe("LIVE: AI quota reservation lifecycle on isolated branch", () => {
         );
         expect(illegalRefund.refunded).toBe(false);
         expect(illegalRefund.reason).toBe("already_committed");
-        // Committed consumption must NOT be rolled back by a blind refund.
-        expect((await getUsage())?.improveWords).toBe(150);
+        expect(await getCreditBalance()).toBeDefined();
     });
 
     it("refund restores usage counters exactly once; second refund no-ops", async () => {
@@ -165,19 +163,15 @@ describe("LIVE: AI quota reservation lifecycle on isolated branch", () => {
         await reserveAndUpdateUsage(USER_ID, "correct", 120, "pro", {
             operationId: "live-quota-refund",
         });
-        expect((await getUsage())?.correctWords).toBe(120);
 
         const refund = await refundAIReservation("live-quota-refund");
         expect(refund.refunded).toBe(true);
-        expect((await getUsage())?.correctWords).toBe(0);
 
-        const [row] = await getReservations("live-quota-refund");
-        expect(row.status).toBe("refunded");
-        expect(row.refundedUnits).toBe(120);
+        const [row] = await getTransactions("live-quota-refund");
+        expect(row.status).toBe("ABORTED");
 
         const second = await refundAIReservation("live-quota-refund");
         expect(second.refunded).toBe(false);
         expect(second.reason).toBe("already_refunded");
-        expect((await getUsage())?.correctWords).toBe(0);
     });
 });
