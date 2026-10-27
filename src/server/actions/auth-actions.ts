@@ -2,17 +2,31 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { db, schema } from "@/server/db";
 import { createClient } from "@/lib/supabase/server";
 import { requireAuthenticatedUser } from "@/server/auth/session";
 import { eq, sql } from "drizzle-orm";
 import { resolveSafeRedirectPath } from "@/lib/auth/safe-redirect";
+import { authRateLimiter } from "@/lib/rate-limit";
 
 /**
  * Sign in with Google OAuth
  */
 export async function signInWithGoogle(redirectTo?: string) {
+    let ip = "unknown";
+    try {
+        const headerStore = await headers();
+        ip = headerStore.get("x-forwarded-for")?.split(",")[0]?.trim() || headerStore.get("x-real-ip") || "unknown";
+    } catch {
+        // Fallback when executed outside request context (e.g. testing)
+    }
+
+    const rateLimit = await authRateLimiter.limit(`signin:${ip}`);
+    if (!rateLimit.success) {
+        return { error: "Rate limit exceeded. Please try again later." };
+    }
+
     const supabase = await createClient();
 
     const safeRedirect = resolveSafeRedirectPath(redirectTo, "/dashboard");
@@ -70,6 +84,11 @@ export async function syncUserToDatabase(): Promise<{ success: boolean; error?: 
             user = await requireAuthenticatedUser();
         } catch {
             return { success: false, error: "No authenticated user" };
+        }
+
+        const rateLimit = await authRateLimiter.limit(`sync:${user.id}`);
+        if (!rateLimit.success) {
+            return { success: false, error: "Rate limit exceeded. Please try again later." };
         }
 
         const userEmail = user.email || `${user.id}@auth.local`;

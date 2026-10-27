@@ -6,6 +6,8 @@ import {
   unwrapMasterKeyWithWebAuthnPrf,
 } from '@/lib/sync/webauthn-prf';
 import { DeviceTrustEnvelope } from '@/lib/sync/types/vault';
+import { cryptoWorkerBridge } from '@/lib/sync/crypto-worker-bridge';
+import { arrayBufferToBase64 } from '@/lib/sync/crypto-utils';
 
 describe('WebAuthn PRF Hardware Key Derivation & Envelope Lifecycle', () => {
   const testUserId = 'user-hardware-test-uuid-1234';
@@ -205,6 +207,33 @@ describe('WebAuthn PRF Hardware Key Derivation & Envelope Lifecycle', () => {
       await expect(
         unwrapMasterKeyWithWebAuthnPrf(envelope, wrongUserId)
       ).rejects.toThrow();
+    });
+
+    it('should successfully unwrap a legacy envelope wrapped with legacy AAD (trusted_device:...)', async () => {
+      const originalMasterKey = crypto.getRandomValues(new Uint8Array(32));
+      const prfSalt = crypto.getRandomValues(new Uint8Array(32));
+      const kek = await derivePrfKek(mockPrfOutput, prfSalt);
+      const iv = await cryptoWorkerBridge.generateRandomBytes(12);
+      const legacyAad = `trusted_device:${testUserId}:1`;
+      const wrapped = await cryptoWorkerBridge.wrapKeyRaw(kek, originalMasterKey, iv, legacyAad);
+      const now = Date.now();
+
+      const legacyEnvelope: DeviceTrustEnvelope = {
+        version: 1,
+        algorithm: 'AES-GCM-256',
+        trustType: 'webauthn_prf',
+        encryptedMasterKey: wrapped.wrappedKeyBase64,
+        salt: arrayBufferToBase64(prfSalt),
+        iv: wrapped.ivBase64,
+        credentialId: arrayBufferToBase64(new Uint8Array([1, 2, 3, 4])),
+        deviceTrustEpoch: 1,
+        trustedAt: now,
+        expiresAt: now + 30 * 24 * 60 * 60 * 1000,
+        failedAttempts: 0,
+      };
+
+      const unwrappedKey = await unwrapMasterKeyWithWebAuthnPrf(legacyEnvelope, testUserId);
+      expect(unwrappedKey).toEqual(originalMasterKey);
     });
   });
 

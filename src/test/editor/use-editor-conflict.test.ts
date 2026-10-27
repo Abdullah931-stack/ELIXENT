@@ -167,7 +167,6 @@ function setup(overrides: Partial<UseEditorConflictOptions> = {}): SetupFixture 
         setError: vi.fn(),
         onNavigate: vi.fn(),
         resolveEffectiveUserId: vi.fn().mockResolvedValue(userId),
-        buildFileAAD: vi.fn((uid, fid) => `vault:file:${uid}:${fid}`),
         ...overrides,
     };
 

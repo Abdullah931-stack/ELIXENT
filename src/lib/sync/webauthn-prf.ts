@@ -11,6 +11,7 @@
 import { DeviceTrustEnvelope } from './types/vault';
 import { arrayBufferToBase64, base64ToUint8Array, wipeBuffer } from './crypto-utils';
 import { cryptoWorkerBridge } from './crypto-worker-bridge';
+import { AAD } from '@/lib/crypto/aad';
 
 export interface PrfAuthenticationExtensionsClientInputs {
   prf?: {
@@ -272,7 +273,7 @@ export async function createWebAuthnPrfEnvelope(
 
   // 4. Wrap Master Key with AES-GCM-256
   const iv = await cryptoWorkerBridge.generateRandomBytes(12);
-  const aad = `trusted_device:${userId}:${deviceTrustEpoch}`;
+  const aad = AAD.deviceWrap(userId, deviceTrustEpoch);
 
   try {
     const wrapped = await cryptoWorkerBridge.wrapKeyRaw(kek, masterKeyBytes, iv, aad);
@@ -360,10 +361,26 @@ export async function unwrapMasterKeyWithWebAuthnPrf(
     // Derive KEK via HKDF
     const kek = await derivePrfKek(prfOutput, prfSalt);
     const iv = base64ToUint8Array(envelope.iv);
-    const aad = `trusted_device:${userId}:${envelope.deviceTrustEpoch || 1}`;
+    const epoch = envelope.deviceTrustEpoch || 1;
+    const canonicalAad = AAD.deviceWrap(userId, epoch);
+    const legacyAad = `trusted_device:${userId}:${epoch}`;
 
     try {
-      return await cryptoWorkerBridge.unwrapKeyRaw(kek, envelope.encryptedMasterKey, iv, aad);
+      try {
+        return await cryptoWorkerBridge.unwrapKeyRaw(
+          kek,
+          envelope.encryptedMasterKey,
+          iv,
+          canonicalAad
+        );
+      } catch {
+        return await cryptoWorkerBridge.unwrapKeyRaw(
+          kek,
+          envelope.encryptedMasterKey,
+          iv,
+          legacyAad
+        );
+      }
     } finally {
       wipeBuffer(prfOutput);
       wipeBuffer(kek);

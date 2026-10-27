@@ -116,19 +116,6 @@ export interface UseEditorOrchestratorReturn {
     handleVaultUnlocked: () => Promise<void>;
 }
 
-/**
- * Constructs authenticated additional data (AAD) binding for encrypted file operations.
- * Validates that both userId and fileId are non-empty strings (LUGX-056).
- */
-export function buildFileAAD(userId: string | undefined | null, fileId: string): string {
-    if (!userId || typeof userId !== "string" || userId.trim() === "") {
-        throw new Error(`[Orchestrator] Invalid userId for file AAD: userId must be a non-empty string, got "${userId}"`);
-    }
-    if (!fileId || typeof fileId !== "string" || fileId.trim() === "") {
-        throw new Error(`[Orchestrator] Invalid fileId for file AAD: fileId must be a non-empty string, got "${fileId}"`);
-    }
-    return `vault:file:${userId.trim()}:${fileId.trim()}`;
-}
 
 export function useEditorOrchestrator({
     fileId,
@@ -404,7 +391,6 @@ export function useEditorOrchestrator({
         if (masterKey && pending.content) {
             try {
                 const effectiveUid = await resolveEffectiveUserId();
-                buildFileAAD(effectiveUid, fileId);
                 const inbound = await SyncCryptoGateway.decryptInbound({
                     fileId,
                     content: pending.content,
@@ -524,7 +510,6 @@ export function useEditorOrchestrator({
         setError,
         onNavigate,
         resolveEffectiveUserId,
-        buildFileAAD,
     });
     const { isBlockedByConflict, handle412Conflict } = conflictHook;
 
@@ -586,7 +571,6 @@ export function useEditorOrchestrator({
 
                 try {
                     const effectiveUid = await resolveEffectiveUserId();
-                    buildFileAAD(effectiveUid, targetFileId);
                     const encrypted = await SyncCryptoGateway.encryptOutbound(
                         targetFileId,
                         content,
@@ -693,7 +677,6 @@ export function useEditorOrchestrator({
                     }
 
                     const effectiveUid = await resolveEffectiveUserId();
-                    buildFileAAD(effectiveUid, fileId);
                     const encResult = await SyncCryptoGateway.encryptOutbound(
                         fileId,
                         contentToSend,
@@ -876,7 +859,6 @@ export function useEditorOrchestrator({
                         if (fileIsEncrypted && initialContent) {
                             try {
                                 const effectiveUid = await resolveEffectiveUserId();
-                                buildFileAAD(effectiveUid, fileId);
                                 const inbound = await SyncCryptoGateway.decryptInbound({
                                     fileId,
                                     content: initialContent,
@@ -991,7 +973,6 @@ export function useEditorOrchestrator({
                         if (safeContent) {
                             try {
                                 const effectiveUid = await resolveEffectiveUserId();
-                                buildFileAAD(effectiveUid, fileId);
                                 const inbound = await SyncCryptoGateway.decryptInbound({
                                     fileId,
                                     content: safeContent,

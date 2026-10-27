@@ -9,19 +9,27 @@ import type { FileOpResult } from "./files";
 /**
  * Fetch all descendant IDs (children, grandchildren, etc.) of a folder recursively.
  */
-export async function getDescendantIds(folderId: string, userId: string): Promise<string[]> {
+export async function getDescendantIds(
+    folderId: string,
+    userId: string,
+    includeDeleted: boolean = false
+): Promise<string[]> {
     const descendantIds: string[] = [];
     const queue: string[] = [folderId];
     const visited = new Set<string>([folderId]);
 
     while (queue.length > 0) {
         const currentId = queue.shift()!;
+        const conditions = [
+            eq(schema.files.parentFolderId, currentId),
+            eq(schema.files.userId, userId),
+        ];
+        if (!includeDeleted) {
+            conditions.push(isNull(schema.files.deletedAt));
+        }
+
         const children = await db.query.files.findMany({
-            where: and(
-                eq(schema.files.parentFolderId, currentId),
-                eq(schema.files.userId, userId),
-                isNull(schema.files.deletedAt)
-            ),
+            where: and(...conditions),
             columns: { id: true, isFolder: true },
         });
 

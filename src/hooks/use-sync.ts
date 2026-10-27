@@ -318,7 +318,7 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
                 etag: file.etag !== undefined ? file.etag : (existingFile?.etag || ''),
                 version: file.version !== undefined ? file.version : (existingFile?.version || 0),
                 title: file.title || existingFile?.title || 'Untitled',
-                parentFolderId: file.parentFolderId || existingFile?.parentFolderId || null,
+                parentFolderId: file.parentFolderId !== undefined ? file.parentFolderId : (existingFile?.parentFolderId ?? null),
                 isEncrypted: file.isEncrypted ?? existingFile?.isEncrypted ?? false,
                 encryptionMetadata: file.encryptionMetadata ?? existingFile?.encryptionMetadata ?? null,
             };
@@ -336,7 +336,7 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
             title: file.title || existingFile?.title || 'Untitled',
             etag: file.etag !== undefined ? file.etag : (existingFile?.etag || ''),
             version: file.version !== undefined ? file.version : (existingFile?.version || 0),
-            parentFolderId: file.parentFolderId || existingFile?.parentFolderId || null,
+            parentFolderId: file.parentFolderId !== undefined ? file.parentFolderId : (existingFile?.parentFolderId ?? null),
             isFolder: file.isFolder ?? existingFile?.isFolder ?? false,
             isEncrypted: file.isEncrypted !== undefined ? file.isEncrypted : (existingFile?.isEncrypted ?? false),
             encryptionMetadata: file.encryptionMetadata !== undefined ? file.encryptionMetadata : (existingFile?.encryptionMetadata ?? null),

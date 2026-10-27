@@ -233,7 +233,6 @@ export interface UseEditorConflictOptions {
 
     // User derivation / AAD
     resolveEffectiveUserId?: () => Promise<string>;
-    buildFileAAD?: (userId: string | undefined | null, fileId: string) => string;
 }
 
 export interface UseEditorConflictReturn {
@@ -833,7 +832,7 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
   - **Vault Subsystem Total:** 10/10 test files, 178/178 tests passing (100% success rate).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 89 unit suites (1077 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 90 unit suites (1081 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
   - **TypeScript Typecheck:** `npx tsc --noEmit` exits with code 0 (zero errors).

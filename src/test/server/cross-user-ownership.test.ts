@@ -61,6 +61,23 @@ vi.mock("@/server/db", async () => {
     };
 });
 
+// Mock rate limiter so authRateLimiter does not fail closed during tests lacking Redis
+vi.mock("@/lib/rate-limit", async () => {
+    const original = await vi.importActual<typeof import("@/lib/rate-limit")>("@/lib/rate-limit");
+    return {
+        ...original,
+        authRateLimiter: {
+            limit: vi.fn().mockResolvedValue({
+                success: true,
+                remaining: 100,
+                reset: Math.ceil(Date.now() / 1000) + 60,
+                limit: 100,
+            }),
+            reset: vi.fn().mockResolvedValue(undefined),
+        },
+    };
+});
+
 describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () => {
     beforeAll(async () => {
         dbAvailable = await isTestDbAvailable();

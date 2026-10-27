@@ -125,7 +125,6 @@ export interface UseEditorConflictOptions {
 
     // User derivation / AAD
     resolveEffectiveUserId?: () => Promise<string>;
-    buildFileAAD?: (userId: string | undefined | null, fileId: string) => string;
 }
 
 export interface UseEditorConflictReturn {
@@ -185,19 +184,6 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
             throw new Error("[Conflict] User ID is missing or empty; cannot derive file AAD for encrypted operations.");
         }
         return resolved.trim();
-    }, []);
-
-    const executeBuildAAD = useCallback((effectiveUid: string, fId: string): string => {
-        if (optsRef.current.buildFileAAD) {
-            return optsRef.current.buildFileAAD(effectiveUid, fId);
-        }
-        if (!effectiveUid || typeof effectiveUid !== "string" || effectiveUid.trim() === "") {
-            throw new Error(`[Conflict] Invalid userId for file AAD: userId must be a non-empty string, got "${effectiveUid}"`);
-        }
-        if (!fId || typeof fId !== "string" || fId.trim() === "") {
-            throw new Error(`[Conflict] Invalid fileId for file AAD: fileId must be a non-empty string, got "${fId}"`);
-        }
-        return `vault:file:${effectiveUid.trim()}:${fId.trim()}`;
     }, []);
 
     const isBlockedByConflict = useCallback((): boolean => {
@@ -322,7 +308,6 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
                 }
 
                 const effectiveUid = await getEffectiveUserId();
-                executeBuildAAD(effectiveUid, fileId);
                 const inbound = await SyncCryptoGateway.decryptInbound({
                     fileId,
                     content: event.content,
@@ -444,7 +429,7 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
                 );
             }
         },
-        [executeBuildAAD, getEffectiveUserId]
+        [getEffectiveUserId]
     );
 
     const handle412Conflict = useCallback(
@@ -455,7 +440,6 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
         ) => {
             const { fileId } = optsRef.current;
             const effectiveUid = await getEffectiveUserId();
-            executeBuildAAD(effectiveUid, fileId);
 
             let decryptedServerContent = serverVersion.content || "";
             const isEncrypted = optsRef.current.isEncrypted();
@@ -597,7 +581,6 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
 
                     if (isEncrypted) {
                         if (sessionKeyStore.hasMasterKey()) {
-                            executeBuildAAD(effectiveUid, fileId);
                             const enc = await SyncCryptoGateway.encryptOutbound(fileId, mergedText, effectiveUid);
                             mergedContentToSend = enc.ciphertextBase64;
                             mergedMetaToSend = enc.encryptionMetadata;
@@ -685,7 +668,7 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
                 });
             }
         },
-        [executeBuildAAD, getEffectiveUserId]
+        [getEffectiveUserId]
     );
 
     const handleResolveConflict = useCallback(
@@ -725,7 +708,6 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
                         return;
                     }
                     const effectiveUid = await getEffectiveUserId();
-                    executeBuildAAD(effectiveUid, fileId);
                     const encResult = await SyncCryptoGateway.encryptOutbound(
                         fileId,
                         resolution.content,
@@ -807,7 +789,6 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
                         if (isEncrypted) {
                             if (sessionKeyStore.hasMasterKey()) {
                                 const effectiveUid = await getEffectiveUserId();
-                                executeBuildAAD(effectiveUid, fileId);
                                 const enc = await SyncCryptoGateway.encryptOutbound(fileId, liveNow, effectiveUid);
                                 liveContentToSave = enc.ciphertextBase64;
                                 liveMetaToSave = enc.encryptionMetadata;
@@ -851,7 +832,6 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
                     let newServerContent = saveRes.serverVersion.content || "";
                     if (isEncrypted || saveRes.serverVersion.isEncrypted) {
                         const effectiveUid = await getEffectiveUserId();
-                        executeBuildAAD(effectiveUid, fileId);
                         const inbound = await SyncCryptoGateway.decryptInbound({
                             fileId,
                             content: newServerContent,
@@ -900,7 +880,7 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
                 isResolvingConflictRef.current = false;
             }
         },
-        [executeBuildAAD, getEffectiveUserId]
+        [getEffectiveUserId]
     );
 
     // Cross-tab synchronization effect
@@ -932,7 +912,6 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
                         } else {
                             try {
                                 const effectiveUid = await getEffectiveUserId();
-                                executeBuildAAD(effectiveUid, fileId);
                                 const encrypted = await SyncCryptoGateway.encryptOutbound(fileId, liveContent, effectiveUid);
                                 contentToSave = encrypted.ciphertextBase64;
                                 metaToSave = encrypted.encryptionMetadata;
@@ -1040,7 +1019,6 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
                     if (optsRef.current.isEncrypted() && sessionKeyStore.hasMasterKey() && localFile.encryptionMetadata?.iv && incomingContent) {
                         try {
                             const effectiveUid = await getEffectiveUserId();
-                            executeBuildAAD(effectiveUid, fileId);
                             const inbound = await SyncCryptoGateway.decryptInbound({
                                 fileId,
                                 content: incomingContent,
@@ -1077,7 +1055,7 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
         return () => {
             unsubscribe();
         };
-    }, [fileId, executeBuildAAD, getEffectiveUserId]);
+    }, [fileId, getEffectiveUserId]);
 
     return {
         activeConflict,

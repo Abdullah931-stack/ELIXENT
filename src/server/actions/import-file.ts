@@ -175,6 +175,16 @@ export async function importFile(
             id: newFileId,
             content: finalContent,
             updatedAt: now,
+            isEncrypted,
+            envelope: isEncrypted && finalMetadata ? {
+                version: 1,
+                algorithm: 'AES-GCM-256',
+                keyId: finalMetadata.keyId ?? 'master-v1',
+                salt: finalMetadata.salt ?? '',
+                iv: finalMetadata.iv,
+                kdfIterations: finalMetadata.kdfIterations ?? 600000,
+                ciphertext: finalContent,
+            } : undefined,
         });
 
         // Atomic insert into Neon PostgreSQL

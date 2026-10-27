@@ -5,7 +5,7 @@ Each entry records the decision owner and the mitigation currently in place.
 Last reviewed: 2026-10-26 (v1.46.3 — AI Model Upgrade, Vitest 5, TD-15 liquidation & Phase 2 Green-Field Baseline).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 89 unit suites (1077 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 90 unit suites (1081 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ---
@@ -195,7 +195,7 @@ Last reviewed: 2026-10-26 (v1.46.3 — AI Model Upgrade, Vitest 5, TD-15 liquida
   - Decryption errors during initial file hydration rendered raw ciphertext or broken strings into the CodeMirror surface (`LUGX-048`).
   - In `SearchReplace`, replacement operated blindly on cached character ranges without verifying that the live document slice matched the expected search query (`LUGX-054`).
   - File encryption/decryption toggle in `FileContextMenu` lacked optimistic concurrency controls, risking overwrites of concurrent edits (`LUGX-055`).
-  - `buildFileAAD` accepted null, undefined, or empty `userId` and `fileId`, risking corrupted or mismatched cryptographic authentication tags (`LUGX-056`).
+  - Legacy ad-hoc file AAD generation accepted null, undefined, or empty `userId` and `fileId`, risking corrupted or mismatched cryptographic authentication tags (`LUGX-056`).
   - When importing files to the vault offline-first, failures to reach the server left the local copy unpersisted or incorrectly marked clean (`LUGX-057`).
 - **Resolution:**
   - **LUGX-020 (Autosave Hook Extraction):** Extracted `useEditorAutosave` (`src/hooks/use-editor-autosave.ts`, 178 lines) with pure injected callbacks (`persist`, `flushOnUnmount`, `getContent`, `isBlocked`, `onUserEdit`), debounce coalescing, and automatic suspension while `isWriteLocked` is active with seamless resumption upon unlock.
@@ -205,7 +205,7 @@ Last reviewed: 2026-10-26 (v1.46.3 — AI Model Upgrade, Vitest 5, TD-15 liquida
   - **LUGX-048 (Fatal Hydration on Decrypt Failure):** Decryption errors immediately transition hydration to `"fatal"`, freeze the editor (`adapter.setEditable(false)`), and surface an explicit error banner without exposing ciphertext.
   - **LUGX-054 (Stale Range Verification):** Verified `currentDoc.slice(from, to) === searchText` synchronously before executing single or multi-range replacements, aborting and re-indexing if the document changed.
   - **LUGX-055 (OCC Encryption Preconditions):** Passed `expectedVersion` and `expectedETag` to `toggleFileEncryption`, detecting and surfacing HTTP 412 conflicts gracefully.
-  - **LUGX-056 (Strict AAD Validation):** Hoisted `buildFileAAD(userId, fileId)` to module scope in `use-editor-orchestrator.ts` and enforced non-empty trimmed string checks throwing informative errors on invalid IDs.
+  - **LUGX-056 (Strict AAD Validation & Standardization):** Enforced non-empty trimmed string validation throwing informative errors on invalid IDs. In Phase 1, legacy ad-hoc `buildFileAAD` was formally superseded and pruned in favor of the canonical centralized factory `@/lib/crypto/aad` via `AAD.file(userId, fileId)` emitting format `lugx:v1:file:${userId}:${fileId}`.
   - **LUGX-057 (Offline-First Vault Import Durability):** Pre-persisted imported vault files to IndexedDB with `isDirty: true` and `lastSyncedAt: 0` before server dispatch, marking clean only after server confirmation.
   - **Verification:** Covered by 5 dedicated regression test suites: `use-editor-autosave.test.ts`, `editor-security-hardening.test.ts`, `search-replace.stale-ranges.test.tsx`, `file-context-menu.encryption-conflict.test.tsx`, and `sidebar-import.vault.test.tsx`.
 
@@ -226,7 +226,7 @@ Last reviewed: 2026-10-26 (v1.46.3 — AI Model Upgrade, Vitest 5, TD-15 liquida
 - **Accepted Debt (Ambient Broadcast Parity Across Vault Modals):**
   - **Decision Owner:** Project Owner & Systems Analyst.
   - **Decision Rationale:** To maintain 100% interoperability with existing UI modals (`VaultUnlockModal`, `TrustDeviceModal`, `FileContextMenu`), `useEditorConflict` broadcasts and subscribes on the ambient `textai_cross_tab_sync` channel via `broadcastCrossTabEvent` and `subscribeCrossTabSync`. Prematurely enforcing isolated user scoping in the editor hook alone created a split-brain architecture where vault lock/unlock events broadcast by ambient modals were silently ignored by the editor.
-  - **Mitigation Currently in Place:** `useEditorConflict` binds to the shared `subscribeCrossTabSync` listener and filters events by fileId and tabId (`senderTabId !== currentTabId`). Encryption operations strictly validate user AAD bindings (`vault:file:${userId}:${fileId}`) in volatile RAM, preventing cross-tenant data corruption.
+  - **Mitigation Currently in Place:** `useEditorConflict` binds to the shared `subscribeCrossTabSync` listener and filters events by fileId and tabId (`senderTabId !== currentTabId`). Encryption operations strictly validate standardized user AAD bindings constructed via `AAD.file(userId, fileId)` (`lugx:v1:file:${userId}:${fileId}`) in volatile RAM, preventing cross-tenant data corruption.
   - **Conditions to Revisit / Reverse:** A systematic multi-tenant overhaul milestone that simultaneously refactors all UI modals, context menus, and worker bridges to subscribe to user-scoped `lugx_sync_${userId}` channels.
 
 ## TD-19 — Multi-Tab Cross-Broadcast Race, 4-Line Visual Diff Duplication & Silent 412 Auto-Merge — ✅ RESOLVED (Release 1.46.1 / 2026-10-13)

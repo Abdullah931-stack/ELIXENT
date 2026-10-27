@@ -171,6 +171,43 @@ describe('useSync hook', () => {
         expect(mocks.indexedDBManager.saveFile).toHaveBeenCalled();
     });
 
+    it('should preserve parentFolderId as null when moving file to root from existing folder', async () => {
+        const existingFile = {
+            id: 'file-abc',
+            content: 'Existing content',
+            title: 'Test',
+            etag: 'etag-1',
+            version: 1,
+            isDirty: false,
+            parentFolderId: 'folder-parent-123',
+            isFolder: false,
+            lastModified: Date.now(),
+            lastSyncedAt: Date.now(),
+        };
+        (mocks.indexedDBManager.getFile as unknown as {
+            mockResolvedValue: (value: unknown) => void;
+        }).mockResolvedValue(existingFile);
+
+        const { result } = renderHook(() => useSync({ userId: 'user-123' }));
+
+        await waitFor(() => expect(result.current.isInitialized).toBe(true));
+
+        await act(async () => {
+            await result.current.saveLocal({
+                id: 'file-abc',
+                content: 'Updated content',
+                parentFolderId: null,
+            });
+        });
+
+        expect(mocks.indexedDBManager.saveFile).toHaveBeenCalledWith(
+            expect.objectContaining({
+                id: 'file-abc',
+                parentFolderId: null,
+            })
+        );
+    });
+
     it('should load a file from local storage', async () => {
         const mockFile = {
             id: 'file-abc',

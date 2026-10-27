@@ -4,6 +4,33 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.1.0] - 2026-10-27 (Phase 1: Core Cryptographic, Sync & Server Actions Hardening)
+
+### Cryptographic Context & AAD Standardization (`src/lib/sync/webauthn-prf.ts`, `src/hooks/*`)
+
+- **Canonical Device Wrap AAD:** Standardized WebAuthn PRF master key envelope wrapping on `AAD.deviceWrap(userId, deviceTrustEpoch)` from `@/lib/crypto/aad` (generating `lugx:v1:device:${userId}:${epoch}`), replacing ad-hoc string formatting.
+- **Dual-Try Fallback Unwrapping:** Implemented fail-safe Dual-Try unwrapping in `unwrapMasterKeyWithWebAuthnPrf` (trying `canonicalAad` first, falling back to `legacyAad`) to ensure existing trusted devices unwrap transparently without user re-authentication or data loss.
+- **Centralized File AAD Standardization:** Pruned legacy uninvoked `buildFileAAD` helpers in `src/hooks/use-editor-orchestrator.ts` and `src/hooks/use-editor-conflict.ts`. Standardized all file AAD construction strictly on `@/lib/crypto/aad` via `AAD.file(userId, fileId)` (`lugx:v1:file:${userId}:${fileId}`).
+- **Client-Server Encrypted ETag Parity (`src/server/actions/import-file.ts`):** Passed the structured `envelope` into `generateETagSync` on encrypted file import (`isEncrypted === true`), achieving exact parity with client-side `generateEncryptedETagSync` and eliminating spurious HTTP 412 Precondition Failed conflicts on subsequent sync polling.
+
+### Offline-First Sync & Conflict Resolution Pruning (`src/hooks/use-sync.ts`, `src/lib/sync/conflict-resolver.ts`)
+
+- **Root Move Null-Preservation (`src/hooks/use-sync.ts`):** Replaced falsy fallback `file.parentFolderId || existingFile?.parentFolderId || null` with explicit `file.parentFolderId !== undefined ? file.parentFolderId : (existingFile?.parentFolderId ?? null)`, strictly preserving explicit `null` moves to the root folder in local IndexedDB persistence (`saveLocal`).
+- **Pruned Dead Merge Methods (`src/lib/sync/conflict-resolver.ts`):** Deleted unreferenced private merge methods (`diff2Way`, `diff3Merge`, `extractSliceForRange`) from `ConflictResolver`, consolidating Diff3 logic around `src/lib/sync/diff3.ts` while strictly preserving `computeLCS`, `areArraysEqual`, and `computeWordSpans` for visual diff rendering.
+
+### Server Actions Hardening & Rate Limiting (`src/server/actions/*`)
+
+- **Recursive Soft-Deleted Folder Cascade (`src/server/actions/folders.ts`, `files.ts`):** Extended `getDescendantIds` signature to accept `includeDeleted: boolean = false` and pass `includeDeleted = true` inside `restoreFile`, ensuring soft-deleted subfolders and documents are revived in an atomic transaction without leaving orphaned descendant records.
+- **Fail-Closed Auth Rate Limiting (`src/server/actions/auth-actions.ts`):** Wired `authRateLimiter` (`src/lib/rate-limit.ts`) to Next.js Server Actions `signInWithGoogle` (keyed by client IP address extracted from headers) and `syncUserToDatabase` (keyed by authenticated `user.id`), enforcing fail-closed protection against brute-force attacks and abuse.
+
+### Verification & Metrics Synchronization
+
+- **Dedicated Rate Limit Test Suite (`src/test/auth/auth-actions-rate-limit.test.ts`):** Created 6 automated tests validating IP and user-based rate limiting, fail-closed handling, and client IP fallback behavior for authentication Server Actions.
+- **Core Hardening Test Verification:** Executed full Vitest verification across `src/test/sync`, `src/test/vault`, `src/test/server`, `src/test/auth`, and `src/test/editor` with 52 test files (739 tests) passing 100%.
+- **Doc Metrics Synchronization:** Confirmed full compliance with canonical SSOT test metrics via `node scripts/sync-doc-metrics.mjs --check` across living documentation.
+
+---
+
 ## [0.0.3] - 2026-10-26 (CI Stage 7 Gating & Non-Runnable Cloud Provider Smoke Bypass)
 
 ### CI Pipeline Stage 7 Gating (`.github/workflows/ci.yml`)

@@ -80,7 +80,8 @@ Pre-generates UUIDs and computes strong SHA-256 ETags in-memory before issuing t
 - **2D Spatial Markdown Table Extractor (`pdf-table-extractor.ts`):** Geometrically clusters text coordinates into lines and columns, reorders RTL columns for Arabic, and formats tabular data into GitHub-Flavored Markdown tables with user toggle capability (`pdf-settings.ts`).
 - **Arabic Unicode Normalizer (`arabic-normalizer.ts`):** Performs lookahead de-spacing on disjointed Arabic characters, NFKC presentation forms un-shaping, and BiDi directionality preservation.
 - **On-Demand Bilingual OCR & Font Corruption Detector:** Detects Private Use Area (PUA) glyphs in corrupted embedded fonts (`pdf-corruption-detector.ts`) and triggers an on-demand bilingual OCR engine (`pdf-ocr-engine.ts` with `tesseract.js`).
-- **Direct Vault Encrypted Import:** Encrypts content directly on the client with AES-GCM-256 using deterministic AAD (`vault:file:${userId}:${fileId}`) and optimistic IndexedDB cache persistence before server dispatch.
+- **Direct Vault Encrypted Import:** Encrypts content directly on the client with AES-GCM-256 using deterministic canonical AAD via `AAD.file(userId, fileId)` (`lugx:v1:file:${userId}:${fileId}`) and optimistic IndexedDB cache persistence before server dispatch.
+- **Client-Server Encrypted ETag Parity:** For encrypted files (`isEncrypted === true`), `importFile` passes the structured `envelope` into `generateETagSync` matching `generateEncryptedETagSync`, guaranteeing client-server ETag parity and preventing spurious 412 Precondition Failed conflicts during subsequent sync polling.
 - **Server Ingestion Safeguards & Adversarial Defense:** Enforces a strict 10MB UTF-8 byte limit, checks magic bytes for disguised binaries (`isDisguisedBinary`), strips directory traversal patterns and invalid OS characters (`sanitizeFilename`), eliminates PostgreSQL null bytes (`\0`), counts words via an $O(1)$ memory streaming regex, and prevents infinite loops with a title deduplication circuit breaker (`counter <= 100`).
 
 ### E. Cascading Soft-Delete with Precondition Locking (`deleteFile` & `DELETE /api/files/[id]` - LUGX-074)
@@ -109,8 +110,9 @@ const [updatedFile] = await db.update(schema.files)
 ### G. Next.js Turbopack Server Actions Separation
 All pure synchronous utilities (such as `generateRestoredTitle` and `generateCopyTitle`) reside in `src/lib/utils/file-naming.ts` outside of `"use server"` files, ensuring full compliance with Next.js 16 requirements where all exported functions in server action files must be `async`.
 
-### I. BFS Hierarchy Traversal Cycle Guards (`getDescendantIds` & `restoreFile`)
+### I. BFS Hierarchy Traversal Cycle Guards & Cascade Restoration (`getDescendantIds` & `restoreFile`)
 When recursively collecting descendant file/folder IDs for cascading deletion or tree restoration, BFS queue traversals maintain a `visited = new Set<string>()` guard. If corrupt or cyclic parent pointers exist in the database, the traversal terminates safely without infinite loops or memory exhaustion.
+The signature `getDescendantIds(folderId: string, userId: string, includeDeleted: boolean = false)` defaults to active files for deletion cascade and cycle checks, while `restoreFile` explicitly specifies `includeDeleted = true` to collect and revive all soft-deleted children (documents and subfolders) in an atomic batch restoration.
 
 ### J. Zero-Knowledge Encryption Toggle Invariants (`toggleFileEncryption`)
 - **Strict Non-Folder Invariant**: Folders cannot be encrypted (`isFolder === false`); attempting to toggle encryption on a folder immediately returns an error.
@@ -139,7 +141,7 @@ To guarantee high cohesion and single-responsibility isolation, file and directo
  - `src/test/vault/vault-import.integration.test.ts`: Integration test verifying direct client-encrypted vault import pipeline.
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 89 unit suites (1077 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 90 unit suites (1081 tests) · 21 live suites (117 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ---

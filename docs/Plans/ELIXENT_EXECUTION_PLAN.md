@@ -165,7 +165,7 @@ flowchart TB
 
 | Phase          | Single Responsibility Scope                                                                                                                                                                                                            | Sub-Agent Tasks         | Target Git Commit                                                                                                       |
 | :------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------: | :---------------------------------------------------------------------------------------------------------------------- |
-| **`Phase 1`**  | Harden encryption (`AAD`), fix sync, folder restoration, and encrypted import, wire `authRateLimiter`, and prune dead code in `conflict-resolver.ts`.                                                                                  | $3$ (`Wave 1.1`)        | `fix(core): harden webauthn AAD, folder restore, encrypted import ETag, sync root move, and auth rate limit`            |
+| **`Phase 1`**  | Harden encryption (`AAD`), fix sync, folder restoration, and encrypted import, wire `authRateLimiter`, and prune dead code in `conflict-resolver.ts`.                                                                                  | $3$ (`Wave 1.1`)        | `fix(core): harden webauthn AAD, folder restore, encrypted import ETag, sync root move, and auth rate limit`<br>*(Status: CLOSED / EXECUTED)* |
 | **`Phase 2`**  | Install NPM packages, export `getPgPool()`, create new Drizzle schemas and migration `0013` (dropping `usage` and `ai_reservations`), and update callers to prevent build breakage.                                                    | $4$ (`Waves 2.1–2.3`)   | `feat(db): add credit & decision ledgers, PostgresSaver DDL, export getPgPool, and drop legacy usage tables`            |
 | **`Phase 3`**  | Transform `models.config.json` into a lean dynamic model registry, build derivation constants/formulas and pessimistic tokenizer (`js-tiktoken`), and author the three atomic Lua scripts.                                             | $3$ (`Waves 3.1–3.2`)   | `feat(metering): implement lean model registry, micro-credit derivation math, tokenizer, and atomic Redis Lua scripts`  |
 | **`Phase 4`**  | Build `Flush-First Cold Start`, PostgreSQL settlement service, `withMeteredNodeGate` wrapper, `StreamGovernor`, and upgrade Stripe tiers and Cron job.                                                                                 | $4$ (`Waves 4.1–4.2`)   | `feat(metering): add Flush-First cold start, StreamGovernor, node gate, Stripe dual-write, and dirty wallet cron`       |
@@ -180,10 +180,12 @@ flowchart TB
 
 ## 4. Detailed 12-Phase Specifications
 
-### [Phase 1: Core Cryptographic, Sync & Server Actions Hardening]
+### [Phase 1: Core Cryptographic, Sync & Server Actions Hardening] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 1 — Core Cryptographic, Sync & Server Actions Hardening`  
+> **Status:** `CLOSED / EXECUTED` (Commit Gate 1 Satisfied & Verified)  
 > **Single Responsibility Principle (`SRP`):** Close the seven vulnerabilities discovered in the current `LUGX v1.46.3` core and prune dead functions in encryption and conflict resolution without touching database schemas or installing new packages, ensuring the first commit is a clean, completely isolated core hardening baseline.  
+> **Closure Record:** [`docs/records/closures/elixent-execution/phase-01-core-hardening.md`](../records/closures/elixent-execution/phase-01-core-hardening.md)  
 > **Pre-Phase 1 Baseline State:** Raw `LUGX v1.46.3` repository as currently checked out on the main branch.
 
 #### Phase 1 Sub-Agent Topology
@@ -291,7 +293,7 @@ flowchart LR
   3. **Wire the authentication rate limiter (`authRateLimiter`) in `src/server/actions/auth-actions.ts`:**
      - Import `authRateLimiter` (defined in `src/lib/rate-limit.ts:208` with `RATE_LIMITS.AUTH` settings) and invoke it at the entry of both active authentication server actions in the file (`signInWithGoogle` at line `15` and `syncUserToDatabase` at line `66`) using the client/user identifier, returning a controlled error response when the limit is exceeded.
 
-#### Phase 1 Commit Gate
+#### Phase 1 Commit Gate — ✅ SATISFIED / CLOSED
 
 - Review `git diff` to verify that changes are strictly confined to the nine files specified above.
 - Execute the following mandatory verification commands (where crypto, `AAD`, and `WebAuthn PRF` tests reside in `src/test/vault` and auth tests reside in `src/test/auth`) and confirm $100\%$ pass rate before running `git commit`:
@@ -299,6 +301,7 @@ flowchart LR
   npx tsc --noEmit
   npx vitest run src/test/sync src/test/vault src/test/server src/test/auth
   ```
+- **Gate Verdict:** `CLOSED / EXECUTED` — 52 test suites (739 tests) passing 100%, TypeScript check clean (0 errors), `Commit Gate 1` fully satisfied.
 
 ### [Phase 2: NPM Dependencies, `getPgPool()` Export & Non-Breaking Database Schema Migration (`0013`)]
 

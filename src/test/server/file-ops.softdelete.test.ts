@@ -24,10 +24,11 @@
  * pg-backed test client. The SQL shapes are identical to production.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { eq, and, isNull, isNotNull, sql } from "drizzle-orm";
+import { eq, and, inArray, isNull, isNotNull, sql } from "drizzle-orm";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
+import { getDescendantIds } from "@/server/actions/folders";
 import { randomUUID } from "crypto";
 
 const TEST_USER_ID = "22222222-2222-2222-2222-222222222222";
@@ -39,6 +40,20 @@ const fileOf = (title: string, parent: string | null = null) => ({
     title,
     content: "<p>content</p>",
     isFolder: false,
+    parentFolderId: parent,
+    etag: null,
+    version: 0,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    deletedAt: null as Date | null,
+});
+
+const folderOf = (title: string, parent: string | null = null) => ({
+    id: randomUUID(),
+    userId: TEST_USER_ID,
+    title,
+    content: "",
+    isFolder: true,
     parentFolderId: parent,
     etag: null,
     version: 0,
@@ -234,6 +249,60 @@ describe("soft delete lifecycle", () => {
             // Drizzle wraps Postgres errors: match the wrapped "Failed query" or
             // the raw "duplicate key … unique constraint" message.
         ).rejects.toThrow(/unique|duplicate|violates|Failed query/i);
+    });
+
+    it("folder restoration cascades restoration to all soft-deleted descendant files and folders", async () => {
+        const rootFolder = folderOf("Projects");
+        const subFolder = folderOf("Frontend", rootFolder.id);
+        const childDoc1 = fileOf("App.tsx", subFolder.id);
+        const childDoc2 = fileOf("README.md", rootFolder.id);
+
+        await testDb.insert(schema.files).values([rootFolder, subFolder, childDoc1, childDoc2]);
+
+        // Soft-delete parent folder and all descendants (simulating folder delete cascade)
+        const deletedAt = new Date();
+        const allIds = [rootFolder.id, subFolder.id, childDoc1.id, childDoc2.id];
+        await testDb
+            .update(schema.files)
+            .set({ deletedAt, updatedAt: deletedAt })
+            .where(and(eq(schema.files.userId, TEST_USER_ID), inArray(schema.files.id, allIds)));
+
+        // Verify all rows are tombstoned
+        const tombstoned = await testDb.query.files.findMany({
+            where: and(eq(schema.files.userId, TEST_USER_ID), inArray(schema.files.id, allIds), isNotNull(schema.files.deletedAt)),
+        });
+        expect(tombstoned).toHaveLength(4);
+
+        // getDescendantIds with includeDeleted: true discovers all soft-deleted children
+        const descendantIds = await getDescendantIds(rootFolder.id, TEST_USER_ID, true);
+        expect(descendantIds).toHaveLength(3);
+        expect(descendantIds).toContain(subFolder.id);
+        expect(descendantIds).toContain(childDoc1.id);
+        expect(descendantIds).toContain(childDoc2.id);
+
+        // getDescendantIds with includeDeleted: false (default) excludes soft-deleted items
+        const liveDescendants = await getDescendantIds(rootFolder.id, TEST_USER_ID, false);
+        expect(liveDescendants).toHaveLength(0);
+
+        // Restore root folder and its descendants (matching files.ts restoreFile logic)
+        const restoredAt = new Date();
+        await testDb
+            .update(schema.files)
+            .set({ deletedAt: null, updatedAt: restoredAt })
+            .where(and(eq(schema.files.id, rootFolder.id), eq(schema.files.userId, TEST_USER_ID)));
+
+        if (descendantIds.length > 0) {
+            await testDb
+                .update(schema.files)
+                .set({ deletedAt: null, updatedAt: restoredAt })
+                .where(and(eq(schema.files.userId, TEST_USER_ID), inArray(schema.files.id, descendantIds)));
+        }
+
+        // Verify all 4 are completely restored and live queries see them
+        const liveRows = await testDb.query.files.findMany({
+            where: and(eq(schema.files.userId, TEST_USER_ID), inArray(schema.files.id, allIds), isNull(schema.files.deletedAt)),
+        });
+        expect(liveRows).toHaveLength(4);
     });
 });
 

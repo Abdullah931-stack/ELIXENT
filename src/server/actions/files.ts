@@ -650,7 +650,7 @@ export async function restoreFile(
 
         // If target is a folder, restore its descendants
         if (target.isFolder) {
-            const descendantIds = await getDescendantIds(fileId, user.id);
+            const descendantIds = await getDescendantIds(fileId, user.id, true);
             if (descendantIds.length > 0) {
                 await db
                     .update(schema.files)

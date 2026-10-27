@@ -19,7 +19,7 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-89%20Suites%20·%201077%2F1077%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 1077 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-90%20Suites%20·%201081%2F1081%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 1081 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-21%20Suites%20·%20117%2F117%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 117 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
@@ -66,14 +66,14 @@
 ### Key Capabilities
 
 - ✍️ **Native Markdown Editor & Bidi Engine:** Built on CodeMirror 6 with live AST token decorations, line-level bidirectional isolation (`bidiLinePlugin`), three direction modes (`auto`, `rtl`, `ltr`), and code block LTR locking.
-- 📴 **Custom Offline-First Synchronization:** User-partitioned IndexedDB storage (`textai_db_${userId}`), deterministic 3-way linear diff merge, SHA-256 ETag verification, bounded worker queues, automatic GC compaction, and atomic rollback snapshots.
+- 📴 **Custom Offline-First Synchronization:** User-partitioned IndexedDB storage (`textai_db_${userId}`), deterministic 3-way linear diff merge, SHA-256 ETag verification, bounded worker queues, automatic GC compaction, root-move null preservation (`saveLocal`), atomic soft-delete folder cascade restoration (`restoreFile`), and atomic rollback snapshots.
 - ⚡ **Dual-Phase Atomic Quota Reservation:** Eliminates TOCTOU race conditions with database-level conditional leases (`ai_reservations`), 60s TTL safety, and zero-bounded atomic refunds (`GREATEST(column - n, 0)`).
 - 🤖 **Resilient AI NDJSON Streaming:** High-performance inline preview card (`CMStreamingGhostWidget`) positioned at exact document offsets with 60fps in-place DOM updates, 3-state decision triggers (`Accept`, `Reject`, `Retry`), and a distributed 3-state circuit breaker with multi-key API rotation.
 - 💳 **Fail-Closed Stripe Subscriptions:** 8-state exhaustive webhook state machine with database-level uniqueness constraints preventing duplicate entitlements.
 - 🛡️ **Smart Hybrid Database Client:** Dual-protocol architecture supporting `@neondatabase/serverless` (HTTP/WebSocket) for Neon Cloud serverless edges and `pg.Pool` (TCP) for local Docker, CI, and development environments.
-- 🔒 **Zero-Knowledge Cloud Vault & Hybrid Encryption:** Client-side end-to-end encryption (`AES-GCM-256` with domain AAD `vault:file:${userId}:${fileId}`), Web Worker-isolated key derivation (`PBKDF2-SHA256` with 600K iterations), WebAuthn PRF hardware biometrics, 6-digit Quick PIN, 12-word BIP-39 recovery seed, transparent local IndexedDB encryption, and dual-layer AI safety gatekeepers.
+- 🔒 **Zero-Knowledge Cloud Vault & Hybrid Encryption:** Client-side end-to-end encryption (`AES-GCM-256` with canonical AAD via `AAD.file(userId, fileId)` emitting `lugx:v1:file:${userId}:${fileId}` and WebAuthn PRF `AAD.deviceWrap(userId, epoch)` with Dual-Try backward compatibility), Web Worker-isolated key derivation (`PBKDF2-SHA256` with 600K iterations), WebAuthn PRF hardware biometrics, 6-digit Quick PIN, 12-word BIP-39 recovery seed, client-server encrypted import ETag parity, transparent local IndexedDB encryption, and dual-layer AI safety gatekeepers.
 - 📄 **Client-Side PDF & Multi-Modal Document Extraction:** 100% in-browser Web Worker text extraction (`pdfjs-dist`), 2D spatial clustering algorithm for automatic GitHub-Flavored Markdown tables, pure TypeScript Arabic Unicode normalization (de-spacing, un-shaping, BiDi correction), embedded font corruption detection (PUA range analysis), and on-demand bilingual OCR (`tesseract.js`).
-- 📡 **Dual-Mode Rate Limiting & Distributed Tracing:** Redis sliding-window limiters with Fail-Open resilience on public and file-sync operations, Fail-Closed protection on AI streaming quotas, distributed `X-Correlation-ID` context propagation across Server Actions and Route Handlers with CRLF injection sanitization, and Zero-Knowledge log masking with token-boundary isolation.
+- 📡 **Dual-Mode Rate Limiting & Distributed Tracing:** Redis sliding-window limiters with Fail-Open resilience on public and file-sync operations, Fail-Closed protection on authentication Server Actions (`signInWithGoogle` by IP, `syncUserToDatabase` by user ID) and AI streaming quotas, distributed `X-Correlation-ID` context propagation across Server Actions and Route Handlers with CRLF injection sanitization, and Zero-Knowledge log masking with token-boundary isolation.
 - ⏱️ **Automated Quota & Maintenance Sweepers:** Scheduled crons for 30-day soft-delete purges (`/api/cron/purge-deleted`) and automated reclamation of expired AI quota leases (`/api/cron/expire-reservations`), resolving orphaned pending leases without manual intervention.
 
 ---
@@ -295,7 +295,7 @@ npm run start
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 89 | 1077 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 90 | 1081 | 100% ✅ |
 | **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 117 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
@@ -310,7 +310,7 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).              |
 
 ```bash
-# Execute unit/contract test suites (89 test files, 1077 tests)
+# Execute unit/contract test suites (90 test files, 1081 tests)
 npm run test
 
 # Execute live database integration test suites on isolated Neon branch (21 test files, 117 tests)

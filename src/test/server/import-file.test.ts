@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { importFile } from "@/server/actions/import-file";
 import { db } from "@/server/db";
 import { getUser } from "@/lib/supabase/server";
+import { generateEncryptedETagSync } from "@/lib/sync/etag-generator";
 import { randomUUID } from "crypto";
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -195,6 +196,18 @@ describe("importFile Server Action (Client-Extracted Text & Vault Pipeline)", ()
             expect(result.data?.id).toBe(clientFileId);
             expect(result.data?.content).toBe(fakeCiphertext);
             expect(result.data?.wordCount).toBe(0);
+
+            // Verify canonical encrypted ETag matching generateEncryptedETagSync
+            const expectedCanonicalEtag = generateEncryptedETagSync({
+                version: 1,
+                algorithm: "AES-GCM-256",
+                keyId: fakeMetadata.keyId,
+                salt: fakeMetadata.salt,
+                iv: fakeMetadata.iv,
+                kdfIterations: fakeMetadata.kdfIterations,
+                ciphertext: fakeCiphertext,
+            });
+            expect(result.data?.etag).toBe(expectedCanonicalEtag);
 
             // Verify insert payload was called with encryption metadata
             expect(db.insert).toHaveBeenCalled();

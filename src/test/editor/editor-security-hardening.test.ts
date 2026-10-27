@@ -11,7 +11,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { buildFileAAD, useEditorOrchestrator } from "../../hooks/use-editor-orchestrator";
+import { useEditorOrchestrator } from "../../hooks/use-editor-orchestrator";
 import { sessionKeyStore } from "../../lib/sync/session-key-store";
 import { SyncCryptoGateway } from "../../lib/sync/sync-crypto-gateway";
 import * as fileOps from "../../server/actions/file-ops";
@@ -93,29 +93,6 @@ function createMockAdapter(initialValue = ""): EditorAdapter {
     } as unknown as EditorAdapter;
 }
 
-describe("LUGX-056: User ID validation in AAD derivation (buildFileAAD)", () => {
-    it("throws descriptive error when userId is missing, empty string, or whitespace", () => {
-        expect(() => buildFileAAD("", "file-123")).toThrow(/Invalid userId for file AAD/);
-        expect(() => buildFileAAD("   ", "file-123")).toThrow(/Invalid userId for file AAD/);
-        expect(() => buildFileAAD(undefined, "file-123")).toThrow(/Invalid userId for file AAD/);
-        expect(() => buildFileAAD(null, "file-123")).toThrow(/Invalid userId for file AAD/);
-    });
-
-    it("throws descriptive error when fileId is missing, empty string, or whitespace", () => {
-        expect(() => buildFileAAD("user-123", "")).toThrow(/Invalid fileId for file AAD/);
-        expect(() => buildFileAAD("user-123", "   ")).toThrow(/Invalid fileId for file AAD/);
-    });
-
-    it("derives valid AAD binding when userId and fileId are valid strings", () => {
-        const aad = buildFileAAD("user-123", "file-abc");
-        expect(aad).toBe("vault:file:user-123:file-abc");
-    });
-
-    it("trims whitespace from valid userId and fileId", () => {
-        const aad = buildFileAAD("  user-123  ", "  file-abc  ");
-        expect(aad).toBe("vault:file:user-123:file-abc");
-    });
-});
 
 describe("LUGX-004: Unmount Flush Plaintext Leak Prevention", () => {
     beforeEach(() => {
