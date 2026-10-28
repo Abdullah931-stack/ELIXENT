@@ -21,8 +21,8 @@ Phase 3 introduces:
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 91 | 1103 | 100% ✅ |
-| **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 118 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 98 | 1221 | 100% ✅ |
+| **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 119 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
 
@@ -37,7 +37,7 @@ flowchart TD
     end
 
     subgraph S2 ["Stage 2: Pure Unit Contracts"]
-        UC["npm run test (91 files, 1103 tests)<br/>Zero DB / Zero Network"]
+        UC["npm run test (98 files, 1221 tests)<br/>Zero DB / Zero Network"]
     end
 
     subgraph S3 ["Stage 3: Schema Integrity"]
@@ -45,7 +45,7 @@ flowchart TD
     end
 
     subgraph S4 ["Stage 4: Concurrency & DB Isolation"]
-        CDI["PostgreSQL 16 + Redis 7 Alpine Services<br/>npm run test:live (21 suites, 118 tests)<br/>TEST_DB_FORBIDDEN_HOSTS Guard"]
+        CDI["PostgreSQL 16 + Redis 7 Alpine Services<br/>npm run test:live (21 suites, 119 tests)<br/>TEST_DB_FORBIDDEN_HOSTS Guard"]
     end
 
     subgraph S5 ["Stage 5: Production Build"]

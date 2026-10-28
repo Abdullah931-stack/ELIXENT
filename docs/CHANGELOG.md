@@ -4,6 +4,50 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.4.0] - 2026-10-28 (Phase 4: Flush-First Cold Start, Settlement Service, StreamGovernor & Stripe/Cron Adaptation)
+
+### Flush-First Cold Start Protocol (`src/lib/metering/cold-start.ts`)
+
+- **Race-Free Wallet Hydration (`ensureWalletLoadedFlushFirst`):** Implemented cold-start protocol preventing double deductions when `lugx:wallet:${userId}` expires from Redis. Checks `HLEN lugx:pending_settlements:${userId}`; if pending entries exist, flushes them to PostgreSQL first via `flushPendingSettlementsToPostgres` with `HDEL`, then queries authoritative `users.creditBalanceMicro` and populates Redis via `SETNX` with a 24-hour TTL (`WALLET_TTL_SECONDS = 86400`).
+- **Fail-Closed Resilience:** Enforced fail-closed behavior throwing `MeteringServiceUnavailableError` (HTTP 503) whenever Redis is unconfigured or unreachable.
+
+### PostgreSQL Settlement Draining Service (`src/server/services/ai-settlement-service.ts`)
+
+- **Batch Draining Engine (`flushPendingSettlementsToPostgres`):** Implemented atomic draining of pending settlement hashes from Redis into PostgreSQL `credit_ledger_transactions` using `INSERT ... ON CONFLICT (operation_id) DO NOTHING RETURNING *`. Calculates the exact net delta micro of newly inserted rows and updates `users.creditBalanceMicro` inside a single ACID transaction. Deletes drained keys via `HDEL` and removes the user from `lugx:dirty_wallets` via `SREM` when the pending hash is empty.
+- **Authoritative Balance Query (`getUserCreditBalance`):** Exposed direct query for `users.creditBalanceMicro`, returning `BigInt` with safe default of `0n` for non-existent users.
+
+### LangGraph Higher-Order Metered Node Gate (`src/lib/metering/node-gate.ts`)
+
+- **Idempotent Pre-Node Wrapper (`withMeteredNodeGate`):** Higher-order wrapper wrapping LangGraph nodes to enforce financial gating. Computes deterministic `StepKey = sha256(threadId:checkpointId:nodeName:stepAttempt)` and checks `lugx:step_done:${stepKey}` to prevent double-billing upon graph resumption after human-in-the-loop interruptions.
+- **Cold-Start Race Recovery & Zero-Dust Drain:** Automatically reloads the wallet once if a cold-start race occurs during reservation (`COLD_START_REQUIRED`). Derives parameters via `deriveModelReservationParameters` with Zero-Dust Drain support.
+- **Interruption Routing:** Returns structured `MeteredGateInterrupt` (`code: "INSUFFICIENT_CREDITS"`, `targetNode: "pure_interrupt_node"`) when credit balance is insufficient.
+- **Execution Failure Rollback:** Automatically refunds reservations via `executeSettleOperation` (`status: "ABORTED"`, `actualTotalCostMicro: 0`) if the wrapped node throws an exception, then re-throws the error.
+
+### Real-Time Stream Governor (`src/lib/metering/stream-governor.ts`)
+
+- **Proactive Runway Extension:** Tracks output tokens on incoming streaming deltas (`onTokenChunk`). Automatically triggers non-blocking asynchronous reservation extension (`executeReserveOrExtend`) when remaining tokens fall below the velocity runway threshold ($\text{Remaining} \le V \times 3\text{s}$).
+- **500ms Local Hold Gate:** When consumed tokens exceed confirmed reservation slices, temporarily pauses chunk delivery to client browsers for up to 500ms (`LOCAL_HOLD_TIMEOUT_MS`) to await in-flight Redis extension confirmations.
+- **Hard Abort & Exact Covered Token Settlement:** If the 500ms timeout expires or an extension is rejected, immediately triggers `abortController.abort("SLICE_EXHAUSTED")` and settles the operation at the last financially covered token (`getCoveredTokens()`), releasing unconsumed reserved credits back to the wallet.
+
+### Stripe Billing Adaptation & Dual-Write Protocol (`src/config/tiers.config.ts`, `src/server/services/billing-service.ts`, `src/app/api/stripe/webhook/route.ts`)
+
+- **Micro-Credit Tier Allocations (`src/config/tiers.config.ts`):** Added `creditAllocationMicro` and `creditsDisplay` to `TierLimits`: Free (50M µcredits / 50 credits), Pro (1,000M µcredits / 1,000 credits), Ultra (3,500M µcredits / 3,500 credits), while preserving legacy word fields for backward compatibility.
+- **Stripe Webhook Dual-Write (`src/server/services/billing-service.ts`):** Implemented `recordCreditTopup` (Step 1: PostgreSQL atomic transaction inserting `stripe_topup_${eventId}` into `credit_ledger_transactions` and incrementing `users.creditBalanceMicro`) and `executeRedisDualWrite` (Step 2: Upstash Redis `INCRBY` via `executeStripeDualWrite` if wallet is live).
+- **Subscription Renewal Top-Up (`invoice.paid`):** Implemented `handleInvoicePaid` in `src/app/api/stripe/webhook/route.ts` to automatically renew subscription periods and allocate recurring monthly credits.
+- **Duplicate Route Pruning:** Permanently deleted redundant duplicate webhook routes `src/app/api/billing/webhook/route.ts` and `src/app/api/webhooks/stripe/route.ts`, consolidating 100% of webhook ingestion under `src/app/api/stripe/webhook/route.ts`.
+
+### Periodic Batch Draining Cron Job (`src/app/api/cron/expire-reservations/route.ts`)
+
+- **Dirty Wallet Draining Loop:** Refactored cron route to acquire distributed lock via `acquireCronLock`, iterate over `lugx:dirty_wallets`, and drain pending records into PostgreSQL via `flushPendingSettlementsToPostgres`.
+- **30-Second Grace Guard:** Enforced `onlyOlderThanMs: 30_000` (`DIRTY_SETTLEMENT_GRACE_MS`) to bypass young settlements and eliminate race conditions with active Next.js `after()` callbacks.
+
+### Comprehensive Test Verification Baseline
+
+- **Acceptance Test Suite (`src/test/metering/credit-metering-suite.test.ts`):** 100% pass rate across all six canonical acceptance criteria (`MTR-01` through `MTR-06`).
+- **Repository Verification Baseline:** 98 unit suites (1221 tests) passing 100%, 21 live suites (119 tests) passing 100%, 14 E2E specs (15 journeys), zero TypeScript errors (`tsc --noEmit`), and zero broken markdown links (`check-markdown-links.mjs`).
+
+---
+
 ## [0.3.0] - 2026-10-28 (Phase 3: Lean Dynamic Model Registry, Derivation Math & Atomic Redis Lua Scripts)
 
 ### Lean Dynamic Model Registry (`src/config/models.config.json`)

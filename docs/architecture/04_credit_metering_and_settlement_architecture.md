@@ -4,7 +4,7 @@
 | :--- | :--- |
 | **Document ID** | `ELIXENT-ARCH-04` |
 | **Classification** | `LIVING SUBSYSTEM SPEC` (`src/lib/metering/*`, `src/server/services/ai-settlement-service.ts`, `src/server/services/billing-service.ts`) |
-| **Version & Status** | `v3.0 — Accepted for Implementation (Accepted)` |
+| **Version & Status** | `v3.1 — Fully Implemented & Verified in Phase 4 (Accepted & Implemented)` |
 | **SSOT Scope** | Economic model specification (`Micro-Credits` / `BigInt`), Lean Dynamic Model Registry (`Lean Model Registry`), automatic derivation equations for the three execution modes, idempotent pre-node gate wrapper (`withMeteredNodeGate`), stream governor and backpressure valve (`StreamGovernor`), bifurcated settlement engine (`Redis Lua + after()`), and cold-start protocol (`Flush-First Cold Start`). |
 | **Suite Index** | • [01_architecture_vision_and_adrs](./01_architecture_vision_and_adrs.md)<br>• [02_agent_orchestration_and_decision_engine](./02_agent_orchestration_and_decision_engine.md)<br>• [03_workspace_ast_editor_and_vault_integration](./03_workspace_ast_editor_and_vault_integration.md)<br>• [05_data_contracts_and_lugx_migration_plan](./05_data_contracts_and_lugx_migration_plan.md) |
 
@@ -211,3 +211,28 @@ When a payment or subscription renewal event is received in `src/app/api/stripe/
 | **`MTR-04`** | Account holds balance covering inputs plus $80$ output tokens only ($< L_{\min}$). | Opens the stream under the exception policy (`Zero-Dust Drain`), generates exactly $80$ tokens, and closes cleanly with $0$ micro-credits remaining. |
 | **`MTR-05`** | Balance runs out after `search_synthesizer_node` and before `decision_scorer_node`, followed by balance top-up and `Command({ resume })`. | Agent pauses via `interrupt('INSUFFICIENT_CREDITS')` before invoking the decision model; upon resume, the node executes and is billed exactly once (`StepKey`). |
 | **`MTR-06`** | Key `lugx:wallet:${userId}` expires from Redis while an unsettled record exists in `lugx:pending_settlements:${userId}`. | `Flush-First Cold Start` flushes the pending record to PostgreSQL first with `ON CONFLICT DO NOTHING` and then reads the net balance without double deduction. |
+
+---
+
+## 7. Implementation Artifacts & Phase Closure References
+
+- **Implementation Modules:**
+  - `src/lib/metering/cold-start.ts` — `ensureWalletLoadedFlushFirst`
+  - `src/lib/metering/stream-governor.ts` — `StreamGovernor` (500ms Local Hold & Abort)
+  - `src/lib/metering/node-gate.ts` — `withMeteredNodeGate` (Higher-Order Metered Node Gate)
+  - `src/server/services/ai-settlement-service.ts` — `flushPendingSettlementsToPostgres`, `getUserCreditBalance`
+  - `src/config/tiers.config.ts` — `creditAllocationMicro` and `creditsDisplay` per tier
+  - `src/server/services/billing-service.ts` — `recordCreditTopup`, `executeRedisDualWrite`
+  - `src/app/api/stripe/webhook/route.ts` — Authoritative Stripe webhook handler with dual-write protocol
+  - `src/app/api/cron/expire-reservations/route.ts` — Batch-draining cron job with 30s grace window
+- **Acceptance & Verification Suites:**
+  - `src/test/metering/credit-metering-suite.test.ts` — MTR-01 through MTR-06 acceptance tests
+  - `src/test/metering/cold-start.unit.test.ts` — Flush-First cold start unit tests (13 tests)
+  - `src/test/metering/stream-governor.unit.test.ts` — Real-time stream governor unit tests (17 tests)
+  - `src/test/metering/node-gate.unit.test.ts` — Metered node gate unit tests (11 tests)
+  - `src/test/metering/ai-settlement-service.unit.test.ts` — AI settlement service unit tests (21 tests)
+  - `src/test/infrastructure/cron-expire-reservations.test.ts` — Cron batch draining tests (10 tests)
+  - `src/test/server/billing-service.test.ts` — Billing service and top-up unit tests (23 tests)
+  - `src/test/api/stripe-webhook.test.ts` — Stripe webhook and dual-write tests (26 tests)
+- **Phase Closure Dossier:** [`docs/records/closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md`](../records/closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md)
+

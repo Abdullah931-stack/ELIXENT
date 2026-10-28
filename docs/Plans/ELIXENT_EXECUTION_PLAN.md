@@ -168,7 +168,7 @@ flowchart TB
 | **`Phase 1`**  | Harden encryption (`AAD`), fix sync, folder restoration, and encrypted import, wire `authRateLimiter`, and prune dead code in `conflict-resolver.ts`.                                                                                  |    $3$ (`Wave 1.1`)     | `fix(core): harden webauthn AAD, folder restore, encrypted import ETag, sync root move, and auth rate limit`<br>_(Status: CLOSED / EXECUTED)_ |
 | **`Phase 2`**  | Install NPM packages, export `getPgPool()`, create new Drizzle schemas and migration `0013` (dropping `usage` and `ai_reservations`), and update callers to prevent build breakage.                                                    |  $4$ (`Waves 2.1–2.3`)  | `feat(db): add credit & decision ledgers, PostgresSaver DDL, export getPgPool, and drop legacy usage tables`<br>_(Status: CLOSED / EXECUTED)_ |
 | **`Phase 3`**  | Transform `models.config.json` into a lean dynamic model registry, build derivation constants/formulas and pessimistic tokenizer (`js-tiktoken`), and author the three atomic Lua scripts.                                             |  $3$ (`Waves 3.1–3.2`)  | `feat(metering): implement lean model registry, micro-credit derivation math, tokenizer, and atomic Redis Lua scripts`<br>_(Status: CLOSED / EXECUTED)_ |
-| **`Phase 4`**  | Build `Flush-First Cold Start`, PostgreSQL settlement service, `withMeteredNodeGate` wrapper, `StreamGovernor`, and upgrade Stripe tiers and Cron job.                                                                                 |  $4$ (`Waves 4.1–4.2`)  | `feat(metering): add Flush-First cold start, StreamGovernor, node gate, Stripe dual-write, and dirty wallet cron`                             |
+| **`Phase 4`**  | Build `Flush-First Cold Start`, PostgreSQL settlement service, `withMeteredNodeGate` wrapper, `StreamGovernor`, and upgrade Stripe tiers and Cron job.                                                                                 |  $4$ (`Waves 4.1–4.2`)  | `feat(metering): add Flush-First cold start, StreamGovernor, node gate, Stripe dual-write, and dirty wallet cron`<br>_(Status: CLOSED / EXECUTED)_ |
 | **`Phase 5`**  | Build the `Fence-Aware Heading Slicer`, `diff3MergeSection` function with exact parameter ordering, and hybrid `BM25 + AST` lexical search engine.                                                                                     |  $3$ (`Waves 5.1–5.2`)  | `feat(ast): implement fence-aware heading slicer, section-scoped Diff3 merge, and hybrid BM25 lexical search`                                 |
 | **`Phase 6`**  | Build the zero-knowledge `EphemeralVaultMemoryMap` (`vault_ref://` pointers), `EncryptedCheckpointSerializer`, and `CloudPostgresWorkspaceProvider`.                                                                                   |  $3$ (`Waves 6.1–6.2`)  | `feat(workspace): implement ephemeral vault memory map, encrypted checkpoint serializer, and cloud workspace provider`                        |
 | **`Phase 7`**  | Comprehensive definition of `PREDEFINED_CONCEPT_TAGS` and `Zod` contracts, unified `/v1/decisions` client, `Conformal APS` classifier, and `Vercel AI SDK v7` gateway.                                                                 |  $3$ (`Waves 7.1–7.2`)  | `feat(jev): define predefined concept tags taxonomy, unified /v1/decisions client, Conformal APS, and AI SDK v6 bridge`                       |
@@ -623,10 +623,13 @@ flowchart LR
 - **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 46/46 unit tests passing (100%), MTR-01 through MTR-04 verified, Commit Gate 3 fully satisfied.
 - **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-03-lean-model-registry-derivation-and-lua.md`](../records/closures/elixent-execution/phase-03-lean-model-registry-derivation-and-lua.md)
 
-### [Phase 4: `Flush-First` Cold Start Protocol, Settlement Service, `StreamGovernor` & Stripe/Cron Adaptation]
+### [Phase 4: `Flush-First` Cold Start Protocol, Settlement Service, `StreamGovernor` & Stripe/Cron Adaptation] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 4 — Flush-First Cold Start, Settlement Service, StreamGovernor & Billing/Cron Adaptation`  
+> **Status:** `CLOSED / EXECUTED` ✅ ([Closure Dossier](../records/closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md))  
+> **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 98 unit suites (1221 tests) passing 100%, 21 live suites (119 tests) passing 100%, MTR-01 through MTR-06 verified, Commit Gate 4 fully satisfied.  
 > **Single Responsibility Principle (`SRP`):** Complete the financial governance subsystem by building the `Flush-First Cold Start` protocol, the PostgreSQL draining service (`ai-settlement-service.ts`), the pre-node metering wrapper (`withMeteredNodeGate`), the real-time stream governor (`StreamGovernor`), and updating Stripe subscription tiers and the periodic Cron job.  
+> **Closure Record:** [`docs/records/closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md`](../records/closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md)  
 > **Post-Phase 3 Baseline State:** The `credit_ledger_transactions` table and `users.credit_balance_micro` column exist in the repository (from Phase 2), alongside the lean model registry, derivation formulas, and the three Lua scripts (from Phase 3).
 
 #### Phase 4 Sub-Agent Topology
@@ -699,13 +702,15 @@ flowchart LR
   1. Upgrade `src/app/api/cron/expire-reservations/route.ts` to execute a `Batch-Draining Loop` inspecting `lugx:dirty_wallets` and invoking `flushPendingSettlementsToPostgres(userId, { onlyOlderThanMs: 30_000 })` to drain only records whose `created_at_ms` is older than $30,000\text{ ms}$.
   2. Author and run the six acceptance tests (`MTR-01` through `MTR-06`) and update the Cron test suites.
 
-#### Phase 4 Commit Gate
+#### Phase 4 Commit Gate — ✅ SATISFIED / CLOSED
 
 - Execute the following mandatory verification commands and confirm $100\%$ pass rate across `MTR-01` through `MTR-06`, Cron, and Stripe tests before running `git commit`:
   ```bash
   npx tsc --noEmit
   npx vitest run src/test/metering/credit-metering-suite.test.ts src/test/infrastructure/cron-expire-reservations.test.ts src/test/api/stripe-webhook.test.ts
   ```
+- **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 98 unit suites (1221 tests) passing 100%, 21 live suites (119 tests) passing 100%, MTR-01 through MTR-06 verified, Commit Gate 4 fully satisfied.
+- **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md`](../records/closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md)
 
 ### [Phase 5: Fence-Aware AST Heading Slicer, Section-Scoped Diff3 & Hybrid `BM25` Search Engine]
 
