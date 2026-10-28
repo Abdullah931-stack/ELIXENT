@@ -4,6 +4,59 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.3.0] - 2026-10-28 (Phase 3: Lean Dynamic Model Registry, Derivation Math & Atomic Redis Lua Scripts)
+
+### Lean Dynamic Model Registry (`src/config/models.config.json`)
+
+- **Configured 7 Canonical Models:** Transformed `models.config.json` into a lean registry under `"models"` indexing 7 models with canonical parameters (`executionMode`, velocity $V$, `creditsPer1kInput`, `creditsPer1kCacheRead`, `creditsPer1kOutput`, and `calibrationPriors`):
+  - `openai/gpt-6-luna-decisions` (`SINGLE_PASS_DECISION`, $V = 0$, priors $\{0.22, 0.42\}$)
+  - `microsoft/decision-1` (`SINGLE_PASS_DECISION`, $V = 0$, priors $\{0.22, 0.42\}$)
+  - `typesafe/jev-1.13` (`SINGLE_PASS_DECISION`, $V = 0$, priors $\{0.08, 0.22\}$)
+  - `fastino/glide` (`DISCRETE_THINKING`, $V = 85$, priors $\{0.09, 0.24\}$)
+  - `google/gemini-4-argon` (`STREAMING_GENERATIVE`, $V = 100$)
+  - `google/gemini-3.8-flash` (`STREAMING_GENERATIVE`, $V = 120$)
+  - `google/gemini-3.1-pro` (`STREAMING_GENERATIVE`, $V = 95$)
+- **Legacy AI Client Compatibility:** Preserved all existing legacy operation blocks (`correct`, `improve`, `translate`, `summarize`, `toPrompt`, fallbacks, and temperature settings) ensuring 100% backward compatibility for `src/lib/ai/client.ts` (24/24 tests passing).
+
+### Pure Micro-Credit Derivation Math (`src/lib/metering/derivation.ts`)
+
+- **Micro-Credit Scale & Conversion:** Implemented `tokensToMicroCredits(tokens, creditsPer1k)` calculating $\lceil \text{Tokens} \times \text{CreditsPer1k} \times 1,000 \rceil$ in integer Micro-Credits ($10^6\text{ micro-credits} = 1\text{ credit}$).
+- **Three-Mode Reservation Derivation:**
+  - `SINGLE_PASS_DECISION`: Input tokens reserved only, $L_{\text{allocated}} = 0$, $\text{Trigger} = 0$, `creditsPer1kOutput = 0`, eliminating division-by-zero risks.
+  - `DISCRETE_THINKING`: Reserves input plus discrete thinking ceiling ($B_{\text{discrete}} = 1500\text{ tokens}$ or node override), $\text{Trigger} = 0$.
+  - `STREAMING_GENERATIVE`: Computes operational chunk $L_{\text{calc}} = \max(L_{\min}, \lceil V \times T_{\text{chunk}} \rceil)$ and runway trigger $\lceil V \times T_{\text{runway}} \rceil$.
+- **Zero-Dust Drain Rule:** Waives the $L_{\min} = 500$ floor constraint when user token capacity is within $0 < \text{capacity} < L_{\min}$, setting `isZeroDustAllowed = true` and reserving the exact remaining micro-credit balance to drain user wallets down to precisely $0$ without stranding fractional dust.
+
+### Pessimistic Tokenization Foundation (`src/lib/metering/tokenizer.ts`)
+
+- **`js-tiktoken` Singleton:** Lazily instantiates `cl100k_base` tokenizer singleton for fast in-process token counting.
+- **Pessimistic Safety Margin:** Multiplies raw token counts by $+15\%$ (`PESSIMISTIC_TOKEN_MARGIN = 1.15`) with ceiling rounding to absorb cross-provider tokenization divergence and multilingual token expansions.
+
+### Metering Constants & Redis Key Builders (`src/lib/metering/constants.ts`)
+
+- **Financial & Timing Constants:** Defined `MICRO_PER_CREDIT = 1_000_000n`, $T_{\text{runway}} = 3\text{s}$ ($3,000\text{ms}$), $T_{\text{chunk}} = 10\text{s}$, $L_{\min} = 500\text{ tokens}$, $B_{\text{discrete}} = 1500\text{ tokens}$, `LOCAL_HOLD_TIMEOUT_MS = 500ms`, `DIRTY_SETTLEMENT_GRACE_MS = 30_000ms`.
+- **Key Lifecycles & TTLs:** `LEASE_TTL_SECONDS = 120s`, `WALLET_TTL_SECONDS = 86400s` ($24\text{h}$), `STEP_DONE_TTL_SECONDS = 3600s` ($1\text{h}$).
+- **Canonical Redis Key Builders (`REDIS_KEYS`):** Centralized builders for `lugx:wallet:${userId}`, `lugx:lease:${operationId}`, `lugx:step_done:${stepKey}`, `lugx:pending_settlements:${userId}`, and `lugx:dirty_wallets`.
+
+### Atomic Upstash Redis Lua Scripts & Execution Wrappers (`src/lib/metering/lua-scripts.ts`)
+
+- **Pre-Flight Reservation & Chunk Extension (`RESERVE_OR_EXTEND_LUA`):** Atomic script checking idempotency via `lugx:step_done`, detecting cold wallets via `EXISTS lugx:wallet` (returning `COLD_START_REQUIRED`), applying Zero-Dust Drain logic, atomically debiting balance, and refreshing `lugx:lease:${operationId}` with 120s TTL.
+- **Operation Settlement & Durability Staging (`SETTLE_OPERATION_LUA`):** Atomically refunds surplus $\max(0, \text{Reserved} - \text{Actual})$ to wallet, deletes active lease, stages pending settlement record in hash `lugx:pending_settlements:${userId}` via `HSET`, registers user in `lugx:dirty_wallets` via `SADD`, and stamps completed step receipt in `lugx:step_done:${stepKey}` with 3600s TTL.
+- **Stripe Webhook Dual-Write (`STRIPE_DUAL_WRITE_LUA`):** Atomically increments live balance via `INCRBY` strictly when the wallet key exists in Redis (`EXISTS == 1`), returning `{ applied: boolean, newBalanceMicro }`.
+- **Fail-Closed Policy Enforcement:** Wrapped all Lua execution in try/catch throwing `MeteringServiceUnavailableError` (`status: 503`, `code: "METERING_SERVICE_UNAVAILABLE"`) upon Redis timeout or connection failure, guaranteeing zero unmetered model execution during outages.
+
+### Isolated Acceptance & Unit Test Verification (`src/test/metering/derivation-and-lua.unit.test.ts`)
+
+- **High-Fidelity In-Memory Test Harness:** Authored `InMemoryRedisEvalClient` simulating Redis key mutations, multi-key TTLs, and atomic Lua execution with zero external network dependencies.
+- **Verified Acceptance Criteria (22 Tests, 100% Passing):**
+  - `MTR-01`: Single-pass decision input-only reservation, zero output tokens, zero trigger, boundary affordability checking.
+  - `MTR-02`: Concurrency & overdraft prevention (10 concurrent requests on 3-slice balance -> exactly 3 accepted, 7 rejected, final balance precisely 0).
+  - `MTR-03`: Fail-Closed policy enforcement throwing HTTP 503 `MeteringServiceUnavailableError` on connection drops or unconfigured runtime.
+  - `MTR-04`: Generative streaming slice allocation and Zero-Dust Drain wallet clearing.
+- **Repository Verification Baseline:** 91 unit suites (1103 tests) passing 100%, 21 live suites (118 tests), 14 E2E specs (15 journeys), clean TypeScript (`tsc --noEmit`), and synchronized SSOT documentation metrics.
+
+---
+
 ## [0.2.0] - 2026-10-27 (Phase 2: NPM Dependencies, Database Schema Migration & Pool Export)
 
 ### Agentic & AI Orchestration Dependencies (`package.json`, `package-lock.json`)

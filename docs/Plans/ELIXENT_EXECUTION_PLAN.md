@@ -167,7 +167,7 @@ flowchart TB
 | :------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------: | :-------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`Phase 1`**  | Harden encryption (`AAD`), fix sync, folder restoration, and encrypted import, wire `authRateLimiter`, and prune dead code in `conflict-resolver.ts`.                                                                                  |    $3$ (`Wave 1.1`)     | `fix(core): harden webauthn AAD, folder restore, encrypted import ETag, sync root move, and auth rate limit`<br>_(Status: CLOSED / EXECUTED)_ |
 | **`Phase 2`**  | Install NPM packages, export `getPgPool()`, create new Drizzle schemas and migration `0013` (dropping `usage` and `ai_reservations`), and update callers to prevent build breakage.                                                    |  $4$ (`Waves 2.1–2.3`)  | `feat(db): add credit & decision ledgers, PostgresSaver DDL, export getPgPool, and drop legacy usage tables`<br>_(Status: CLOSED / EXECUTED)_ |
-| **`Phase 3`**  | Transform `models.config.json` into a lean dynamic model registry, build derivation constants/formulas and pessimistic tokenizer (`js-tiktoken`), and author the three atomic Lua scripts.                                             |  $3$ (`Waves 3.1–3.2`)  | `feat(metering): implement lean model registry, micro-credit derivation math, tokenizer, and atomic Redis Lua scripts`                        |
+| **`Phase 3`**  | Transform `models.config.json` into a lean dynamic model registry, build derivation constants/formulas and pessimistic tokenizer (`js-tiktoken`), and author the three atomic Lua scripts.                                             |  $3$ (`Waves 3.1–3.2`)  | `feat(metering): implement lean model registry, micro-credit derivation math, tokenizer, and atomic Redis Lua scripts`<br>_(Status: CLOSED / EXECUTED)_ |
 | **`Phase 4`**  | Build `Flush-First Cold Start`, PostgreSQL settlement service, `withMeteredNodeGate` wrapper, `StreamGovernor`, and upgrade Stripe tiers and Cron job.                                                                                 |  $4$ (`Waves 4.1–4.2`)  | `feat(metering): add Flush-First cold start, StreamGovernor, node gate, Stripe dual-write, and dirty wallet cron`                             |
 | **`Phase 5`**  | Build the `Fence-Aware Heading Slicer`, `diff3MergeSection` function with exact parameter ordering, and hybrid `BM25 + AST` lexical search engine.                                                                                     |  $3$ (`Waves 5.1–5.2`)  | `feat(ast): implement fence-aware heading slicer, section-scoped Diff3 merge, and hybrid BM25 lexical search`                                 |
 | **`Phase 6`**  | Build the zero-knowledge `EphemeralVaultMemoryMap` (`vault_ref://` pointers), `EncryptedCheckpointSerializer`, and `CloudPostgresWorkspaceProvider`.                                                                                   |  $3$ (`Waves 6.1–6.2`)  | `feat(workspace): implement ephemeral vault memory map, encrypted checkpoint serializer, and cloud workspace provider`                        |
@@ -551,10 +551,13 @@ flowchart LR
 - **Gate Verdict:** CLOSED / EXECUTED — 90 unit suites (1081 tests), 21 live suites (118 tests) passing 100%, ESLint clean (0 errors, 0 warnings), TypeScript check clean (0 errors), Commit Gate 2 fully satisfied.
 - **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-02-dependencies-pool-and-schema-migration.md`](../records/closures/elixent-execution/phase-02-dependencies-pool-and-schema-migration.md)
 
-### [Phase 3: Lean Dynamic Model Registry, Micro-Credit Derivation Math & Atomic `Redis Lua` Scripts]
+### [Phase 3: Lean Dynamic Model Registry, Micro-Credit Derivation Math & Atomic `Redis Lua` Scripts] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 3 — Lean Model Registry, Micro-Credit Derivation Math & Atomic Redis Lua Scripts`  
+> **Status:** `CLOSED / EXECUTED` ✅ ([Closure Dossier](../records/closures/elixent-execution/phase-03-lean-model-registry-derivation-and-lua.md))  
+> **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 46/46 unit tests passing (100%), MTR-01 through MTR-04 verified, Commit Gate 3 fully satisfied.  
 > **Single Responsibility Principle (`SRP`):** Transform `models.config.json` into a lean dynamic model registry, build the pure mathematical and tokenization modules (`constants.ts`, `derivation.ts`, `tokenizer.ts`) and the three atomic Upstash Redis Lua scripts (`lua-scripts.ts`), and unit-test them in isolation from streaming services and PostgreSQL.  
+> **Closure Record:** [`docs/records/closures/elixent-execution/phase-03-lean-model-registry-derivation-and-lua.md`](../records/closures/elixent-execution/phase-03-lean-model-registry-derivation-and-lua.md)  
 > **Post-Phase 2 Baseline State:** Packages (`js-tiktoken`, `@langchain/langgraph`, `ai`) are installed, and `credit_ledger_transactions` and `users.credit_balance_micro` schemas are active in the database.
 
 #### Phase 3 Sub-Agent Topology
@@ -581,7 +584,7 @@ flowchart LR
 - **Exclusively Targeted Files:**
   - `src/config/models.config.json` (modify)
 - **Exact Implementation Actions:**
-  1. Structure `src/config/models.config.json` to index models under the `models` key by `modelId` `modelId` (`openai/gpt-6.1-luna-decisions`, `microsoft/decision-1`, `typesafe/jev-1.13`, `fastino/glide`, `google/gemini-4-argon`, `google/gemini-3.8-flash`) with the canonical fields specified in `ELIXENT-ARCH-04` §2.3:
+  1. Structure `src/config/models.config.json` to index models under the `models` key by `modelId` (`openai/gpt-6-luna-decisions`, `microsoft/decision-1`, `typesafe/jev-1.13`, `fastino/glide`, `google/gemini-4-argon`, `google/gemini-3.8-flash`, `google/gemini-3.1-pro`) with the canonical fields specified in `ELIXENT-ARCH-04` §2.3:
      - `executionMode` (`SINGLE_PASS_DECISION | DISCRETE_THINKING | STREAMING_GENERATIVE`), `V` (`tokensPerSecond`), `creditsPer1kInput`, `creditsPer1kCacheRead`, `creditsPer1kOutput` (`0` for single-pass decision models), and `calibrationPriors` (`{ qHatCore05: 0.22, qHatPeriph20: 0.42 }` for decision models and `null` for generative models), while preserving temporary backward-compatibility keys for `src/lib/ai/client.ts` until its upgrade in Phase 7.
 
 ##### 2. Task `Sub-Agent 3.B`: Build Metering Constants, Automated Derivation Formulas, and Pessimistic Tokenizer (`js-tiktoken`)
@@ -610,13 +613,15 @@ flowchart LR
   2. Enforce **`Fail-Closed`** policy: throw `MeteringServiceUnavailableError` (`status: 503`) immediately if Upstash Redis is unreachable.
   3. Create `src/test/metering/derivation-and-lua.unit.test.ts` testing the derivation math (`MTR-01`, `MTR-04`) and the three Lua scripts (`MTR-02`, `MTR-03`).
 
-#### Phase 3 Commit Gate
+#### Phase 3 Commit Gate — ✅ SATISFIED / CLOSED
 
 - Execute the following mandatory verification commands and confirm $100\%$ pass rate before running `git commit`:
   ```bash
   npx tsc --noEmit
-  npx vitest run src/test/metering/derivation-and-lua.unit.test.ts
+  npx vitest run src/test/metering/derivation-and-lua.unit.test.ts src/test/ai/ai-client.test.ts
   ```
+- **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 46/46 unit tests passing (100%), MTR-01 through MTR-04 verified, Commit Gate 3 fully satisfied.
+- **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-03-lean-model-registry-derivation-and-lua.md`](../records/closures/elixent-execution/phase-03-lean-model-registry-derivation-and-lua.md)
 
 ### [Phase 4: `Flush-First` Cold Start Protocol, Settlement Service, `StreamGovernor` & Stripe/Cron Adaptation]
 
