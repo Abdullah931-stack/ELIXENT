@@ -1,6 +1,6 @@
 # Stripe Setup Guide
 
-This guide will help you complete the Stripe integration setup for LUGX.
+This guide will help you complete the Stripe integration setup for LUGX / Elixent.
 
 ## ⚠️ IMPORTANT: You MUST complete these steps before the payment system will work!
 
@@ -13,7 +13,7 @@ This guide will help you complete the Stripe integration setup for LUGX.
 2. **Create Pro Plan Product**:
    - Click "+ Add product"
    - Name: `LUGX Pro`
-   - Description: `Pro subscription plan for LUGX - 20,000 words/day, 5 summaries/day, 10 prompts/day`
+   - Description: `Pro subscription plan for Elixent - 1,000 credits/month (1,000,000,000 µcredits), 20,000 words/day, 5 summaries/day, 10 prompts/day`
    - Pricing model: `Recurring`
    - Price: `$12.00`
    - Billing period: `Monthly`
@@ -23,7 +23,7 @@ This guide will help you complete the Stripe integration setup for LUGX.
 3. **Create Ultra Plan Product**:
    - Click "+ Add product"
    - Name: `LUGX Ultra`
-   - Description: `Ultra subscription plan for LUGX - 250,000 words/day, 50 summaries/day, 500 prompts/day`
+   - Description: `Ultra subscription plan for Elixent - 3,500 credits/month (3,500,000,000 µcredits), 250,000 words/day, 50 summaries/day, 500 prompts/day`
    - Pricing model: `Recurring`
    - Price: `$120.00`
    - Billing period: `Monthly`
@@ -84,7 +84,7 @@ npm run dev
    - After successful payment, you'll be redirected to `/dashboard`
    - Go to `/account` again
    - Your plan should now show "Pro" instead of "Free"
-   - Your quota limits should be updated accordingly
+   - Your credit balance will reflect the top-up (1,000 credits) and quota limits will update accordingly
 
 ### Step 5: Production Deployment
 
@@ -110,6 +110,7 @@ STRIPE_ULTRA_PRICE_ID=price_live_XXXXXXXX
      - `customer.subscription.updated`
      - `customer.subscription.deleted`
      - `customer.subscription.trial_will_end`
+     - `invoice.paid`
      - `invoice.payment_failed`
    - Copy webhook signing secret and update `STRIPE_WEBHOOK_SECRET`
 

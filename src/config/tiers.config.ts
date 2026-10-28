@@ -8,6 +8,8 @@
 export type TierName = "free" | "pro" | "ultra";
 
 export interface TierLimits {
+    creditAllocationMicro: bigint;
+    creditsDisplay: number;
     // Combined limit for Correct, Improve, Translate operations
     correctImproveTranslate: {
         words: number;
@@ -33,6 +35,8 @@ export interface TierLimits {
 
 export const TIER_LIMITS: Record<TierName, TierLimits> = {
     free: {
+        creditAllocationMicro: BigInt(50_000_000),
+        creditsDisplay: 50,
         correctImproveTranslate: {
             words: 2000,
             period: "weekly",
@@ -47,6 +51,8 @@ export const TIER_LIMITS: Record<TierName, TierLimits> = {
         },
     },
     pro: {
+        creditAllocationMicro: BigInt(1_000_000_000),
+        creditsDisplay: 1_000,
         correctImproveTranslate: {
             words: 20000,
             period: "daily",
@@ -66,6 +72,8 @@ export const TIER_LIMITS: Record<TierName, TierLimits> = {
         },
     },
     ultra: {
+        creditAllocationMicro: BigInt(3_500_000_000),
+        creditsDisplay: 3_500,
         correctImproveTranslate: {
             words: 250000,
             period: "daily",

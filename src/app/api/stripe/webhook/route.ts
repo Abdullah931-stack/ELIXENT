@@ -33,12 +33,13 @@ import {
     recordSubscriptionEvent,
     executeSubscriptionTransition,
 } from '@/server/actions/subscription-actions';
-import type { TierName } from '@/config/tiers.config';
+import { TIER_LIMITS, type TierName } from '@/config/tiers.config';
 import Stripe from 'stripe';
 import { stripe } from '@/lib/stripe';
 import { getTierFromPriceId } from '@/lib/stripe/config';
 import { redis } from '@/lib/redis';
 import { BillingService } from '@/server/services/billing-service';
+import { executeStripeDualWrite } from '@/lib/metering/lua-scripts';
 import {
     isTerminalSubscriptionStatus,
     type SubscriptionStatus,
@@ -65,6 +66,16 @@ const MAX_TIMESTAMP_AGE_SECONDS = 300; // 5 minutes
  * the webhook handler beyond Stripe's delivery tolerance window.
  */
 const REDIS_TIMEOUT_MS = 1500;
+
+/**
+ * Numeric weight hierarchy for deterministic MAX(tier) and tier upgrade checks.
+ * Ultra (2) > Pro (1) > Free (0)
+ */
+const TIER_WEIGHTS: Record<TierName, number> = {
+    ultra: 2,
+    pro: 1,
+    free: 0,
+};
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs = REDIS_TIMEOUT_MS): Promise<T> {
     let timer: NodeJS.Timeout | undefined;
@@ -199,8 +210,11 @@ async function handleCheckoutSessionCompleted(
             fallbackAnchorSeconds: session.created,
         });
 
-        // Atomic Transaction: User Tier + Subscription Upsert + Durable Event
-        return await executeSubscriptionTransition(async (tx) => {
+        const allocationMicro = TIER_LIMITS[tier]?.creditAllocationMicro ?? BigInt(0);
+
+        // Atomic Transaction: User Tier + Subscription Upsert + Top-Up + Durable Event
+        let topupApplied = false;
+        const transitionResult = await executeSubscriptionTransition(async (tx) => {
             const tierResult = await updateUserTier(userId, tier, tx);
             if (!tierResult.success) {
                 throw new Error(`Failed to update user tier: ${tierResult.error}`);
@@ -227,6 +241,19 @@ async function handleCheckoutSessionCompleted(
                 }
             }
 
+            // Step 1: PostgreSQL credit top-up inside atomic transaction
+            if (allocationMicro > BigInt(0)) {
+                const topupResult = await BillingService.recordCreditTopup(
+                    {
+                        userId,
+                        eventId,
+                        allocationMicro,
+                    },
+                    tx as unknown as import('@/server/services/billing-service').DbClient
+                );
+                topupApplied = topupResult.applied;
+            }
+
             await recordSubscriptionEvent(
                 {
                     eventId,
@@ -243,6 +270,23 @@ async function handleCheckoutSessionCompleted(
             );
             return { success: true, userId, subscriptionId };
         });
+
+        // Step 2: Upstash Redis dual write after PostgreSQL transaction commit
+        if (transitionResult.success && topupApplied && allocationMicro > BigInt(0)) {
+            try {
+                await executeStripeDualWrite({
+                    userId,
+                    topupMicro: allocationMicro,
+                });
+            } catch (redisError) {
+                console.warn(
+                    `[WEBHOOK] Redis dual-write skipped or failed for user ${userId} on checkout:`,
+                    redisError
+                );
+            }
+        }
+
+        return transitionResult;
     } catch (error) {
         console.error('Error in handleCheckoutSessionCompleted:', error);
         return { success: false, error: String(error) };
@@ -313,8 +357,11 @@ async function handleSubscriptionUpdated(
             fallbackAnchorSeconds: subscription.start_date,
         });
 
-        // Atomic Transaction: Check Terminal State + Sync Sub + Record Event
-        return await executeSubscriptionTransition(async (tx) => {
+        let topupApplied = false;
+        let topupAllocation = BigInt(0);
+
+        // Atomic Transaction: Check Terminal State + Sync Sub + Upgrade Topup + Record Event
+        const transitionResult = await executeSubscriptionTransition(async (tx) => {
             const currentSub = await getUserSubscription(userId, tx);
 
             // TERMINAL STATE PROTECTION: If subscription is in terminal state in DB,
@@ -341,6 +388,11 @@ async function handleSubscriptionUpdated(
                 return { success: true, userId, subscriptionId: subscription.id };
             }
 
+            const previousTier: TierName = (currentSub?.tier as TierName) || 'free';
+            const isUpgrade =
+                paidStatuses.includes(subscription.status) &&
+                TIER_WEIGHTS[effectiveTier] > TIER_WEIGHTS[previousTier];
+
             const upsertResult = await upsertSubscription(
                 userId,
                 {
@@ -356,6 +408,23 @@ async function handleSubscriptionUpdated(
 
             if (!upsertResult.success) {
                 throw new Error(`Failed to upsert subscription: ${upsertResult.error}`);
+            }
+
+            // Step 1: PostgreSQL credit top-up for tier upgrades inside atomic transaction
+            if (isUpgrade) {
+                const allocationMicro = TIER_LIMITS[effectiveTier]?.creditAllocationMicro ?? BigInt(0);
+                if (allocationMicro > BigInt(0)) {
+                    const topupResult = await BillingService.recordCreditTopup(
+                        {
+                            userId,
+                            eventId,
+                            allocationMicro,
+                        },
+                        tx as unknown as import('@/server/services/billing-service').DbClient
+                    );
+                    topupApplied = topupResult.applied;
+                    topupAllocation = allocationMicro;
+                }
             }
 
             await recordSubscriptionEvent(
@@ -375,6 +444,23 @@ async function handleSubscriptionUpdated(
 
             return { success: true, userId, subscriptionId: subscription.id };
         });
+
+        // Step 2: Upstash Redis dual write after PostgreSQL commit
+        if (transitionResult.success && topupApplied && topupAllocation > BigInt(0)) {
+            try {
+                await executeStripeDualWrite({
+                    userId,
+                    topupMicro: topupAllocation,
+                });
+            } catch (redisError) {
+                console.warn(
+                    `[WEBHOOK] Redis dual-write skipped or failed for user ${userId} on upgrade:`,
+                    redisError
+                );
+            }
+        }
+
+        return transitionResult;
     } catch (error) {
         console.error('Error handling customer.subscription.updated:', error);
         return { success: false, subscriptionId: subscription.id, error: String(error) };
@@ -521,6 +607,136 @@ async function handleInvoicePaymentFailed(
 }
 
 /**
+ * Process invoice.paid event atomically (subscription renewals & recurring credit top-ups)
+ */
+async function handleInvoicePaid(
+    invoice: Stripe.Invoice,
+    eventId: string
+): Promise<HandlerResult> {
+    try {
+        const rawInvoice = invoice as unknown as {
+            subscription?: string | { id: string };
+            subscription_details?: { metadata?: { userId?: string } };
+        };
+        const subDetails = rawInvoice.subscription_details;
+        const subId = typeof rawInvoice.subscription === 'string'
+            ? rawInvoice.subscription
+            : rawInvoice.subscription?.id;
+        const customerId = typeof invoice.customer === 'string'
+            ? invoice.customer
+            : (invoice.customer as Stripe.Customer | undefined)?.id;
+
+        const userId = await BillingService.resolveUserId({
+            metadataUserId: invoice.metadata?.userId,
+            subscriptionDetailsUserId: subDetails?.metadata?.userId,
+            stripeCustomerId: customerId,
+            stripeSubscriptionId: subId,
+        });
+
+        if (!userId) {
+            console.error('[WEBHOOK] Missing userId in invoice.paid event:', invoice.id);
+            return { success: false, error: 'Missing userId' };
+        }
+
+        const firstLine = invoice.lines?.data?.[0];
+        const priceId = (firstLine as any)?.price?.id || (firstLine as any)?.plan?.id;
+        const priceTier = getTierFromPriceId(priceId);
+        const metadataTier = (invoice.metadata?.tier || (subDetails as any)?.metadata?.tier) as TierName | undefined;
+
+        let tier: TierName = priceTier || metadataTier || 'free';
+
+        const invoicePeriod = firstLine?.period;
+        const { currentPeriodStart, currentPeriodEnd } = extractPeriod({
+            invoicePeriod,
+            fallbackAnchorSeconds: invoice.created,
+        });
+
+        let topupApplied = false;
+        let topupAllocation = BigInt(0);
+
+        // Atomic Transaction: Subscription Renewal + Credit Top-Up + Durable Event
+        const transitionResult = await executeSubscriptionTransition(async (tx) => {
+            const existingSub = await getUserSubscription(userId, tx);
+            const resolvedSubId = subId || existingSub?.stripeSubscriptionId || '';
+
+            if (tier === 'free' && existingSub?.tier && existingSub.tier !== 'free') {
+                tier = existingSub.tier as TierName;
+            }
+
+            if (resolvedSubId) {
+                const upsertResult = await upsertSubscription(
+                    userId,
+                    {
+                        stripeSubscriptionId: resolvedSubId,
+                        tier,
+                        status: 'active',
+                        currentPeriodStart: existingSub?.currentPeriodStart || currentPeriodStart,
+                        currentPeriodEnd: currentPeriodEnd,
+                        cancelAtPeriodEnd: false,
+                    },
+                    tx
+                );
+
+                if (!upsertResult.success) {
+                    throw new Error(`Failed to update subscription on invoice.paid: ${upsertResult.error}`);
+                }
+            }
+
+            // Step 1: PostgreSQL credit top-up inside atomic transaction
+            const allocationMicro = TIER_LIMITS[tier]?.creditAllocationMicro ?? BigInt(0);
+            if (allocationMicro > BigInt(0)) {
+                const topupResult = await BillingService.recordCreditTopup(
+                    {
+                        userId,
+                        eventId,
+                        allocationMicro,
+                    },
+                    tx as unknown as import('@/server/services/billing-service').DbClient
+                );
+                topupApplied = topupResult.applied;
+                topupAllocation = allocationMicro;
+            }
+
+            await recordSubscriptionEvent(
+                {
+                    eventId,
+                    eventType: 'invoice.paid',
+                    userId,
+                    stripeSubscriptionId: resolvedSubId || null,
+                    status: 'processed',
+                },
+                tx
+            );
+
+            console.log(
+                `[WEBHOOK] Invoice paid handled atomically for user ${userId}; tier: ${tier}, topupApplied: ${topupApplied}`
+            );
+            return { success: true, userId, subscriptionId: resolvedSubId };
+        });
+
+        // Step 2: Upstash Redis dual write after PostgreSQL commit
+        if (transitionResult.success && topupApplied && topupAllocation > BigInt(0)) {
+            try {
+                await executeStripeDualWrite({
+                    userId,
+                    topupMicro: topupAllocation,
+                });
+            } catch (redisError) {
+                console.warn(
+                    `[WEBHOOK] Redis dual-write skipped or failed for user ${userId} on invoice.paid:`,
+                    redisError
+                );
+            }
+        }
+
+        return transitionResult;
+    } catch (error) {
+        console.error('Error handling invoice.paid:', error);
+        return { success: false, error: String(error) };
+    }
+}
+
+/**
  * Main webhook handler (POST /api/stripe/webhook)
  */
 export async function POST(request: NextRequest) {
@@ -657,6 +873,13 @@ export async function POST(request: NextRequest) {
 
             case 'invoice.payment_failed':
                 mutationMeta = await handleInvoicePaymentFailed(
+                    event.data.object as Stripe.Invoice,
+                    eventId
+                );
+                break;
+
+            case 'invoice.paid':
+                mutationMeta = await handleInvoicePaid(
                     event.data.object as Stripe.Invoice,
                     eventId
                 );

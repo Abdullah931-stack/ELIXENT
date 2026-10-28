@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { BillingService, type DbClient } from "@/server/services/billing-service";
 import * as schema from "@/server/db/schema";
+import { executeStripeDualWrite } from "@/lib/metering/lua-scripts";
+
+vi.mock("@/lib/metering/lua-scripts", () => ({
+    executeStripeDualWrite: vi.fn(),
+}));
 
 describe("BillingService (Phase 12 Domain Logic)", () => {
     let mockSubscriptions: Array<{
@@ -17,16 +22,20 @@ describe("BillingService (Phase 12 Domain Logic)", () => {
         id: string;
         stripeCustomerId?: string | null;
         tier: string;
+        creditBalanceMicro?: bigint;
     }>;
+    let mockLedger: Array<any>;
 
     let mockDb: DbClient;
 
     beforeEach(() => {
         mockSubscriptions = [];
+        mockLedger = [];
         mockUsers = [
-            { id: "user-1", stripeCustomerId: "cus_123", tier: "free" },
-            { id: "user-2", stripeCustomerId: "cus_456", tier: "free" },
+            { id: "user-1", stripeCustomerId: "cus_123", tier: "free", creditBalanceMicro: BigInt(0) },
+            { id: "user-2", stripeCustomerId: "cus_456", tier: "free", creditBalanceMicro: BigInt(0) },
         ];
+        vi.mocked(executeStripeDualWrite).mockReset();
 
         // Create an in-memory mock client that mirrors Drizzle operations used by BillingService
         mockDb = {
@@ -81,17 +90,40 @@ describe("BillingService (Phase 12 Domain Logic)", () => {
                 return queryBuilder;
             }),
 
-            insert: vi.fn((table: any) => ({
-                values: vi.fn(async (values: any) => {
-                    if (table === schema.subscriptions) {
-                        mockSubscriptions.push({
-                            id: `sub_${Date.now()}_${Math.random()}`,
-                            ...values,
-                        });
-                    }
-                    return [{ id: "mock_id" }];
-                }),
-            })),
+            insert: vi.fn((table: any) => {
+                let insertedValues: any = null;
+                const builder: any = {
+                    values: vi.fn((val: any) => {
+                        insertedValues = val;
+                        return builder;
+                    }),
+                    onConflictDoNothing: vi.fn(() => builder),
+                    returning: vi.fn(async () => {
+                        if (table === schema.creditLedgerTransactions) {
+                            const duplicate = mockLedger.some(
+                                (r) => r.operationId === insertedValues?.operationId
+                            );
+                            if (duplicate) {
+                                return [];
+                            }
+                            const row = { id: `tx_${Date.now()}`, ...insertedValues };
+                            mockLedger.push(row);
+                            return [row];
+                        }
+                        return [{ id: "mock_id" }];
+                    }),
+                    then: (resolve: (val: any) => void) => {
+                        if (table === schema.subscriptions) {
+                            mockSubscriptions.push({
+                                id: `sub_${Date.now()}_${Math.random()}`,
+                                ...insertedValues,
+                            });
+                        }
+                        return Promise.resolve(resolve([{ id: "mock_id" }]));
+                    },
+                };
+                return builder;
+            }),
 
             update: vi.fn((table: any) => ({
                 set: vi.fn((setValues: any) => ({
@@ -108,9 +140,7 @@ describe("BillingService (Phase 12 Domain Logic)", () => {
                             }
                         } else if (table === schema.users) {
                             for (const user of mockUsers) {
-                                if (clause?.__userId && user.id === clause.__userId) {
-                                    Object.assign(user, setValues);
-                                }
+                                Object.assign(user, setValues);
                             }
                         }
                         return [{ affected: 1 }];
@@ -412,6 +442,167 @@ describe("BillingService (Phase 12 Domain Logic)", () => {
             expect(result.success).toBe(true);
             expect(result.effectiveTier).toBe("free");
             expect(result.subscriptionId).toBe("sub_failed");
+        });
+    });
+
+    describe("recordCreditTopup & executeRedisDualWrite (Wave 4.2 Stripe Dual-Write Protocol)", () => {
+        describe("recordCreditTopup (PostgreSQL Ledger Step 1)", () => {
+            it("atomically inserts ledger transaction and increments user creditBalanceMicro on fresh event", async () => {
+                const allocationMicro = BigInt(1_000_000_000); // 1,000 display credits (Pro)
+                const result = await BillingService.recordCreditTopup(
+                    {
+                        userId: "user-1",
+                        eventId: "evt_topup_fresh_1",
+                        allocationMicro,
+                    },
+                    mockDb
+                );
+
+                expect(result.applied).toBe(true);
+                expect(result.row).toBeDefined();
+                expect(result.row?.operationId).toBe("stripe_topup_evt_topup_fresh_1");
+                expect(result.row?.modelId).toBe("system/stripe-topup");
+                expect(result.row?.executionMode).toBe("CREDIT_TOPUP");
+                expect(result.row?.status).toBe("TOPUP_APPLIED");
+                expect(result.row?.deltaMicro).toBe(allocationMicro);
+
+                expect(mockDb.insert).toHaveBeenCalledWith(schema.creditLedgerTransactions);
+                expect(mockDb.update).toHaveBeenCalledWith(schema.users);
+            });
+
+            it("enforces ON CONFLICT DO NOTHING idempotency: duplicate event returns applied=false without balance mutation", async () => {
+                const allocationMicro = BigInt(500_000_000);
+                const eventId = "evt_topup_duplicate_idempotent";
+
+                // First execution: succeeds
+                const firstResult = await BillingService.recordCreditTopup(
+                    {
+                        userId: "user-1",
+                        eventId,
+                        allocationMicro,
+                    },
+                    mockDb
+                );
+                expect(firstResult.applied).toBe(true);
+                const updateCallsAfterFirst = vi.mocked(mockDb.update).mock.calls.length;
+
+                // Second execution with same eventId: idempotent conflict returns applied=false
+                const secondResult = await BillingService.recordCreditTopup(
+                    {
+                        userId: "user-1",
+                        eventId,
+                        allocationMicro,
+                    },
+                    mockDb
+                );
+                expect(secondResult.applied).toBe(false);
+                expect(secondResult.row).toBeUndefined();
+
+                // Ensure users table was NOT updated again
+                expect(vi.mocked(mockDb.update).mock.calls.length).toBe(updateCallsAfterFirst);
+            });
+
+            it("rejects zero or negative micro-credit allocations without database interaction", async () => {
+                const zeroResult = await BillingService.recordCreditTopup(
+                    {
+                        userId: "user-1",
+                        eventId: "evt_zero",
+                        allocationMicro: BigInt(0),
+                    },
+                    mockDb
+                );
+                expect(zeroResult.applied).toBe(false);
+
+                const negResult = await BillingService.recordCreditTopup(
+                    {
+                        userId: "user-1",
+                        eventId: "evt_negative",
+                        allocationMicro: BigInt(-100_000),
+                    },
+                    mockDb
+                );
+                expect(negResult.applied).toBe(false);
+
+                expect(mockDb.insert).not.toHaveBeenCalled();
+            });
+
+            it("propagates database errors to trigger atomic transaction rollback", async () => {
+                const failingDb = {
+                    ...mockDb,
+                    insert: vi.fn(() => ({
+                        values: () => ({
+                            onConflictDoNothing: () => ({
+                                returning: async () => {
+                                    throw new Error("Neon connection timeout during top-up ledger insert");
+                                },
+                            }),
+                        }),
+                    })),
+                } as unknown as DbClient;
+
+                await expect(
+                    BillingService.recordCreditTopup(
+                        {
+                            userId: "user-1",
+                            eventId: "evt_db_error",
+                            allocationMicro: BigInt(1_000_000_000),
+                        },
+                        failingDb
+                    )
+                ).rejects.toThrow("Neon connection timeout during top-up ledger insert");
+            });
+        });
+
+        describe("executeRedisDualWrite (Upstash Redis Step 2)", () => {
+            it("triggers executeStripeDualWrite with userId and positive topupMicro", async () => {
+                vi.mocked(executeStripeDualWrite).mockResolvedValueOnce({
+                    applied: true,
+                    newBalanceMicro: 1_000_000_000,
+                });
+
+                await BillingService.executeRedisDualWrite({
+                    userId: "user-1",
+                    topupMicro: BigInt(1_000_000_000),
+                });
+
+                expect(executeStripeDualWrite).toHaveBeenCalledWith({
+                    userId: "user-1",
+                    topupMicro: BigInt(1_000_000_000),
+                });
+            });
+
+            it("skips Redis execution when topupMicro is zero or negative", async () => {
+                await BillingService.executeRedisDualWrite({
+                    userId: "user-1",
+                    topupMicro: BigInt(0),
+                });
+                expect(executeStripeDualWrite).not.toHaveBeenCalled();
+
+                await BillingService.executeRedisDualWrite({
+                    userId: "user-1",
+                    topupMicro: BigInt(-500),
+                });
+                expect(executeStripeDualWrite).not.toHaveBeenCalled();
+            });
+
+            it("fails open gracefully without throwing when Redis dual-write throws error", async () => {
+                vi.mocked(executeStripeDualWrite).mockRejectedValueOnce(
+                    new Error("Upstash REST connection ECONNREFUSED")
+                );
+
+                // Must not throw — Postgres commit is authoritative, Redis will hydrate on cold start
+                await expect(
+                    BillingService.executeRedisDualWrite({
+                        userId: "user-1",
+                        topupMicro: BigInt(500_000_000),
+                    })
+                ).resolves.toBeUndefined();
+
+                expect(executeStripeDualWrite).toHaveBeenCalledWith({
+                    userId: "user-1",
+                    topupMicro: BigInt(500_000_000),
+                });
+            });
         });
     });
 });

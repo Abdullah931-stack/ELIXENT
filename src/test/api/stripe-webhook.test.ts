@@ -73,12 +73,19 @@ vi.mock("@/lib/redis", () => ({
     },
 }));
 
+vi.mock("@/lib/metering/lua-scripts", () => ({
+    executeStripeDualWrite: vi.fn(async () => ({ applied: true, newBalanceMicro: 1_000_000_000 })),
+}));
+
 import { POST } from "@/app/api/stripe/webhook/route";
 import { __resetProcessedEventIds } from "@/lib/stripe/webhook-dedupe";
 import Stripe from "stripe";
 import * as stripeLib from "@/lib/stripe";
 import * as subActions from "@/server/actions/subscription-actions";
 import { redis } from "@/lib/redis";
+import { BillingService } from "@/server/services/billing-service";
+import { executeStripeDualWrite } from "@/lib/metering/lua-scripts";
+import { TIER_LIMITS } from "@/config/tiers.config";
 
 type AnyFn = ReturnType<typeof vi.fn> & ((...args: any[]) => any);
 const mockConstruct = vi.mocked(stripeLib.stripe.webhooks.constructEvent) as AnyFn;
@@ -146,6 +153,9 @@ beforeEach(() => {
     vi.mocked(redis.set).mockResolvedValue("OK" as never);
     vi.mocked(redis.get).mockResolvedValue(null as never);
     vi.mocked(redis.del).mockResolvedValue(1 as never);
+    vi.mocked(executeStripeDualWrite).mockReset();
+    vi.mocked(executeStripeDualWrite).mockResolvedValue({ applied: true, newBalanceMicro: 1_000_000_000 });
+    vi.spyOn(BillingService, "recordCreditTopup").mockResolvedValue({ applied: true, row: {} as any });
 });
 
 function stubEvent(event: Stripe.Event) {
@@ -701,6 +711,425 @@ describe("Phase 13: Stripe webhook hardening & durable idempotency", () => {
                 }),
                 expect.anything()
             );
+        });
+    });
+
+    describe("Wave 4.2: Stripe Dual-Write Protocol (Postgres + Redis) & Top-Up Allocation", () => {
+        describe("checkout.session.completed credit top-up", () => {
+            it("allocates Pro credits (1,000,000,000 micro) to Postgres and triggers Redis dual-write on paid checkout", async () => {
+                const spyRecord = vi.spyOn(BillingService, "recordCreditTopup").mockResolvedValueOnce({
+                    applied: true,
+                    row: {} as any,
+                });
+
+                stubEvent(
+                    makeEvent(
+                        "checkout.session.completed",
+                        {
+                            id: "cs_pro_paid",
+                            metadata: { userId: "user-cs-pro", tier: "pro" },
+                            payment_status: "paid",
+                            subscription: "sub_cs_pro",
+                            created: 1700000000,
+                        },
+                        "evt_cs_pro_topup"
+                    )
+                );
+
+                const resp = await POST(makeRequest());
+                expect(resp.status).toBe(200);
+
+                // Step 1: Postgres recordCreditTopup inside atomic transaction
+                expect(spyRecord).toHaveBeenCalledWith(
+                    {
+                        userId: "user-cs-pro",
+                        eventId: "evt_cs_pro_topup",
+                        allocationMicro: BigInt(1_000_000_000),
+                    },
+                    expect.anything()
+                );
+
+                // Step 2: Upstash Redis dual write
+                expect(executeStripeDualWrite).toHaveBeenCalledWith({
+                    userId: "user-cs-pro",
+                    topupMicro: BigInt(1_000_000_000),
+                });
+            });
+
+            it("allocates Ultra credits (3,500,000,000 micro) on paid Ultra checkout", async () => {
+                const spyRecord = vi.spyOn(BillingService, "recordCreditTopup").mockResolvedValueOnce({
+                    applied: true,
+                    row: {} as any,
+                });
+
+                stubEvent(
+                    makeEvent(
+                        "checkout.session.completed",
+                        {
+                            id: "cs_ultra_paid",
+                            metadata: { userId: "user-cs-ultra", tier: "ultra" },
+                            payment_status: "paid",
+                            subscription: "sub_cs_ultra",
+                            created: 1700000000,
+                        },
+                        "evt_cs_ultra_topup"
+                    )
+                );
+
+                const resp = await POST(makeRequest());
+                expect(resp.status).toBe(200);
+
+                expect(spyRecord).toHaveBeenCalledWith(
+                    {
+                        userId: "user-cs-ultra",
+                        eventId: "evt_cs_ultra_topup",
+                        allocationMicro: BigInt(3_500_000_000),
+                    },
+                    expect.anything()
+                );
+
+                expect(executeStripeDualWrite).toHaveBeenCalledWith({
+                    userId: "user-cs-ultra",
+                    topupMicro: BigInt(3_500_000_000),
+                });
+            });
+
+            it("does not execute Redis dual-write when Postgres top-up indicates duplicate conflict (applied: false)", async () => {
+                vi.spyOn(BillingService, "recordCreditTopup").mockResolvedValueOnce({
+                    applied: false,
+                });
+
+                stubEvent(
+                    makeEvent(
+                        "checkout.session.completed",
+                        {
+                            id: "cs_pro_dup",
+                            metadata: { userId: "user-cs-dup", tier: "pro" },
+                            payment_status: "paid",
+                            subscription: "sub_cs_dup",
+                            created: 1700000000,
+                        },
+                        "evt_cs_dup"
+                    )
+                );
+
+                const resp = await POST(makeRequest());
+                expect(resp.status).toBe(200);
+
+                // Redis dual-write must be skipped to avoid double incrementing wallet
+                expect(executeStripeDualWrite).not.toHaveBeenCalled();
+            });
+
+            it("fails open gracefully when Redis dual-write throws error on checkout (Postgres committed)", async () => {
+                vi.spyOn(BillingService, "recordCreditTopup").mockResolvedValueOnce({
+                    applied: true,
+                    row: {} as any,
+                });
+                vi.mocked(executeStripeDualWrite).mockRejectedValueOnce(
+                    new Error("Redis connection dropped")
+                );
+
+                stubEvent(
+                    makeEvent(
+                        "checkout.session.completed",
+                        {
+                            id: "cs_pro_redis_err",
+                            metadata: { userId: "user-cs-redis-err", tier: "pro" },
+                            payment_status: "paid",
+                            subscription: "sub_cs_redis_err",
+                            created: 1700000000,
+                        },
+                        "evt_cs_redis_fail_open"
+                    )
+                );
+
+                const resp = await POST(makeRequest());
+                // Webhook must return 200 because Postgres transaction committed successfully
+                expect(resp.status).toBe(200);
+            });
+        });
+
+        describe("customer.subscription.updated tier upgrade top-up", () => {
+            it("triggers top-up when upgrading from free to pro (isUpgrade = true)", async () => {
+                mockGetSub.mockResolvedValueOnce({
+                    id: "sub_prev_free",
+                    userId: "user-upgrade-1",
+                    tier: "free",
+                    status: "active",
+                } as any);
+
+                const spyRecord = vi.spyOn(BillingService, "recordCreditTopup").mockResolvedValueOnce({
+                    applied: true,
+                    row: {} as any,
+                });
+
+                stubEvent(
+                    makeEvent(
+                        "customer.subscription.updated",
+                        {
+                            id: "sub_upgrade_1",
+                            metadata: { userId: "user-upgrade-1", tier: "pro" },
+                            status: "active",
+                            cancel_at_period_end: false,
+                            start_date: 1700000000,
+                        },
+                        "evt_upgrade_free_to_pro"
+                    )
+                );
+
+                const resp = await POST(makeRequest());
+                expect(resp.status).toBe(200);
+
+                expect(spyRecord).toHaveBeenCalledWith(
+                    {
+                        userId: "user-upgrade-1",
+                        eventId: "evt_upgrade_free_to_pro",
+                        allocationMicro: BigInt(1_000_000_000),
+                    },
+                    expect.anything()
+                );
+
+                expect(executeStripeDualWrite).toHaveBeenCalledWith({
+                    userId: "user-upgrade-1",
+                    topupMicro: BigInt(1_000_000_000),
+                });
+            });
+
+            it("triggers top-up when upgrading from pro to ultra (isUpgrade = true)", async () => {
+                mockGetSub.mockResolvedValueOnce({
+                    id: "sub_prev_pro",
+                    userId: "user-upgrade-2",
+                    tier: "pro",
+                    status: "active",
+                } as any);
+
+                const spyRecord = vi.spyOn(BillingService, "recordCreditTopup").mockResolvedValueOnce({
+                    applied: true,
+                    row: {} as any,
+                });
+
+                stubEvent(
+                    makeEvent(
+                        "customer.subscription.updated",
+                        {
+                            id: "sub_upgrade_2",
+                            metadata: { userId: "user-upgrade-2", tier: "ultra" },
+                            status: "active",
+                            cancel_at_period_end: false,
+                            start_date: 1700000000,
+                        },
+                        "evt_upgrade_pro_to_ultra"
+                    )
+                );
+
+                const resp = await POST(makeRequest());
+                expect(resp.status).toBe(200);
+
+                expect(spyRecord).toHaveBeenCalledWith(
+                    {
+                        userId: "user-upgrade-2",
+                        eventId: "evt_upgrade_pro_to_ultra",
+                        allocationMicro: BigInt(3_500_000_000),
+                    },
+                    expect.anything()
+                );
+
+                expect(executeStripeDualWrite).toHaveBeenCalledWith({
+                    userId: "user-upgrade-2",
+                    topupMicro: BigInt(3_500_000_000),
+                });
+            });
+
+            it("does NOT trigger top-up on subscription downgrade (ultra to pro)", async () => {
+                mockGetSub.mockResolvedValueOnce({
+                    id: "sub_prev_ultra",
+                    userId: "user-downgrade",
+                    tier: "ultra",
+                    status: "active",
+                } as any);
+
+                const spyRecord = vi.spyOn(BillingService, "recordCreditTopup");
+
+                stubEvent(
+                    makeEvent(
+                        "customer.subscription.updated",
+                        {
+                            id: "sub_downgrade",
+                            metadata: { userId: "user-downgrade", tier: "pro" },
+                            status: "active",
+                            cancel_at_period_end: false,
+                            start_date: 1700000000,
+                        },
+                        "evt_downgrade"
+                    )
+                );
+
+                const resp = await POST(makeRequest());
+                expect(resp.status).toBe(200);
+
+                expect(spyRecord).not.toHaveBeenCalled();
+                expect(executeStripeDualWrite).not.toHaveBeenCalled();
+            });
+
+            it("does NOT trigger upgrade top-up when renewing the same tier (pro to pro)", async () => {
+                mockGetSub.mockResolvedValueOnce({
+                    id: "sub_prev_same",
+                    userId: "user-same-tier",
+                    tier: "pro",
+                    status: "active",
+                } as any);
+
+                const spyRecord = vi.spyOn(BillingService, "recordCreditTopup");
+
+                stubEvent(
+                    makeEvent(
+                        "customer.subscription.updated",
+                        {
+                            id: "sub_same_tier",
+                            metadata: { userId: "user-same-tier", tier: "pro" },
+                            status: "active",
+                            cancel_at_period_end: false,
+                            start_date: 1700000000,
+                        },
+                        "evt_same_tier"
+                    )
+                );
+
+                const resp = await POST(makeRequest());
+                expect(resp.status).toBe(200);
+
+                expect(spyRecord).not.toHaveBeenCalled();
+                expect(executeStripeDualWrite).not.toHaveBeenCalled();
+            });
+        });
+
+        describe("invoice.paid recurring credit top-up", () => {
+            it("allocates Pro credits (1,000,000,000 micro) on invoice.paid renewal", async () => {
+                const spyRecord = vi.spyOn(BillingService, "recordCreditTopup").mockResolvedValueOnce({
+                    applied: true,
+                    row: {} as any,
+                });
+
+                mockGetSub.mockResolvedValueOnce({
+                    id: "sub_renewal",
+                    userId: "user-renewal",
+                    stripeSubscriptionId: "sub_renewal_123",
+                    tier: "pro",
+                    status: "active",
+                } as any);
+
+                stubEvent(
+                    makeEvent(
+                        "invoice.paid",
+                        {
+                            id: "in_renewal_pro",
+                            customer: "cus_renewal",
+                            subscription: "sub_renewal_123",
+                            metadata: { userId: "user-renewal", tier: "pro" },
+                            created: 1700000000,
+                            lines: {
+                                data: [
+                                    {
+                                        period: { start: 1700000000, end: 1702592000 },
+                                    },
+                                ],
+                            },
+                        },
+                        "evt_invoice_paid_pro"
+                    )
+                );
+
+                const resp = await POST(makeRequest());
+                expect(resp.status).toBe(200);
+
+                expect(spyRecord).toHaveBeenCalledWith(
+                    {
+                        userId: "user-renewal",
+                        eventId: "evt_invoice_paid_pro",
+                        allocationMicro: BigInt(1_000_000_000),
+                    },
+                    expect.anything()
+                );
+
+                expect(executeStripeDualWrite).toHaveBeenCalledWith({
+                    userId: "user-renewal",
+                    topupMicro: BigInt(1_000_000_000),
+                });
+            });
+
+            it("does not call executeStripeDualWrite on duplicate invoice.paid replay (applied: false)", async () => {
+                vi.spyOn(BillingService, "recordCreditTopup").mockResolvedValueOnce({
+                    applied: false,
+                });
+
+                mockGetSub.mockResolvedValueOnce({
+                    id: "sub_renewal_dup",
+                    userId: "user-renewal-dup",
+                    stripeSubscriptionId: "sub_renewal_dup_123",
+                    tier: "pro",
+                    status: "active",
+                } as any);
+
+                stubEvent(
+                    makeEvent(
+                        "invoice.paid",
+                        {
+                            id: "in_renewal_dup",
+                            subscription: "sub_renewal_dup_123",
+                            metadata: { userId: "user-renewal-dup", tier: "pro" },
+                            created: 1700000000,
+                        },
+                        "evt_invoice_paid_dup"
+                    )
+                );
+
+                const resp = await POST(makeRequest());
+                expect(resp.status).toBe(200);
+
+                expect(executeStripeDualWrite).not.toHaveBeenCalled();
+            });
+
+            it("fails open gracefully when Redis dual-write throws error on invoice.paid", async () => {
+                vi.spyOn(BillingService, "recordCreditTopup").mockResolvedValueOnce({
+                    applied: true,
+                    row: {} as any,
+                });
+                vi.mocked(executeStripeDualWrite).mockRejectedValueOnce(
+                    new Error("Upstash REST connection timeout")
+                );
+
+                mockGetSub.mockResolvedValueOnce({
+                    id: "sub_renewal_err",
+                    userId: "user-renewal-err",
+                    stripeSubscriptionId: "sub_renewal_err_123",
+                    tier: "ultra",
+                    status: "active",
+                } as any);
+
+                stubEvent(
+                    makeEvent(
+                        "invoice.paid",
+                        {
+                            id: "in_renewal_err",
+                            subscription: "sub_renewal_err_123",
+                            metadata: { userId: "user-renewal-err", tier: "ultra" },
+                            created: 1700000000,
+                        },
+                        "evt_invoice_paid_redis_fail"
+                    )
+                );
+
+                const resp = await POST(makeRequest());
+                expect(resp.status).toBe(200);
+            });
+        });
+
+        describe("Route Consolidation & Duplicate Route Invariants", () => {
+            it("confirms duplicate webhook routes are permanently deleted", () => {
+                // Ensure duplicate routes cannot be imported
+                expect(() => require("@/app/api/billing/webhook/route")).toThrow();
+                expect(() => require("@/app/api/webhooks/stripe/route")).toThrow();
+            });
         });
     });
 });

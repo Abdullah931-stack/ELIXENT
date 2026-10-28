@@ -20,9 +20,10 @@ import "server-only";
 import { db } from "@/server/db";
 import { txDb } from "@/server/db/transactional";
 import * as schema from "@/server/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import type { TierName } from "@/config/tiers.config";
 import { stripe } from "@/lib/stripe";
+import { executeStripeDualWrite } from "@/lib/metering/lua-scripts";
 import {
     reduceSubscriptionState,
     type SubscriptionState,
@@ -489,5 +490,88 @@ export class BillingService {
             .from(schema.subscriptions)
             .where(eq(schema.subscriptions.userId, userId))
             .orderBy(desc(schema.subscriptions.createdAt));
+    }
+
+    /**
+     * Atomically records a credit top-up in the credit ledger and increments
+     * users.creditBalanceMicro by allocationMicro (Step 1 of Stripe dual-write protocol).
+     * Enforces idempotency via ON CONFLICT (operation_id) DO NOTHING.
+     */
+    static async recordCreditTopup(
+        params: {
+            userId: string;
+            eventId: string;
+            allocationMicro: bigint;
+        },
+        client?: DbClient
+    ): Promise<{ applied: boolean; row?: schema.CreditLedgerTransaction }> {
+        if (params.allocationMicro <= BigInt(0)) {
+            return { applied: false };
+        }
+
+        const targetDb = getActiveClient(client);
+
+        if (!targetDb || typeof targetDb.insert !== "function") {
+            return { applied: false };
+        }
+
+        const operationId = `stripe_topup_${params.eventId}`;
+
+        try {
+            const insertedRows = await (targetDb as any)
+                .insert(schema.creditLedgerTransactions)
+                .values({
+                    operationId,
+                    userId: params.userId,
+                    modelId: "system/stripe-topup",
+                    executionMode: "CREDIT_TOPUP",
+                    status: "TOPUP_APPLIED",
+                    deltaMicro: params.allocationMicro,
+                    createdAt: new Date(),
+                })
+                .onConflictDoNothing({
+                    target: schema.creditLedgerTransactions.operationId,
+                })
+                .returning();
+
+            if (insertedRows && insertedRows.length > 0) {
+                await (targetDb as any)
+                    .update(schema.users)
+                    .set({
+                        creditBalanceMicro: sql`${schema.users.creditBalanceMicro} + ${params.allocationMicro}`,
+                        updatedAt: new Date(),
+                    })
+                    .where(eq(schema.users.id, params.userId));
+
+                return { applied: true, row: insertedRows[0] };
+            }
+
+            return { applied: false };
+        } catch (error) {
+            console.error("[BillingService] Error recording credit top-up:", error);
+            throw error;
+        }
+    }
+
+    /**
+     * Executes Step 2 of the Stripe dual-write protocol: atomically increments
+     * the Redis wallet balance if warm (EXISTS == 1) via executeStripeDualWrite.
+     */
+    static async executeRedisDualWrite(params: {
+        userId: string;
+        topupMicro: bigint;
+    }): Promise<void> {
+        if (params.topupMicro <= BigInt(0)) return;
+        try {
+            await executeStripeDualWrite({
+                userId: params.userId,
+                topupMicro: params.topupMicro,
+            });
+        } catch (error) {
+            console.warn(
+                `[BillingService] Redis dual-write skipped or failed for user ${params.userId} (PostgreSQL committed, wallet will hydrate on cold start):`,
+                error
+            );
+        }
     }
 }

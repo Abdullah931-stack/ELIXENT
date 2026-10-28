@@ -142,8 +142,8 @@ export function isTerminalSubscriptionStatus(status: SubscriptionStatus): boolea
   - `401` - Unauthorized (no active session)
   - `500` - Server error
 
-#### POST `/api/stripe/webhook` (Canonical Handler)
-Authoritative webhook ingestion endpoint with alias re-exports at `/api/webhooks/stripe` and `/api/billing/webhook`.
+#### POST `/api/stripe/webhook` (Sole Authoritative Handler)
+Authoritative webhook ingestion endpoint. Redundant duplicate aliases (`/api/webhooks/stripe` and `/api/billing/webhook`) were permanently deleted in Phase 4 to guarantee single-route determinism.
 
 **Security & Invariants:**
 - **HMAC Signature Verification:** Verified against `STRIPE_WEBHOOK_SECRET` with `MAX_TIMESTAMP_AGE_SECONDS = 300` before JSON parsing or DB operations.
@@ -156,12 +156,16 @@ Authoritative webhook ingestion endpoint with alias re-exports at `/api/webhooks
 - **1:N Multi-Subscriptions & Dynamic MAX(tier) (LUGX-027):** Users can hold multiple active subscriptions indexed by `stripe_subscription_id`. The user's tier is dynamically derived via `BillingService.calculateEffectiveTier` (`MAX(tier)` where ultra > pro > free).
 - **Grace Period Preservation (LUGX-026):** On `invoice.payment_failed`, the subscription status is marked `past_due` without immediately wiping user tier, allowing smart retries.
 - **Terminal State Protection (LUGX-069):** A subscription in `canceled` state rejects stale `customer.subscription.updated` events, while `paused` status is non-terminal.
+- **Stripe Dual-Write Protocol (Phase 4):**
+  - **Step 1 (PostgreSQL inside atomic ACID transaction):** Inserts a credit top-up record into `credit_ledger_transactions` (`operationId: stripe_topup_${eventId}`, `executionMode: "CREDIT_TOPUP"`, `status: "TOPUP_APPLIED"`, `deltaMicro: allocationMicro`) via `ON CONFLICT (operation_id) DO NOTHING`. If newly inserted, increments `users.creditBalanceMicro` by `allocationMicro`.
+  - **Step 2 (Upstash Redis after transaction commit):** Invokes `executeStripeDualWrite` to atomically increment `lugx:wallet:${userId}` via `INCRBY` strictly if the wallet key is live in memory (`EXISTS == 1`). If the wallet is cold, hydration occurs automatically on next access via the Flush-First Cold Start protocol.
 
 **Supported Events:**
-- `checkout.session.completed` — Upgrades tier and records subscription upon confirmed payment.
-- `customer.subscription.updated` — Updates tier and subscription status (fail-closed on unmapped statuses; supports `paused`).
+- `checkout.session.completed` — Upgrades tier, records subscription, and triggers dual-write credit allocation upon confirmed payment.
+- `customer.subscription.updated` — Updates tier and subscription status (fail-closed on unmapped statuses; triggers dual-write credit top-up on tier upgrade).
 - `customer.subscription.deleted` — Cancels subscription and recalculates tier from remaining active subscriptions.
 - `customer.subscription.trial_will_end` — Informational notice; preserves user tier.
+- `invoice.paid` — Handles subscription renewals and triggers recurring credit top-ups via the dual-write protocol.
 - `invoice.payment_failed` — Marks subscription `past_due` during grace period without premature tier wipe.
 
 ---
@@ -175,6 +179,8 @@ Authoritative webhook ingestion endpoint with alias re-exports at `/api/webhooks
 - `handleInvoicePaymentFailed(options, client?)`: Sets subscription to `past_due` without destroying other active tiers.
 - `createCustomerPortalSession(userId, returnUrl?)`: Generates Stripe Customer Portal session URL.
 - `getUserSubscriptions(userId, client?)`: Returns all subscriptions held by a user.
+- `recordCreditTopup(params, client?)`: Inserts top-up record into `credit_ledger_transactions` and increments `users.creditBalanceMicro` inside an atomic transaction (Step 1).
+- `executeRedisDualWrite(params)`: Executes `executeStripeDualWrite` against Upstash Redis to atomically increment warm wallet balance (Step 2).
 
 ---
 

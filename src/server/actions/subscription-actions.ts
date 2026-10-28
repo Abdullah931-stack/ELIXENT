@@ -320,3 +320,31 @@ export async function calculateEffectiveTier(
         client as unknown as import('@/server/services/billing-service').DbClient
     );
 }
+
+/**
+ * Record a Stripe credit top-up into the credit ledger and increment user credit balance.
+ * Implements Step 1 of the Stripe dual-write protocol.
+ */
+export async function recordCreditTopup(
+    params: {
+        userId: string;
+        eventId: string;
+        allocationMicro: bigint;
+    },
+    client?: DbClient
+) {
+    return BillingService.recordCreditTopup(
+        params,
+        client as unknown as import('@/server/services/billing-service').DbClient
+    );
+}
+
+/**
+ * Execute Step 2 of the Stripe dual-write protocol against Upstash Redis.
+ */
+export async function executeRedisDualWrite(params: {
+    userId: string;
+    topupMicro: bigint;
+}) {
+    return BillingService.executeRedisDualWrite(params);
+}
