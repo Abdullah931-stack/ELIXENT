@@ -1,4 +1,69 @@
 {
+  "models": {
+    "openai/gpt-6-luna-decisions": {
+      "modelId": "openai/gpt-6-luna-decisions",
+      "executionMode": "SINGLE_PASS_DECISION",
+      "V": 0,
+      "creditsPer1kInput": 0.20,
+      "creditsPer1kCacheRead": 0.05,
+      "creditsPer1kOutput": 0,
+      "calibrationPriors": { "qHatCore05": 0.22, "qHatPeriph20": 0.42 }
+    },
+    "microsoft/decision-1": {
+      "modelId": "microsoft/decision-1",
+      "executionMode": "SINGLE_PASS_DECISION",
+      "V": 0,
+      "creditsPer1kInput": 0.10,
+      "creditsPer1kCacheRead": 0.02,
+      "creditsPer1kOutput": 0,
+      "calibrationPriors": { "qHatCore05": 0.22, "qHatPeriph20": 0.42 }
+    },
+    "typesafe/jev-1.13": {
+      "modelId": "typesafe/jev-1.13",
+      "executionMode": "SINGLE_PASS_DECISION",
+      "V": 0,
+      "creditsPer1kInput": 0.15,
+      "creditsPer1kCacheRead": 0.03,
+      "creditsPer1kOutput": 0,
+      "calibrationPriors": { "qHatCore05": 0.08, "qHatPeriph20": 0.22 }
+    },
+    "fastino/glide": {
+      "modelId": "fastino/glide",
+      "executionMode": "DISCRETE_THINKING",
+      "V": 85,
+      "creditsPer1kInput": 0.25,
+      "creditsPer1kCacheRead": 0.05,
+      "creditsPer1kOutput": 0.80,
+      "calibrationPriors": { "qHatCore05": 0.09, "qHatPeriph20": 0.24 }
+    },
+    "google/gemini-4-argon": {
+      "modelId": "google/gemini-4-argon",
+      "executionMode": "STREAMING_GENERATIVE",
+      "V": 100,
+      "creditsPer1kInput": 1.25,
+      "creditsPer1kCacheRead": 0.3125,
+      "creditsPer1kOutput": 5.00,
+      "calibrationPriors": null
+    },
+    "google/gemini-3.8-flash": {
+      "modelId": "google/gemini-3.8-flash",
+      "executionMode": "STREAMING_GENERATIVE",
+      "V": 120,
+      "creditsPer1kInput": 0.15,
+      "creditsPer1kCacheRead": 0.0375,
+      "creditsPer1kOutput": 0.60,
+      "calibrationPriors": null
+    },
+    "google/gemini-3.1-pro": {
+      "modelId": "google/gemini-3.1-pro",
+      "executionMode": "STREAMING_GENERATIVE",
+      "V": 95,
+      "creditsPer1kInput": 1.25,
+      "creditsPer1kCacheRead": 0.3125,
+      "creditsPer1kOutput": 5.00,
+      "calibrationPriors": null
+    }
+  },
   "correct": {
     "free": "gemini-3.8-flash",
     "pro": "gemini-3.8-flash",
