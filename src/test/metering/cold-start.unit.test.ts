@@ -283,7 +283,7 @@ describe("Cold-Start Wallet Preloading & Flush-First Policy (cold-start.ts)", ()
 
     it("should support Lua script eval fallback clients", async () => {
       const luaOnlyClient = {
-        eval: vi.fn().mockImplementation(async (script: string, keys: string[]) => {
+        eval: vi.fn().mockImplementation(async (script: string, _keys: string[]) => {
           if (script.includes("EXISTS")) return 0;
           if (script.includes("HLEN")) return 0;
           if (script.includes("SETNX")) return 1;

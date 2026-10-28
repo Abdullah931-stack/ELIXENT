@@ -516,9 +516,10 @@ export class BillingService {
         }
 
         const operationId = `stripe_topup_${params.eventId}`;
+        const dbInstance = targetDb as unknown as typeof db;
 
         try {
-            const insertedRows = await (targetDb as any)
+            const insertedRows = await dbInstance
                 .insert(schema.creditLedgerTransactions)
                 .values({
                     operationId,
@@ -535,7 +536,7 @@ export class BillingService {
                 .returning();
 
             if (insertedRows && insertedRows.length > 0) {
-                await (targetDb as any)
+                await dbInstance
                     .update(schema.users)
                     .set({
                         creditBalanceMicro: sql`${schema.users.creditBalanceMicro} + ${params.allocationMicro}`,

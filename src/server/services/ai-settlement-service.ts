@@ -9,7 +9,10 @@ import { TIER_LIMITS, TierName, isToPromptEnabled } from "@/config/tiers.config"
 import { eq, and, sql } from "drizzle-orm";
 import { isRedisConfigured, redis } from "@/lib/redis";
 import { REDIS_KEYS } from "@/lib/metering/constants";
-import { MeteringServiceUnavailableError } from "@/lib/metering/lua-scripts";
+import {
+  MeteringServiceUnavailableError,
+  type RedisEvalClient,
+} from "@/lib/metering/lua-scripts";
 
 /**
  * Compute canonical deterministic request fingerprint for replay attack prevention.
@@ -618,11 +621,24 @@ export async function reserveAndUpdateUsage(
 }
 
 /**
+ * Redis client shape compatible with hash and set operations.
+ */
+export interface SettlementRedisClient {
+  hgetall?(key: string): Promise<Record<string, unknown> | null>;
+  hdel?(key: string, ...fields: string[]): Promise<number>;
+  hlen?(key: string): Promise<number>;
+  srem?(key: string, ...members: string[]): Promise<number>;
+  pendingSettlements?: Map<string, Map<string, unknown> | Record<string, unknown>>;
+  dirtyWallets?: Set<string>;
+  eval?<T = unknown>(script: string, keys: string[], args: (string | number)[]): Promise<T>;
+}
+
+/**
  * Options for flushing pending settlements to PostgreSQL.
  */
 export interface FlushPendingSettlementsOptions {
   onlyOlderThanMs?: number;
-  customRedis?: any;
+  customRedis?: RedisEvalClient | SettlementRedisClient | null;
 }
 
 /**
@@ -638,7 +654,7 @@ export interface FlushPendingSettlementsResult {
  * Supports Upstash Redis, InMemory test clients, and Lua fallback.
  */
 async function redisHGetAll(
-  client: any,
+  client: SettlementRedisClient,
   key: string
 ): Promise<Record<string, unknown> | null> {
   if (typeof client.hgetall === "function") {
@@ -649,14 +665,14 @@ async function redisHGetAll(
     if (val instanceof Map) {
       return Object.fromEntries(val.entries());
     }
-    return val ?? null;
+    return (val as Record<string, unknown>) ?? null;
   }
   if (typeof client.eval === "function") {
     const res = await client.eval("return redis.call('HGETALL', KEYS[1])", [key], []);
     if (Array.isArray(res)) {
       const result: Record<string, unknown> = {};
       for (let i = 0; i < res.length; i += 2) {
-        result[res[i]] = res[i + 1];
+        result[String(res[i])] = res[i + 1];
       }
       return result;
     }
@@ -669,7 +685,7 @@ async function redisHGetAll(
  * Helper to delete fields from Redis hash.
  */
 async function redisHDel(
-  client: any,
+  client: SettlementRedisClient,
   key: string,
   ...fields: string[]
 ): Promise<number> {
@@ -701,7 +717,7 @@ async function redisHDel(
 /**
  * Helper to inspect Redis hash length.
  */
-async function redisHLen(client: any, key: string): Promise<number> {
+async function redisHLen(client: SettlementRedisClient, key: string): Promise<number> {
   if (typeof client.hlen === "function") {
     return await client.hlen(key);
   }
@@ -723,7 +739,7 @@ async function redisHLen(client: any, key: string): Promise<number> {
  * Helper to remove member from Redis set.
  */
 async function redisSRem(
-  client: any,
+  client: SettlementRedisClient,
   key: string,
   ...members: string[]
 ): Promise<number> {
@@ -796,19 +812,22 @@ export async function flushPendingSettlementsToPostgres(
     }
 
     const now = Date.now();
-    const eligibleEntries: Array<{ opId: string; data: any }> = [];
+    const eligibleEntries: Array<{ opId: string; data: Record<string, unknown> }> = [];
 
     for (const [opId, rawVal] of Object.entries(entriesMap)) {
-      let data: any = rawVal;
+      let data: Record<string, unknown> =
+        typeof rawVal === "object" && rawVal !== null
+          ? (rawVal as Record<string, unknown>)
+          : {};
       if (typeof rawVal === "string") {
         try {
-          data = JSON.parse(rawVal);
+          const parsed = JSON.parse(rawVal);
+          if (parsed && typeof parsed === "object") {
+            data = parsed as Record<string, unknown>;
+          }
         } catch {
-          data = rawVal;
+          // Keep fallback
         }
-      }
-      if (!data || typeof data !== "object") {
-        data = {};
       }
 
       const createdAtMs = Number(
@@ -838,32 +857,36 @@ export async function flushPendingSettlementsToPostgres(
         eligibleEntries.map(({ opId, data }) => {
           let deltaMicro = BigInt(0);
           if (data.deltaMicro !== undefined && data.deltaMicro !== null) {
-            deltaMicro = BigInt(data.deltaMicro);
+            deltaMicro = BigInt(data.deltaMicro as bigint | number | string);
           } else if (
             data.actualTotalCostMicro !== undefined &&
             data.actualTotalCostMicro !== null
           ) {
-            deltaMicro = -BigInt(data.actualTotalCostMicro);
+            deltaMicro = -BigInt(data.actualTotalCostMicro as bigint | number | string);
           } else if (
             data.actualCostMicro !== undefined &&
             data.actualCostMicro !== null
           ) {
-            deltaMicro = -BigInt(data.actualCostMicro);
+            deltaMicro = -BigInt(data.actualCostMicro as bigint | number | string);
           }
 
           return {
             operationId: opId,
-            userId: data.userId || userId,
-            threadId: data.threadId ?? null,
-            nodeName: data.nodeName ?? null,
-            modelId: data.modelId ?? "gemini-2.5-flash",
-            executionMode: (data.executionMode as any) ?? "STREAMING_GENERATIVE",
+            userId: (data.userId as string) || userId,
+            threadId: (data.threadId as string | null) ?? null,
+            nodeName: (data.nodeName as string | null) ?? null,
+            modelId: (data.modelId as string) ?? "gemini-2.5-flash",
+            executionMode:
+              (data.executionMode as typeof schema.executionModeEnum.enumValues[number]) ??
+              "STREAMING_GENERATIVE",
             inputTokens: Number(data.inputTokens ?? 0),
             cachedInputTokens: Number(data.cachedInputTokens ?? 0),
             outputTokens: Number(data.outputTokens ?? 0),
             reasoningTokens: Number(data.reasoningTokens ?? 0),
             deltaMicro,
-            status: (data.status as any) ?? "SETTLED",
+            status:
+              (data.status as typeof schema.ledgerSettlementStatusEnum.enumValues[number]) ??
+              "SETTLED",
             createdAt: data.created_at_ms
               ? new Date(Number(data.created_at_ms))
               : new Date(),

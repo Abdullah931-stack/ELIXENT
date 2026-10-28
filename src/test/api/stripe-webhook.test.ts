@@ -85,7 +85,6 @@ import * as subActions from "@/server/actions/subscription-actions";
 import { redis } from "@/lib/redis";
 import { BillingService } from "@/server/services/billing-service";
 import { executeStripeDualWrite } from "@/lib/metering/lua-scripts";
-import { TIER_LIMITS } from "@/config/tiers.config";
 
 type AnyFn = ReturnType<typeof vi.fn> & ((...args: any[]) => any);
 const mockConstruct = vi.mocked(stripeLib.stripe.webhooks.constructEvent) as AnyFn;
@@ -1125,10 +1124,10 @@ describe("Phase 13: Stripe webhook hardening & durable idempotency", () => {
         });
 
         describe("Route Consolidation & Duplicate Route Invariants", () => {
-            it("confirms duplicate webhook routes are permanently deleted", () => {
+            it("confirms duplicate webhook routes are permanently deleted", async () => {
                 // Ensure duplicate routes cannot be imported
-                expect(() => require("@/app/api/billing/webhook/route")).toThrow();
-                expect(() => require("@/app/api/webhooks/stripe/route")).toThrow();
+                await expect(import(/* @vite-ignore */ "@/app/api/billing/webhook/route" as string)).rejects.toThrow();
+                await expect(import(/* @vite-ignore */ "@/app/api/webhooks/stripe/route" as string)).rejects.toThrow();
             });
         });
     });

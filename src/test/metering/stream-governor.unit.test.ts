@@ -3,14 +3,12 @@ import { StreamGovernor } from "@/lib/metering/stream-governor";
 import {
   LOCAL_HOLD_TIMEOUT_MS,
   REDIS_KEYS,
-  T_RUNWAY_SECONDS,
 } from "@/lib/metering/constants";
 import {
   RESERVE_OR_EXTEND_LUA,
   SETTLE_OPERATION_LUA,
   type RedisEvalClient,
 } from "@/lib/metering/lua-scripts";
-import { tokensToMicroCredits } from "@/lib/metering/derivation";
 
 /**
  * In-memory Mock Redis Client for Stream Governor Testing.
@@ -48,7 +46,7 @@ class MockGovernorRedis implements RedisEvalClient {
       }
 
       const [walletKey, leaseKey] = keys;
-      const [reqInputStr, desOutputStr, _minOutputStr, _zeroDustStr, leaseTtlStr, userId, stepKey] = args;
+      const [_reqInputStr, desOutputStr, _minOutputStr, _zeroDustStr, leaseTtlStr, userId, stepKey] = args;
 
       const desOutput = Number(desOutputStr);
       const curBal = this.wallets.get(walletKey) ?? 50_000_000;
@@ -447,7 +445,9 @@ describe("Stream Governor & Real-Time Local Hold Gate (stream-governor.ts)", () 
       expect(result.status).toBe("SETTLED");
 
       const pendingHash = redis.pendingSettlements.get(REDIS_KEYS.pendingSettlements(userId));
-      const payload = JSON.parse(pendingHash?.get(operationId)!);
+      const rawPayload = pendingHash?.get(operationId);
+      expect(rawPayload).toBeDefined();
+      const payload = JSON.parse(rawPayload as string);
       expect(payload.outputTokens).toBe(80);
     });
 
@@ -488,7 +488,9 @@ describe("Stream Governor & Real-Time Local Hold Gate (stream-governor.ts)", () 
       expect(result.status).toBe("SETTLED"); // Redis script status returns SETTLED
       // Verify pending settlement payload has status ABORTED
       const pendingHash = redis.pendingSettlements.get(REDIS_KEYS.pendingSettlements(userId));
-      const payload = JSON.parse(pendingHash?.get(operationId)!);
+      const rawPayload = pendingHash?.get(operationId);
+      expect(rawPayload).toBeDefined();
+      const payload = JSON.parse(rawPayload as string);
       expect(payload.status).toBe("ABORTED");
     });
   });

@@ -90,7 +90,7 @@ const mockDb = vi.hoisted(() => {
         };
       }),
     })),
-    update: vi.fn((table: any) => ({
+    update: vi.fn((_table: any) => ({
       set: vi.fn((updates: any) => ({
         where: vi.fn((condition: any) => {
           const findUserId = (cond: any): string | undefined => {

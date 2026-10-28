@@ -124,7 +124,7 @@ class InMemoryGateRedis implements RedisEvalClient {
     }
 
     if (script === SETTLE_OPERATION_LUA) {
-      const [walletKey, leaseKey, pendingKey, dirtyKey, stepDoneKey] = keys;
+      const [walletKey, leaseKey, pendingKey, _dirtyKey, stepDoneKey] = keys;
       const [operationId, actualCostStr, payloadJson, userId] = args;
 
       const lease = this.leases.get(leaseKey);
@@ -292,9 +292,6 @@ describe("LangGraph Higher-Order Metered Node Gate (node-gate.ts)", () => {
   describe("Cold Start Race Recovery", () => {
     it("should recover automatically if wallet cold start race occurs during reservation", async () => {
       const redis = new InMemoryGateRedis();
-      // Initially empty wallet (cold)
-      let ensureWalletCalled = 0;
-
       // Mock ensureWalletLoadedFlushFirst behavior by setting wallet balance
       redis.wallets.set(REDIS_KEYS.wallet(userId), 10_000_000);
 

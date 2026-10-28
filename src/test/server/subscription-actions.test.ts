@@ -2,9 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
     recordCreditTopup,
     executeRedisDualWrite,
-    isSubscriptionEventProcessed,
     recordSubscriptionEvent,
-    executeSubscriptionTransition,
 } from "@/server/actions/subscription-actions";
 import { BillingService } from "@/server/services/billing-service";
 import * as schema from "@/server/db/schema";

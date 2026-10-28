@@ -10,10 +10,25 @@ import {
 } from "@/server/services/ai-settlement-service";
 
 /**
+ * Redis client shape compatible with Upstash Redis, in-memory mocks, and eval clients.
+ */
+export interface ColdStartRedisClient {
+  exists?(key: string): Promise<number | boolean>;
+  get?(key: string): Promise<string | number | null>;
+  hlen?(key: string): Promise<number>;
+  set?(key: string, value: string, options?: { nx?: boolean; ex?: number }): Promise<unknown>;
+  setnx?(key: string, value: string): Promise<number | boolean>;
+  expire?(key: string, seconds: number): Promise<number | boolean>;
+  wallets?: Map<string, number>;
+  pendingSettlements?: Map<string, Map<string, unknown> | Record<string, unknown>>;
+  eval?<T = unknown>(script: string, keys: string[], args: (string | number)[]): Promise<T>;
+}
+
+/**
  * Checks if key exists in Redis.
  * Supports Upstash Redis, in-memory test mocks, and Lua fallback.
  */
-async function redisKeyExists(client: any, key: string): Promise<boolean> {
+async function redisKeyExists(client: ColdStartRedisClient, key: string): Promise<boolean> {
   if (typeof client.exists === "function") {
     const res = await client.exists(key);
     return res === 1 || res === true;
@@ -31,12 +46,12 @@ async function redisKeyExists(client: any, key: string): Promise<boolean> {
 /**
  * Gets string value from Redis.
  */
-async function redisGet(client: any, key: string): Promise<string | number | null> {
+async function redisGet(client: ColdStartRedisClient, key: string): Promise<string | number | null> {
   if (typeof client.get === "function") {
     return await client.get(key);
   }
   if (client.wallets instanceof Map) {
-    return client.wallets.has(key) ? client.wallets.get(key) : null;
+    return client.wallets.has(key) ? (client.wallets.get(key) ?? null) : null;
   }
   if (typeof client.eval === "function") {
     return await client.eval("return redis.call('GET', KEYS[1])", [key], []);
@@ -47,7 +62,7 @@ async function redisGet(client: any, key: string): Promise<string | number | nul
 /**
  * Checks hash length in Redis.
  */
-async function redisHLen(client: any, key: string): Promise<number> {
+async function redisHLen(client: ColdStartRedisClient, key: string): Promise<number> {
   if (typeof client.hlen === "function") {
     return await client.hlen(key);
   }
@@ -69,7 +84,7 @@ async function redisHLen(client: any, key: string): Promise<number> {
  * Atomically sets key if not exists and sets TTL.
  */
 async function redisSetnxExpire(
-  client: any,
+  client: ColdStartRedisClient,
   key: string,
   value: string | number,
   ttlSeconds: number
@@ -118,9 +133,11 @@ async function redisSetnxExpire(
  */
 export async function ensureWalletLoadedFlushFirst(
   userId: string,
-  customRedis?: RedisEvalClient
+  customRedis?: RedisEvalClient | ColdStartRedisClient | null
 ): Promise<bigint> {
-  const client = customRedis || (isRedisConfigured() ? redis : null);
+  const client: ColdStartRedisClient | null =
+    (customRedis as ColdStartRedisClient | null | undefined) ||
+    (isRedisConfigured() ? (redis as unknown as ColdStartRedisClient) : null);
   if (!client) {
     throw new MeteringServiceUnavailableError();
   }

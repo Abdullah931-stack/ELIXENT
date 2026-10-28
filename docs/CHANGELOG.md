@@ -4,6 +4,33 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.4.1] - 2026-10-28 (Repository Code Hygiene, Strict Typing Hardening & Full ESLint Remediation)
+
+### Full ESLint Zero-Defect Remediation
+
+- **Repository-Wide Lint Cleanliness:** Remediated all 62 ESLint failures (5 errors and 57 warnings) across 14 files under strict engineering discipline, achieving 0 errors and 0 warnings with zero suppression comments (`eslint-disable`).
+- **Critical Gate Inspection:** Validated that none of the lint failures represented underlying business logic defects or regressions.
+
+### Type Safety Hardening & Redis Client Contracts
+
+- **Redis Multi-Backend Abstractions:** Introduced strongly-typed client interfaces (`ColdStartRedisClient`, `NodeGateRedisClient`, `SettlementRedisClient`) supporting Upstash Redis, in-memory Map clients, and Lua script fallback runners without requiring `client: any` parameters (`src/lib/metering/cold-start.ts`, `src/lib/metering/node-gate.ts`, `src/server/services/ai-settlement-service.ts`).
+- **Canonical Drizzle Enum Typing:** Replaced loose casts in PostgreSQL batch draining with canonical Drizzle schema enum types `schema.executionModeEnum.enumValues[number]` and `schema.ledgerSettlementStatusEnum.enumValues[number]` (`src/server/services/ai-settlement-service.ts`).
+- **Stripe Webhook Typing Hardening:** Strongly typed invoice subscription details metadata and line-item extraction in `src/app/api/stripe/webhook/route.ts`, eliminating `as any` casts.
+- **Drizzle Client Query Typing:** Typed database instances in `src/server/services/billing-service.ts` (`const dbInstance = targetDb as unknown as typeof db`), removing `(targetDb as any)` assertions during dual-write top-ups.
+- **LangGraph Metered Node Wrapper Typing:** Replaced loose `any` signatures in `withMeteredNodeGate` with generic type-safe `unknown` / `TResult` parameters and runtime object narrowing for token usage metrics (`src/lib/metering/node-gate.ts`).
+
+### Test Suite Hygiene & Modern Standards
+
+- **ESM Dynamic Imports for Route Deletion Invariants:** Replaced forbidden CommonJS `require()` calls in `src/test/api/stripe-webhook.test.ts` with dynamic `await expect(import(/* @vite-ignore */ ... as string)).rejects.toThrow()` to comply with `@typescript-eslint/no-require-imports`.
+- **Safe Optional Chain Assertions:** Refactored fragile non-null asserted optional chains (`?.get()!`) into explicit two-step assertions in `src/test/metering/stream-governor.unit.test.ts`.
+- **Unused Import & Variable Pruning:** Cleaned up unused imports, dead mock counters, and unreferenced parameters across all 8 affected test files (`src/test/api/stripe-webhook.test.ts`, `src/test/infrastructure/cron-overlap.test.ts`, `src/test/metering/ai-settlement-service.unit.test.ts`, `src/test/metering/cold-start.unit.test.ts`, `src/test/metering/credit-metering-suite.test.ts`, `src/test/metering/node-gate.unit.test.ts`, `src/test/metering/stream-governor.unit.test.ts`, `src/test/server/subscription-actions.test.ts`).
+
+### Verification & Stability
+
+- **Automated Verification:** Verified with 0 errors and 0 warnings via `npm run lint`, 0 type errors via `npx tsc --noEmit`, and 100% test pass rate (145/145 tests passing across all 9 affected suites).
+
+---
+
 ## [0.4.0] - 2026-10-28 (Phase 4: Flush-First Cold Start, Settlement Service, StreamGovernor & Stripe/Cron Adaptation)
 
 ### Flush-First Cold Start Protocol (`src/lib/metering/cold-start.ts`)

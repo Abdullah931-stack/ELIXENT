@@ -16,7 +16,6 @@ import { GET as purgeDeletedGET, POST as purgeDeletedPOST } from "@/app/api/cron
 import * as aiSettlement from "@/server/services/ai-settlement-service";
 import { db } from "@/server/db";
 import { acquireCronLock } from "@/lib/cron/lock";
-import { isRedisConfigured, redis } from "@/lib/redis";
 
 const inMemoryRedisLocks = new Map<string, string>();
 

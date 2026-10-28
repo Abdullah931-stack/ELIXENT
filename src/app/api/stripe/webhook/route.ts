@@ -616,7 +616,7 @@ async function handleInvoicePaid(
     try {
         const rawInvoice = invoice as unknown as {
             subscription?: string | { id: string };
-            subscription_details?: { metadata?: { userId?: string } };
+            subscription_details?: { metadata?: { userId?: string; tier?: string } };
         };
         const subDetails = rawInvoice.subscription_details;
         const subId = typeof rawInvoice.subscription === 'string'
@@ -639,9 +639,10 @@ async function handleInvoicePaid(
         }
 
         const firstLine = invoice.lines?.data?.[0];
-        const priceId = (firstLine as any)?.price?.id || (firstLine as any)?.plan?.id;
+        const lineItem = firstLine as unknown as { price?: { id?: string }; plan?: { id?: string } } | undefined;
+        const priceId = lineItem?.price?.id || lineItem?.plan?.id;
         const priceTier = getTierFromPriceId(priceId);
-        const metadataTier = (invoice.metadata?.tier || (subDetails as any)?.metadata?.tier) as TierName | undefined;
+        const metadataTier = (invoice.metadata?.tier || subDetails?.metadata?.tier) as TierName | undefined;
 
         let tier: TierName = priceTier || metadataTier || 'free';
 

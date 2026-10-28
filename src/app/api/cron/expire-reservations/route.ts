@@ -71,7 +71,7 @@ export async function GET(request: NextRequest) {
         const dirtyUsers: string[] = Array.isArray(dirtyMembers)
             ? dirtyMembers
             : dirtyMembers
-              ? Array.from(dirtyMembers as any)
+              ? Array.from(dirtyMembers as Iterable<string>)
               : [];
 
         let processedUsers = 0;

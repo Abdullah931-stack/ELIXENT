@@ -4,13 +4,8 @@ import {
   deriveSinglePassReservation,
   deriveDiscreteThinkingReservation,
   deriveStreamingGenerativeReservation,
-  deriveModelReservationParameters,
   getModelRegistryEntry,
 } from "@/lib/metering/derivation";
-import {
-  countRawTokens,
-  estimatePessimisticInputTokens,
-} from "@/lib/metering/tokenizer";
 import {
   executeReserveOrExtend,
   executeSettleOperation,
@@ -27,12 +22,9 @@ import {
   B_DISCRETE_DEFAULT_TOKENS,
   DIRTY_SETTLEMENT_GRACE_MS,
   LEASE_TTL_SECONDS,
-  L_MIN_TOKENS,
   LOCAL_HOLD_TIMEOUT_MS,
   MICRO_PER_CREDIT,
   REDIS_KEYS,
-  T_CHUNK_SECONDS,
-  T_RUNWAY_SECONDS,
   WALLET_TTL_SECONDS,
 } from "@/lib/metering/constants";
 import * as aiSettlement from "@/server/services/ai-settlement-service";

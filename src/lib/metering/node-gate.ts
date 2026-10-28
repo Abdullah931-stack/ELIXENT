@@ -28,19 +28,28 @@ export interface MeteredGateInterrupt {
 }
 
 /**
+ * Redis client shape compatible with stepDone reads and eval.
+ */
+export interface NodeGateRedisClient {
+  get?(key: string): Promise<unknown>;
+  stepDone?: Map<string, string>;
+  eval?<T = unknown>(script: string, keys: string[], args: (string | number)[]): Promise<T>;
+}
+
+/**
  * Configuration options for withMeteredNodeGate.
  */
 export interface MeteredNodeGateOptions {
   customRedis?: RedisEvalClient;
-  pessimisticInputTokens?: number | ((state: any, config?: any) => number);
+  pessimisticInputTokens?: number | ((state: unknown, config?: unknown) => number);
   discreteCeilingTokens?: number;
-  calculateActualCostMicro?: (result: any, state: any) => bigint | number;
+  calculateActualCostMicro?: (result: unknown, state: unknown) => bigint | number;
 }
 
 /**
  * Reads step_done receipt from Redis.
  */
-async function getStepDoneReceipt(client: any, key: string): Promise<string | null> {
+async function getStepDoneReceipt(client: NodeGateRedisClient, key: string): Promise<string | null> {
   if (typeof client.get === "function") {
     const val = await client.get(key);
     return val ? (typeof val === "string" ? val : JSON.stringify(val)) : null;
@@ -58,20 +67,32 @@ async function getStepDoneReceipt(client: any, key: string): Promise<string | nu
 /**
  * Extracts pessimistic input token estimate from LangGraph state representations.
  */
-function extractPessimisticInputTokens(state: any): number {
-  if (!state) return 0;
-  if (typeof state.prompt === "string") {
-    return estimatePessimisticInputTokens(state.prompt);
+function extractPessimisticInputTokens(state: unknown): number {
+  if (!state || typeof state !== "object") return 0;
+  const s = state as Record<string, unknown>;
+  if (typeof s.prompt === "string") {
+    return estimatePessimisticInputTokens(s.prompt);
   }
-  if (typeof state.text === "string") {
-    return estimatePessimisticInputTokens(state.text);
+  if (typeof s.text === "string") {
+    return estimatePessimisticInputTokens(s.text);
   }
-  if (typeof state.input === "string") {
-    return estimatePessimisticInputTokens(state.input);
+  if (typeof s.input === "string") {
+    return estimatePessimisticInputTokens(s.input);
   }
-  if (Array.isArray(state.messages)) {
-    const text = state.messages
-      .map((m: any) => (typeof m === "string" ? m : m?.content || m?.text || ""))
+  if (Array.isArray(s.messages)) {
+    const text = s.messages
+      .map((m: unknown) => {
+        if (typeof m === "string") return m;
+        if (m && typeof m === "object") {
+          const msg = m as Record<string, unknown>;
+          return typeof msg.content === "string"
+            ? msg.content
+            : typeof msg.text === "string"
+            ? msg.text
+            : "";
+        }
+        return "";
+      })
       .join("\n");
     return estimatePessimisticInputTokens(text);
   }
@@ -82,21 +103,23 @@ function extractPessimisticInputTokens(state: any): number {
  * Calculates actual micro-credit cost based on execution result and model registry.
  */
 function calculateCost(
-  nodeResult: any,
+  nodeResult: unknown,
   modelId: string,
   inputTokens: number,
   fallbackReservedMicro: number
 ): bigint | number {
   if (nodeResult && typeof nodeResult === "object") {
-    if (nodeResult.actualTotalCostMicro !== undefined && nodeResult.actualTotalCostMicro !== null) {
-      return nodeResult.actualTotalCostMicro;
+    const res = nodeResult as Record<string, unknown>;
+    if (res.actualTotalCostMicro !== undefined && res.actualTotalCostMicro !== null) {
+      return res.actualTotalCostMicro as bigint | number;
     }
-    if (nodeResult.usage) {
+    if (res.usage && typeof res.usage === "object") {
+      const usage = res.usage as Record<string, unknown>;
       const inTokens = Number(
-        nodeResult.usage.inputTokens ?? nodeResult.usage.prompt_tokens ?? inputTokens
+        usage.inputTokens ?? usage.prompt_tokens ?? inputTokens
       );
       const outTokens = Number(
-        nodeResult.usage.outputTokens ?? nodeResult.usage.completion_tokens ?? 0
+        usage.outputTokens ?? usage.completion_tokens ?? 0
       );
       try {
         const model = getModelRegistryEntry(modelId);
@@ -119,33 +142,35 @@ function calculateCost(
  * 4. Post-execution settlement and refund via atomic Lua scripts
  */
 export function withMeteredNodeGate<
-  TState = any,
-  TConfig extends RunnableConfig = RunnableConfig
+  TState = unknown,
+  TConfig extends RunnableConfig = RunnableConfig,
+  TResult = unknown
 >(
   nodeName: string,
   modelId: string,
-  nodeFn: (state: TState, config?: TConfig) => Promise<any>,
+  nodeFn: (state: TState, config?: TConfig) => Promise<TResult>,
   options?: MeteredNodeGateOptions
-): (state: TState, config?: TConfig) => Promise<any> {
-  return async (state: TState, config?: TConfig): Promise<any> => {
+): (state: TState, config?: TConfig) => Promise<TResult | MeteredGateInterrupt> {
+  return async (state: TState, config?: TConfig): Promise<TResult | MeteredGateInterrupt> => {
+    const stateRecord = typeof state === "object" && state !== null ? (state as Record<string, unknown>) : null;
     // 1. Resolve configurable parameters
     const threadId = String(
       config?.configurable?.thread_id ??
       config?.configurable?.threadId ??
-      (state as any)?.threadId ??
+      stateRecord?.threadId ??
       "default_thread"
     );
     const checkpointId = String(
       config?.configurable?.checkpoint_id ??
       config?.configurable?.checkpointId ??
-      (state as any)?.checkpointId ??
+      stateRecord?.checkpointId ??
       "default_checkpoint"
     );
     const stepAttempt = Number(
       config?.configurable?.step_attempt ??
       config?.configurable?.stepAttempt ??
-      (state as any)?.stepAttempt ??
-      (state as any)?.step_attempt ??
+      stateRecord?.stepAttempt ??
+      stateRecord?.step_attempt ??
       1
     );
 
@@ -178,8 +203,8 @@ export function withMeteredNodeGate<
     const userId = (
       config?.configurable?.userId ??
       config?.configurable?.user_id ??
-      (state as any)?.userId ??
-      (state as any)?.user_id
+      stateRecord?.userId ??
+      stateRecord?.user_id
     ) as string | undefined;
 
     if (!userId) {
@@ -269,12 +294,12 @@ export function withMeteredNodeGate<
 
     if (reserveResult.status !== "SUCCESS") {
       throw new MeteringServiceUnavailableError(
-        `Failed to reserve quota for node "${nodeName}": unexpected reservation status "${(reserveResult as any).status}"`
+        `Failed to reserve quota for node "${nodeName}": unexpected reservation status "${(reserveResult as Record<string, unknown>).status}"`
       );
     }
 
     // 9. Execute node execution with failure rollback protection
-    let nodeResult: any;
+    let nodeResult: TResult;
     try {
       nodeResult = await nodeFn(state, config);
     } catch (error) {
@@ -319,6 +344,23 @@ export function withMeteredNodeGate<
       );
     }
 
+    const resultRecord =
+      typeof nodeResult === "object" && nodeResult !== null
+        ? (nodeResult as Record<string, unknown>)
+        : null;
+    const usage =
+      resultRecord && typeof resultRecord.usage === "object" && resultRecord.usage !== null
+        ? (resultRecord.usage as Record<string, unknown>)
+        : null;
+    const promptDetails =
+      usage && typeof usage.prompt_tokens_details === "object" && usage.prompt_tokens_details !== null
+        ? (usage.prompt_tokens_details as Record<string, unknown>)
+        : null;
+    const completionDetails =
+      usage && typeof usage.completion_tokens_details === "object" && usage.completion_tokens_details !== null
+        ? (usage.completion_tokens_details as Record<string, unknown>)
+        : null;
+
     const settlementPayload = {
       operationId: stepKey,
       userId,
@@ -328,18 +370,18 @@ export function withMeteredNodeGate<
       executionMode: derived.executionMode,
       inputTokens,
       cachedInputTokens: Number(
-        nodeResult?.usage?.cachedInputTokens ??
-        nodeResult?.usage?.prompt_tokens_details?.cached_tokens ??
+        usage?.cachedInputTokens ??
+        promptDetails?.cached_tokens ??
         0
       ),
       outputTokens: Number(
-        nodeResult?.usage?.outputTokens ??
-        nodeResult?.usage?.completion_tokens ??
+        usage?.outputTokens ??
+        usage?.completion_tokens ??
         0
       ),
       reasoningTokens: Number(
-        nodeResult?.usage?.reasoningTokens ??
-        nodeResult?.usage?.completion_tokens_details?.reasoning_tokens ??
+        usage?.reasoningTokens ??
+        completionDetails?.reasoning_tokens ??
         0
       ),
       actualTotalCostMicro: Number(actualCostMicro),
