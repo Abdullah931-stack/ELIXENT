@@ -1,24 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
-import { expireStaleReservations } from "@/server/services/ai-settlement-service";
+import { timingSafeEqual } from "crypto";
+import { acquireCronLock } from "@/lib/cron/lock";
+import { redis, isRedisConfigured } from "@/lib/redis";
+import { REDIS_KEYS, DIRTY_SETTLEMENT_GRACE_MS } from "@/lib/metering/constants";
+import { flushPendingSettlementsToPostgres } from "@/server/services/ai-settlement-service";
+import { MeteringServiceUnavailableError } from "@/lib/metering/lua-scripts";
 
 /**
- * Sweeper for stale AI quota reservations — closing TD-02.
+ * Periodic Batch-Draining Sweeper for Pending Credit Settlements.
  *
- * Transitions abandoned `reserved` records to `expired` and restores
- * user quota counters in PostgreSQL.
+ * Scans `lugx:dirty_wallets` in Redis and drains pending settlements older than
+ * the safety grace period (DIRTY_SETTLEMENT_GRACE_MS = 30,000ms) into PostgreSQL
+ * `credit_ledger_transactions` and synchronizes `users.creditBalanceMicro`.
  *
  * AUTH: Protected by shared cron secret (CRON_SECRET env).
  *   curl -H "Authorization: Bearer $CRON_SECRET" https://app/api/cron/expire-reservations
  *
- * IDEMPOTENT: Re-running only touches records that are currently past
- * their TTL window (`expires_at <= now()`).
+ * IDEMPOTENT: Uses distributed lock to prevent overlapping sweeps and drains
+ * pending hashes via atomic database transactions with ON CONFLICT DO NOTHING.
  */
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-import { timingSafeEqual } from "crypto";
-import { acquireCronLock } from "@/lib/cron/lock";
 
 function authorized(request: NextRequest): boolean {
     const secret = process.env.CRON_SECRET;
@@ -52,18 +55,61 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-        const expiredCount = await expireStaleReservations();
+        if (!isRedisConfigured()) {
+            return NextResponse.json(
+                { success: false, error: "Redis service unavailable" },
+                { status: 503 }
+            );
+        }
+
+        const dirtyWalletsKey =
+            typeof REDIS_KEYS.dirtyWallets === "function"
+                ? REDIS_KEYS.dirtyWallets()
+                : (REDIS_KEYS.dirtyWallets as string);
+
+        const dirtyMembers = await redis.smembers(dirtyWalletsKey);
+        const dirtyUsers: string[] = Array.isArray(dirtyMembers)
+            ? dirtyMembers
+            : dirtyMembers
+              ? Array.from(dirtyMembers as any)
+              : [];
+
+        let processedUsers = 0;
+        let flushedOperations = 0;
+        let totalNetDeltaMicro = BigInt(0);
+
+        for (const userId of dirtyUsers) {
+            if (!userId || typeof userId !== "string") continue;
+            const res = await flushPendingSettlementsToPostgres(userId, {
+                onlyOlderThanMs: DIRTY_SETTLEMENT_GRACE_MS,
+            });
+            processedUsers++;
+            flushedOperations += res.flushedCount;
+            totalNetDeltaMicro += res.netDeltaMicro;
+        }
 
         return NextResponse.json({
             success: true,
-            expiredCount,
+            processedUsers,
+            flushedOperations,
+            netDeltaMicro: totalNetDeltaMicro.toString(),
             timestamp: new Date().toISOString(),
         });
     } catch (error) {
-        console.error("Expire reservations cron error:", error);
+        console.error("Batch draining cron error:", error);
+        const isRedisError =
+            error instanceof MeteringServiceUnavailableError ||
+            (error instanceof Error &&
+                (error.message.includes("Redis") ||
+                 error.message.includes("redis") ||
+                 error.name.includes("Redis")));
+
         return NextResponse.json(
-            { success: false, error: "Expire reservations failed" },
-            { status: 500 }
+            {
+                success: false,
+                error: error instanceof Error ? error.message : "Batch draining failed",
+            },
+            { status: isRedisError ? 503 : 500 }
         );
     } finally {
         await lock.release();
@@ -71,4 +117,3 @@ export async function GET(request: NextRequest) {
 }
 
 export const POST = GET;
-
