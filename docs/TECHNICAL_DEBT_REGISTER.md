@@ -5,7 +5,7 @@ Each entry records the decision owner and the mitigation currently in place.
 Last reviewed: 2026-10-26 (v1.46.3 — AI Model Upgrade, Vitest 5, TD-15 liquidation & Phase 2 Green-Field Baseline).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 98 unit suites (1221 tests) · 21 live suites (119 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 95 unit suites (1234 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ---
@@ -246,7 +246,7 @@ Last reviewed: 2026-10-26 (v1.46.3 — AI Model Upgrade, Vitest 5, TD-15 liquida
 ## TD-20 — Cloud Provider Smoke Test Bypass & Google Gemini API Overload Debt — ACCEPTED DEBT (2026-10-26)
 
 - **Debt:**
-  - In Stage 7 of the CI pipeline (`.github/workflows/ci.yml`), execution of the live cloud provider smoke test suite (`src/test/ai/ai-live-e2e.test.ts`) is temporarily bypassed with `TEST_EXIT_CODE=0` and a warning notice.
+  - In Stage 7 of the CI pipeline (`.github/workflows/ci.yml`), execution of the live cloud provider smoke test suite (`src/test/ai/ai-live-e2e.live.test.ts`) is temporarily bypassed with `TEST_EXIT_CODE=0` and a warning notice.
   - Upstream Google Gemini API (Free Tier) persistently returns `503 Service Unavailable (High Demand)` and `429 Too Many Requests` overloads across configured API keys in the CI environment, triggering test timeouts (>60s) and intermittent flakiness on GitHub Actions runners.
   - The internal client fallback hierarchy across multiple models (`gemini-3.8-flash`, `3.6-flash`, `3.5-flash-lite`, `3.1-flash-lite`) requires a comprehensive architectural overhaul to prevent tight-loop retries on exhausted fallback chains and avoid tripping circuit breakers prematurely.
 - **Accepted Debt (Stage 7 Smoke Bypass):**
@@ -258,7 +258,7 @@ Last reviewed: 2026-10-26 (v1.46.3 — AI Model Upgrade, Vitest 5, TD-15 liquida
   - **Conditions to Revisit / Reverse:**
     1. Provisioning a dedicated, stable paid-tier Google Gemini API key or enterprise quota.
     2. Completing the planned architectural overhaul of the AI client layer (e.g. migration to Vercel AI SDK with multi-provider failover).
-    3. Re-enabling the live execution of `src/test/ai/ai-live-e2e.test.ts` inside Stage 7 of `.github/workflows/ci.yml`.
+    3. Re-enabling the live execution of `src/test/ai/ai-live-e2e.live.test.ts` inside Stage 7 of `.github/workflows/ci.yml`.
 
 
 

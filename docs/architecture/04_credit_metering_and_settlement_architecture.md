@@ -226,7 +226,7 @@ When a payment or subscription renewal event is received in `src/app/api/stripe/
   - `src/app/api/stripe/webhook/route.ts` — Authoritative Stripe webhook handler with dual-write protocol
   - `src/app/api/cron/expire-reservations/route.ts` — Batch-draining cron job with 30s grace window
 - **Acceptance & Verification Suites:**
-  - `src/test/metering/credit-metering-suite.test.ts` — MTR-01 through MTR-06 acceptance tests
+  - `src/test/metering/derivation-and-lua.unit.test.ts` — Token derivation and Redis Lua script unit tests (18 tests)
   - `src/test/metering/cold-start.unit.test.ts` — Flush-First cold start unit tests (13 tests)
   - `src/test/metering/stream-governor.unit.test.ts` — Real-time stream governor unit tests (17 tests)
   - `src/test/metering/node-gate.unit.test.ts` — Metered node gate unit tests (11 tests)

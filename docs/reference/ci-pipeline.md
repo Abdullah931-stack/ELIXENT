@@ -21,8 +21,8 @@ Phase 3 introduces:
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 98 | 1221 | 100% ✅ |
-| **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 119 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 95 | 1234 | 100% ✅ |
+| **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 108 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
 
@@ -37,7 +37,7 @@ flowchart TD
     end
 
     subgraph S2 ["Stage 2: Pure Unit Contracts"]
-        UC["npm run test (98 files, 1221 tests)<br/>Zero DB / Zero Network"]
+        UC["npm run test (95 files, 1234 tests)<br/>Zero DB / Zero Network"]
     end
 
     subgraph S3 ["Stage 3: Schema Integrity"]
@@ -45,7 +45,7 @@ flowchart TD
     end
 
     subgraph S4 ["Stage 4: Concurrency & DB Isolation"]
-        CDI["PostgreSQL 16 + Redis 7 Alpine Services<br/>npm run test:live (21 suites, 119 tests)<br/>TEST_DB_FORBIDDEN_HOSTS Guard"]
+        CDI["PostgreSQL 16 + Redis 7 Alpine Services<br/>npm run test:live (21 suites, 108 tests)<br/>TEST_DB_FORBIDDEN_HOSTS Guard"]
     end
 
     subgraph S5 ["Stage 5: Production Build"]
@@ -57,7 +57,7 @@ flowchart TD
     end
 
     subgraph S7 ["Stage 7: Live Provider Smoke (Gated)"]
-        SMOKE["Google Gemini 2.5 + Neon Cloud Integration<br/>ai-live-e2e.test.ts · Fail-Closed Release Gate"]
+        SMOKE["Google Gemini 2.5 + Neon Cloud Integration<br/>ai-live-e2e.live.test.ts · Fail-Closed Release Gate"]
     end
 
     S1 --> S2
@@ -81,7 +81,7 @@ flowchart TD
 | **4. Concurrency & Isolation** | `concurrency-and-db-isolation` | `ubuntu-latest` + `postgres:16-alpine` + `redis:7-alpine` | `npm run test:live` | Runs 21 live integration suites against isolated containers; enforces `TEST_DB_FORBIDDEN_HOSTS` to block accidental production connections. |
 | **5. Production Build** | `build-verification` | `ubuntu-latest` | `npm run build` | Validates complete Next.js 16 production build compilation with route tree generation and asset optimization. |
 | **6. Browser E2E Testing** | `e2e-browser-testing` | `ubuntu-latest` | `npx playwright test` | Executes 14 Playwright specs across 15 user journeys in headless Chromium. Gated by progressive fail-closed rules. |
-| **7. Live Provider Smoke** | `live-provider-smoke` | `ubuntu-latest` | `npx vitest run src/test/ai/ai-live-e2e.test.ts --config vitest.live.config.mts` | Gated verification of live Google Gemini API and cloud database connectivity. Strictly fail-closed on release branches. |
+| **7. Live Provider Smoke** | `live-provider-smoke` | `ubuntu-latest` | `npx vitest run src/test/ai/ai-live-e2e.live.test.ts --config vitest.live.config.mts` | Gated verification of live Google Gemini API and cloud database connectivity. Strictly fail-closed on release branches. |
 
 ---
 

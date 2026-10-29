@@ -49,7 +49,7 @@ docs/
 │
 ├── records/                           ← engineering records, incidents, audits, closures & plans archive
 │   ├── incidents/                     ← root-cause post-mortems (test-database-safety.md, codemirror-syntax-tree-parse-budget-race.md)
-│   ├── audits/                        ← verification audit records (W10-Final-Closure-Round.md, unified-security-and-engineering-audit.md)
+│   ├── audits/                        ← verification audit records (comprehensive-test-suite-audit-and-refactor-baseline.md, unified-security-and-engineering-audit.md)
 │   ├── closures/                      ← official milestone & phase closure dossiers (Phases 1–20, Core Hardening)
 │   │   ├── phase-01-to-06-markdown-editor/
 │   │   ├── phase-11-to-15-core-infrastructure/
@@ -188,6 +188,7 @@ docs/
 
 | Document | Scope / Date |
 | :--- | :--- |
+| [comprehensive-test-suite-audit-and-refactor-baseline.md](./records/audits/comprehensive-test-suite-audit-and-refactor-baseline.md) | Exhaustive test suite audit and refactoring baseline (134 files, 1,364 tests, 5 anti-pattern clusters, 89 sacred regressions) — 2026-10-28 |
 | [unified-security-and-engineering-audit.md](./records/audits/unified-security-and-engineering-audit.md) | Comprehensive 7-module security, reliability & architectural audit (183 consolidated findings, v1.32.4 / commit `d2d60a7`) |
 | [W10-Final-Closure-Round.md](./records/audits/W10-Final-Closure-Round.md) | Concurrency-window closure F1 (SQL optimistic locking on `PUT /api/files/:id`) & Vitest `singleFork` serialization — 2026-08-16 |
 
@@ -199,7 +200,7 @@ docs/
 | [phase-11-to-15-core-infrastructure/](./records/closures/phase-11-to-15-core-infrastructure/) | Phase 11 to Phase 15 closure dossiers: editor orchestration, auth ownership, Stripe webhooks, Supabase storage purge, and file sanitization |
 | [phase-16-vault-encryption/](./records/closures/phase-16-vault-encryption/) | Phase 16 closure dossiers: isolated Crypto Worker, schemas, UI conversion engine, AI safety gates, and 10-point test matrix |
 | [phase-17-to-20-production-readiness/](./records/closures/phase-17-to-20-production-readiness/) | Phase 17 to Phase 20 closure dossiers: dual-mode rate limiting, live multi-system integration, Playwright E2E testing, and production readiness dossier |
-| [extensions/](./records/closures/extensions/) | PDF Worker extraction, spatial table reconstruction, Arabic normalizer, and vault import closure report; [ad-hoc automated test & CI ecosystem harmonization closure](./records/closures/extensions/ad-hoc-test-and-ci-ecosystem-alignment-closure.md); [Intra-Line Word-Level Diff & Sub-Line 3-Way Merge Upgrade closure](./records/closures/extensions/intra-line-word-diff-and-sub-line-3way-merge-closure.md); [Release v1.46.1 Offline Auto-Merge & Cross-Tab Sync closure](./records/closures/extensions/release-1-46-1-offline-automerge-and-crosstab-sync-closure.md); [Release v1.46.2 Architectural Remediation & Complete Lifecycle Hardening closure](./records/closures/extensions/release-1-46-2-architectural-remediation-and-lifecycle-hardening-closure.md) |
+| [extensions/](./records/closures/extensions/) | PDF Worker extraction, spatial table reconstruction, Arabic normalizer, and vault import closure report; [ad-hoc automated test & CI ecosystem harmonization closure](./records/closures/extensions/ad-hoc-test-and-ci-ecosystem-alignment-closure.md); [Intra-Line Word-Level Diff & Sub-Line 3-Way Merge Upgrade closure](./records/closures/extensions/intra-line-word-diff-and-sub-line-3way-merge-closure.md); [Release v1.46.1 Offline Auto-Merge & Cross-Tab Sync closure](./records/closures/extensions/release-1-46-1-offline-automerge-and-crosstab-sync-closure.md); [Release v1.46.2 Architectural Remediation & Complete Lifecycle Hardening closure](./records/closures/extensions/release-1-46-2-architectural-remediation-and-lifecycle-hardening-closure.md); [Comprehensive Test Engineering Refactor & Playwright E2E Hardening closure](./records/closures/extensions/comprehensive-test-engineering-refactor-and-e2e-hardening-closure.md) |
 | [core-hardening/](./records/closures/core-hardening/) | Core Hardening dossiers: Phase 1 (metrics & SSOT sync), Phase 2 (internal link audit & CI link checker), Phase 3 (skipped tests & release gate), Phase 4 (Redis REST emulator, lock contention & fail-open), Phase 5 (contracts dictionary & discriminated storage), Phase 6 (pure state reducers & contractual safety nets), Phase 7 (PostgreSQL schema hardening, migrations & atomic interactive transactions), Phase 8 (server-authoritative identity, resource ownership guards, cycle detection & optimistic concurrency on deletions: [phase-08 closure dossier](./records/closures/core-hardening/phase-08-identity-ownership-and-cycle-detection-closure.md)), Phase 9 (cryptographic key hierarchy, standard AAD contexts & adaptive dual-try recovery migration: [phase-09 closure dossier](./records/closures/core-hardening/phase-09-crypto-hierarchy-and-adaptive-migration-closure.md)), Phase 10 (encrypted content governance, mandatory fileId & export warning modal: [phase-10 closure dossier](./records/closures/core-hardening/phase-10-encrypted-content-governance-closure.md)), Phase 11 (AI service, server-authoritative settlement, replay defense & decoupled commit: [phase-11 closure dossier](./records/closures/core-hardening/phase-11-ai-service-and-server-settlement-closure.md)), Phase 13 (Redis fail-closed policies, conditional ZADD, Upstash REST CI proxy, distributed cron locking & hermetic test isolation: [phase-13 closure dossier](./records/closures/core-hardening/phase-13-redis-fail-closed-and-cron-overlap-closure.md)), Phase 14 (local sync queue, monotonic localRevision, Lean CAS & pure queued-only coalescing: [phase-14 closure dossier](./records/closures/core-hardening/phase-14-local-sync-queue-and-atomic-cas-closure.md)), Phase 15 (durable IDB conflict quarantine, pull protection, deterministic Hunt-McIlroy Diff3 engine & user-scoped cross-tab isolation: [phase-15 closure dossier](./records/closures/core-hardening/phase-15-durable-idb-conflict-quarantine-diff3-and-tab-isolation-closure.md)), Phase 15.1 (deterministic dependency security audit gate with production fail-closed policy & TD-15 dev allowlist: [phase-15.1 closure dossier](./records/closures/core-hardening/phase-15-1-ci-dependency-security-audit-gate-closure.md)), Phase 16 (thin coordinator sync-manager decomposition, sub-engine extraction & SyncRollback preservation: [phase-16 closure dossier](./records/closures/core-hardening/phase-16-sync-manager-decomposition-and-thin-coordinator-closure.md)), and Phase 17 (standalone useEditorAutosave hook extraction, React 19 ref discipline, fail-closed vault unmount flush & security hardening: [phase-17 closure dossier](./records/closures/core-hardening/phase17-editor-autosave-react19.md)) |
 | [elixent-execution/](./records/closures/elixent-execution/) | Elixent 12-phase execution plan closure dossiers: [Phase 1 Core Hardening closure dossier](./records/closures/elixent-execution/phase-01-core-hardening.md), [Phase 2 Dependencies, Pool & Schema Migration closure dossier](./records/closures/elixent-execution/phase-02-dependencies-pool-and-schema-migration.md), [Phase 3 Lean Model Registry & Lua Scripts closure dossier](./records/closures/elixent-execution/phase-03-lean-model-registry-derivation-and-lua.md), and [Phase 4 Flush-First Cold Start & Settlement closure dossier](./records/closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md) |
 
@@ -247,7 +248,7 @@ docs/
 ## 4. Verification Commands
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 98 unit suites (1221 tests) · 21 live suites (119 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 95 unit suites (1234 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ```bash
@@ -256,8 +257,8 @@ npm run lint:links      # deterministic markdown internal link verification (zer
 npm run test:ci-gate    # deterministic CI gating simulation matrix (30 assertions, zero broken contracts)
 npx tsc --noEmit        # strict TypeScript type-checking (0 errors)
 npm run audit:ci        # dependency security gate: production fail-closed (0 vulnerabilities) + dev allowlist (TD-15)
-npm run test            # pure unit, contract, and vault cryptographic test suites (98 files, 1221 tests via vitest.config.mts)
-npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (21 files, 119 tests via vitest.live.config.mts)
+npm run test            # pure unit, contract, and vault cryptographic test suites (95 files, 1234 tests via vitest.config.mts)
+npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (21 files, 108 tests via vitest.live.config.mts)
 npm run test:e2e        # browser-driven E2E user journeys (14 specs, 15 scenarios via Playwright / Chromium)
 npm run test:all        # full suite execution (unit + live)
 npm run build           # Next.js 16 production bundle compilation

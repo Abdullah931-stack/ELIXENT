@@ -534,12 +534,12 @@ jobs:
                 "## ❌ Stage 7: Live Provider Smoke — FAILED (Cloud Provider Failure)" \
                 "" \
                 "> [!CAUTION]" \
-                "> Live provider smoke test suite \`src/test/ai/ai-live-e2e.test.ts\` failed." \
+                "> Live provider smoke test suite \`src/test/ai/ai-live-e2e.live.test.ts\` failed." \
                 "" \
                 "| Metric / Parameter | Value |" \
                 "| :--- | :--- |" \
                 "| **Execution Status** | ❌ FAILED (Exit Code: $TEST_EXIT_CODE) |" \
-                "| **Target Suite** | \`src/test/ai/ai-live-e2e.test.ts\` |" \
+                "| **Target Suite** | \`src/test/ai/ai-live-e2e.live.test.ts\` |" \
                 "| **Target Providers** | Google Gemini 2.5 + Isolated Neon PostgreSQL |" \
                 "| **Trigger Context** | \`$REF\` (\`$EVENT_NAME\`) |" \
                 >> "$GITHUB_STEP_SUMMARY"
@@ -554,7 +554,7 @@ jobs:
               "| Metric / Parameter | Value |" \
               "| :--- | :--- |" \
               "| **Execution Status** | ✅ Passed (Live provider smoke verified) |" \
-              "| **Target Suite** | \`src/test/ai/ai-live-e2e.test.ts\` |" \
+              "| **Target Suite** | \`src/test/ai/ai-live-e2e.live.test.ts\` |" \
               "| **Target Providers** | Google Gemini 2.5 + Isolated Neon PostgreSQL |" \
               "| **Trigger Context** | \`$REF\` (\`$EVENT_NAME\`) |" \
               "" \

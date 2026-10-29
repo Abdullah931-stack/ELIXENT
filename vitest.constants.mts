@@ -39,5 +39,5 @@ export const LIVE_TEST_FILES = [
  * Cloud E2E test suites gated to specific provider smoke runs.
  */
 export const CLOUD_E2E_FILES = [
-    'src/test/ai/ai-live-e2e.test.ts',
+    'src/test/ai/ai-live-e2e.live.test.ts',
 ];

@@ -17,24 +17,24 @@ remain in place as a **second layer of defense**, not a substitute.
 
 ## 2. Architecture
 
-| File | Role |
-|---|---|
-| `src/test/load-test-env.ts` | Dual-mode hermetic environment loader. For LIVE suites (`VITEST_LIVE: 'true'`), loads `.env.test.local`, `.env.local` (override: true), and binds `DATABASE_URL = TEST_DATABASE_URL`. For UNIT suites (`VITEST_LIVE: 'false'`), strictly ignores `.env.local`/`.env`, loads only `.env.test.local`/`.env.test`, and enforces dummy placeholders for Upstash Redis and Postgres to guarantee complete network isolation. |
-| `src/test/test-db-guard.ts` | Pure fail-closed guard (`assertSafeTestDatabaseUrl`) + identity helpers (`extractDbHost`, `extractNeonEndpointId`). No pg imports — unit-testable. |
-| `src/test/test-db.ts` | Calls the guard BEFORE creating the pg Pool and prints the branch identity line. |
-| `drizzle.config.test.ts` | `drizzle-kit push` target resolved from `TEST_DATABASE_URL ?? DATABASE_URL`. |
-| `vitest.constants.mts` | Defines `LIVE_TEST_FILES` — the single source of truth for suites requiring real environments (isolated Neon branch / live AI keys). |
-| `vitest.live.config.mts` | LIVE suite config importing `LIVE_TEST_FILES`, enforcing strict sequential execution via `fileParallelism: false` to eliminate cross-suite database deadlocks. |
-| `vitest.live.global-setup.ts` | Fail-closed gate for `test:live`: verifies guard rules AND branch reachability up front; refuses to start otherwise (no silent skips). |
-| `vitest.config.mts` | Default config — excludes every `LIVE_TEST_FILES` entry, so plain `npm run test` can structurally never touch a real environment. |
+| File                          | Role                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/test/load-test-env.ts`   | Dual-mode hermetic environment loader. For LIVE suites (`VITEST_LIVE: 'true'`), loads `.env.test.local`, `.env.local` (override: true), and binds `DATABASE_URL = TEST_DATABASE_URL`. For UNIT suites (`VITEST_LIVE: 'false'`), strictly ignores `.env.local`/`.env`, loads only `.env.test.local`/`.env.test`, and enforces dummy placeholders for Upstash Redis and Postgres to guarantee complete network isolation. |
+| `src/test/test-db-guard.ts`   | Pure fail-closed guard (`assertSafeTestDatabaseUrl`) + identity helpers (`extractDbHost`, `extractNeonEndpointId`). No pg imports — unit-testable.                                                                                                                                                                                                                                                                      |
+| `src/test/test-db.ts`         | Calls the guard BEFORE creating the pg Pool and prints the branch identity line.                                                                                                                                                                                                                                                                                                                                        |
+| `drizzle.config.test.ts`      | `drizzle-kit push` target resolved from `TEST_DATABASE_URL ?? DATABASE_URL`.                                                                                                                                                                                                                                                                                                                                            |
+| `vitest.constants.mts`        | Defines `LIVE_TEST_FILES` — the single source of truth for suites requiring real environments (isolated Neon branch / live AI keys).                                                                                                                                                                                                                                                                                    |
+| `vitest.live.config.mts`      | LIVE suite config importing `LIVE_TEST_FILES`, enforcing strict sequential execution via `fileParallelism: false` to eliminate cross-suite database deadlocks.                                                                                                                                                                                                                                                          |
+| `vitest.live.global-setup.ts` | Fail-closed gate for `test:live`: verifies guard rules AND branch reachability up front; refuses to start otherwise (no silent skips).                                                                                                                                                                                                                                                                                  |
+| `vitest.config.mts`           | Default config — excludes every `LIVE_TEST_FILES` entry, so plain `npm run test` can structurally never touch a real environment.                                                                                                                                                                                                                                                                                       |
 
 ## 2.1 Test execution commands
 
-| Command | Scope |
-|---|---|
-| `npm run test` | Unit/contract tests only (runs ONCE via `vitest run`; `test:watch` exists for watch mode). No DB, no external services. Fast, hermetic, and completely decoupled from network/cloud. |
-| `npm run test:live` | The 21 hermetic LIVE suites against the isolated PostgreSQL service container / Neon branch. |
-| `npm run test:all` | Both, sequentially. |
+| Command             | Scope                                                                                                                                                                                |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `npm run test`      | Unit/contract tests only (runs ONCE via `vitest run`; `test:watch` exists for watch mode). No DB, no external services. Fast, hermetic, and completely decoupled from network/cloud. |
+| `npm run test:live` | The 21 hermetic LIVE suites against the isolated PostgreSQL service container / Neon branch.                                                                                         |
+| `npm run test:all`  | Both, sequentially.                                                                                                                                                                  |
 
 LIVE suites registered in `vitest.constants.mts` (21 hermetic database suites):
 
@@ -60,24 +60,25 @@ LIVE suites registered in `vitest.constants.mts` (21 hermetic database suites):
 20. `src/test/infrastructure/redis-live-integration.test.ts`
 21. `src/test/server/schema-atomic-transactions.live.test.ts`
 
-*(Note: The external cloud integration suite `src/test/ai/ai-live-e2e.test.ts` is explicitly isolated to Stage 7 `live-provider-smoke` and requires live provider API secrets).*
+_(Note: The external cloud integration suite `src/test/ai/ai-live-e2e.live.test.ts` is explicitly isolated to Stage 7 `live-provider-smoke` and requires live provider API secrets)._
 
 ### Formerly-mocked suites — LIVE twins now implemented (post Phase 10 follow-up)
 
 The suites below had fully-mocked persistence when inventoried; real-
 branch live twins were added and registered in `vitest.constants.mts`:
 
-| Mocked contract suite | LIVE twin |
-|---|---|
-| `src/test/ai/ai-quota-idempotency.test.ts` | `src/test/ai/ai-quota-idempotency.live.test.ts` — incl. concurrent same-operationId race on real rows |
-| `src/test/ai/ai-server-atomic-commit.test.ts` | `src/test/ai/ai-atomic-commit.integration.test.ts` — real interactive transactions, live ACID rollbacks, and unauthenticated route isolation |
-| `src/test/editor/editor-orchestration.integration.test.ts` | `src/test/editor/editor-orchestration.live.test.ts` — real file-ops actions; real 412 vs sibling write + merge resolution |
-| `src/test/ai/ai-preview-decision.test.ts` | `src/test/ai/ai-preview-decision.live.test.ts` — hook-generated operationId settled against real reservation rows |
-| `src/test/api/stripe-webhook.test.ts` | `src/test/api/stripe-webhook.live.test.ts` — REAL HMAC signature verification + persisted tier/subscription rows (durable-ledger dedupe deferred to Phase 13) |
+| Mocked contract suite                                      | LIVE twin                                                                                                                                                     |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/test/ai/ai-quota-idempotency.test.ts`                 | `src/test/ai/ai-quota-idempotency.live.test.ts` — incl. concurrent same-operationId race on real rows                                                         |
+| `src/test/ai/ai-server-atomic-commit.test.ts`              | `src/test/ai/ai-atomic-commit.integration.test.ts` — real interactive transactions, live ACID rollbacks, and unauthenticated route isolation                  |
+| `src/test/editor/editor-orchestration.integration.test.ts` | `src/test/editor/editor-orchestration.live.test.ts` — real file-ops actions; real 412 vs sibling write + merge resolution                                     |
+| `src/test/ai/ai-preview-decision.test.ts`                  | `src/test/ai/ai-preview-decision.live.test.ts` — hook-generated operationId settled against real reservation rows                                             |
+| `src/test/api/stripe-webhook.test.ts`                      | `src/test/api/stripe-webhook.live.test.ts` — REAL HMAC signature verification + persisted tier/subscription rows (durable-ledger dedupe deferred to Phase 13) |
 
 ### Smart Hybrid Database Client (`db` & `txDb`)
 
 Database operations across the application and testing harness utilize an intelligent dual-driver architecture:
+
 - **Standard Client (`db` in `src/server/db/client.ts` & `src/server/db/index.ts`):** Dynamically detects environment hosts:
   - **Neon Cloud (`neon.tech`):** Uses `@neondatabase/serverless` (`neon-http`) with `drizzle-orm/neon-http` for low-latency serverless HTTP execution.
   - **Local & CI PostgreSQL Containers (`localhost` / `127.0.0.1` on port 5432):** Automatically connects via `pg.Pool` (`node-postgres`) with `drizzle-orm/node-postgres`, eliminating `ECONNREFUSED ::1:443` port conflicts in Docker and CI runners.
@@ -89,6 +90,7 @@ Database operations across the application and testing harness utilize an intell
 ### Deterministic Namespaced User IDs & Concurrency Isolation
 
 To guarantee 100% isolation when integration test suites run against a shared test database:
+
 - Strict Sequential Suite Execution: Enforced via `fileParallelism: false` in `vitest.live.config.mts`, eliminating concurrent transaction interleaving and PostgreSQL cascading foreign key deadlocks (`40P01`).
 - Deterministic Placeholder UUID Namespaces: Every suite is allocated a deterministic, non-overlapping placeholder UUID range matching `/^(\d{4})\1-\1-\1-\1-\1{3}$/` (e.g. `1111...` for `ai-ops.integrity`, `1313...`/`1414...` for `cross-user-ownership`, `1515...` for `editor-orchestration`, `1616...` for `ai-server-atomic-commit`, `2323...`/`2424...`/`2525...` for `stripe/webhook`).
 - Resilient Hierarchical Cleanup: `cleanupTestUsers` in `src/test/test-db.ts` explicitly deletes dependent child rows (`subscriptions`, `creditLedgerTransactions`, `projectDecisionLedger`, `checkpointWrites`, `checkpointBlobs`, `checkpoints`, `files`, `userVaultProfiles`) prior to removing user records, and guards against transient lock contention with an exponential backoff retry loop.
@@ -139,11 +141,11 @@ to a live URL; push failures surface immediately).
 ## 5. Evidence of isolation
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 98 unit suites (1221 tests) · 21 live suites (119 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 95 unit suites (1234 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
-- **Active Unit & Contract Suite (`npm run test`):** **98 files / 1221 tests — all passed (100% pass rate)**, zero LIVE files included.
-- **Active Live Multi-System Suite (`npm run test:live`):** **21 registered suites / 119 tests — all passed (100% pass rate)** on isolated Neon branch (`ep-dry-rain-b1kfmpgk-pooler`).
+- **Active Unit & Contract Suite (`npm run test`):** **95 files / 1234 tests — all passed (100% pass rate)**, zero LIVE files included.
+- **Active Live Multi-System Suite (`npm run test:live`):** **21 registered suites / 108 tests — all passed (100% pass rate)** on isolated Neon branch (`ep-dry-rain-b1kfmpgk-pooler`).
 - **Guard unit tests (`src/test/infrastructure/test-db.isolation.test.ts`):** **8/8 passed** (main-branch refusal, missing-URL refusal, mismatch refusal, loader leak prevention, shell-value precedence, and `-pooler` endpoint refusal).
 - **Historical Milestone Baseline (Phase 10 Archive):** Initially verified at 37 unit files / 488 tests and 16 live suites; systematically expanded through Phase 18 and Phase 20 hardening rounds to current active levels.
 - Mandatory identity line printed at the start of every live run:
@@ -152,17 +154,17 @@ to a live URL; push failures surface immediately).
   probe reading `.env.local` in-memory without exposing the URL) — **identical,
   zero rows touched**:
 
-  | Table | Before | After |
-  |---|---|---|
-  | `users` | 4 | 4 |
-  | `files` | 1 | 1 |
-  | `usage` | 2 | 2 |
-  | `ai_reservations` | 38 | 38 |
-  | `subscriptions` | 1 | 1 |
+  | Table             | Before | After |
+  | ----------------- | ------ | ----- |
+  | `users`           | 4      | 4     |
+  | `files`           | 1      | 1     |
+  | `usage`           | 2      | 2     |
+  | `ai_reservations` | 38     | 38    |
+  | `subscriptions`   | 1      | 1     |
 
 ### Known transient (out of Phase 10 scope)
 
-`ai-live-e2e.test.ts` exercises the external Gemini provider and can exceed the
+`ai-live-e2e.live.test.ts` exercises the external Gemini provider and can exceed the
 default 30 s vitest timeout when provider latency spikes (observed intermittently
 on 2026-08-24; passed fully on other attempts). Unrelated to database isolation.
 Follow-up: raise a dedicated `testTimeout` for the live config.
@@ -191,13 +193,12 @@ const p = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUn
 
 The repository runs a deterministic multi-stage CI pipeline on GitHub Actions configured to strictly enforce concurrency integrity, documentation synchronization, and database isolation across every pull request and branch push. For the exhaustive specification and gating decision matrix, see [ci-pipeline.md](./ci-pipeline.md).
 
-| Stage | Job Name | Isolation & Execution Guarantees |
-|---|---|---|
-| **1. Quality Gate** | `quality-gate` | Pure static verification: ESLint 9, TypeScript strictness (`tsc --noEmit`), dependency vulnerability audit gate (`scripts/ci-audit.mjs`: production fail-closed + dev allowlist), documentation metrics check (`sync-doc-metrics.mjs --check`), and internal link validation (`check-markdown-links.mjs`). |
-| **2. Pure Unit Contracts** | `unit-contracts` | Runs `npm run test` strictly excluding `LIVE_TEST_FILES` (zero database or network dependencies, < 20s runtime). |
-| **3. Schema Integrity** | `migration-integrity` | Ephemeral `postgres:16-alpine` service container verifies sequential migration application (`scripts/verify-migrations.mjs`) and Drizzle schema sync (`drizzle-kit push --config drizzle.config.test.ts --force`). |
-| **4. Concurrency & Isolation** | `concurrency-and-db-isolation` | Runs `npm run test:live` against isolated PostgreSQL 16 + Redis 7 service containers with `TEST_DB_FORBIDDEN_HOSTS` configured to reject production hosts, verifying lost-update guards, AI quota idempotency, and Stripe ledger deduplication. |
-| **5. Production Build** | `build-verification` | Full Next.js 16 production build (`npm run build`) with asset compilation and route validation. |
-| **6. Browser E2E Testing** | `e2e-browser-testing` | Playwright E2E test execution in Chromium across 15 automated user journeys with progressive fail-closed release gating, failure artifact reporting (`playwright-report`), and dashboard step summaries (`$GITHUB_STEP_SUMMARY`). |
-| **7. Live Smoke (Gated)** | `live-provider-smoke` | Gated provider live smoke (`src/test/ai/ai-live-e2e.test.ts`) executed on `main` push, release tags, release publish, or manual `workflow_dispatch` with strict fail-closed gating on missing credentials. |
-
+| Stage                          | Job Name                       | Isolation & Execution Guarantees                                                                                                                                                                                                                                                                           |
+| ------------------------------ | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1. Quality Gate**            | `quality-gate`                 | Pure static verification: ESLint 9, TypeScript strictness (`tsc --noEmit`), dependency vulnerability audit gate (`scripts/ci-audit.mjs`: production fail-closed + dev allowlist), documentation metrics check (`sync-doc-metrics.mjs --check`), and internal link validation (`check-markdown-links.mjs`). |
+| **2. Pure Unit Contracts**     | `unit-contracts`               | Runs `npm run test` strictly excluding `LIVE_TEST_FILES` (zero database or network dependencies, < 20s runtime).                                                                                                                                                                                           |
+| **3. Schema Integrity**        | `migration-integrity`          | Ephemeral `postgres:16-alpine` service container verifies sequential migration application (`scripts/verify-migrations.mjs`) and Drizzle schema sync (`drizzle-kit push --config drizzle.config.test.ts --force`).                                                                                         |
+| **4. Concurrency & Isolation** | `concurrency-and-db-isolation` | Runs `npm run test:live` against isolated PostgreSQL 16 + Redis 7 service containers with `TEST_DB_FORBIDDEN_HOSTS` configured to reject production hosts, verifying lost-update guards, AI quota idempotency, and Stripe ledger deduplication.                                                            |
+| **5. Production Build**        | `build-verification`           | Full Next.js 16 production build (`npm run build`) with asset compilation and route validation.                                                                                                                                                                                                            |
+| **6. Browser E2E Testing**     | `e2e-browser-testing`          | Playwright E2E test execution in Chromium across 15 automated user journeys with progressive fail-closed release gating, failure artifact reporting (`playwright-report`), and dashboard step summaries (`$GITHUB_STEP_SUMMARY`).                                                                          |
+| **7. Live Smoke (Gated)**      | `live-provider-smoke`          | Gated provider live smoke (`src/test/ai/ai-live-e2e.live.test.ts`) executed on `main` push, release tags, release publish, or manual `workflow_dispatch` with strict fail-closed gating on missing credentials.                                                                                            |

@@ -4,6 +4,52 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.4.5] - 2026-10-29 (Comprehensive Test Engineering Refactor, Anti-Pattern Eradication & Playwright E2E Hardening)
+
+### Repository-Wide Anti-Pattern Eradication & Test Modernization
+
+- **Systemic Anti-Pattern Remediation:** Systematically audited 134 test files (1,364 tests) and eradicated 5 major anti-pattern clusters: In-Test Surrogates, Tautological Assertions, Massive Copy-Paste Duplication, Hand-Rolled ORM Mocks, and Phantom E2E component tests.
+- **Net LOC Reduction & Maintainability:** Pruned 5,011 lines of fragile, duplicated, and unmaintainable test code while introducing 2,558 lines of high-fidelity contract assertions, achieving a net repository reduction of 2,453 LOC.
+- **Parametrized Vitest Compression:** Refactored bloated repetitive test blocks across auth, sync, parsers, and editor suites into declarative `test.each` tables with typed row schemas, improving maintainability and debugging clarity without reducing scenario breadth.
+- **Surrogate Purge & Production Import Alignment:** Eradicated in-test reimplementation of algorithms (such as custom token derivation math or byte parsers), replacing them with direct imports from canonical production modules (`src/lib/metering/derivation-and-lua.ts`, `src/lib/parsers/`, and `src/server/services/`).
+
+### Sacred Incident Regression Protection
+
+- **Historical Regression Defense:** Verified and defended all 89 sacred incident regressions (covering `INC-01` through `INC-12`, `LUGX-001` through `LUGX-065`, and `TD-01` through `TD-20`), ensuring zero regressions were lost or compromised during the refactor.
+- **Contract-Bound Assertions:** Elevated fragile surrogate mocks in incident tests to robust contract assertions validating real side effects, ACID rollbacks, Redis TTL expirations, and RFC 7807 problem details.
+
+### Test Suite Modularization & Dead Code Purge
+
+- **Decomposition of Monolithic Metering Suite:** Decomposed the 914-line `src/test/metering/credit-metering-suite.test.ts` into 5 cohesive, single-responsibility unit suites under `src/test/metering/`:
+  - `cold-start.unit.test.ts`: Flush-First cold-start protocol and wallet hydration locks.
+  - `stream-governor.unit.test.ts`: Real-time streaming governor, 500ms local hold, and abort propagation.
+  - `node-gate.unit.test.ts`: LangGraph higher-order metered node gate and step idempotency.
+  - `ai-settlement-service.unit.test.ts`: PostgreSQL batch draining and credit ledger transaction settlement.
+  - `derivation-and-lua.unit.test.ts`: Model reservation token cost derivation and atomic Lua script execution.
+- **Dead Legacy Mock Purge:** Permanently deleted obsolete and dead mock test files (`src/test/ai/ai-provider-smoke.test.ts` and `src/test/server/subscription-actions.test.ts`), whose coverage is now natively provided by `ai-client.test.ts`, `stripe-webhook.test.ts`, and `billing-service.test.ts`.
+- **Live Cloud Smoke Isolation:** Renamed `src/test/ai/ai-live-e2e.test.ts` to `src/test/ai/ai-live-e2e.live.test.ts` and formally registered it in `vitest.constants.mts` (`CLOUD_E2E_FILES`), guaranteeing pure unit suites (`npm run test`) remain 100% hermetic with zero external cloud network calls.
+
+### Playwright E2E Browser Journey Hardening & 100% Green Verification
+
+- **Full Suite Remediation:** Diagnosed and remediated all 8 failing specs across 14 spec files and 15 user journeys, achieving 100% pass rate in headless Chromium (`15 passed out of 15 in 4.0m`):
+  - **CodeMirror 6 Navigation Invariant (`03-codemirror-bidi.spec.ts`):** Replaced coordinate clicks with `page.keyboard.press("Control+End")` to ensure cursor placement at absolute document EOF outside code blocks.
+  - **Remote Hydration Barrier & Ghost Widget Locator (`06-ai-streaming-commit.spec.ts`, `07-ai-abort-reject.spec.ts`):** Introduced explicit remote Neon DB hydration barriers (`await expect(cmContent).toContainText(...)`) before executing AI actions, preventing premature empty-buffer rejections. Switched ghost preview assertions to CodeMirror's dedicated `.cm-ai-ghost-text` DOM widget.
+  - **Strict Locator Resolution (`08-ai-failure-refund.spec.ts`):** Resolved multi-element strict mode ambiguity by targeting the primary error notification via `.first()`.
+  - **Dynamic Remote Version for HTTP 412 Conflict Testing (`09-ai-conflict-412.spec.ts`):** Calculated the conflicting remote server version dynamically `(preDoc.version ?? 1) + 1` from the active document state, eliminating race conditions caused by autosave debouncing.
+  - **Encrypted Vault Lifecycle Modal Alignment (`10-vault-lifecycle.spec.ts`):** Aligned locators with the canonical `VaultUnlockModal` heading and password input, dismissing automatic unlock prompts before asserting toolbar controls.
+  - **Tenant Isolation Error Banner Handling (`14-tenant-isolation.spec.ts`):** Updated assertions to verify the fatal error banner on unauthorized access and interactively click the return-to-workspace action.
+
+### Authoritative SSOT Metrics Baseline
+
+- **Synchronized Documentation Metrics:** Validated via `scripts/sync-doc-metrics.mjs --check`:
+  - **Unit & Contract:** 95 test suites, 1,234 passing tests (100% green).
+  - **Live Multi-System Integration:** 21 test suites, 108 passing tests (100% green).
+  - **Browser E2E Journeys:** 14 spec files, 15 passing user journeys (100% green).
+  - **Total Repository Passing Tests:** 1,357 tests passing across all three tiers.
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/extensions/comprehensive-test-engineering-refactor-and-e2e-hardening-closure.md`](records/closures/extensions/comprehensive-test-engineering-refactor-and-e2e-hardening-closure.md).
+
+---
+
 ## [0.4.1] - 2026-10-28 (Repository Code Hygiene, Strict Typing Hardening & Full ESLint Remediation)
 
 ### Full ESLint Zero-Defect Remediation
