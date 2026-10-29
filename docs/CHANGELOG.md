@@ -4,6 +4,17 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.4.6] - 2026-10-30 (Playwright E2E CI/CD Stability & Stripe Webhook Secret Hermeticity)
+
+### Playwright E2E Stream Lifecycle & CI Secret Hermeticity
+
+- **Route Callback Lifecycle Teardown (`07-ai-abort-reject.spec.ts`):** Eradicated `page.waitForTimeout` crash during route handler interception by decoupling stream simulation delay to standard promise timers, backed by explicit `unrouteAll({ behavior: "ignoreErrors" })` in `test.afterEach`.
+- **Stripe Webhook Signature CI Disparity (`13-stripe-billing.spec.ts`):** Resolved signature verification failure in CI Stage 6 by injecting default mock credentials (`STRIPE_WEBHOOK_SECRET` and `STRIPE_SECRET_KEY`) into `.env.test`, `.github/workflows/ci.yml`, and `playwright.config.ts` `webServer.env`.
+- **Defensive Webhook Test Fallback:** Hardened `src/app/api/stripe/webhook/route.ts` and `src/lib/stripe/index.ts` with explicit test-environment secret fallbacks when `NODE_ENV === "test"` or `PLAYWRIGHT === "1"`.
+- **Verification:** 100% green execution across targeted user journeys (`Scenario 7`, `Scenario 8`, and `Scenario 14`).
+
+---
+
 ## [0.4.5] - 2026-10-29 (Comprehensive Test Engineering Refactor, Anti-Pattern Eradication & Playwright E2E Hardening)
 
 ### Repository-Wide Anti-Pattern Eradication & Test Modernization

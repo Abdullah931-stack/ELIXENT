@@ -762,10 +762,16 @@ export async function POST(request: NextRequest) {
         let event: Stripe.Event;
 
         try {
+            const webhookSecret =
+                process.env.STRIPE_WEBHOOK_SECRET ||
+                (process.env.NODE_ENV === 'test' || process.env.PLAYWRIGHT === '1'
+                    ? 'whsec_test_mock_ci_secret'
+                    : '');
+
             event = await stripe.webhooks.constructEvent(
                 body,
                 signature,
-                process.env.STRIPE_WEBHOOK_SECRET!,
+                webhookSecret,
                 MAX_TIMESTAMP_AGE_SECONDS
             );
         } catch (error) {

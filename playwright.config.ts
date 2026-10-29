@@ -71,6 +71,8 @@ export default defineConfig({
             NEXT_PUBLIC_APP_URL: BASE_URL,
             NODE_ENV: 'test',
             PLAYWRIGHT: '1',
+            STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET || 'whsec_test_mock_ci_secret',
+            STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY || 'sk_test_mock_ci_key',
         },
     },
 });

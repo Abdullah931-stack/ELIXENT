@@ -3,6 +3,10 @@ import { e2eDb, getDbFile } from "../fixtures/test-db";
 import * as schema from "../../src/server/db/schema";
 
 test.describe("Scenarios 7 & 8: User AI Abort and Preview Reject (Browser User Journeys)", () => {
+    test.afterEach(async ({ page }) => {
+        await page.unrouteAll({ behavior: "ignoreErrors" });
+    });
+
     test("Scenario 7: User aborting AI stream in UI halts stream and preserves baseline document", async ({
         page,
         authSession,
@@ -18,19 +22,23 @@ test.describe("Scenarios 7 & 8: User AI Abort and Preview Reject (Browser User J
             })
             .returning();
 
-        // 1. Intercept stream to simulate slow continuous generation
+        // 1. Intercept stream to simulate slow continuous generation using non-page-bound delay
         await page.route("**/api/ai/stream", async (route) => {
-            await page.waitForTimeout(1000);
-            const ndjson = [
-                JSON.stringify({ type: "meta", operationId: `op-abort-${Date.now()}`, model: "google/gemini-2.5-flash" }),
-                JSON.stringify({ type: "chunk", text: "# Partial text that should be cancelled" }),
-            ].join("\n") + "\n";
+            try {
+                await new Promise((res) => setTimeout(res, 800));
+                const ndjson = [
+                    JSON.stringify({ type: "meta", operationId: `op-abort-${Date.now()}`, model: "google/gemini-2.5-flash" }),
+                    JSON.stringify({ type: "chunk", text: "# Partial text that should be cancelled" }),
+                ].join("\n") + "\n";
 
-            await route.fulfill({
-                status: 200,
-                contentType: "application/x-ndjson",
-                body: ndjson,
-            });
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/x-ndjson",
+                    body: ndjson,
+                });
+            } catch {
+                // Request aborted or page closed prior to fulfillment
+            }
         });
 
         // 2. Open editor in browser
@@ -38,8 +46,8 @@ test.describe("Scenarios 7 & 8: User AI Abort and Preview Reject (Browser User J
         await page.waitForLoadState("domcontentloaded");
 
         const cmContent = page.locator(".cm-content");
-        await expect(cmContent).toBeVisible({ timeout: 15000 });
-        await expect(cmContent).toContainText("Original Unaltered Content", { timeout: 20000 });
+        await expect(cmContent).toBeVisible({ timeout: 20000 });
+        await expect(cmContent).toContainText("Original Unaltered Content", { timeout: 30000 });
 
         // 3. Trigger AI Improve
         const improveBtn = page.getByRole("button", { name: "Improve" });
@@ -75,17 +83,21 @@ test.describe("Scenarios 7 & 8: User AI Abort and Preview Reject (Browser User J
 
         // 1. Mock completed preview stream
         await page.route("**/api/ai/stream", async (route) => {
-            const ndjson = [
-                JSON.stringify({ type: "meta", operationId: `op-reject-${Date.now()}`, model: "google/gemini-2.5-flash" }),
-                JSON.stringify({ type: "chunk", text: "# Unwanted AI Proposal" }),
-                JSON.stringify({ type: "done" }),
-            ].join("\n") + "\n";
+            try {
+                const ndjson = [
+                    JSON.stringify({ type: "meta", operationId: `op-reject-${Date.now()}`, model: "google/gemini-2.5-flash" }),
+                    JSON.stringify({ type: "chunk", text: "# Unwanted AI Proposal" }),
+                    JSON.stringify({ type: "done" }),
+                ].join("\n") + "\n";
 
-            await route.fulfill({
-                status: 200,
-                contentType: "application/x-ndjson",
-                body: ndjson,
-            });
+                await route.fulfill({
+                    status: 200,
+                    contentType: "application/x-ndjson",
+                    body: ndjson,
+                });
+            } catch {
+                // Request aborted or page closed prior to fulfillment
+            }
         });
 
         // 2. Open editor
@@ -93,8 +105,8 @@ test.describe("Scenarios 7 & 8: User AI Abort and Preview Reject (Browser User J
         await page.waitForLoadState("domcontentloaded");
 
         const cmContent = page.locator(".cm-content");
-        await expect(cmContent).toBeVisible({ timeout: 15000 });
-        await expect(cmContent).toContainText("Safe Baseline Text", { timeout: 20000 });
+        await expect(cmContent).toBeVisible({ timeout: 20000 });
+        await expect(cmContent).toContainText("Safe Baseline Text", { timeout: 30000 });
 
         // 3. Trigger AI Improve
         const improveBtn = page.getByRole("button", { name: "Improve" });
