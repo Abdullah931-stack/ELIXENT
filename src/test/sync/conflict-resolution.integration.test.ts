@@ -10,17 +10,35 @@
  * 6. Delete conflict detection & restore resolution
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { eq, and, isNull } from "drizzle-orm";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+import { eq, and } from "drizzle-orm";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { randomUUID } from "crypto";
 import { conflictResolver } from "@/lib/sync/conflict-resolver";
 import { generateETagSync } from "@/lib/sync/etag-generator";
+import { updateFileContent } from "@/server/actions/file-ops";
 
 const TEST_USER_ID = "66666666-6666-6666-6666-666666666666";
 let dbAvailable = false;
+
+vi.mock("@/lib/supabase/server", () => ({
+    getUser: vi.fn(async () => ({ id: TEST_USER_ID, email: "conflict-integration-test@example.com" })),
+    createClient: vi.fn(async () => ({
+        auth: {
+            getUser: vi.fn(async () => ({ data: { user: { id: TEST_USER_ID, email: "conflict-integration-test@example.com" } }, error: null })),
+        },
+    })),
+}));
+
+vi.mock("@/server/db", async () => {
+    const original = await vi.importActual<typeof import("@/server/db")>("@/server/db");
+    return {
+        ...original,
+        db: testDb,
+    };
+});
 
 beforeAll(async () => {
     dbAvailable = await isTestDbAvailable();
@@ -60,87 +78,6 @@ afterAll(async () => {
     try { await cleanupTestUsers([TEST_USER_ID]); } catch { /* ignore */ }
 });
 
-/**
- * Executes an optimistic-locked write against the database matching updateFileContent contract
- */
-async function executeOptimisticWrite(
-    fileId: string,
-    content: string,
-    expectedVersion: number,
-    userId: string = TEST_USER_ID,
-    title?: string
-) {
-    const current = await testDb.query.files.findFirst({
-        where: and(eq(schema.files.id, fileId), eq(schema.files.userId, userId), isNull(schema.files.deletedAt)),
-    });
-
-    if (!current) {
-        return { success: false, status: "not_found" as const };
-    }
-
-    if (current.version !== expectedVersion) {
-        return {
-            success: false,
-            status: "conflict" as const,
-            serverVersion: {
-                version: current.version,
-                etag: current.etag,
-                content: current.content,
-                title: current.title,
-                updatedAt: current.updatedAt.toISOString(),
-            },
-        };
-    }
-
-    const newVersion = current.version + 1;
-    const now = new Date();
-    const newEtag = generateETagSync({ id: fileId, content, updatedAt: now });
-
-    const [updated] = await testDb
-        .update(schema.files)
-        .set({
-            content,
-            title: title ?? current.title,
-            etag: newEtag,
-            version: newVersion,
-            updatedAt: now,
-        })
-        .where(
-            and(
-                eq(schema.files.id, fileId),
-                eq(schema.files.userId, userId),
-                eq(schema.files.version, expectedVersion),
-                isNull(schema.files.deletedAt)
-            )
-        )
-        .returning();
-
-    if (!updated) {
-        const refreshed = await testDb.query.files.findFirst({
-            where: and(eq(schema.files.id, fileId), eq(schema.files.userId, userId)),
-        });
-        return {
-            success: false,
-            status: "conflict" as const,
-            serverVersion: refreshed ? {
-                version: refreshed.version,
-                etag: refreshed.etag,
-                content: refreshed.content,
-                title: refreshed.title,
-                updatedAt: refreshed.updatedAt.toISOString(),
-            } : undefined,
-        };
-    }
-
-    return {
-        success: true,
-        version: updated.version,
-        etag: updated.etag,
-        content: updated.content,
-        title: updated.title,
-    };
-}
-
 describe("Three-Way Conflict Resolution Lifecycle on PostgreSQL", () => {
     it("full three-way merge lifecycle: base -> concurrent remote edit -> local conflict (412) -> 3-way merge -> single authoritative write -> reload verified", async () => {
         const fileId = randomUUID();
@@ -164,7 +101,7 @@ describe("Three-Way Conflict Resolution Lifecycle on PostgreSQL", () => {
 
         // Step 2: Remote writer updates line 1 (advancing server to Version 2)
         const remoteContent = "Title Section\nParagraph 1: Remote updated text\nParagraph 2: Stable content\nFooter Note";
-        const remoteWrite = await executeOptimisticWrite(fileId, remoteContent, 1);
+        const remoteWrite = await updateFileContent(fileId, remoteContent, { expectedVersion: 1 });
         expect(remoteWrite.success).toBe(true);
         expect(remoteWrite.version).toBe(2);
 
@@ -172,7 +109,7 @@ describe("Three-Way Conflict Resolution Lifecycle on PostgreSQL", () => {
         const localContent = "Title Section\nParagraph 1: Original text\nParagraph 2: Stable content\nFooter Note: Local additions";
         
         // Local attempts to write with stale expectedVersion: 1 -> MUST yield 412 Conflict
-        const localAttempt = await executeOptimisticWrite(fileId, localContent, 1);
+        const localAttempt = await updateFileContent(fileId, localContent, { expectedVersion: 1 });
         expect(localAttempt.success).toBe(false);
         expect(localAttempt.status).toBe("conflict");
         expect(localAttempt.serverVersion).toBeDefined();
@@ -185,7 +122,7 @@ describe("Three-Way Conflict Resolution Lifecycle on PostgreSQL", () => {
             local: { content: localContent, title: baseTitle, version: 1 },
             remote: {
                 content: localAttempt.serverVersion!.content!,
-                title: localAttempt.serverVersion!.title,
+                title: baseTitle,
                 version: localAttempt.serverVersion!.version ?? undefined,
             },
         });
@@ -197,10 +134,10 @@ describe("Three-Way Conflict Resolution Lifecycle on PostgreSQL", () => {
         expect(mergeResult.content).toContain("Footer Note: Local additions");
 
         // Step 5: Single authoritative write with expectedVersion: 2 (server's current version)
-        const resolvedWrite = await executeOptimisticWrite(
+        const resolvedWrite = await updateFileContent(
             fileId,
             mergeResult.content!,
-            localAttempt.serverVersion!.version || 2
+            { expectedVersion: localAttempt.serverVersion!.version || 2 }
         );
 
         expect(resolvedWrite.success).toBe(true);
@@ -220,21 +157,7 @@ describe("Three-Way Conflict Resolution Lifecycle on PostgreSQL", () => {
     });
 
     it("rejects auto-merge when base snapshot is missing and requires manual resolution", async () => {
-        const fileId = randomUUID();
         const serverContent = "Server text on file";
-        const now = new Date();
-
-        await testDb.insert(schema.files).values({
-            id: fileId,
-            userId: TEST_USER_ID,
-            title: "No Base Doc",
-            content: serverContent,
-            version: 2,
-            etag: generateETagSync({ id: fileId, content: serverContent, updatedAt: now }),
-            isFolder: false,
-            createdAt: now,
-            updatedAt: now,
-        });
 
         // Attempting 3-way merge with null base must flag manual_resolution_required
         const mergeResult = conflictResolver.attemptThreeWayMerge({

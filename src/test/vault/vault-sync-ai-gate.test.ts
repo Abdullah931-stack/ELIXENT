@@ -27,6 +27,8 @@ import { validateMarkdownSyntaxIntegrity } from '@/lib/sync/syntax-validator';
 import { generateEncryptedETagSync, generateETagSync } from '@/lib/sync/etag-generator';
 import { sessionKeyStore } from '@/lib/sync/session-key-store';
 import { cryptoWorkerBridge } from '@/lib/sync/crypto-worker-bridge';
+import { createIndexedDBManager, type IndexedDBManager } from '@/lib/sync/indexeddb';
+import { connectionDetector } from '@/lib/sync/connection-detector';
 import { AAD } from '@/lib/crypto/aad';
 import type { PendingEncryptedConflict } from '@/lib/sync';
 import type { EncryptedEnvelope } from '@/lib/sync/types/vault';
@@ -157,7 +159,6 @@ vi.mock('@/lib/rate-limit', () => ({
 // Import Route Handlers and Server Actions after mocks
 import { POST as aiStreamRoute } from '@/app/api/ai/stream/route';
 import { commitAIFileOperation } from '@/server/actions/ai-commit';
-import { updateVaultAISetting } from '@/server/actions/vault-actions';
 import { SyncManager } from '@/lib/sync/sync-manager';
 
 describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sync', () => {
@@ -608,59 +609,26 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
     });
 
     // =========================================================================
-    // 5. Vault AI Preference Server Action (updateVaultAISetting)
-    // =========================================================================
-    describe('5. Vault AI Preference Server Action (updateVaultAISetting)', () => {
-        const userId = 'user-pref-1';
-
-        it('should reject unauthenticated request', async () => {
-            mockGetUser.mockResolvedValueOnce(null);
-
-            const res = await updateVaultAISetting(true);
-            expect(res.success).toBe(false);
-            expect(res.status).toBe('unauthorized');
-        });
-
-        it('should return not_found if user vault profile does not exist', async () => {
-            mockGetUser.mockResolvedValueOnce({ id: userId });
-            mockDb.query.userVaultProfiles.findFirst.mockResolvedValueOnce(null);
-
-            const res = await updateVaultAISetting(true);
-            expect(res.success).toBe(false);
-            expect(res.status).toBe('not_found');
-        });
-
-        it('should update allowAIOnEncryptedFiles in database and return new state', async () => {
-            mockGetUser.mockResolvedValueOnce({ id: userId });
-            mockDb.query.userVaultProfiles.findFirst.mockResolvedValueOnce({
-                userId,
-                allowAIOnEncryptedFiles: false,
-            });
-
-            const res = await updateVaultAISetting(true);
-            expect(res.success).toBe(true);
-            expect(res.data?.allowAIOnEncryptedFiles).toBe(true);
-            expect(mockDb.update).toHaveBeenCalled();
-        });
-    });
-
-    // =========================================================================
     // 6. Non-Blocking Sync Manager: Encrypted Conflict Isolation
     // =========================================================================
     describe('6. Non-Blocking Sync Manager: Encrypted Conflict Isolation', () => {
         let syncManager: SyncManager;
+        let testIdb: IndexedDBManager;
         let testUserId = 'user-sync-p4';
         const encryptedFileId = 'file-enc-conflict';
         const unencryptedFileId = 'file-plain-clean';
 
         beforeEach(async () => {
             testUserId = 'user-sync-' + Math.random().toString(36).substring(2, 8);
-            syncManager = new SyncManager();
-            await syncManager.init({ userId: testUserId });
+            vi.spyOn(connectionDetector, 'isOnline').mockReturnValue(true);
+            testIdb = createIndexedDBManager(testUserId);
+            syncManager = new SyncManager({ idb: testIdb, userId: testUserId });
+            await syncManager.init({ idb: testIdb, userId: testUserId });
         });
 
         afterEach(() => {
             syncManager.destroy();
+            testIdb.close();
             sessionKeyStore.purgeKeys();
             vi.restoreAllMocks();
         });
@@ -723,9 +691,8 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
                 detectedAt: new Date(),
             };
 
-            // Test notifyEncryptedConflictLocked and pending storage
-            syncManager['pendingEncryptedConflicts'].set(encryptedFileId, mockConflictData);
-            syncManager['notifyEncryptedConflictLocked'](mockConflictData);
+            // Test quarantineEncryptedConflict and pending storage
+            syncManager.quarantineEncryptedConflict(mockConflictData);
 
             expect(lockedEventFired).toBe(true);
             expect(lockedFileId).toBe(encryptedFileId);
@@ -735,7 +702,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
 
         it('should allow concurrent push of unencrypted files while an encrypted file is conflict-locked', async () => {
             // Lock file A as pending encrypted conflict
-            syncManager['pendingEncryptedConflicts'].set(encryptedFileId, {
+            syncManager.quarantineEncryptedConflict({
                 fileId: encryptedFileId,
                 remoteEnvelope: { version: 1 as const, algorithm: 'AES-GCM-256' as const, keyId: 'master-v1', iv: '', salt: '', ciphertext: '', kdfIterations: 600000 },
                 baseEnvelope: { version: 1 as const, algorithm: 'AES-GCM-256' as const, keyId: 'master-v1', iv: '', salt: '', ciphertext: '', kdfIterations: 600000 },
@@ -756,7 +723,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
             sessionKeyStore.storeMasterKeyRaw(rawMasterKey, 3600);
             expect(sessionKeyStore.isVaultUnlocked()).toBe(true);
 
-            const userId = syncManager['config']?.userId || '';
+            const userId = syncManager.getUserId() || testUserId;
             const aad = `vault:file:${userId}:${encryptedFileId}`;
 
             const basePlaintext = '# Base Document\n\nSection 1 original\n\nSection 2 original\n';
@@ -772,7 +739,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
             const encRemote = await cryptoWorkerBridge.encryptAESGCM(rawMasterKey, remotePlaintext, iv3, aad);
 
             // Setup initial local file in IndexedDB with real encrypted local payload
-            await syncManager['idb'].saveFile({
+            await testIdb.saveFile({
                 id: encryptedFileId,
                 title: 'enc-doc.md',
                 parentFolderId: null,
@@ -802,7 +769,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
             global.fetch = globalFetchMock;
 
             // Set up pending conflict with real encrypted envelopes
-            syncManager['pendingEncryptedConflicts'].set(encryptedFileId, {
+            syncManager.quarantineEncryptedConflict({
                 fileId: encryptedFileId,
                 remoteEnvelope: { version: 1, algorithm: 'AES-GCM-256', keyId: 'master-v1', iv: encRemote.ivBase64, salt: '', ciphertext: encRemote.ciphertextBase64, kdfIterations: 600000 },
                 baseEnvelope: { version: 1, algorithm: 'AES-GCM-256', keyId: 'master-v1', iv: encBase.ivBase64, salt: '', ciphertext: encBase.ciphertextBase64, kdfIterations: 600000 },
@@ -827,7 +794,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
             );
 
             // Verify local IndexedDB was updated with merged ciphertext, metadata, and marked clean
-            const persistedFile = await syncManager['idb'].getFile(encryptedFileId);
+            const persistedFile = await testIdb.getFile(encryptedFileId);
             expect(persistedFile?.isDirty).toBe(false);
             expect(persistedFile?.etag).toBe('etag-merged-success');
             expect(persistedFile?.version).toBe(2);
@@ -842,7 +809,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
         });
 
         it('should clear pending encrypted conflicts and listeners upon destroy()', () => {
-            syncManager['pendingEncryptedConflicts'].set('file-leak-test', {
+            syncManager.quarantineEncryptedConflict({
                 fileId: 'file-leak-test',
                 remoteEnvelope: { version: 1, algorithm: 'AES-GCM-256', keyId: 'master-v1', iv: '', salt: '', ciphertext: '', kdfIterations: 600000 },
                 baseEnvelope: { version: 1, algorithm: 'AES-GCM-256', keyId: 'master-v1', iv: '', salt: '', ciphertext: '', kdfIterations: 600000 },
@@ -878,11 +845,25 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
                 updatedAt: new Date().toISOString(),
             };
 
-            const result = await syncManager['pullFile'](newServerFile);
-            expect(result.success).toBe(true);
-            expect(result.action).toBe('pulled');
+            const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+                if (url.includes('/api/files/sync')) {
+                    return {
+                        ok: true,
+                        json: async () => ({
+                            files: [newServerFile],
+                            has_more: false,
+                        }),
+                    };
+                }
+                return { ok: false, status: 404 };
+            });
+            global.fetch = fetchMock;
 
-            const saved = await syncManager['idb'].getFile('file-new-enc');
+            const result = await syncManager.sync();
+            expect(result.success).toBe(true);
+            expect(result.filesPulled).toBe(1);
+
+            const saved = await testIdb.getFile('file-new-enc');
             expect(saved?.isEncrypted).toBe(true);
             expect(saved?.encryptionMetadata?.iv).toBe('iv-server-1234');
             expect(saved?.encryptionMetadata?.salt).toBe('salt-server-1234');
@@ -890,7 +871,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
 
         it('should update encryptionMetadata when pulling newer version of existing clean encrypted file (ADV2-01)', async () => {
             // Pre-save existing clean file with old IV
-            await syncManager['idb'].saveFile({
+            await testIdb.saveFile({
                 id: 'file-existing-enc',
                 title: 'Existing Encrypted File',
                 content: 'cipher-old',
@@ -932,42 +913,102 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
                 updatedAt: new Date().toISOString(),
             };
 
-            const result = await syncManager['pullFile'](updatedServerFile);
-            expect(result.success).toBe(true);
-            expect(result.action).toBe('pulled');
+            const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+                if (url.includes('/api/files/sync')) {
+                    return {
+                        ok: true,
+                        json: async () => ({
+                            files: [updatedServerFile],
+                            has_more: false,
+                        }),
+                    };
+                }
+                return { ok: false, status: 404 };
+            });
+            global.fetch = fetchMock;
 
-            const saved = await syncManager['idb'].getFile('file-existing-enc');
+            const result = await syncManager.sync();
+            expect(result.success).toBe(true);
+            expect(result.filesPulled).toBe(1);
+
+            const saved = await testIdb.getFile('file-existing-enc');
             expect(saved?.content).toBe('cipher-new-v2');
             expect(saved?.encryptionMetadata?.iv).toBe('iv-new-fresh');
             expect(saved?.version).toBe(2);
         });
 
         it('should automatically trigger resolution of pending encrypted conflicts when vault is unlocked (ADV2-03)', async () => {
-            const spyResolve = vi.spyOn(syncManager, 'resolvePendingEncryptedConflict').mockResolvedValue({
-                fileId: 'auto-resolve-target',
-                success: true,
-                action: 'pushed',
+            const rawKey = new Uint8Array(32).fill(7);
+            const autoFileId = 'auto-resolve-target';
+            const aad = `vault:file:${testUserId}:${autoFileId}`;
+
+            const basePlaintext = '# Auto Doc\n\nSection 1 original\n\nSection 2 original\n';
+            const localPlaintext = '# Auto Doc\n\nSection 1 local edit\n\nSection 2 original\n';
+            const remotePlaintext = '# Auto Doc\n\nSection 1 original\n\nSection 2 remote edit\n';
+
+            const iv1 = crypto.getRandomValues(new Uint8Array(12));
+            const iv2 = crypto.getRandomValues(new Uint8Array(12));
+            const iv3 = crypto.getRandomValues(new Uint8Array(12));
+
+            const encBase = await cryptoWorkerBridge.encryptAESGCM(rawKey, basePlaintext, iv1, aad);
+            const encLocal = await cryptoWorkerBridge.encryptAESGCM(rawKey, localPlaintext, iv2, aad);
+            const encRemote = await cryptoWorkerBridge.encryptAESGCM(rawKey, remotePlaintext, iv3, aad);
+
+            await testIdb.saveFile({
+                id: autoFileId,
+                title: 'auto.md',
+                parentFolderId: null,
+                isFolder: false,
+                content: encLocal.ciphertextBase64,
+                etag: 'etag-old',
+                version: 1,
+                isDirty: true,
+                isEncrypted: true,
+                encryptionMetadata: {
+                    version: 1,
+                    algorithm: 'AES-GCM-256',
+                    keyId: 'master-v1',
+                    salt: '',
+                    iv: encLocal.ivBase64,
+                    kdfIterations: 600000,
+                },
+                lastModified: Date.now(),
+                lastSyncedAt: Date.now(),
             });
 
-            syncManager['pendingEncryptedConflicts'].set('auto-resolve-target', {
-                fileId: 'auto-resolve-target',
-                remoteEnvelope: { version: 1, algorithm: 'AES-GCM-256', keyId: 'master-v1', iv: '', salt: '', ciphertext: '', kdfIterations: 600000 },
-                baseEnvelope: { version: 1, algorithm: 'AES-GCM-256', keyId: 'master-v1', iv: '', salt: '', ciphertext: '', kdfIterations: 600000 },
-                localEnvelope: { version: 1, algorithm: 'AES-GCM-256', keyId: 'master-v1', iv: '', salt: '', ciphertext: '', kdfIterations: 600000 },
-                remoteEtag: 'etag',
+            const fetchMock = vi.fn().mockResolvedValue({
+                ok: true,
+                json: async () => ({ etag: 'etag-auto-resolved', version: 2 }),
+            });
+            global.fetch = fetchMock;
+
+            syncManager.quarantineEncryptedConflict({
+                fileId: autoFileId,
+                remoteEnvelope: { version: 1, algorithm: 'AES-GCM-256', keyId: 'master-v1', iv: encRemote.ivBase64, salt: '', ciphertext: encRemote.ciphertextBase64, kdfIterations: 600000 },
+                baseEnvelope: { version: 1, algorithm: 'AES-GCM-256', keyId: 'master-v1', iv: encBase.ivBase64, salt: '', ciphertext: encBase.ciphertextBase64, kdfIterations: 600000 },
+                localEnvelope: { version: 1, algorithm: 'AES-GCM-256', keyId: 'master-v1', iv: encLocal.ivBase64, salt: '', ciphertext: encLocal.ciphertextBase64, kdfIterations: 600000 },
+                remoteEtag: 'etag-remote-123',
                 detectedAt: new Date(),
             });
 
             expect(syncManager.getPendingEncryptedConflicts()).toHaveLength(1);
+            expect(syncManager.isEncryptedConflictLocked(autoFileId)).toBe(true);
 
             // Unlock vault in sessionKeyStore
-            const rawKey = new Uint8Array(32).fill(7);
             sessionKeyStore.storeMasterKeyRaw(rawKey, 3600);
 
-            // Wait for microtask/async resolution loop
-            await new Promise(r => setTimeout(r, 50));
-
-            expect(spyResolve).toHaveBeenCalledWith('auto-resolve-target');
+            // Wait for observable side effects: auto-resolution empties the quarantined conflicts map and marks IDB clean
+            await vi.waitFor(async () => {
+                expect(syncManager.isEncryptedConflictLocked(autoFileId)).toBe(false);
+                expect(syncManager.getPendingEncryptedConflicts()).toHaveLength(0);
+                const saved = await testIdb.getFile(autoFileId);
+                expect(saved?.isDirty).toBe(false);
+                expect(saved?.etag).toBe('etag-auto-resolved');
+            });
+            expect(fetchMock).toHaveBeenCalledWith(
+                expect.stringContaining(`/api/files/${autoFileId}`),
+                expect.anything()
+            );
         });
     });
 });

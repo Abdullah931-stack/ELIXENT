@@ -44,11 +44,26 @@ describe("FileContextMenu - LUGX-055 Encryption Conflict Handling", () => {
         });
         vi.spyOn(cryptoWorkerBridge, "decryptAESGCM").mockResolvedValue("plain");
         
-        // Mock Vault Profile
-        vi.mocked(getUserVaultProfile).mockResolvedValue({ success: true, data: {} as any });
+        // Mock Vault Profile without `as any` casts
+        vi.mocked(getUserVaultProfile).mockResolvedValue({
+            success: true,
+            data: {
+                userId: "test-user",
+                encryptedMasterKey: "mock-key",
+                recoveryEncryptedMasterKey: "mock-recovery",
+                keySalt: "salt",
+                recoverySalt: "rec-salt",
+                kdfIterations: 600000,
+                keyVersion: 1,
+                deviceTrustEpoch: 1,
+                allowAIOnEncryptedFiles: false,
+                createdAt: new Date(),
+                updatedAt: new Date(),
+            },
+        });
         
         // Mock IDB
-        vi.spyOn(indexedDBManager, "init").mockResolvedValue({} as any);
+        vi.spyOn(indexedDBManager, "init").mockResolvedValue({} as unknown as IDBDatabase);
         vi.spyOn(indexedDBManager, "getCachedVaultProfile").mockResolvedValue(null);
         vi.spyOn(indexedDBManager, "saveCachedVaultProfile").mockResolvedValue();
         vi.spyOn(indexedDBManager, "getFile").mockResolvedValue({
@@ -57,7 +72,13 @@ describe("FileContextMenu - LUGX-055 Encryption Conflict Handling", () => {
             version: 5,
             etag: "etag-5",
             isDirty: false,
-        } as any);
+            title: "test.md",
+            lastModified: Date.now(),
+            lastSyncedAt: Date.now(),
+            parentFolderId: null,
+            isFolder: false,
+            isEncrypted: false,
+        });
         vi.spyOn(indexedDBManager, "saveFile").mockResolvedValue();
         vi.spyOn(indexedDBManager, "getOperations").mockResolvedValue([]);
         

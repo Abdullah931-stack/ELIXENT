@@ -116,7 +116,7 @@ vi.mock('@/lib/sync/error-handler', () => ({
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-import { SyncManager, createSyncManager } from '@/lib/sync/sync-manager';
+import { SyncManager, createSyncManager, SyncPullEngine } from '@/lib/sync/sync-manager';
 
 describe('Sync Manager', () => {
     let manager: SyncManager;
@@ -732,6 +732,17 @@ describe('Sync Manager', () => {
     });
 
     describe('pullFile tombstone handling (data-safety guard)', () => {
+        const pullEngine = new SyncPullEngine({
+            userId: 'user-123',
+            idb: mockIndexedDBManager as any,
+            rollback: mockSyncRollback as any,
+            conflictStore: { isConflicted: vi.fn().mockResolvedValue(false) } as any,
+            encryptedConflictStore: {
+                isEncryptedConflictLocked: vi.fn().mockReturnValue(false),
+                quarantineEncryptedConflict: vi.fn(),
+            } as any,
+        });
+
         const tombstoneFile = {
             id: 'file-tombstoned',
             content: '',
@@ -757,7 +768,7 @@ describe('Sync Manager', () => {
                 { id: 'op-1', fileId: 'file-tombstoned', status: 'queued' },
             ]);
 
-            const result = await (manager as any).pullFile(tombstoneFile);
+            const result = await pullEngine.pullFile(tombstoneFile);
 
             expect(result.success).toBe(true);
             expect(result.action).toBe('pulled');
@@ -782,7 +793,7 @@ describe('Sync Manager', () => {
                 { id: 'op-2', fileId: 'file-tombstoned', status: 'syncing' },
             ]);
 
-            const result = await (manager as any).pullFile(tombstoneFile);
+            const result = await pullEngine.pullFile(tombstoneFile);
 
             // Local unsaved edits are preserved; the case is escalated as a conflict
             expect(result.success).toBe(false);
@@ -801,6 +812,10 @@ describe('Sync Manager', () => {
     });
 
     describe('onRemoteUpdate Callback Event Dispatch (Phase 4)', () => {
+        beforeEach(() => {
+            mockIndexedDBManager.getDirtyFiles.mockResolvedValue([]);
+            mockIndexedDBManager.getDueOperations.mockResolvedValue([]);
+        });
         it('should dispatch remote update event when clean server update is pulled', async () => {
             await manager.init({ userId: 'user-123' });
 
@@ -827,10 +842,16 @@ describe('Sync Manager', () => {
                 updatedAt: new Date().toISOString(),
             };
 
-            const result = await (manager as any).pullFile(serverUpdate);
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: vi.fn().mockResolvedValue({ files: [serverUpdate], has_more: false }),
+            });
+
+            const result = await manager.sync();
 
             expect(result.success).toBe(true);
-            expect(result.action).toBe('pulled');
+            expect(result.filesPulled).toBe(1);
             expect(remoteUpdateListener).toHaveBeenCalledWith(
                 expect.objectContaining({
                     fileId: 'doc-1',
@@ -865,10 +886,16 @@ describe('Sync Manager', () => {
                 updatedAt: new Date().toISOString(),
             };
 
-            const result = await (manager as any).pullFile(newServerFile);
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: vi.fn().mockResolvedValue({ files: [newServerFile], has_more: false }),
+            });
+
+            const result = await manager.sync();
 
             expect(result.success).toBe(true);
-            expect(result.action).toBe('pulled');
+            expect(result.filesPulled).toBe(1);
             expect(remoteUpdateListener).toHaveBeenCalledWith(
                 expect.objectContaining({
                     fileId: 'doc-new',
@@ -890,16 +917,24 @@ describe('Sync Manager', () => {
 
             // Attempting to pull after destroy should not invoke listener
             mockIndexedDBManager.getFile.mockResolvedValueOnce(null);
-            await (manager as any).pullFile({
-                id: 'doc-after-destroy',
-                content: '# Content',
-                etag: 'etag-1',
-                version: 1,
-                title: 'Title',
-                parentFolderId: null,
-                isFolder: false,
-                updatedAt: new Date().toISOString(),
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: vi.fn().mockResolvedValue({
+                    files: [{
+                        id: 'doc-after-destroy',
+                        content: '# Content',
+                        etag: 'etag-1',
+                        version: 1,
+                        title: 'Title',
+                        parentFolderId: null,
+                        isFolder: false,
+                        updatedAt: new Date().toISOString(),
+                    }],
+                    has_more: false,
+                }),
             });
+            await manager.sync();
 
             expect(remoteUpdateListener).not.toHaveBeenCalled();
             mockIndexedDBManager.getFile.mockReset();

@@ -10,7 +10,7 @@
  * 6. Visual Diff & WordSpan Precision (computeWordSpans micro-LCS tokens, computeVisualDiff modify op pairing)
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, test, expect, beforeEach } from 'vitest';
 import { tokenizeLine, trySubLineMerge, diff3MergeText, diff3Merge } from '@/lib/sync/diff3';
 import { ConflictResolver } from '@/lib/sync/conflict-resolver';
 import { validateMarkdownSyntaxIntegrity } from '@/lib/sync/syntax-validator';
@@ -117,54 +117,46 @@ describe('Sub-Line 3-Way Merge & Intra-Line Word Diff Test Suite', () => {
     // 2. Sub-Line Disjoint Merge Scenarios
     // =========================================================================
     describe('2. Sub-Line Disjoint Merge Scenarios', () => {
-        it('should cleanly merge when Local edits word at index 0 and Remote edits word at index 5', () => {
-            const base = 'Alpha beta gamma delta epsilon zeta';
-            const local = 'First beta gamma delta epsilon zeta'; // Word 0 changed
-            const remote = 'Alpha beta gamma delta epsilon last'; // Word 5 changed
-
+        test.each([
+            {
+                scenario: 'Local edits word at index 0 and Remote edits word at index 5',
+                base: 'Alpha beta gamma delta epsilon zeta',
+                local: 'First beta gamma delta epsilon zeta',
+                remote: 'Alpha beta gamma delta epsilon last',
+                expected: 'First beta gamma delta epsilon last',
+            },
+            {
+                scenario: 'Local inserts word between words 1 and 2, and Remote appends at end',
+                base: 'word1 word2 word3 word4',
+                local: 'word1 inserted word2 word3 word4',
+                remote: 'word1 word2 word3 word4 appended',
+                expected: 'word1 inserted word2 word3 word4 appended',
+            },
+            {
+                scenario: 'Arabic sentence with disjoint word replacements',
+                base: 'هذا النص مكتوب باللغة العربية الجميلة',
+                local: 'هذا المقال مكتوب باللغة العربية الجميلة',
+                remote: 'هذا النص مكتوب باللغة العربية الحديثة',
+                expected: 'هذا المقال مكتوب باللغة العربية الحديثة',
+            },
+            {
+                scenario: 'code syntax when Local modifies declaration and Remote modifies value',
+                base: 'const counter = 0; // initial count',
+                local: 'let counter = 0; // initial count',
+                remote: 'const counter = 100; // initial count',
+                expected: 'let counter = 100; // initial count',
+            },
+            {
+                scenario: 'identical modifications on both sides (false conflict resolution)',
+                base: 'The quick brown fox',
+                local: 'The fast brown fox',
+                remote: 'The fast brown fox',
+                expected: 'The fast brown fox',
+            },
+        ])('should cleanly merge: $scenario', ({ base, local, remote, expected }) => {
             const subResult = trySubLineMerge(local, base, remote);
             expect(subResult.success).toBe(true);
-            expect(subResult.line).toBe('First beta gamma delta epsilon last');
-        });
-
-        it('should cleanly merge when Local inserts word between words 1 and 2, and Remote appends at end', () => {
-            const base = 'word1 word2 word3 word4';
-            const local = 'word1 inserted word2 word3 word4';
-            const remote = 'word1 word2 word3 word4 appended';
-
-            const subResult = trySubLineMerge(local, base, remote);
-            expect(subResult.success).toBe(true);
-            expect(subResult.line).toBe('word1 inserted word2 word3 word4 appended');
-        });
-
-        it('should cleanly merge Arabic sentence with disjoint word replacements', () => {
-            const base = 'هذا النص مكتوب باللغة العربية الجميلة';
-            const local = 'هذا المقال مكتوب باللغة العربية الجميلة'; // "النص" -> "المقال"
-            const remote = 'هذا النص مكتوب باللغة العربية الحديثة'; // "الجميلة" -> "الحديثة"
-
-            const subResult = trySubLineMerge(local, base, remote);
-            expect(subResult.success).toBe(true);
-            expect(subResult.line).toBe('هذا المقال مكتوب باللغة العربية الحديثة');
-        });
-
-        it('should cleanly merge code syntax when Local modifies declaration and Remote modifies value', () => {
-            const base = 'const counter = 0; // initial count';
-            const local = 'let counter = 0; // initial count';
-            const remote = 'const counter = 100; // initial count';
-
-            const subResult = trySubLineMerge(local, base, remote);
-            expect(subResult.success).toBe(true);
-            expect(subResult.line).toBe('let counter = 100; // initial count');
-        });
-
-        it('should resolve false conflicts when both Local and Remote perform identical modifications', () => {
-            const base = 'The quick brown fox';
-            const local = 'The fast brown fox';
-            const remote = 'The fast brown fox';
-
-            const subResult = trySubLineMerge(local, base, remote);
-            expect(subResult.success).toBe(true);
-            expect(subResult.line).toBe('The fast brown fox');
+            expect(subResult.line).toBe(expected);
         });
 
         it('should integrate cleanly in diff3MergeText on full documents with disjoint line edits', () => {
@@ -623,6 +615,61 @@ describe('Sub-Line 3-Way Merge & Intra-Line Word Diff Test Suite', () => {
 
             expect(hasDelete).toBe(true);
             expect(hasInsert).toBe(false);
+        });
+
+        it('should properly pair in-place modifications without duplication or erasure in 4-line scenario (CHANGELOG-v1:108)', () => {
+            const base = 'Line 1\nLine 2\nLine 3\nLine 4';
+            const local = 'Line 1\nLine 2\nLine 3\nLine 4 local';
+            const remote = 'Line 1\nLine 2 server\nLine 3\nLine 4';
+
+            const diffs = resolver.computeVisualDiff(local, remote, base);
+
+            const deleteOps = diffs.filter(d => d.type === 'delete');
+            expect(deleteOps.length).toBe(0);
+            expect(diffs.filter(d => d.type === 'equal').length).toBe(2);
+
+            const modifyOps = diffs.filter(d => d.type === 'modify');
+            expect(modifyOps.length).toBe(2);
+            expect(modifyOps[0].oldValue).toBe('Line 2');
+            expect(modifyOps[0].newValue).toBe('Line 2 server');
+            expect(modifyOps[1].oldValue).toBe('Line 4 local');
+            expect(modifyOps[1].newValue).toBe('Line 4');
+        });
+
+        it('should prevent resurrecting deleted lines when local modified adjacent line', () => {
+            const base = 'Line A\nLine B\nLine C';
+            const local = 'Line A (local modified)\nLine C';
+            const remote = 'Line A (remote modified)\nLine B\nLine C';
+
+            const result = resolver.attemptThreeWayMerge({
+                base: { content: base },
+                local: { content: local },
+                remote: { content: remote },
+            });
+
+            if (result.success) {
+                expect(result.content).not.toContain('Line B');
+            } else {
+                expect(result.conflictMarkers).not.toContain('Line B');
+            }
+        });
+
+        it('should handle pure insertions and pure deletions as line ops in computeVisualDiff', () => {
+            const base = 'Line 1\nLine 2';
+            const local = 'Line 1\nLine 2';
+            const remote = 'Line 1\nLine Inserted\nLine 2';
+
+            const diffs = resolver.computeVisualDiff(local, remote, base);
+            expect(diffs.some(d => d.type === 'insert' && d.value === 'Line Inserted')).toBe(true);
+        });
+
+        it('should accurately compute spans for markdown formatted text in visual diff', () => {
+            const base = 'Simple text';
+            const local = '**Bold** text';
+            const remote = '*Italic* text';
+
+            const diffs = resolver.computeVisualDiff(local, remote, base);
+            expect(diffs.length).toBeGreaterThan(0);
         });
     });
 });

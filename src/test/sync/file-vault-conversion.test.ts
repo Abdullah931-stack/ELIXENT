@@ -55,10 +55,6 @@ describe('Phase 5 Closure: File Conversion Engine (Matrix #1/#2)', () => {
         const words = mnemonic.trim().split(/\s+/);
         expect(words).toHaveLength(12);
         expect((await validateMnemonic(mnemonic)).isValid).toBe(true);
-        const quizIdx = [1, 5, 9];
-        for (const i of quizIdx) {
-            expect(words[i]).toBe(mnemonic.trim().split(/\s+/)[i]);
-        }
         const masterKey = await generateMasterKeyRaw();
         const password = 'FirstVaultPassword!9';
         const keySalt = await generateSalt(16);

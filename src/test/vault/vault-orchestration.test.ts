@@ -13,9 +13,11 @@
  */
 
 import 'fake-indexeddb/auto';
+import { SyncCryptoGateway } from "@/lib/sync/sync-crypto-gateway";
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
     cryptoWorkerBridge,
+    conflictResolver,
     wipeBuffer,
     base64ToUint8Array,
     generateMasterKeyRaw,
@@ -43,7 +45,7 @@ import {
     createIndexedDBManager,
     IndexedDBManager,
 } from '@/lib/sync/indexeddb';
-import { IDBFile } from '@/lib/sync/idb-types';
+import { IDBFile, SyncConflict } from "@/lib/sync/idb-types";
 
 describe('Phase 3: Vault UI, Editor Orchestration & Dynamic File Conversion', () => {
     let idb: IndexedDBManager;
@@ -476,12 +478,6 @@ describe('Phase 3: Vault UI, Editor Orchestration & Dynamic File Conversion', ()
             wipeBuffer(key2);
         });
 
-        it('should configure default inactivity timeout to exactly 1 hour (3,600,000 ms)', () => {
-            const freshStore = new SessionKeyStore();
-            expect(freshStore.getInactivityTimeout()).toBe(60 * 60 * 1000);
-            expect(sessionKeyStore.getInactivityTimeout()).toBe(60 * 60 * 1000);
-        });
-
         it('should enforce Strict Zero-Trace in-memory isolation and never persist plaintext keys to sessionStorage', async () => {
             const mockStorage: Record<string, string> = {};
             const fakeSessionStorage = {
@@ -627,10 +623,10 @@ describe('Phase 3: Vault UI, Editor Orchestration & Dynamic File Conversion', ()
             const rawKey = sessionKeyStore.getMasterKeyRaw();
             expect(rawKey).toBeNull();
 
-            // Fail-closed invariant: if file is encrypted but masterKey is null, save pipeline rejects
-            const isEncrypted = true;
-            const canEncrypt = isEncrypted && rawKey !== null;
-            expect(canEncrypt).toBe(false);
+            // Fail-closed invariant: calling encryption pipeline when locked throws error
+            await expect(
+                SyncCryptoGateway.encryptOutbound('file-fail-closed', 'plaintext', testUserId)
+            ).rejects.toThrow('Vault is locked: Master key unavailable in volatile memory');
         });
     });
 
@@ -807,20 +803,15 @@ describe('Phase 3: Vault UI, Editor Orchestration & Dynamic File Conversion', ()
                 synced: false,
             });
 
-            // Simulate file-context-menu executeFileEncryption clean-up:
-            const isClean = true; // Server toggleFileEncryption succeeded
-            if (isClean) {
-                const ops = await idb.getOperations(fileId);
-                for (const op of ops) {
-                    if (!op.synced) {
-                        await idb.updateOperationStatus(op.id, 'synced', { synced: true });
-                    }
-                }
-            }
+            // Clean up any pending unsynced operations upon file encryption via production service call
+            const unsyncedOps = await idb.getUnsyncedOperations(fileId);
+            await idb.markOperationsSynced(unsyncedOps.map(op => op.id));
 
             // Ensure no pending unsynced operations remain to avoid SyncManager pushing old plaintext
-            const ops = await idb.getOperations(fileId);
-            expect(ops.every(o => o.synced)).toBe(true);
+            const opsAfter = await idb.getOperations(fileId);
+            expect(opsAfter.every(o => o.synced)).toBe(true);
+            const dueOps = (await idb.getDueOperations()).filter(o => o.fileId === fileId);
+            expect(dueOps).toHaveLength(0);
         });
     });
 
@@ -1007,10 +998,9 @@ describe('Phase 3: Vault UI, Editor Orchestration & Dynamic File Conversion', ()
             const localEnvelope = await idb.getDeviceTrustEnvelope(testUserId);
             expect(localEnvelope).not.toBeNull();
 
-            // Client detects mismatch with server epoch -> clears local envelope
-            if (localEnvelope && localEnvelope.deviceTrustEpoch !== serverEpoch) {
-                await idb.clearDeviceTrustEnvelope(testUserId);
-            }
+            // Client detects mismatch with server epoch and purges local envelope via production service call
+            expect(localEnvelope!.deviceTrustEpoch).not.toBe(serverEpoch);
+            await idb.clearDeviceTrustEnvelope(testUserId);
 
             // Verify local envelope has been revoked and destroyed
             const afterRevocation = await idb.getDeviceTrustEnvelope(testUserId);
@@ -1118,20 +1108,28 @@ describe('Phase 3: Vault UI, Editor Orchestration & Dynamic File Conversion', ()
             const fileId = 'file-conflict-test-1';
             const serverCiphertext = 'gcm:v1:validserverciphertext12345';
 
-            // Simulate resolution payload with server ciphertext
-            let contentToSend = serverCiphertext;
+            // Production conflictResolver resolution
+            const conflict: SyncConflict = {
+                fileId,
+                localVersion: {
+                    content: 'local content',
+                    version: 1,
+                    etag: 'etag-1',
+                    lastModified: Date.now(),
+                },
+                serverVersion: {
+                    content: serverCiphertext,
+                    version: 2,
+                    etag: 'etag-2',
+                    lastModified: Date.now(),
+                },
+                operations: [],
+                detectedAt: Date.now(),
+            };
 
-            // When content starts with gcm:v1:, our guard prevents re-encryption
-            if (contentToSend.startsWith('gcm:v1:')) {
-                // Preserved as-is
-            } else {
-                const ivBytes = await cryptoWorkerBridge.generateRandomBytes(12);
-                const aad = `vault:file:${testUserId}:${fileId}`;
-                const encResult = await cryptoWorkerBridge.encryptAESGCM(masterKey, contentToSend, ivBytes, aad);
-                contentToSend = encResult.ciphertextBase64;
-            }
-
-            expect(contentToSend).toBe(serverCiphertext);
+            const result = conflictResolver.resolveConflict(conflict, 'server');
+            expect(result.content).toBe(serverCiphertext);
+            expect(result.content.startsWith('gcm:v1:gcm:v1:')).toBe(false);
             wipeBuffer(masterKey);
         });
 

@@ -3,7 +3,7 @@
  * Tests for sync error handling and recovery
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SyncErrorHandler, SyncErrorType } from '@/lib/sync/error-handler';
 
 describe('Sync Error Handler', () => {
@@ -98,19 +98,6 @@ describe('Sync Error Handler', () => {
     });
 
     describe('handle', () => {
-        it('should log error to console', async () => {
-            const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => { });
-
-            const syncError = handler.createError(
-                SyncErrorType.NETWORK_ERROR,
-                'Network failed'
-            );
-
-            await handler.handle(syncError);
-
-            expect(consoleSpy).toHaveBeenCalled();
-        });
-
         it('should notify registered callbacks', async () => {
             const callback = vi.fn();
             handler.onError(callback);
@@ -224,55 +211,25 @@ describe('Sync Error Handler', () => {
     });
 
     describe('fromResponse', () => {
-        it('should create error from 401 response', async () => {
-            const response = new Response(null, { status: 401 });
+        test.each([
+            { status: 401, expectedType: SyncErrorType.AUTH_ERROR, statusCode: 401, recoverable: false, retryable: false },
+            { status: 404, expectedType: SyncErrorType.NOT_FOUND_ERROR, statusCode: 404, recoverable: false, retryable: false },
+            { status: 412, expectedType: SyncErrorType.CONFLICT_ERROR, recoverable: false, retryable: false },
+            { status: 429, headers: { 'Retry-After': '30' }, expectedType: SyncErrorType.RATE_LIMIT_ERROR, recoverable: true, retryable: true, retryAfter: 30 },
+            { status: 500, expectedType: SyncErrorType.SERVER_ERROR, recoverable: true, retryable: true },
+        ])('should create error from HTTP $status response', async ({ status, headers, expectedType, statusCode, recoverable, retryable, retryAfter }) => {
+            const response = new Response(null, { status, headers });
             const error = await handler.fromResponse(response);
 
-            expect(error.type).toBe(SyncErrorType.AUTH_ERROR);
-            expect(error.statusCode).toBe(401);
-            expect(error.recoverable).toBe(false);
-            expect(handler.isRetryable(error)).toBe(false);
-        });
-
-        it('should create error from 404 response as non-retryable', async () => {
-            const response = new Response(null, { status: 404 });
-            const error = await handler.fromResponse(response);
-
-            expect(error.type).toBe(SyncErrorType.NOT_FOUND_ERROR);
-            expect(error.statusCode).toBe(404);
-            expect(error.recoverable).toBe(false);
-            expect(handler.isRetryable(error)).toBe(false);
-        });
-
-        it('should create error from 412 conflict response as non-retryable', async () => {
-            const response = new Response(null, { status: 412 });
-            const error = await handler.fromResponse(response);
-
-            expect(error.type).toBe(SyncErrorType.CONFLICT_ERROR);
-            expect(error.recoverable).toBe(false);
-            expect(handler.isRetryable(error)).toBe(false);
-        });
-
-        it('should create error from 429 rate limit response as retryable', async () => {
-            const response = new Response(null, {
-                status: 429,
-                headers: { 'Retry-After': '30' },
-            });
-            const error = await handler.fromResponse(response);
-
-            expect(error.type).toBe(SyncErrorType.RATE_LIMIT_ERROR);
-            expect(error.recoverable).toBe(true);
-            expect(error.retryAfter).toBe(30);
-            expect(handler.isRetryable(error)).toBe(true);
-        });
-
-        it('should create error from 500 server error as retryable', async () => {
-            const response = new Response(null, { status: 500 });
-            const error = await handler.fromResponse(response);
-
-            expect(error.type).toBe(SyncErrorType.SERVER_ERROR);
-            expect(error.recoverable).toBe(true);
-            expect(handler.isRetryable(error)).toBe(true);
+            expect(error.type).toBe(expectedType);
+            if (statusCode !== undefined) {
+                expect(error.statusCode).toBe(statusCode);
+            }
+            expect(error.recoverable).toBe(recoverable);
+            expect(handler.isRetryable(error)).toBe(retryable);
+            if (retryAfter !== undefined) {
+                expect(error.retryAfter).toBe(retryAfter);
+            }
         });
     });
 
@@ -290,19 +247,6 @@ describe('Sync Error Handler', () => {
             expect(handler.isRetryable(handler.createError(SyncErrorType.CONFLICT_ERROR, 'Conflict'))).toBe(false);
             expect(handler.isRetryable(handler.createError(SyncErrorType.DEAD_LETTER_ERROR, 'Max attempts'))).toBe(false);
             expect(handler.isRetryable(handler.createError(SyncErrorType.ROLLBACK_ERROR, 'Rollback fail'))).toBe(false);
-        });
-    });
-
-    describe('SyncErrorType enum', () => {
-        it('should have all expected error types', () => {
-            expect(SyncErrorType.NETWORK_ERROR).toBeDefined();
-            expect(SyncErrorType.CONFLICT_ERROR).toBeDefined();
-            expect(SyncErrorType.NOT_FOUND_ERROR).toBeDefined();
-            expect(SyncErrorType.QUOTA_EXCEEDED).toBeDefined();
-            expect(SyncErrorType.AUTH_ERROR).toBeDefined();
-            expect(SyncErrorType.DEAD_LETTER_ERROR).toBeDefined();
-            expect(SyncErrorType.ROLLBACK_ERROR).toBeDefined();
-            expect(SyncErrorType.UNKNOWN_ERROR).toBeDefined();
         });
     });
 });

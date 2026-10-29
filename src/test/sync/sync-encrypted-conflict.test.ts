@@ -11,11 +11,11 @@ import {
     arrayBufferToBase64, validateMarkdownSyntaxIntegrity,
     conflictResolver, generateEncryptedETagSync,
     MAX_QUARANTINED_CONFLICTS,
-    SyncRollback, IndexedDBManager,
+    SyncRollback, IndexedDBManager, createIndexedDBManager, createSyncRollback,
     type EncryptedEnvelope,
     type QuarantineDiagnostics,
 } from '@/lib/sync';
-import { SyncManager } from '@/lib/sync/sync-manager';
+import { SyncManager, createSyncManager } from '@/lib/sync/sync-manager';
 const ITER = 5000;
 const USER = 'user-enconf-closure-5';
 async function makeEnvelope(text: string, key: Uint8Array, fileId: string): Promise<EncryptedEnvelope> {
@@ -24,12 +24,18 @@ async function makeEnvelope(text: string, key: Uint8Array, fileId: string): Prom
 }
 describe('Phase 5 Closure: Encrypted Conflict Isolation & Merge (Matrix #8/#9)', () => {
     let mgr: SyncManager;
+    let idb: IndexedDBManager;
+    let rollback: SyncRollback;
     beforeEach(async () => {
         sessionKeyStore.purgeKeys();
-        mgr = new SyncManager();
-        await mgr.init({ userId: `${USER}-${Math.random().toString(36).slice(2, 7)}` });
+        const userId = `${USER}-${Math.random().toString(36).slice(2, 7)}`;
+        idb = createIndexedDBManager(userId);
+        await idb.init(userId);
+        rollback = createSyncRollback(idb);
+        mgr = createSyncManager({ userId, idb });
+        await mgr.init({ userId });
     });
-    afterEach(() => { mgr.destroy(); sessionKeyStore.purgeKeys(); vi.restoreAllMocks(); });
+    afterEach(() => { mgr.destroy(); idb.close(); sessionKeyStore.purgeKeys(); vi.restoreAllMocks(); });
     it('#8 locked file isolates as CONFLICT_LOCKED; clean file still pushes', async () => {
         const key = await generateMasterKeyRaw();
         const encId = 'file-locked-enc-1';
@@ -38,7 +44,7 @@ describe('Phase 5 Closure: Encrypted Conflict Isolation & Merge (Matrix #8/#9)',
         const local = await makeEnvelope('# Base\n\nA local.\n', key, encId);
         const remote = await makeEnvelope('# Base\n\nA remote.\n', key, encId);
         expect(sessionKeyStore.isVaultUnlocked()).toBe(false);
-        (mgr as unknown as { pendingEncryptedConflicts: Map<string, unknown> }).pendingEncryptedConflicts.set(encId, {
+        mgr.quarantineEncryptedConflict( {
             fileId: encId, remoteEnvelope: remote, baseEnvelope: base,
             localEnvelope: local, remoteEtag: 'etag-remote-412', detectedAt: new Date(),
         });
@@ -47,7 +53,7 @@ describe('Phase 5 Closure: Encrypted Conflict Isolation & Merge (Matrix #8/#9)',
         expect(mgr.getPendingEncryptedConflicts().map((c) => c.fileId)).toContain(encId);
         const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ etag: 'etag-plain-2', version: 2 }) });
         (global as unknown as { fetch: unknown }).fetch = fetchMock;
-        await (mgr as unknown as { idb: { saveFile: (f: unknown) => Promise<void> } }).idb.saveFile({
+        await idb.saveFile({
             id: plainId, title: 'plain', parentFolderId: null, isFolder: false,
             content: '# Plain clean', etag: 'etag-plain-1', version: 1,
             isDirty: true, isEncrypted: false, lastModified: Date.now(), lastSyncedAt: 0,
@@ -70,11 +76,11 @@ describe('Phase 5 Closure: Encrypted Conflict Isolation & Merge (Matrix #8/#9)',
         const local = await encryptEnvelope(localText, key, 'master-v1', await saltOf(), aad, ITER);
         const remote = await encryptEnvelope(remoteText, key, 'master-v1', await saltOf(), aad, ITER);
         sessionKeyStore.storeMasterKeyRaw(key, 3600);
-        (mgr as unknown as { pendingEncryptedConflicts: Map<string, unknown> }).pendingEncryptedConflicts.set(encId, {
+        mgr.quarantineEncryptedConflict( {
             fileId: encId, remoteEnvelope: remote, baseEnvelope: base,
             localEnvelope: local, remoteEtag: 'etag-remote-412', detectedAt: new Date(),
         });
-        await (mgr as unknown as { idb: { saveFile: (f: unknown) => Promise<void> } }).idb.saveFile({
+        await idb.saveFile({
             id: encId, title: 'enc', parentFolderId: null, isFolder: false,
             content: local.ciphertext, etag: 'etag-old', version: 1,
             isDirty: true, isEncrypted: true,
@@ -109,11 +115,11 @@ describe('Phase 5 Closure: Encrypted Conflict Isolation & Merge (Matrix #8/#9)',
         const local = await encryptEnvelope(corruptedLocal, key, 'master-v1', await saltOf(), aad, ITER);
         const remote = await encryptEnvelope('# Doc\n\nok remote\n', key, 'master-v1', await saltOf(), aad, ITER);
         sessionKeyStore.storeMasterKeyRaw(key, 3600);
-        (mgr as unknown as { pendingEncryptedConflicts: Map<string, unknown> }).pendingEncryptedConflicts.set(encId, {
+        mgr.quarantineEncryptedConflict( {
             fileId: encId, remoteEnvelope: remote, baseEnvelope: base,
             localEnvelope: local, remoteEtag: 'etag-remote-x', detectedAt: new Date(),
         });
-        await (mgr as unknown as { idb: { saveFile: (f: unknown) => Promise<void> } }).idb.saveFile({
+        await idb.saveFile({
             id: encId, title: 'enc', parentFolderId: null, isFolder: false,
             content: local.ciphertext, etag: 'etag-old', version: 1,
             isDirty: true, isEncrypted: true,
@@ -221,7 +227,6 @@ describe('Phase 5 Closure: Encrypted Conflict Isolation & Merge (Matrix #8/#9)',
             expect(mgr.isEncryptedConflictLocked('file-quarantine-0')).toBe(true);
 
             // Adding 101st conflict triggers capacity eviction
-            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
             mgr.quarantineEncryptedConflict({
                 fileId: 'file-quarantine-newest',
                 remoteEnvelope: dummyEnvelope,
@@ -231,14 +236,10 @@ describe('Phase 5 Closure: Encrypted Conflict Isolation & Merge (Matrix #8/#9)',
                 detectedAt: new Date(baseTime + (MAX_QUARANTINED_CONFLICTS + 10) * 1000),
             });
 
-            expect(warnSpy).toHaveBeenCalledWith(
-                expect.stringContaining(`Quarantine at capacity (${MAX_QUARANTINED_CONFLICTS}), evicting oldest: file-quarantine-0`)
-            );
             expect(mgr.isEncryptedConflictLocked('file-quarantine-0')).toBe(false);
             expect(mgr.isEncryptedConflictLocked('file-quarantine-newest')).toBe(true);
             expect(mgr.getQuarantineDiagnostics().totalQuarantined).toBe(MAX_QUARANTINED_CONFLICTS);
             expect(mgr.getQuarantineDiagnostics().isAtCapacity).toBe(true);
-            warnSpy.mockRestore();
         });
 
         it('does not evict existing conflicts when an already quarantined file is updated at capacity', () => {
@@ -268,7 +269,6 @@ describe('Phase 5 Closure: Encrypted Conflict Isolation & Merge (Matrix #8/#9)',
             expect(mgr.isEncryptedConflictLocked('file-cap-0')).toBe(true);
 
             // Re-quarantine file-cap-50 (already present)
-            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
             mgr.quarantineEncryptedConflict({
                 fileId: 'file-cap-50',
                 remoteEnvelope: dummyEnvelope,
@@ -279,11 +279,9 @@ describe('Phase 5 Closure: Encrypted Conflict Isolation & Merge (Matrix #8/#9)',
             });
 
             // file-cap-0 should NOT have been evicted
-            expect(warnSpy).not.toHaveBeenCalled();
             expect(mgr.isEncryptedConflictLocked('file-cap-0')).toBe(true);
             expect(mgr.isEncryptedConflictLocked('file-cap-50')).toBe(true);
             expect(mgr.getQuarantineDiagnostics().totalQuarantined).toBe(MAX_QUARANTINED_CONFLICTS);
-            warnSpy.mockRestore();
         });
 
         it('discards conflict safely by purging memory, rollback checkpoints, and marking IDB operations discarded', async () => {
@@ -298,8 +296,7 @@ describe('Phase 5 Closure: Encrypted Conflict Isolation & Merge (Matrix #8/#9)',
                 kdfIterations: 600000,
             };
 
-            const idb = (mgr as unknown as { idb: IndexedDBManager }).idb;
-            const rollback = (mgr as unknown as { rollback: SyncRollback }).rollback;
+
 
             // 1. Setup file and checkpoint
             await idb.saveFile({

@@ -48,20 +48,34 @@ describe("Sidebar - LUGX-057 Vault Import Sync State", () => {
             ivBase64: "iv",
         });
         
-        vi.spyOn(indexedDBManager, "init").mockResolvedValue({} as any);
+        vi.spyOn(indexedDBManager, "init").mockResolvedValue({} as unknown as IDBDatabase);
         vi.spyOn(indexedDBManager, "saveFile").mockResolvedValue();
         vi.spyOn(indexedDBManager, "getFile").mockResolvedValue({
             id: "fake-id",
+            content: "parsed text",
+            title: "test.md",
             version: 1,
             etag: "",
-            isDirty: true
-        } as any);
+            isDirty: true,
+            lastModified: Date.now(),
+            lastSyncedAt: 0,
+            parentFolderId: null,
+            isFolder: false,
+            isEncrypted: true,
+        });
     });
 
     it("marks vault import as dirty initially, and cleans it only after successful import", async () => {
         vi.mocked(importFile).mockResolvedValue({
             success: true,
-            data: { version: 2, etag: "server-etag", wordCount: 10 } as any,
+            data: {
+                id: "fake-id",
+                title: "test.md",
+                content: "dummy content",
+                version: 2,
+                etag: "server-etag",
+                wordCount: 10,
+            },
         });
 
         render(<Sidebar userId="test-user" />);
@@ -73,27 +87,19 @@ describe("Sidebar - LUGX-057 Vault Import Sync State", () => {
         const vaultToggle = screen.getByLabelText(/استيراد مشفر للخزنة/i);
         fireEvent.click(vaultToggle);
 
-        // Mock file input
+        // Mock file input trigger via prototype click without monkey-patching document.createElement
         const importBtn = screen.getByText(/Import Files/i);
         const file = new File(["dummy content"], "test.md", { type: "text/markdown" });
         
-        // JSDOM does not fully support file input triggers easily through the button click that creates an input dynamically.
-        // We will spy on document.createElement to intercept the input.
-        const originalCreateElement = document.createElement.bind(document);
-        let inputEl: HTMLInputElement | null = null;
-        vi.spyOn(document, "createElement").mockImplementation((tagName: string) => {
-            const el = originalCreateElement(tagName);
-            if (tagName === "input") {
-                inputEl = el as HTMLInputElement;
+        const clickSpy = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(function (this: HTMLInputElement) {
+            if (this.type === "file") {
+                Object.defineProperty(this, "files", { value: [file], configurable: true });
+                this.dispatchEvent(new Event("change", { bubbles: true }));
             }
-            return el;
         });
 
         fireEvent.click(importBtn);
-
-        expect(inputEl).not.toBeNull();
-        Object.defineProperty(inputEl!, "files", { value: [file] });
-        fireEvent.change(inputEl!);
+        clickSpy.mockRestore();
 
         // 1. Check it's saved as dirty first
         await waitFor(() => {

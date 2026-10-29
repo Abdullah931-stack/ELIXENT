@@ -143,16 +143,18 @@ describe('useSync hook', () => {
         expect(result.current.lastSyncResult?.filesPushed).toBe(0);
     });
 
-    it('should delegate syncFile to the sync manager', async () => {
+    it('should delegate syncFile to the sync manager and maintain state', async () => {
         const { result } = renderHook(() => useSync({ userId: 'user-123' }));
 
         await waitFor(() => expect(result.current.isInitialized).toBe(true));
 
         await act(async () => {
-            await result.current.syncFile('file-abc');
+            await expect(result.current.syncFile('file-abc')).resolves.toBeUndefined();
         });
 
         expect(mocks.syncManager.syncFile).toHaveBeenCalledWith('file-abc');
+        expect(result.current.isInitialized).toBe(true);
+        expect(result.current.status).toBe('idle');
     });
 
     it('should save a file locally through the indexeddb manager', async () => {

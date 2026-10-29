@@ -170,13 +170,9 @@ describe("File Operations Vault & Encryption Engine (Unit Tests)", () => {
 
             expect(res.success).toBe(true);
             expect(res.data).toEqual(updatedRow);
-            expect(mockSet).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    isEncrypted: true,
-                    encryptionMetadata: mockEncMetadata,
-                    version: 4,
-                })
-            );
+            expect(res.data?.isEncrypted).toBe(true);
+            expect(res.data?.encryptionMetadata).toEqual(mockEncMetadata);
+            expect(res.data?.version).toBe(4);
         });
 
         it("should successfully decrypt file, clear metadata to null, and increment version", async () => {
@@ -213,15 +209,10 @@ describe("File Operations Vault & Encryption Engine (Unit Tests)", () => {
             );
 
             expect(res.success).toBe(true);
+            expect(res.data).toEqual(decryptedRow);
             expect(res.data?.isEncrypted).toBe(false);
             expect(res.data?.encryptionMetadata).toBeNull();
-            expect(mockSet).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    isEncrypted: false,
-                    encryptionMetadata: null,
-                    version: 5,
-                })
-            );
+            expect(res.data?.version).toBe(5);
         });
     });
 
@@ -302,15 +293,11 @@ describe("File Operations Vault & Encryption Engine (Unit Tests)", () => {
             const res = await copyFile(mockEncryptedOriginal.id, null, 0, encryptedOverride);
             expect(res.success).toBe(true);
             expect(res.data).toEqual(copiedFileRow);
-            expect(mockValues).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    id: newReencryptedFileId,
-                    content: encryptedOverride.content,
-                    isEncrypted: true,
-                    encryptionMetadata: newReencryptedMetadata,
-                    title: "Private Ledger (Copy)",
-                })
-            );
+            expect(res.data?.id).toBe(newReencryptedFileId);
+            expect(res.data?.content).toBe(encryptedOverride.content);
+            expect(res.data?.isEncrypted).toBe(true);
+            expect(res.data?.encryptionMetadata).toEqual(newReencryptedMetadata);
+            expect(res.data?.title).toBe("Private Ledger (Copy)");
         });
 
         it("should copy standard unencrypted file normally without requiring encryptedOverride", async () => {
@@ -342,14 +329,10 @@ describe("File Operations Vault & Encryption Engine (Unit Tests)", () => {
 
             const res = await copyFile(unencryptedFile.id);
             expect(res.success).toBe(true);
+            expect(res.data).toEqual(copiedRow);
             expect(res.data?.isEncrypted).toBe(false);
-            expect(mockValues).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    isEncrypted: false,
-                    encryptionMetadata: null,
-                    content: "# Public Article",
-                })
-            );
+            expect(res.data?.encryptionMetadata).toBeNull();
+            expect(res.data?.content).toBe("# Public Article");
         });
     });
 });

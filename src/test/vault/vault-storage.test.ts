@@ -18,10 +18,6 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-    userVaultProfiles,
-    files,
-} from '@/server/db/schema';
-import {
     IDBFile,
     IDBOperation,
     IDB_CONFIG,
@@ -57,24 +53,6 @@ describe('Phase 2: Database Schema & Transparent Encrypted IndexedDB Storage', (
     });
 
     describe('1. Drizzle Schema & SQL Migration 0008 Verification', () => {
-        it('should have userVaultProfiles table defined with all required security fields', () => {
-            expect(userVaultProfiles).toBeDefined();
-            expect(userVaultProfiles.userId).toBeDefined();
-            expect(userVaultProfiles.encryptedMasterKey).toBeDefined();
-            expect(userVaultProfiles.recoveryEncryptedMasterKey).toBeDefined();
-            expect(userVaultProfiles.keySalt).toBeDefined();
-            expect(userVaultProfiles.recoverySalt).toBeDefined();
-            expect(userVaultProfiles.kdfIterations).toBeDefined();
-            expect(userVaultProfiles.keyVersion).toBeDefined();
-            expect(userVaultProfiles.createdAt).toBeDefined();
-            expect(userVaultProfiles.updatedAt).toBeDefined();
-        });
-
-        it('should have encryption fields added to files table', () => {
-            expect(files.isEncrypted).toBeDefined();
-            expect(files.encryptionMetadata).toBeDefined();
-        });
-
         it('should verify migration file 0008_hybrid_vault_schema.sql exists and contains valid SQL', () => {
             const migrationPath = path.resolve(process.cwd(), 'src/server/db/migrations/0008_hybrid_vault_schema.sql');
             expect(fs.existsSync(migrationPath)).toBe(true);

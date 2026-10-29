@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, test, expect, vi, beforeEach, afterEach } from "vitest";
 import {
     wipeBuffer,
     generateMasterKeyRaw,
@@ -37,39 +37,16 @@ describe("Vault Cryptographic Resilience & Fault Tolerance (Unit Tests)", () => 
             wipeBuffer(salt);
         });
 
-        it("should reject 4-digit PINs", async () => {
+        test.each([
+            ["4-digit PIN", "1234"],
+            ["5-digit PIN", "12345"],
+            ["7-digit PIN", "1234567"],
+            ["letters in PIN", "12345a"],
+            ["hyphen in PIN", "12-456"],
+            ["spaces in PIN", "12 456"],
+        ])("should reject %s (%s)", async (_label, invalidPin) => {
             const salt = await generateSalt(16);
-            await expect(deriveKEKFromPin("1234", salt, 1000)).rejects.toThrow(
-                /PIN must consist of exactly 6 digits/
-            );
-            wipeBuffer(salt);
-        });
-
-        it("should reject 5-digit PINs", async () => {
-            const salt = await generateSalt(16);
-            await expect(deriveKEKFromPin("12345", salt, 1000)).rejects.toThrow(
-                /PIN must consist of exactly 6 digits/
-            );
-            wipeBuffer(salt);
-        });
-
-        it("should reject 7-digit PINs", async () => {
-            const salt = await generateSalt(16);
-            await expect(deriveKEKFromPin("1234567", salt, 1000)).rejects.toThrow(
-                /PIN must consist of exactly 6 digits/
-            );
-            wipeBuffer(salt);
-        });
-
-        it("should reject non-numeric characters and letters in PIN", async () => {
-            const salt = await generateSalt(16);
-            await expect(deriveKEKFromPin("12345a", salt, 1000)).rejects.toThrow(
-                /PIN must consist of exactly 6 digits/
-            );
-            await expect(deriveKEKFromPin("12-456", salt, 1000)).rejects.toThrow(
-                /PIN must consist of exactly 6 digits/
-            );
-            await expect(deriveKEKFromPin("12 456", salt, 1000)).rejects.toThrow(
+            await expect(deriveKEKFromPin(invalidPin, salt, 1000)).rejects.toThrow(
                 /PIN must consist of exactly 6 digits/
             );
             wipeBuffer(salt);

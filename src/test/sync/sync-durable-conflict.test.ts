@@ -14,19 +14,29 @@ import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createIndexedDBManager, IndexedDBManager } from '@/lib/sync/indexeddb';
 import { ConflictStore } from '@/lib/idb/conflict-store';
-import { SyncManager } from '@/lib/sync/sync-manager';
+import { SyncPullEngine } from '@/lib/sync/sync-pull-engine';
+import { createSyncRollback } from '@/lib/sync/rollback';
+import { SyncEncryptedConflictStore } from '@/lib/sync/sync-encrypted-conflict-store';
 import { IDBFile } from '@/lib/sync/idb-types';
 
 describe('Phase 15: Durable Conflict Quarantine in IndexedDB', () => {
     let testUserId: string;
     let idb: IndexedDBManager;
     let conflictStore: ConflictStore;
+    let pullEngine: SyncPullEngine;
 
     beforeEach(async () => {
         testUserId = `test_user_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         idb = createIndexedDBManager(testUserId);
         await idb.init(testUserId);
         conflictStore = new ConflictStore(idb);
+        pullEngine = new SyncPullEngine({
+            userId: testUserId,
+            idb,
+            rollback: createSyncRollback(idb),
+            conflictStore,
+            encryptedConflictStore: new SyncEncryptedConflictStore({ userId: testUserId, idb, conflictStore }),
+        });
     });
 
     afterEach(async () => {
@@ -88,6 +98,7 @@ describe('Phase 15: Durable Conflict Quarantine in IndexedDB', () => {
         expect(storedBefore?.conflictData).toBeDefined();
 
         // 3. Simulate browser close / reload by instantiating fresh IndexedDBManager
+        idb.close();
         const reloadedIdb = createIndexedDBManager(testUserId);
         await reloadedIdb.init(testUserId);
         const reloadedConflictStore = new ConflictStore(reloadedIdb);
@@ -107,13 +118,12 @@ describe('Phase 15: Durable Conflict Quarantine in IndexedDB', () => {
         const conflictObj = await reloadedConflictStore.getConflict(fileId);
         expect(conflictObj).not.toBeNull();
         expect(conflictObj?.serverVersion.etag).toBe('etag_server_2');
+
+        await reloadedIdb.deleteDatabase();
     });
 
     it('should strictly refuse to overwrite or replace a conflicted file in pullFile', async () => {
         const fileId = 'file_protected_from_pull';
-
-        const syncManager = new SyncManager({ userId: testUserId, idb });
-        await syncManager.init({ userId: testUserId, idb });
 
         // Place file directly in conflict quarantine
         const conflictedFile: IDBFile = {
@@ -144,10 +154,10 @@ describe('Phase 15: Durable Conflict Quarantine in IndexedDB', () => {
                 detectedAt: Date.now(),
             },
         };
-        await syncManager['idb'].saveFile(conflictedFile);
+        await idb.saveFile(conflictedFile);
 
-        // Attempt background pull of new server version
-        const pullResult = await (syncManager as any).pullFile({
+        // Attempt background pull of new server version via public pullFile method
+        const pullResult = await pullEngine.pullFile({
             id: fileId,
             content: 'Server Content That Must Not Overwrite',
             etag: 'etag_remote_2',
@@ -164,16 +174,13 @@ describe('Phase 15: Durable Conflict Quarantine in IndexedDB', () => {
         expect(pullResult.error).toBe('DURABLE_CONFLICT_QUARANTINE');
 
         // Verify local file content in IDB remained untouched
-        const preservedFile = await syncManager['idb'].getFile(fileId);
+        const preservedFile = await idb.getFile(fileId);
         expect(preservedFile?.content).toBe('Local In-Progress Conflict Content');
         expect(preservedFile?.syncStatus).toBe('conflict');
     });
 
     it('should strictly refuse to delete a conflicted file when receiving server tombstone', async () => {
         const fileId = 'file_protected_from_tombstone';
-
-        const syncManager = new SyncManager({ userId: testUserId, idb });
-        await syncManager.init({ userId: testUserId, idb });
 
         // Save file in conflict state (even if isDirty was false)
         const conflictedFile: IDBFile = {
@@ -194,10 +201,10 @@ describe('Phase 15: Durable Conflict Quarantine in IndexedDB', () => {
                 detectedAt: Date.now(),
             },
         };
-        await syncManager['idb'].saveFile(conflictedFile);
+        await idb.saveFile(conflictedFile);
 
-        // Server sends tombstone (deletedAt set)
-        const tombstoneResult = await (syncManager as any).pullFile({
+        // Server sends tombstone (deletedAt set) via public pullFile method
+        const tombstoneResult = await pullEngine.pullFile({
             id: fileId,
             content: '',
             etag: 'etag_del',
@@ -214,7 +221,7 @@ describe('Phase 15: Durable Conflict Quarantine in IndexedDB', () => {
         expect(tombstoneResult.action).toBe('conflict');
 
         // File remains in IDB
-        const fileInIdb = await syncManager['idb'].getFile(fileId);
+        const fileInIdb = await idb.getFile(fileId);
         expect(fileInIdb).toBeDefined();
         expect(fileInIdb?.content).toBe('Valuable User Notes In Conflict');
         expect(fileInIdb?.syncStatus).toBe('conflict');
@@ -223,33 +230,53 @@ describe('Phase 15: Durable Conflict Quarantine in IndexedDB', () => {
     it('should resolve conflict cleanly and transition state to synced or dirty', async () => {
         const fileId = 'file_resolve_test';
 
-        await conflictStore.quarantineConflict({
-            fileId,
-            localVersion: { content: 'Local Version', etag: 'etag_local', version: 1, lastModified: Date.now() },
-            serverVersion: { content: 'Server Version', etag: 'etag_server', version: 2, lastModified: Date.now() },
-            baseVersion: { content: 'Base Version', etag: 'etag_base', version: 1, lastModified: Date.now() },
+        // 1. Quarantined file
+        await idb.saveFile({
+            id: fileId,
+            content: 'Local Text',
+            etag: 'etag_local',
+            lastModified: Date.now(),
+            lastSyncedAt: 0,
+            isDirty: true,
+            syncStatus: 'conflict',
+            version: 1,
+            title: 'Doc',
+            parentFolderId: null,
+            isFolder: false,
+            conflictData: {
+                serverVersion: { content: 'Server Text', etag: 'etag_server', version: 2, lastModified: Date.now() },
+                localVersion: { content: 'Local Text', etag: 'etag_local', version: 1, lastModified: Date.now() },
+                detectedAt: Date.now(),
+            },
         });
 
-        // 1. Resolve adopting server
+        // 2. Resolve choosing server
         await conflictStore.resolveConflict(fileId, 'server');
-        let file = await idb.getFile(fileId);
-        expect(file?.syncStatus).toBe('synced');
-        expect(file?.content).toBe('Server Version');
-        expect(file?.conflictData).toBeUndefined();
 
-        // 2. Quarantine again
-        await conflictStore.quarantineConflict({
-            fileId,
-            localVersion: { content: 'Local Version 2', etag: 'etag_local_2', version: 2, lastModified: Date.now() },
-            serverVersion: { content: 'Server Version 2', etag: 'etag_server_3', version: 3, lastModified: Date.now() },
-        });
+        const resolvedFile = await idb.getFile(fileId);
+        expect(resolvedFile?.syncStatus).toBe('synced');
+        expect(resolvedFile?.content).toBe('Server Text');
+        expect(resolvedFile?.version).toBe(2);
+        expect(resolvedFile?.isDirty).toBe(false);
+        expect(resolvedFile?.conflictData).toBeUndefined();
 
         // 3. Resolve retaining local (must stay dirty for subsequent push pass - LUGX-003)
+        await idb.saveFile({
+            ...resolvedFile!,
+            syncStatus: 'conflict',
+            conflictData: {
+                serverVersion: { content: 'Server Text 3', etag: 'etag_server_3', version: 3, lastModified: Date.now() },
+                localVersion: { content: 'Local Edit', etag: 'etag_local_2', version: 2, lastModified: Date.now() },
+                detectedAt: Date.now(),
+            },
+        });
+
         await conflictStore.resolveConflict(fileId, 'local');
-        file = await idb.getFile(fileId);
-        expect(file?.syncStatus).toBe('dirty');
-        expect(file?.isDirty).toBe(true);
-        expect(file?.content).toBe('Local Version 2');
-        expect(file?.conflictData).toBeUndefined();
+
+        const resolvedLocalFile = await idb.getFile(fileId);
+        expect(resolvedLocalFile?.syncStatus).toBe('dirty');
+        expect(resolvedLocalFile?.isDirty).toBe(true);
+        expect(resolvedLocalFile?.content).toBe('Local Edit');
+        expect(resolvedLocalFile?.conflictData).toBeUndefined();
     });
 });

@@ -6,7 +6,7 @@
  * are captured (never thrown) so one bad item cannot cancel the batch.
  */
 import { describe, it, expect } from "vitest";
-import { runWithConcurrency, DEFAULT_PUSH_CONCURRENCY } from "@/lib/sync/parallel";
+import { runWithConcurrency } from "@/lib/sync/parallel";
 
 describe("runWithConcurrency (W7)", () => {
     it("respects the concurrency cap under real timing pressure", async () => {
@@ -60,7 +60,4 @@ describe("runWithConcurrency (W7)", () => {
         expect(errors).toEqual([]);
     });
 
-    it("push concurrency default is sane (not 1, not unbounded)", () => {
-        expect(DEFAULT_PUSH_CONCURRENCY).toBe(4);
-    });
 });

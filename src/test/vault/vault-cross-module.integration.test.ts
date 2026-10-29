@@ -8,6 +8,7 @@
 import "fake-indexeddb/auto";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+    conflictResolver,
     wipeBuffer,
     generateMasterKeyRaw,
     generateSalt,
@@ -21,6 +22,7 @@ import {
     arrayBufferToBase64,
 } from "@/lib/sync";
 import { createIndexedDBManager, IndexedDBManager } from "@/lib/sync/indexeddb";
+import type { SyncConflict } from "@/lib/sync/idb-types";
 import {
     createUserVaultProfile,
     revokeAllTrustedDevices,
@@ -489,27 +491,28 @@ describe("Cross-Module Integration Suite (Vault Ecosystem)", () => {
     });
 
     it("Flow 4: Conflict 412 Double-Encryption Prevention Invariant (AUD-03)", () => {
-        // Defensive guard invariant test from use-editor-orchestrator.ts
-        const isEncrypted = true;
         const serverCiphertext = "gcm:v1:existing-server-ciphertext-base64";
+        const conflict: SyncConflict = {
+            fileId: "file-conflict-412",
+            localVersion: {
+                content: "Local plaintext edit",
+                version: 1,
+                etag: "etag-local",
+                lastModified: Date.now(),
+            },
+            serverVersion: {
+                content: serverCiphertext,
+                version: 2,
+                etag: "etag-server",
+                lastModified: Date.now(),
+            },
+            operations: [],
+            detectedAt: Date.now(),
+        };
 
-        // Simulating handleResolveConflict policy:
-        let contentToSend: string;
-        let performedReencryption = false;
-
-        if (isEncrypted && serverCiphertext.startsWith("gcm:v1:")) {
-            // Guard triggers: Keep raw ciphertext as-is without running encryptEnvelope
-            contentToSend = serverCiphertext;
-        } else if (isEncrypted) {
-            contentToSend = `gcm:v1:${serverCiphertext}`;
-            performedReencryption = true;
-        } else {
-            contentToSend = serverCiphertext;
-        }
-
-        expect(performedReencryption).toBe(false);
-        expect(contentToSend).toBe(serverCiphertext);
-        expect(contentToSend.startsWith("gcm:v1:gcm:v1:")).toBe(false); // ZERO DOUBLE-ENCRYPTION
+        const resolved = conflictResolver.resolveConflict(conflict, 'server');
+        expect(resolved.content).toBe(serverCiphertext);
+        expect(resolved.content.startsWith("gcm:v1:gcm:v1:")).toBe(false); // ZERO DOUBLE-ENCRYPTION
     });
 
     it("Flow 5: Central Device Trust Revocation & Local Envelope Epoch Invalidation (AUD-05)", async () => {
@@ -550,18 +553,10 @@ describe("Cross-Module Integration Suite (Vault Ecosystem)", () => {
 
         // 3. Local device attempts PIN unlock -> detects epoch mismatch with server
         const serverEpoch = revokeRes.data!.newEpoch;
-        let pinUnlockAllowed = true;
-        let fallbackToPasswordRequired = false;
+        expect(storedEnvelope!.deviceTrustEpoch).not.toBe(serverEpoch);
 
-        if (storedEnvelope && serverEpoch !== storedEnvelope.deviceTrustEpoch) {
-            // Local client detects central revocation
-            await idb.clearDeviceTrustEnvelope(testUserId);
-            pinUnlockAllowed = false;
-            fallbackToPasswordRequired = true;
-        }
-
-        expect(pinUnlockAllowed).toBe(false);
-        expect(fallbackToPasswordRequired).toBe(true);
+        // When epoch mismatch occurs, device trust manager clears the invalid envelope from IDB
+        await idb.clearDeviceTrustEnvelope(testUserId);
 
         // 4. Verify local envelope is wiped from IndexedDB
         const envelopeAfterRevocation = await idb.getDeviceTrustEnvelope(testUserId);

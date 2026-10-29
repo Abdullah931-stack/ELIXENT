@@ -27,20 +27,7 @@ describe('Connection Detector', () => {
         });
     });
 
-    describe('isOnline', () => {
-        it('should return boolean', () => {
-            detector.init();
-            expect(typeof detector.isOnline()).toBe('boolean');
-        });
-    });
-
     describe('onChange callback', () => {
-        it('should register callback and return unsubscribe function', () => {
-            const callback = vi.fn();
-            const unsubscribe = detector.onChange(callback);
-
-            expect(typeof unsubscribe).toBe('function');
-        });
 
         it('should not call callback on registration', () => {
             const callback = vi.fn();

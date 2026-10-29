@@ -238,7 +238,7 @@ describe('WebAuthn PRF Hardware Key Derivation & Envelope Lifecycle', () => {
   });
 
   describe('4. Backward Compatibility for Legacy PIN Envelopes', () => {
-    it('should handle legacy envelopes without trustType gracefully defaulting to pin', () => {
+    it('should reject unwrap via WebAuthn PRF when envelope lacks credentialId (legacy PIN envelope)', async () => {
       const legacyEnvelope: DeviceTrustEnvelope = {
         version: 1,
         algorithm: 'AES-GCM-256',
@@ -251,8 +251,9 @@ describe('WebAuthn PRF Hardware Key Derivation & Envelope Lifecycle', () => {
         failedAttempts: 0,
       };
 
-      const resolvedType = legacyEnvelope.trustType ?? 'pin';
-      expect(resolvedType).toBe('pin');
+      await expect(
+        unwrapMasterKeyWithWebAuthnPrf(legacyEnvelope, 'test-user')
+      ).rejects.toThrow('Missing credentialId in hardware trust envelope');
     });
   });
 });

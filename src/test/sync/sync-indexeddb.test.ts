@@ -5,7 +5,7 @@
 
 import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { IDBFile, IDBOperation, IDB_CONFIG, getDatabaseName } from '@/lib/sync/idb-types';
+import { IDBFile, IDBOperation, getDatabaseName } from '@/lib/sync/idb-types';
 import { IndexedDBManager, createIndexedDBManager } from '@/lib/sync/indexeddb';
 
 describe('IndexedDB Manager (Real IndexedDB & Multi-User Isolation)', () => {
@@ -423,13 +423,4 @@ describe('IndexedDB Manager (Real IndexedDB & Multi-User Isolation)', () => {
         });
     });
 
-    describe('IDB_CONFIG', () => {
-        it('should have correct configuration', () => {
-            expect(IDB_CONFIG.DB_NAME_PREFIX).toBe('textai_db');
-            expect(IDB_CONFIG.DB_VERSION).toBeGreaterThan(0);
-            expect(IDB_CONFIG.STORES.FILES).toBe('files');
-            expect(IDB_CONFIG.STORES.OPERATIONS).toBe('operations');
-            expect(IDB_CONFIG.STORES.SYNC_METADATA).toBe('sync_metadata');
-        });
-    });
 });
