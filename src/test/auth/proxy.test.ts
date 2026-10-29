@@ -130,14 +130,16 @@ describe("Next.js 16 Edge Proxy (src/proxy.ts)", () => {
             expect(body).toEqual({ error: "Unauthorized" });
         });
 
-        it("returns JSON 401 Unauthorized for unauthenticated API requests hitting protected subpaths", async () => {
+        it("redirects unauthenticated subpath requests without next-action header to login (307) even with json accept header", async () => {
             mockGetUser.mockResolvedValueOnce({ data: { user: null }, error: null });
 
-            const req = new NextRequest("https://lugx.app/workspace/api/save");
+            const req = new NextRequest("https://lugx.app/workspace/api/save", {
+                headers: { accept: "application/json" },
+            });
             const res = await proxy(req);
 
-            // Gated under /workspace which is a protected path; since it is under /workspace, it returns 401 if unauthenticated and not navigating
-            expect(res.status).toBe(307); // regular page navigation under /workspace redirects to login
+            // Gated under /workspace; proxy currently gates 401 strictly on next-action header or /api/ prefix
+            expect(res.status).toBe(307);
         });
     });
 

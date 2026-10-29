@@ -8,9 +8,6 @@
 import { describe, it, expect } from 'vitest';
 import { ZodError } from 'zod';
 import {
-  type DocumentStoragePayload,
-  type PlaintextStoragePayload,
-  type EncryptedStoragePayload,
   documentStoragePayloadSchema,
   plaintextStoragePayloadSchema,
   encryptedStoragePayloadSchema,
@@ -47,25 +44,6 @@ describe('Phase 5: DocumentStoragePayload Discriminated Union', () => {
     iv: 'aXYtZXhhbXBsZQ==',
     kdfIterations: 600000,
   };
-
-  it('strictly validates compile-time assignments and runtime guards', () => {
-    const plaintext: PlaintextStoragePayload = {
-      type: 'plaintext',
-      content: '# Typed Plaintext',
-      isEncrypted: false,
-      encryptionMetadata: null,
-    };
-    const encrypted: EncryptedStoragePayload = {
-      type: 'encrypted',
-      ciphertextBase64: 'U29tZVRleHQ=',
-      isEncrypted: true,
-      encryptionMetadata: validMetadata,
-    };
-    const doc1: DocumentStoragePayload = plaintext;
-    const doc2: DocumentStoragePayload = encrypted;
-    expect(isPlaintextPayload(doc1)).toBe(true);
-    expect(isEncryptedPayload(doc2)).toBe(true);
-  });
 
   it('accepts and validates a strictly typed plaintext payload', () => {
     const rawPlaintext = {

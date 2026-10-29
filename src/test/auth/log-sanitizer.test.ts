@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, test, expect, beforeEach } from 'vitest';
 import {
     isSensitiveLogKey,
     sanitizeLogMessage,
@@ -10,46 +10,50 @@ import { wipeBuffer } from '@/lib/sync/crypto-worker-bridge';
 
 describe('Log Sanitizer & RAM Hygiene (Hardened Suite)', () => {
     describe('isSensitiveLogKey & Word-Boundary Isolation (F4 / F5)', () => {
-        it('should redact sensitive keys and token-bounded compound keys', () => {
-            expect(isSensitiveLogKey('password')).toBe(true);
-            expect(isSensitiveLogKey('masterKey')).toBe(true);
-            expect(isSensitiveLogKey('pin')).toBe(true);
-            expect(isSensitiveLogKey('device_pin')).toBe(true);
-            expect(isSensitiveLogKey('authPin')).toBe(true);
-            expect(isSensitiveLogKey('iv')).toBe(true);
-            expect(isSensitiveLogKey('file_iv')).toBe(true);
-            expect(isSensitiveLogKey('aad')).toBe(true);
-            expect(isSensitiveLogKey('kek')).toBe(true);
-            expect(isSensitiveLogKey('mnemonic')).toBe(true);
-            expect(isSensitiveLogKey('seed')).toBe(true);
+        test.each([
+            'password',
+            'masterKey',
+            'pin',
+            'device_pin',
+            'authPin',
+            'iv',
+            'file_iv',
+            'aad',
+            'kek',
+            'mnemonic',
+            'seed',
             // AI prompts & API credentials (Phase 17)
-            expect(isSensitiveLogKey('prompt')).toBe(true);
-            expect(isSensitiveLogKey('userPrompt')).toBe(true);
-            expect(isSensitiveLogKey('input_prompt')).toBe(true);
-            expect(isSensitiveLogKey('apiKey')).toBe(true);
-            expect(isSensitiveLogKey('bearerToken')).toBe(true);
-            expect(isSensitiveLogKey('connectionString')).toBe(true);
-            expect(isSensitiveLogKey('sessionToken')).toBe(true);
-            expect(isSensitiveLogKey('token')).toBe(true);
-            expect(isSensitiveLogKey('user_token')).toBe(true);
+            'prompt',
+            'userPrompt',
+            'input_prompt',
+            'apiKey',
+            'bearerToken',
+            'connectionString',
+            'sessionToken',
+            'token',
+            'user_token',
+        ])('should redact sensitive key or compound key: %s', (key) => {
+            expect(isSensitiveLogKey(key)).toBe(true);
         });
 
-        it('should NOT falsely redact benign operational keys containing short fragments (F4/F5)', () => {
+        test.each([
             // "activity", "archive", "privacy", "privilege", "universal" all contain "iv"
-            expect(isSensitiveLogKey('activity')).toBe(false);
-            expect(isSensitiveLogKey('archive')).toBe(false);
-            expect(isSensitiveLogKey('privacy')).toBe(false);
-            expect(isSensitiveLogKey('privilege')).toBe(false);
-            expect(isSensitiveLogKey('universal')).toBe(false);
+            'activity',
+            'archive',
+            'privacy',
+            'privilege',
+            'universal',
             // "spinning" contains "pin"
-            expect(isSensitiveLogKey('spinning')).toBe(false);
+            'spinning',
             // Standard benign metadata
-            expect(isSensitiveLogKey('fileId')).toBe(false);
-            expect(isSensitiveLogKey('userId')).toBe(false);
-            expect(isSensitiveLogKey('etag')).toBe(false);
-            expect(isSensitiveLogKey('operationId')).toBe(false);
-            expect(isSensitiveLogKey('sessionId')).toBe(false);
-            expect(isSensitiveLogKey('tokenizer')).toBe(false);
+            'fileId',
+            'userId',
+            'etag',
+            'operationId',
+            'sessionId',
+            'tokenizer',
+        ])('should NOT falsely redact benign key containing short fragment (F4/F5): %s', (key) => {
+            expect(isSensitiveLogKey(key)).toBe(false);
         });
     });
 

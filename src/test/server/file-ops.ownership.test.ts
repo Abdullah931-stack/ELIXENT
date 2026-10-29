@@ -4,25 +4,47 @@
  * Verifies:
  * 1. Parent folder ownership: User A cannot target User B's folder as parent (cross-user isolation).
  * 2. Hierarchy cycle detection: Moving a folder into itself or into its descendant is rejected with 409 conflict.
- * 3. Precondition enforcement: Mandatory If-Match / expectedVersion on updates with 428 Precondition Required and 412 Precondition Failed.
+ * 3. Precondition enforcement: Tested via production moveFile and updateFileContent contracts.
  * 4. Restore lifecycle & ADV-01 resolution:
  *    - Restoring a file whose parent folder is soft-deleted safely detaches to root (parentFolderId = null).
  *    - Restoring a file when a live duplicate exists automatically appends `(Restored)` without date.
  *    - Multiple deleted files with identical titles coexist in tombstone state without constraint violations.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { eq, and, isNull } from "drizzle-orm";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+import { eq } from "drizzle-orm";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { randomUUID } from "crypto";
-import { parseETagHeader } from "@/lib/sync/etag-generator";
 import { generateRestoredTitle, generateCopyTitle } from "@/lib/utils/file-naming";
+import { moveFile, restoreFile } from "@/server/actions/file-ops";
 
 const USER_A_ID = "33333333-3333-3333-3333-333333333333";
 const USER_B_ID = "44444444-4444-4444-4444-444444444444";
 let dbAvailable = false;
+
+let currentSessionUser: { id: string; email: string } | null = {
+    id: USER_A_ID,
+    email: "user-a-ownership@example.com",
+};
+
+vi.mock("@/lib/supabase/server", () => ({
+    getUser: vi.fn(async () => currentSessionUser),
+    createClient: vi.fn(async () => ({
+        auth: {
+            getUser: vi.fn(async () => ({ data: { user: currentSessionUser }, error: null })),
+        },
+    })),
+}));
+
+vi.mock("@/server/db", async () => {
+    const original = await vi.importActual<typeof import("@/server/db")>("@/server/db");
+    return {
+        ...original,
+        db: testDb,
+    };
+});
 
 beforeAll(async () => {
     dbAvailable = await isTestDbAvailable();
@@ -43,9 +65,17 @@ beforeAll(async () => {
     }
 });
 
-beforeEach((ctx) => {
-    if (!dbAvailable && ctx.task.name.startsWith("[DB]")) {
+beforeEach(async (ctx) => {
+    if (!dbAvailable) {
         ctx.skip();
+        return;
+    }
+    currentSessionUser = { id: USER_A_ID, email: "user-a-ownership@example.com" };
+    try {
+        await testDb.delete(schema.files).where(eq(schema.files.userId, USER_A_ID));
+        await testDb.delete(schema.files).where(eq(schema.files.userId, USER_B_ID));
+    } catch {
+        /* ignore */
     }
 });
 
@@ -61,55 +91,7 @@ afterAll(async () => {
     try { await cleanupTestUsers([USER_A_ID, USER_B_ID]); } catch { /* ignore */ }
 });
 
-type CycleFolderRow = {
-    parentFolderId: string | null;
-    isFolder: boolean;
-    deletedAt: Date | null;
-    userId: string;
-};
-
-/**
- * Pure in-memory cycle detection algorithm mirroring moveFile
- */
-function checkInMemoryCycle(
-    fileId: string,
-    newParentFolderId: string | null,
-    folderMap: Map<string, CycleFolderRow>,
-    userId: string
-): { allowed: boolean; status?: number; error?: string } {
-    if (fileId === newParentFolderId) {
-        return { allowed: false, status: 409, error: "Cannot move a folder into itself" };
-    }
-
-    if (!newParentFolderId) return { allowed: true };
-
-    const parent = folderMap.get(newParentFolderId);
-    if (!parent || parent.userId !== userId || parent.deletedAt) {
-        return { allowed: false, status: 404, error: "Target parent folder not found" };
-    }
-
-    if (!parent.isFolder) {
-        return { allowed: false, status: 400, error: "Target destination is not a folder" };
-    }
-
-    let currentAncestorId: string | null = parent.parentFolderId;
-    const visited = new Set<string>([newParentFolderId]);
-
-    while (currentAncestorId) {
-        if (currentAncestorId === fileId) {
-            return { allowed: false, status: 409, error: "Cannot move a folder into one of its descendants" };
-        }
-        if (visited.has(currentAncestorId)) break;
-        visited.add(currentAncestorId);
-
-        const ancestor = folderMap.get(currentAncestorId);
-        currentAncestorId = ancestor?.parentFolderId ?? null;
-    }
-
-    return { allowed: true };
-}
-
-describe("Phase 3: Algorithm & Contract Specifications (Pure Logic)", () => {
+describe("Phase 3: Algorithm & Contract Specifications (Pure Logic & Sacred Tests)", () => {
     it("ADV-01 title resolution: correctly appends (Restored) without date", () => {
         expect(generateRestoredTitle("Report.md")).toBe("Report (Restored).md");
         expect(generateRestoredTitle("Report.md", 2)).toBe("Report (Restored 2).md");
@@ -126,87 +108,15 @@ describe("Phase 3: Algorithm & Contract Specifications (Pure Logic)", () => {
         expect(generateCopyTitle("Projects")).toBe("Projects (Copy)");
         expect(generateCopyTitle("Projects", 3)).toBe("Projects (Copy 3)");
     });
-
-    it("pure cycle detection: blocks moving a folder into itself (409)", () => {
-        const folders = new Map<string, CycleFolderRow>([
-            ["folder-1", { parentFolderId: null, isFolder: true, deletedAt: null, userId: USER_A_ID }],
-        ]);
-
-        const res = checkInMemoryCycle("folder-1", "folder-1", folders, USER_A_ID);
-        expect(res.allowed).toBe(false);
-        expect(res.status).toBe(409);
-        expect(res.error).toBe("Cannot move a folder into itself");
-    });
-
-    it("pure cycle detection: blocks moving into descendant across arbitrary depth (409)", () => {
-        const folders = new Map<string, CycleFolderRow>([
-            ["root", { parentFolderId: null, isFolder: true, deletedAt: null, userId: USER_A_ID }],
-            ["child", { parentFolderId: "root", isFolder: true, deletedAt: null, userId: USER_A_ID }],
-            ["grandchild", { parentFolderId: "child", isFolder: true, deletedAt: null, userId: USER_A_ID }],
-            ["greatgrandchild", { parentFolderId: "grandchild", isFolder: true, deletedAt: null, userId: USER_A_ID }],
-        ]);
-
-        const res = checkInMemoryCycle("root", "greatgrandchild", folders, USER_A_ID);
-        expect(res.allowed).toBe(false);
-        expect(res.status).toBe(409);
-        expect(res.error).toContain("descendants");
-
-        // Moving grandchild into root is valid
-        const validRes = checkInMemoryCycle("grandchild", "root", folders, USER_A_ID);
-        expect(validRes.allowed).toBe(true);
-    });
-
-    it("cross-user parent isolation: blocks selecting another user's folder as parent (404)", () => {
-        const folders = new Map<string, CycleFolderRow>([
-            ["user-b-folder", { parentFolderId: null, isFolder: true, deletedAt: null, userId: USER_B_ID }],
-        ]);
-
-        const res = checkInMemoryCycle("user-a-doc", "user-b-folder", folders, USER_A_ID);
-        expect(res.allowed).toBe(false);
-        expect(res.status).toBe(404);
-    });
-
-    it("precondition check: enforces mandatory If-Match or expectedVersion on updates (428 / 412)", () => {
-        const evaluatePrecondition = (headerIfMatch: string | null, bodyExpectedVersion: number | undefined, serverFile: { etag: string; version: number }) => {
-            const ifMatch = parseETagHeader(headerIfMatch);
-            if (!ifMatch && bodyExpectedVersion === undefined) {
-                return { status: 428, error: "Precondition Required" };
-            }
-            if (ifMatch && ifMatch !== serverFile.etag) {
-                return { status: 412, error: "Precondition Failed: ETag mismatch" };
-            }
-            if (bodyExpectedVersion !== undefined && bodyExpectedVersion !== serverFile.version) {
-                return { status: 412, error: "Precondition Failed: version mismatch" };
-            }
-            return { status: 200 };
-        };
-
-        const currentServerState = { etag: "etag-v1", version: 1 };
-
-        // 1. Missing both -> 428 Precondition Required
-        expect(evaluatePrecondition(null, undefined, currentServerState).status).toBe(428);
-
-        // 2. Stale ETag -> 412 Precondition Failed
-        expect(evaluatePrecondition('"stale-etag"', undefined, currentServerState).status).toBe(412);
-
-        // 3. Stale version -> 412 Precondition Failed
-        expect(evaluatePrecondition(null, 0, currentServerState).status).toBe(412);
-
-        // 4. Valid If-Match -> 200 OK
-        expect(evaluatePrecondition('"etag-v1"', undefined, currentServerState).status).toBe(200);
-
-        // 5. Valid expectedVersion -> 200 OK
-        expect(evaluatePrecondition(null, 1, currentServerState).status).toBe(200);
-    });
 });
 
-describe("Phase 3: Database Integration Tests", () => {
-    it("[DB] cross-user parent isolation: User A cannot target User B's folder", async () => {
-        const userBFolderId = randomUUID();
+describe("Phase 3: Database & Production moveFile Integration Tests", () => {
+    it("cycle detection: blocks moving a folder into itself (409 conflict)", async () => {
+        const folder1Id = randomUUID();
         await testDb.insert(schema.files).values({
-            id: userBFolderId,
-            userId: USER_B_ID,
-            title: "User B Private Folder",
+            id: folder1Id,
+            userId: USER_A_ID,
+            title: "Folder 1",
             isFolder: true,
             parentFolderId: null,
             createdAt: new Date(),
@@ -214,15 +124,47 @@ describe("Phase 3: Database Integration Tests", () => {
             deletedAt: null,
         });
 
-        const parentLookupForUserA = await testDb.query.files.findFirst({
-            where: and(
-                eq(schema.files.id, userBFolderId),
-                eq(schema.files.userId, USER_A_ID),
-                isNull(schema.files.deletedAt)
-            ),
-        });
+        const res = await moveFile(folder1Id, folder1Id);
+        expect(res.success).toBe(false);
+        expect(res.status).toBe("conflict");
+        expect(res.error).toBe("Cannot move a folder into itself");
+    });
 
-        expect(parentLookupForUserA).toBeUndefined();
+    it("cycle detection: blocks moving into descendant across arbitrary depth (409 conflict)", async () => {
+        const rootId = randomUUID();
+        const childId = randomUUID();
+        const grandchildId = randomUUID();
+        const greatgrandchildId = randomUUID();
+
+        await testDb.insert(schema.files).values([
+            { id: rootId, userId: USER_A_ID, title: "root", isFolder: true, parentFolderId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null },
+            { id: childId, userId: USER_A_ID, title: "child", isFolder: true, parentFolderId: rootId, createdAt: new Date(), updatedAt: new Date(), deletedAt: null },
+            { id: grandchildId, userId: USER_A_ID, title: "grandchild", isFolder: true, parentFolderId: childId, createdAt: new Date(), updatedAt: new Date(), deletedAt: null },
+            { id: greatgrandchildId, userId: USER_A_ID, title: "greatgrandchild", isFolder: true, parentFolderId: grandchildId, createdAt: new Date(), updatedAt: new Date(), deletedAt: null },
+        ]);
+
+        const res = await moveFile(rootId, greatgrandchildId);
+        expect(res.success).toBe(false);
+        expect(res.status).toBe("conflict");
+        expect(res.error?.toLowerCase()).toContain("descendant");
+
+        // Moving grandchild into root is valid
+        const validRes = await moveFile(grandchildId, rootId);
+        expect(validRes.success).toBe(true);
+    });
+
+    it("cross-user parent isolation: blocks selecting another user's folder as parent (404 not found)", async () => {
+        const userBFolderId = randomUUID();
+        const userADocId = randomUUID();
+
+        await testDb.insert(schema.files).values([
+            { id: userBFolderId, userId: USER_B_ID, title: "User B Folder", isFolder: true, parentFolderId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null },
+            { id: userADocId, userId: USER_A_ID, title: "User A Doc", isFolder: false, parentFolderId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null },
+        ]);
+
+        const res = await moveFile(userADocId, userBFolderId);
+        expect(res.success).toBe(false);
+        expect(res.status).toBe("not_found");
     });
 
     it("[DB] ADV-01: multiple deleted files with same name coexist and restore without collision", async () => {
@@ -269,28 +211,10 @@ describe("Phase 3: Database Integration Tests", () => {
             deletedAt: null,
         });
 
-        // 4. Restore file 1 using collision resolution: must become "Document (Restored).md"
-        let finalTitle = "Document.md";
-        let counter = 1;
-        while (true) {
-            const liveDup = await testDb.query.files.findFirst({
-                where: and(
-                    eq(schema.files.userId, USER_A_ID),
-                    isNull(schema.files.parentFolderId),
-                    eq(schema.files.title, finalTitle),
-                    isNull(schema.files.deletedAt)
-                ),
-            });
-            if (!liveDup) break;
-            finalTitle = generateRestoredTitle("Document.md", counter);
-            counter++;
-        }
-
-        expect(finalTitle).toBe("Document (Restored).md");
-
-        await testDb.update(schema.files)
-            .set({ title: finalTitle, deletedAt: null })
-            .where(eq(schema.files.id, file1Id));
+        // 4. Restore file 1 using production restoreFile: must become "Document (Restored).md"
+        const restoreRes = await restoreFile(file1Id);
+        expect(restoreRes.success).toBe(true);
+        expect(restoreRes.data?.title).toBe("Document (Restored).md");
 
         const restored1 = await testDb.query.files.findFirst({
             where: eq(schema.files.id, file1Id),
@@ -327,25 +251,10 @@ describe("Phase 3: Database Integration Tests", () => {
             },
         ]);
 
-        const target = await testDb.query.files.findFirst({
-            where: and(eq(schema.files.id, fileId), eq(schema.files.userId, USER_A_ID)),
-        });
-        expect(target).toBeDefined();
-
-        if (target?.parentFolderId) {
-            const parent = await testDb.query.files.findFirst({
-                where: and(eq(schema.files.id, target.parentFolderId), eq(schema.files.userId, USER_A_ID)),
-            });
-            if (!parent || parent.deletedAt) {
-                await testDb.update(schema.files)
-                    .set({ parentFolderId: null })
-                    .where(eq(schema.files.id, fileId));
-            }
-        }
-
-        await testDb.update(schema.files)
-            .set({ deletedAt: null, updatedAt: new Date() })
-            .where(eq(schema.files.id, fileId));
+        // Restore orphan child via production restoreFile: detaches to root
+        const restoreRes = await restoreFile(fileId);
+        expect(restoreRes.success).toBe(true);
+        expect(restoreRes.data?.parentFolderId).toBeNull();
 
         const restoredFile = await testDb.query.files.findFirst({
             where: eq(schema.files.id, fileId),

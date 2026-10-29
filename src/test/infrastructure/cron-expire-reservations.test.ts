@@ -9,10 +9,6 @@ import * as cronLock from "@/lib/cron/lock";
 import * as redisModule from "@/lib/redis";
 import { MeteringServiceUnavailableError } from "@/lib/metering/lua-scripts";
 
-vi.mock("@/server/services/ai-settlement-service", () => ({
-  flushPendingSettlementsToPostgres: vi.fn(),
-}));
-
 vi.mock("@/lib/redis", () => {
   const mockRedis = {
     smembers: vi.fn(),
@@ -38,7 +34,7 @@ describe("Cron: Batch-Draining Sweeper (/api/cron/expire-reservations) — TD-02
     vi.mocked(redisModule.redis.set).mockResolvedValue("OK");
     vi.mocked(redisModule.redis.get).mockResolvedValue("lock-id");
     vi.mocked(redisModule.redis.del).mockResolvedValue(1);
-    vi.mocked(aiSettlement.flushPendingSettlementsToPostgres).mockResolvedValue({
+    vi.spyOn(aiSettlement, "flushPendingSettlementsToPostgres").mockResolvedValue({
       flushedCount: 0,
       netDeltaMicro: BigInt(0),
     });

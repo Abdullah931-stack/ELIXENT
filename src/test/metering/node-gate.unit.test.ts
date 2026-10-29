@@ -292,8 +292,18 @@ describe("LangGraph Higher-Order Metered Node Gate (node-gate.ts)", () => {
   describe("Cold Start Race Recovery", () => {
     it("should recover automatically if wallet cold start race occurs during reservation", async () => {
       const redis = new InMemoryGateRedis();
-      // Mock ensureWalletLoadedFlushFirst behavior by setting wallet balance
-      redis.wallets.set(REDIS_KEYS.wallet(userId), 10_000_000);
+      // True cold start: do not pre-warm redis.wallets.
+      // Simulate race condition: wallet is evicted right before initial reservation executes.
+      const originalEval = redis.eval.bind(redis);
+      let raceSimulated = false;
+      vi.spyOn(redis, "eval").mockImplementation(async (script, keys, args) => {
+        if (script === RESERVE_OR_EXTEND_LUA && !raceSimulated) {
+          raceSimulated = true;
+          redis.wallets.delete(keys[0]);
+          return JSON.stringify({ status: "COLD_START_REQUIRED" }) as any;
+        }
+        return originalEval(script, keys, args);
+      });
 
       const nodeFn = vi.fn().mockResolvedValue({ summary: "Generated summary successfully" });
       const gatedNode = withMeteredNodeGate(nodeName, modelId, nodeFn, {
@@ -308,6 +318,9 @@ describe("LangGraph Higher-Order Metered Node Gate (node-gate.ts)", () => {
       expect(result).toEqual({ summary: "Generated summary successfully" });
       expect(nodeFn).toHaveBeenCalledTimes(1);
       expect(redis.settleCalls.length).toBe(1);
+      expect(raceSimulated).toBe(true);
+      // Both initial cold-start and post-race reload should invoke getUserCreditBalance
+      expect(mockGetUserCreditBalance).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -410,56 +423,42 @@ describe("LangGraph Higher-Order Metered Node Gate (node-gate.ts)", () => {
   });
 
   describe("Input Token Extraction Variations", () => {
-    it("should extract pessimistic tokens from state.text", async () => {
-      const redis = new InMemoryGateRedis();
-      redis.wallets.set(REDIS_KEYS.wallet(userId), 10_000_000);
-      const nodeFn = vi.fn().mockResolvedValue({ ok: true });
-
-      const gatedNode = withMeteredNodeGate(nodeName, modelId, nodeFn, {
-        customRedis: redis,
-      });
-
-      await gatedNode({ text: "Sample text payload for extraction" }, { configurable: { userId } });
-      expect(nodeFn).toHaveBeenCalledTimes(1);
-    });
-
-    it("should extract pessimistic tokens from state.messages array", async () => {
-      const redis = new InMemoryGateRedis();
-      redis.wallets.set(REDIS_KEYS.wallet(userId), 10_000_000);
-      const nodeFn = vi.fn().mockResolvedValue({ ok: true });
-
-      const gatedNode = withMeteredNodeGate(nodeName, modelId, nodeFn, {
-        customRedis: redis,
-      });
-
-      await gatedNode(
-        {
+    it.each([
+      {
+        name: "state.text",
+        state: { text: "Sample text payload for extraction" },
+        options: {},
+      },
+      {
+        name: "state.messages array",
+        state: {
           messages: [
             { content: "User prompt message" },
             { content: "Assistant response message" },
           ],
         },
-        { configurable: { userId } }
-      );
-      expect(nodeFn).toHaveBeenCalledTimes(1);
-    });
-
-    it("should support function-based pessimisticInputTokens parameter", async () => {
+        options: {},
+      },
+      {
+        name: "function-based pessimisticInputTokens parameter",
+        state: { prompt: "input" },
+        options: { pessimisticInputTokens: vi.fn().mockReturnValue(350) },
+      },
+    ])("should extract pessimistic tokens from $name", async ({ state, options }) => {
       const redis = new InMemoryGateRedis();
       redis.wallets.set(REDIS_KEYS.wallet(userId), 10_000_000);
       const nodeFn = vi.fn().mockResolvedValue({ ok: true });
 
-      const customEstimator = vi.fn().mockReturnValue(350);
-
       const gatedNode = withMeteredNodeGate(nodeName, modelId, nodeFn, {
         customRedis: redis,
-        pessimisticInputTokens: customEstimator,
+        ...options,
       });
 
-      await gatedNode({ prompt: "input" }, { configurable: { userId } });
-
-      expect(customEstimator).toHaveBeenCalled();
+      await gatedNode(state, { configurable: { userId } });
       expect(nodeFn).toHaveBeenCalledTimes(1);
+      if (typeof options.pessimisticInputTokens === "function") {
+        expect(options.pessimisticInputTokens).toHaveBeenCalled();
+      }
     });
   });
 });

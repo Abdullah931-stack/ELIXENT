@@ -14,20 +14,34 @@
  *      conflict instead of silently overwriting the first writer.
  *   3. Sequential updates keep advancing the version monotonically; the
  *      guard never rejects a legitimately newer save.
- *
- * The production action requires Supabase auth, so the algorithm is
- * exercised against the real schema with SQL statements identical in
- * shape to those in updateFileContent.
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { eq, and, isNull } from "drizzle-orm";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+import { eq, and } from "drizzle-orm";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { randomUUID } from "crypto";
+import { updateFileContent } from "@/server/actions/file-ops";
 
 const TEST_USER_ID = "55555555-5555-5555-5555-555555555555";
 let dbAvailable = false;
+
+vi.mock("@/lib/supabase/server", () => ({
+    getUser: vi.fn(async () => ({ id: TEST_USER_ID, email: "lostupdate-test@example.com" })),
+    createClient: vi.fn(async () => ({
+        auth: {
+            getUser: vi.fn(async () => ({ data: { user: { id: TEST_USER_ID, email: "lostupdate-test@example.com" } }, error: null })),
+        },
+    })),
+}));
+
+vi.mock("@/server/db", async () => {
+    const original = await vi.importActual<typeof import("@/server/db")>("@/server/db");
+    return {
+        ...original,
+        db: testDb,
+    };
+});
 
 beforeAll(async () => {
     dbAvailable = await isTestDbAvailable();
@@ -56,48 +70,6 @@ afterAll(async () => {
     try { await cleanupTestUsers([TEST_USER_ID]); } catch { /* ignore */ }
 });
 
-/**
- * Minimal in-process reproduction of the production updateFileContent
- * algorithm: read version → UPDATE conditioned on that exact version →
- * inspect affected rows. Returning the affected-row count lets the tests
- * assert the same contract the action returns (`conflict` vs `success`).
- */
-async function optimisticUpdate(
-    fileId: string,
-    newContent: string,
-    opts: { version?: number } = {}
-) {
-    const current = await testDb.query.files.findFirst({
-        where: and(
-            eq(schema.files.id, fileId),
-            eq(schema.files.userId, TEST_USER_ID),
-            isNull(schema.files.deletedAt)
-        ),
-        columns: { version: true },
-    });
-    if (!current) return { success: false, error: "File not found or deleted" as const, affected: 0 };
-
-    const baseVersion = opts.version ?? (current.version ?? 0);
-    const newVersion = baseVersion + 1;
-    const now = new Date();
-
-    const [updated] = await testDb
-        .update(schema.files)
-        .set({ content: newContent, version: newVersion, updatedAt: now })
-        .where(and(
-            eq(schema.files.id, fileId),
-            eq(schema.files.userId, TEST_USER_ID),
-            eq(schema.files.version, baseVersion),
-            isNull(schema.files.deletedAt)
-        ))
-        .returning();
-
-    if (!updated) {
-        return { success: false, error: "conflict" as const, affected: 0 };
-    }
-    return { success: true, version: newVersion, affected: 1 };
-}
-
 describe("lost-update guard (W5)", () => {
     it("normal update advances version by 1 and persists content", async () => {
         const fileId = randomUUID();
@@ -115,9 +87,9 @@ describe("lost-update guard (W5)", () => {
             deletedAt: null,
         });
 
-        const r1 = await optimisticUpdate(fileId, "v1");
+        const r1 = await updateFileContent(fileId, "v1");
         expect(r1.success).toBe(true);
-        expect(r1.version).toBe(2);
+        expect((r1 as any).version).toBe(2);
 
         const row = await testDb.query.files.findFirst({
             where: eq(schema.files.id, fileId),
@@ -150,14 +122,14 @@ describe("lost-update guard (W5)", () => {
             columns: { version: true },
         });
         const [first, second] = await Promise.all([
-            optimisticUpdate(fileId, "writer-A", { version: snapshot!.version ?? 0 }),
-            optimisticUpdate(fileId, "writer-B", { version: snapshot!.version ?? 0 }),
+            updateFileContent(fileId, "writer-A", { expectedVersion: snapshot!.version ?? 0 }),
+            updateFileContent(fileId, "writer-B", { expectedVersion: snapshot!.version ?? 0 }),
         ]);
 
         // Exactly one must succeed; the other must report the conflict.
         const outcomes = [first, second];
         expect(outcomes.filter(o => o.success).length).toBe(1);
-        expect(outcomes.filter(o => !o.success && o.error === "conflict").length).toBe(1);
+        expect(outcomes.filter(o => !o.success && o.status === "conflict").length).toBe(1);
 
         // Whichever won, its content is what the row holds (no silent mix).
         const row = await testDb.query.files.findFirst({
@@ -185,15 +157,15 @@ describe("lost-update guard (W5)", () => {
         });
 
         // Fresh writer moves it to 6.
-        const fresh = await optimisticUpdate(fileId, "fresh-save");
+        const fresh = await updateFileContent(fileId, "fresh-save");
         expect(fresh.success).toBe(true);
-        expect(fresh.version).toBe(6);
+        expect((fresh as any).version).toBe(6);
 
         // A writer still holding version 4 tries to save — must fail,
         // and the row's content must stay the fresh writer's.
-        const stale = await optimisticUpdate(fileId, "stale-save", { version: 4 });
+        const stale = await updateFileContent(fileId, "stale-save", { expectedVersion: 4 });
         expect(stale.success).toBe(false);
-        expect(stale.error).toBe("conflict");
+        expect(stale.status).toBe("conflict");
 
         const row = await testDb.query.files.findFirst({
             where: eq(schema.files.id, fileId),
@@ -222,9 +194,9 @@ describe("lost-update guard (W5)", () => {
         // version — must ALL succeed and advance the version monotonically.
         // The guard must never reject a genuinely newer save; it only blocks
         // writers holding a stale snapshot.
-        const s1 = await optimisticUpdate(fileId, "v1");
-        const s2 = await optimisticUpdate(fileId, "v2");
-        const s3 = await optimisticUpdate(fileId, "v3");
+        const s1 = await updateFileContent(fileId, "v1");
+        const s2 = await updateFileContent(fileId, "v2");
+        const s3 = await updateFileContent(fileId, "v3");
         expect(s1.success).toBe(true);
         expect(s2.success).toBe(true);
         expect(s3.success).toBe(true);
@@ -238,9 +210,9 @@ describe("lost-update guard (W5)", () => {
         // Meanwhile a stale writer still holding the original snapshot
         // (version 7) is rejected — the positive and negative paths both
         // verified in one test.
-        const stale = await optimisticUpdate(fileId, "stale-save", { version: 7 });
+        const stale = await updateFileContent(fileId, "stale-save", { expectedVersion: 7 });
         expect(stale.success).toBe(false);
-        expect(stale.error).toBe("conflict");
+        expect(stale.status).toBe("conflict");
 
         const rowAfterStale = await testDb.query.files.findFirst({
             where: eq(schema.files.id, fileId),

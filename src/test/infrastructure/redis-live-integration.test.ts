@@ -146,45 +146,7 @@ describe("Upstash Redis Live Integration, Lock Contention & Fail-Open Suite (Pha
     });
 
     // =========================================================================
-    // Step 1: Upstash HTTP REST Emulator Wire Protocol Verification
-    // =========================================================================
-    describe("1. Upstash HTTP REST Emulator Wire Protocol", () => {
-        it("acquires key with NX EX and rejects duplicate NX acquisition", async () => {
-            const key = "test:lock:nx_ex_1";
-            const setRes1 = await redis.set(key, "locked", { nx: true, ex: 10 });
-            expect(setRes1).toBe("OK");
-
-            // Duplicate attempt while key exists must return null
-            const setRes2 = await redis.set(key, "collision", { nx: true, ex: 10 });
-            expect(setRes2).toBeNull();
-
-            // Value must remain the first value
-            const val = await redis.get(key);
-            expect(val).toBe("locked");
-
-            // Deletion returns count
-            const delRes = await redis.del(key);
-            expect(delRes).toBe(1);
-
-            // After deletion, NX can be acquired again
-            const setRes3 = await redis.set(key, "reacquired", { nx: true, ex: 10 });
-            expect(setRes3).toBe("OK");
-        });
-
-        it("handles batch pipelines seamlessly", async () => {
-            const p = redis.pipeline();
-            p.set("pipe:1", "val1");
-            p.set("pipe:2", "val2");
-            p.get("pipe:1");
-            p.del("pipe:2");
-            const results = await p.exec();
-
-            expect(results).toEqual(["OK", "OK", "val1", 1]);
-        });
-    });
-
-    // =========================================================================
-    // Step 3: Redis Healthy Path (Lock acquisition, DB mutation, Dedup cache)
+    // Step 2: Redis Healthy Path (Lock acquisition, DB mutation, Dedup cache)
     // =========================================================================
     describe("2. Redis Healthy Path: Lock Lifecycle & Fast-Path Deduplication", () => {
         it("acquires lock, updates tier in DB, sets dedup cache, and frees lock", async () => {

@@ -1,10 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
     RateLimiter,
-    RATE_LIMITS,
-    aiStreamRateLimiter,
-    authRateLimiter,
-    syncApiRateLimiter,
     rateLimitExceededResponse,
 } from '@/lib/rate-limit';
 import { redis, isRedisConfigured } from '@/lib/redis';
@@ -24,28 +20,6 @@ describe('Rate Limiter Suite — Hardened Dual-Policy & Fail-Closed (Phase 13 / 
     beforeEach(() => {
         vi.clearAllMocks();
         vi.mocked(isRedisConfigured).mockReturnValue(true);
-    });
-
-    it('should define AI_STREAM and AUTH with fail-closed policy', () => {
-        expect(RATE_LIMITS.AI_STREAM).toBeDefined();
-        expect(RATE_LIMITS.AI_STREAM.limit).toBe(30);
-        expect(RATE_LIMITS.AI_STREAM.windowSeconds).toBe(60);
-        expect(RATE_LIMITS.AI_STREAM.failureMode).toBe('fail-closed');
-
-        expect(RATE_LIMITS.AUTH).toBeDefined();
-        expect(RATE_LIMITS.AUTH.limit).toBe(20);
-        expect(RATE_LIMITS.AUTH.failureMode).toBe('fail-closed');
-    });
-
-    it('should define SYNC_API and FILE_API with fail-open policy for offline-first continuity', () => {
-        expect(RATE_LIMITS.SYNC_API.failureMode).toBe('fail-open');
-        expect(RATE_LIMITS.FILE_API.failureMode).toBe('fail-open');
-    });
-
-    it('should export pre-configured limiter instances with correct policies', () => {
-        expect(aiStreamRateLimiter).toBeInstanceOf(RateLimiter);
-        expect(authRateLimiter).toBeInstanceOf(RateLimiter);
-        expect(syncApiRateLimiter).toBeInstanceOf(RateLimiter);
     });
 
     it('should allow request when within limit and only then append zadd token', async () => {

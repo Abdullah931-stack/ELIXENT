@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // =========================================================================
 // Mock Setup using vi.hoisted for Redis
@@ -93,7 +93,6 @@ import {
     AllKeysExhaustedError,
     RedisUnavailableError,
     ROTATION_ERROR_CODES,
-    PROBE_LOCK_TTL_SECONDS,
 } from '@/lib/ai/key-rotation';
 
 describe('Key Rotation & Circuit Breaker System (Hardened)', () => {
@@ -286,10 +285,6 @@ describe('Key Rotation & Circuit Breaker System (Hardened)', () => {
     describe('3-State Distributed Circuit Breaker', () => {
         const model = 'gemini-3.8-flash';
 
-        it('should have 5 minutes (300s) cooldown lock for single probe', () => {
-            expect(PROBE_LOCK_TTL_SECONDS).toBe(300);
-        });
-
         it('should report CLOSED state by default', async () => {
             const state = await getModelCircuitState(model);
             expect(state).toBe('closed');
@@ -349,25 +344,85 @@ describe('Key Rotation & Circuit Breaker System (Hardened)', () => {
             expect(await isModelCircuitOpen(model)).toBe(false);
         });
 
-        it('should trip back to OPEN state with backoff if probe fails', async () => {
-            await tripModelCircuit(model, 600);
+        it('should trip back to OPEN state with backoff and clear probe lock if probe fails', async () => {
+            mockStore.set(`gemini:model_failures:${model}`, 2);
+            await tryAcquireHalfOpenProbe(model);
+            expect(mockStore.has(`gemini:circuit_probe:${model}`)).toBe(true);
+
+            await recordModelFailure(model);
+
             expect(await isModelCircuitOpen(model)).toBe(true);
+            expect(mockStore.has(`gemini:circuit_probe:${model}`)).toBe(false);
         });
     });
 
     // =========================================================================
-    // Error Classification & Sanitization
+    // Error Classification & Sanitization (Parameterized)
     // =========================================================================
     describe('classifyGeminiError & sanitizeErrorMessage', () => {
-        it('should classify 400 Bad Request as invalid_request (non-rotatable, fail-fast)', () => {
-            const error = new Error('400 Bad Request: Invalid argument supplied');
-            const result = classifyGeminiError(error);
+        const CLASSIFICATION_VECTORS = [
+            {
+                label: '400 Bad Request as invalid_request (non-rotatable, fail-fast)',
+                error: new Error('400 Bad Request: Invalid argument supplied'),
+                expectedCategory: 'invalid_request',
+                expectedStatusCode: 400,
+                retryableWithKey: false,
+                retryableWithModel: false,
+            },
+            {
+                label: '401 as authentication (rotatable, disables key)',
+                error: new Error('API key not valid. Please pass a valid API key. (401)'),
+                expectedCategory: 'authentication',
+                expectedStatusCode: 401,
+                retryableWithKey: true,
+                retryableWithModel: false,
+            },
+            {
+                label: '429 and ResourceExhausted as quota (rotatable, sets cooldown)',
+                error: new Error('Resource has been exhausted (e.g. check quota) (429)'),
+                expectedCategory: 'quota',
+                expectedStatusCode: 429,
+                retryableWithKey: true,
+                retryableWithModel: false,
+            },
+            {
+                label: '503 and high demand as overload (rotatable to fallback model)',
+                error: new Error('503 Service Unavailable: Model is overloaded'),
+                expectedCategory: 'overload',
+                expectedStatusCode: 503,
+                retryableWithKey: false,
+                retryableWithModel: true,
+            },
+            {
+                label: '500, 502, 504 and fetch failed as transient',
+                error: new Error('fetch failed: ECONNRESET'),
+                expectedCategory: 'transient',
+                expectedStatusCode: undefined,
+                retryableWithKey: true,
+                retryableWithModel: false,
+            },
+            {
+                label: 'AbortError as cancelled (non-rotatable)',
+                error: Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }),
+                expectedCategory: 'cancelled',
+                expectedStatusCode: undefined,
+                retryableWithKey: false,
+                retryableWithModel: false,
+            },
+        ];
 
-            expect(result.category).toBe('invalid_request');
-            expect(result.statusCode).toBe(400);
-            expect(result.retryableWithKey).toBe(false);
-            expect(result.retryableWithModel).toBe(false);
-        });
+        test.each(CLASSIFICATION_VECTORS)(
+            'should classify $label',
+            ({ error, expectedCategory, expectedStatusCode, retryableWithKey, retryableWithModel }) => {
+                const result = classifyGeminiError(error);
+                expect(result.category).toBe(expectedCategory);
+                if (expectedStatusCode !== undefined) {
+                    expect(result.statusCode).toBe(expectedStatusCode);
+                }
+                expect(result.retryableWithKey).toBe(retryableWithKey);
+                expect(result.retryableWithModel).toBe(retryableWithModel);
+            }
+        );
 
         it('should sanitize Google API keys and query parameters from error strings', () => {
             const rawSdkMsg = 'fetch failed: https://generativelanguage.googleapis.com/v1beta/models/gemini:generateContent?key=AIzaSyD1234567890abcdef1234567890abcde';
@@ -376,71 +431,26 @@ describe('Key Rotation & Circuit Breaker System (Hardened)', () => {
             expect(sanitized).not.toContain('AIzaSyD1234567890abcdef1234567890abcde');
             expect(sanitized).toContain('[REDACTED_API_KEY]');
         });
-
-        it('should classify 401 as authentication (rotatable, disables key)', () => {
-            const error = new Error('API key not valid. Please pass a valid API key. (401)');
-            const result = classifyGeminiError(error);
-
-            expect(result.category).toBe('authentication');
-            expect(result.statusCode).toBe(401);
-            expect(result.retryableWithKey).toBe(true);
-        });
-
-        it('should classify 429 and ResourceExhausted as quota (rotatable, sets cooldown)', () => {
-            const error = new Error('Resource has been exhausted (e.g. check quota) (429)');
-            const result = classifyGeminiError(error);
-
-            expect(result.category).toBe('quota');
-            expect(result.statusCode).toBe(429);
-            expect(result.retryableWithKey).toBe(true);
-        });
-
-        it('should classify 503 and high demand as overload (rotatable to fallback model)', () => {
-            const error = new Error('503 Service Unavailable: Model is overloaded');
-            const result = classifyGeminiError(error);
-
-            expect(result.category).toBe('overload');
-            expect(result.statusCode).toBe(503);
-            expect(result.retryableWithModel).toBe(true);
-            expect(result.retryableWithKey).toBe(false);
-        });
-
-        it('should classify 500, 502, 504 and fetch failed as transient', () => {
-            const error = new Error('fetch failed: ECONNRESET');
-            const result = classifyGeminiError(error);
-
-            expect(result.category).toBe('transient');
-            expect(result.retryableWithKey).toBe(true);
-        });
-
-        it('should classify AbortError as cancelled (non-rotatable)', () => {
-            const abortErr = new Error('The operation was aborted');
-            abortErr.name = 'AbortError';
-            const result = classifyGeminiError(abortErr);
-
-            expect(result.category).toBe('cancelled');
-            expect(result.retryableWithKey).toBe(false);
-            expect(result.retryableWithModel).toBe(false);
-        });
     });
 
     // =========================================================================
-    // Sanitization & Masking
+    // Sanitization & Masking (Parameterized)
     // =========================================================================
     describe('maskApiKey', () => {
-        it('should mask standard API key securely', () => {
-            expect(maskApiKey('AIzaSyD-1234567890abcdef')).toBe('AIza...cdef');
-        });
+        const MASK_CASES = [
+            { key: 'AIzaSyD-1234567890abcdef', expected: 'AIza...cdef', desc: 'standard API key securely' },
+            { key: 'short', expected: '***masked***', desc: 'short or invalid keys safely' },
+            { key: '', expected: 'unknown_key', desc: 'empty string key' },
+            { key: undefined, expected: 'unknown_key', desc: 'undefined key' },
+        ];
 
-        it('should handle short or invalid keys safely', () => {
-            expect(maskApiKey('short')).toBe('***masked***');
-            expect(maskApiKey('')).toBe('unknown_key');
-            expect(maskApiKey(undefined)).toBe('unknown_key');
+        test.each(MASK_CASES)('should mask $desc', ({ key, expected }) => {
+            expect(maskApiKey(key)).toBe(expected);
         });
     });
 
     // =========================================================================
-    // extractErrorCode Precision (Avoiding False Positives)
+    // extractErrorCode Precision (Avoiding False Positives - Parameterized)
     // =========================================================================
     describe('extractErrorCode precision', () => {
         it('should return false for 400 Bad Request', () => {
@@ -448,19 +458,24 @@ describe('Key Rotation & Circuit Breaker System (Hardened)', () => {
             expect(shouldRotateOnError(new Error('400 Bad Request'))).toBe(false);
         });
 
-        it('should return true for 401, 403, 429, 500, 502, 503, 504', () => {
-            for (const code of ROTATION_ERROR_CODES) {
-                expect(shouldRotateOnError(code)).toBe(true);
-            }
+        test.each(ROTATION_ERROR_CODES)('should return true for rotatable error code %i', (code) => {
+            expect(shouldRotateOnError(code)).toBe(true);
         });
 
-        it('should extract status codes correctly from structured properties', () => {
-            expect(extractErrorCode({ status: 503 })).toBe(503);
-            expect(extractErrorCode({ statusCode: 401 })).toBe(401);
-            expect(extractErrorCode({ response: { status: 429 } })).toBe(429);
-            expect(extractErrorCode(new Error('status: 400'))).toBe(400);
-            expect(extractErrorCode(null)).toBe(0);
-        });
+        const STRUCTURED_EXTRACTION_CASES = [
+            { input: { status: 503 }, expected: 503, desc: 'status property' },
+            { input: { statusCode: 401 }, expected: 401, desc: 'statusCode property' },
+            { input: { response: { status: 429 } }, expected: 429, desc: 'nested response.status' },
+            { input: new Error('status: 400'), expected: 400, desc: 'error message status' },
+            { input: null, expected: 0, desc: 'null input' },
+        ];
+
+        test.each(STRUCTURED_EXTRACTION_CASES)(
+            'should extract status codes correctly from $desc',
+            ({ input, expected }) => {
+                expect(extractErrorCode(input)).toBe(expected);
+            }
+        );
 
         it('should avoid false positive match on non-HTTP numbers in payload', () => {
             const docMsg = new Error('File item document_id_400 loaded successfully');

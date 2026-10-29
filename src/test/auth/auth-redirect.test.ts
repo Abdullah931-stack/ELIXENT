@@ -13,7 +13,7 @@
  *    - Resists HTTP Parameter Pollution (HPP).
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, test, expect, vi, beforeEach } from "vitest";
 import { resolveSafeRedirectPath } from "@/lib/auth/safe-redirect";
 import { GET as authCallbackGET } from "@/app/auth/callback/route";
 import { NextRequest } from "next/server";
@@ -35,113 +35,137 @@ vi.mock("@/server/actions/auth-actions", () => ({
 
 describe("Phase 12: Safe Redirect Resolution (resolveSafeRedirectPath)", () => {
     describe("Valid Internal Routes", () => {
-        it("allows standard internal paths", () => {
-            expect(resolveSafeRedirectPath("/dashboard")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/workspace")).toBe("/workspace");
-            expect(resolveSafeRedirectPath("/account")).toBe("/account");
-            expect(resolveSafeRedirectPath("/workspace/editor/doc-123")).toBe("/workspace/editor/doc-123");
+        test.each([
+            "/dashboard",
+            "/workspace",
+            "/account",
+            "/workspace/editor/doc-123",
+        ])("allows standard internal path: %s", (path) => {
+            expect(resolveSafeRedirectPath(path)).toBe(path);
         });
 
-        it("preserves query parameters and fragments on valid internal paths", () => {
-            expect(resolveSafeRedirectPath("/workspace?tab=recent")).toBe("/workspace?tab=recent");
-            expect(resolveSafeRedirectPath("/workspace/editor/123?view=split#section-2")).toBe(
-                "/workspace/editor/123?view=split#section-2"
-            );
+        test.each([
+            ["/workspace?tab=recent", "/workspace?tab=recent"],
+            ["/workspace/editor/123?view=split#section-2", "/workspace/editor/123?view=split#section-2"],
+        ])("preserves query parameters and fragments on valid internal path: %s", (input, expected) => {
+            expect(resolveSafeRedirectPath(input)).toBe(expected);
         });
 
-        it("respects custom valid defaultPath fallback", () => {
-            expect(resolveSafeRedirectPath(null, "/workspace")).toBe("/workspace");
-            expect(resolveSafeRedirectPath("https://evil.com", "/workspace")).toBe("/workspace");
+        test.each([
+            [null, "/workspace", "/workspace"],
+            ["https://evil.com", "/workspace", "/workspace"],
+        ])("respects custom valid defaultPath fallback (%s -> %s)", (input, fallback, expected) => {
+            expect(resolveSafeRedirectPath(input, fallback)).toBe(expected);
         });
     });
 
     describe("Empty, Null, and Falsy Inputs", () => {
-        it("returns /dashboard for null, undefined, empty, or whitespace-only inputs", () => {
-            expect(resolveSafeRedirectPath(null)).toBe("/dashboard");
-            expect(resolveSafeRedirectPath(undefined)).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("   ")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("\t\n\r")).toBe("/dashboard");
+        test.each([
+            [null, "null"],
+            [undefined, "undefined"],
+            ["", "empty string"],
+            ["   ", "spaces"],
+            ["\t\n\r", "whitespace control chars"],
+        ])("returns /dashboard for falsy or whitespace input (%s)", (input, _label) => {
+            expect(resolveSafeRedirectPath(input)).toBe("/dashboard");
         });
 
-        it("returns /dashboard if target is not a relative path starting with slash", () => {
-            expect(resolveSafeRedirectPath("dashboard")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("workspace/editor")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("www.google.com")).toBe("/dashboard");
+        test.each([
+            "dashboard",
+            "workspace/editor",
+            "www.google.com",
+        ])("returns /dashboard if target is not a relative path starting with slash: %s", (target) => {
+            expect(resolveSafeRedirectPath(target)).toBe("/dashboard");
         });
     });
 
     describe("Open Redirect & Protocol-Relative Attack Vectors", () => {
-        it("blocks standard external absolute URLs (http and https)", () => {
-            expect(resolveSafeRedirectPath("https://evil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("http://evil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("https://evil.com/dashboard")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("http://attacker.com/workspace")).toBe("/dashboard");
+        test.each([
+            "https://evil.com",
+            "http://evil.com",
+            "https://evil.com/dashboard",
+            "http://attacker.com/workspace",
+        ])("blocks standard external absolute URL: %s", (url) => {
+            expect(resolveSafeRedirectPath(url)).toBe("/dashboard");
         });
 
-        it("blocks protocol-relative URLs (//evil.com)", () => {
-            expect(resolveSafeRedirectPath("//evil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("//evil.com/path")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("///evil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("////evil.com")).toBe("/dashboard");
+        test.each([
+            "//evil.com",
+            "//evil.com/path",
+            "///evil.com",
+            "////evil.com",
+        ])("blocks protocol-relative URL: %s", (url) => {
+            expect(resolveSafeRedirectPath(url)).toBe("/dashboard");
         });
 
-        it("blocks backslash in any position (/\\evil.com, \\evil.com, /foo\\bar)", () => {
-            expect(resolveSafeRedirectPath("/\\evil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("\\evil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("\\\\evil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/\\\\evil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/foo\\bar")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/workspace\\editor\\doc")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/sub\\..\\..\\evil.com")).toBe("/dashboard");
+        test.each([
+            "/\\evil.com",
+            "\\evil.com",
+            "\\\\evil.com",
+            "/\\\\evil.com",
+            "/foo\\bar",
+            "/workspace\\editor\\doc",
+            "/sub\\..\\..\\evil.com",
+        ])("blocks backslash in any position: %s", (path) => {
+            expect(resolveSafeRedirectPath(path)).toBe("/dashboard");
         });
 
-        it("blocks URL-encoded slashes and bypasses (/%2F%2Fevil.com, /%5Cevil.com)", () => {
-            expect(resolveSafeRedirectPath("/%2F%2Fevil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/%2f%2fevil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/%5Cevil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/%5c%5cevil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/%252F%252Fevil.com")).toBe("/dashboard"); // double encoded
+        test.each([
+            "/%2F%2Fevil.com",
+            "/%2f%2fevil.com",
+            "/%5Cevil.com",
+            "/%5c%5cevil.com",
+            "/%252F%252Fevil.com",
+        ])("blocks URL-encoded slashes and bypasses: %s", (path) => {
+            expect(resolveSafeRedirectPath(path)).toBe("/dashboard");
         });
 
-        it("blocks pseudo-protocols and script/communication schemes (javascript:, data:, vbscript:, blob:, mailto:, tel:, sms:, urn:)", () => {
-            expect(resolveSafeRedirectPath("javascript:alert(1)")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/javascript:alert(1)")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("data:text/html,<script>alert(1)</script>")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/data:text/html,<script>alert(1)</script>")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("vbscript:msgbox(1)")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/vbscript:msgbox(1)")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("blob:http://localhost/uuid")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("mailto:attacker@evil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/mailto:attacker@evil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("tel:+1234567890")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/tel:+1234567890")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("sms:+1234567890")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/sms:+1234567890")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("urn:isbn:0-486-27557-4")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/urn:isbn:0-486-27557-4")).toBe("/dashboard");
+        test.each([
+            "javascript:alert(1)",
+            "/javascript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "/data:text/html,<script>alert(1)</script>",
+            "vbscript:msgbox(1)",
+            "/vbscript:msgbox(1)",
+            "blob:http://localhost/uuid",
+            "mailto:attacker@evil.com",
+            "/mailto:attacker@evil.com",
+            "tel:+1234567890",
+            "/tel:+1234567890",
+            "sms:+1234567890",
+            "/sms:+1234567890",
+            "urn:isbn:0-486-27557-4",
+            "/urn:isbn:0-486-27557-4",
+        ])("blocks pseudo-protocol and script schemes: %s", (scheme) => {
+            expect(resolveSafeRedirectPath(scheme)).toBe("/dashboard");
         });
     });
 
     describe("Adversarial Evasion: Unicode Homographs, Control Chars, Null Bytes & Max Length", () => {
-        it("blocks Unicode slash homographs (Full-width solidus ／, Reverse solidus ＼)", () => {
-            expect(resolveSafeRedirectPath("\uFF0F\uFF0Fevil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/\uFF0Fevil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("\uFF3C\uFF3Cevil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/\uFE68evil.com")).toBe("/dashboard");
+        test.each([
+            "\uFF0F\uFF0Fevil.com",
+            "/\uFF0Fevil.com",
+            "\uFF3C\uFF3Cevil.com",
+            "/\uFE68evil.com",
+        ])("blocks Unicode slash homographs: %s", (payload) => {
+            expect(resolveSafeRedirectPath(payload)).toBe("/dashboard");
         });
 
-        it("blocks zero-width spaces and invisible characters (\u200B, \u200C, \u200D, \uFEFF)", () => {
-            expect(resolveSafeRedirectPath("/\u200B/evil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/\uFEFF/evil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/\u200D/evil.com")).toBe("/dashboard");
+        test.each([
+            "/\u200B/evil.com",
+            "/\uFEFF/evil.com",
+            "/\u200D/evil.com",
+        ])("blocks zero-width spaces and invisible characters: %s", (payload) => {
+            expect(resolveSafeRedirectPath(payload)).toBe("/dashboard");
         });
 
-        it("blocks null bytes and control character injection (%00, \\x00, CRLF)", () => {
-            expect(resolveSafeRedirectPath("/%00//evil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/\x00//evil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/%0d%0a/evil.com")).toBe("/dashboard");
-            expect(resolveSafeRedirectPath("/\r\n//evil.com")).toBe("/dashboard");
+        test.each([
+            "/%00//evil.com",
+            "/\x00//evil.com",
+            "/%0d%0a/evil.com",
+            "/\r\n//evil.com",
+        ])("blocks null bytes and control character injection: %s", (payload) => {
+            expect(resolveSafeRedirectPath(payload)).toBe("/dashboard");
         });
 
         it("enforces MAX_URL_LENGTH (2048) to prevent ReDoS / CPU exhaustion", () => {

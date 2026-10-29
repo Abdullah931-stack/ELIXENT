@@ -45,17 +45,6 @@ vi.mock("@/lib/supabase/server", () => ({
     getUser: vi.fn(),
 }));
 
-vi.mock("@/server/db", () => ({
-    db: {
-        insert: vi.fn(),
-        query: { users: { findFirst: vi.fn() } },
-        update: vi.fn(),
-    },
-    schema: {
-        users: { id: "id" },
-    },
-}));
-
 import { signOut } from "@/server/actions/auth-actions";
 
 describe("TD-12: signOut() Cache Invalidation & Cookie Wiping", () => {

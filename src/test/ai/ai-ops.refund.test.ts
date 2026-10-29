@@ -147,10 +147,4 @@ describe("quota refund after AI failure (W1)", () => {
         const afterBalance = await snapshotCreditBalance(TEST_USER_ID);
         expect(afterBalance).toBeLessThanOrEqual(beforeBalance);
     });
-
-    it("rejects reservation at the quota boundary and leaves credit balance untouched", async () => {
-        const beforeBalance = await snapshotCreditBalance(TEST_USER_ID);
-        const afterBalance = await snapshotCreditBalance(TEST_USER_ID);
-        expect(afterBalance).toBe(beforeBalance);
-    });
 });

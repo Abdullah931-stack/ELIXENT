@@ -249,25 +249,32 @@ describe("importFile Server Action (Client-Extracted Text & Vault Pipeline)", ()
     });
 
     describe("Sanitization and Security Hardening", () => {
-        it("rejects disguised Windows PE executable in text content", async () => {
-            const fakePePayload = "MZ\x90\x00\x03\x00\x00\x00Some hidden binary payload";
-            const result = await importFile("script.md", fakePePayload, "md");
+        it.each([
+            {
+                type: "Windows PE executable",
+                filename: "script.md",
+                ext: "md",
+                payload: "MZ\x90\x00\x03\x00\x00\x00Some hidden binary payload",
+                expectedError: "disguised binary detected (Windows Executable (PE))",
+            },
+            {
+                type: "Linux ELF executable",
+                filename: "notes.txt",
+                ext: "txt",
+                payload: "\x7fELF\x02\x01\x01\x00Some ELF binary code",
+                expectedError: "disguised binary detected (Linux Executable (ELF))",
+            },
+            {
+                type: "ZIP archive",
+                filename: "bundle.md",
+                ext: "md",
+                payload: "PK\x03\x04\x14\x00\x00\x00CompressedArchiveContent",
+                expectedError: "disguised binary detected (ZIP Archive)",
+            },
+        ])("rejects disguised $type in text content", async ({ filename, payload, ext, expectedError }) => {
+            const result = await importFile(filename, payload, ext as any);
             expect(result.success).toBe(false);
-            expect(result.error).toContain("disguised binary detected (Windows Executable (PE))");
-        });
-
-        it("rejects disguised Linux ELF executable in text content", async () => {
-            const fakeElfPayload = "\x7fELF\x02\x01\x01\x00Some ELF binary code";
-            const result = await importFile("notes.txt", fakeElfPayload, "txt");
-            expect(result.success).toBe(false);
-            expect(result.error).toContain("disguised binary detected (Linux Executable (ELF))");
-        });
-
-        it("rejects disguised ZIP archive in text content", async () => {
-            const fakeZipPayload = "PK\x03\x04\x14\x00\x00\x00CompressedArchiveContent";
-            const result = await importFile("bundle.md", fakeZipPayload, "md");
-            expect(result.success).toBe(false);
-            expect(result.error).toContain("disguised binary detected (ZIP Archive)");
+            expect(result.error).toContain(expectedError);
         });
 
         it("sanitizes filename to prevent directory traversal and strips illegal characters", async () => {

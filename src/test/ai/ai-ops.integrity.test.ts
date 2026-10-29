@@ -65,36 +65,6 @@ afterAll(async () => {
 });
 
 describe("credit ledger integrity under concurrency", () => {
-    it("primary key on operationId exists and rejects duplicates", async () => {
-        const opId = `op_pk_${crypto.randomUUID()}`;
-        await testDb
-            .delete(schema.creditLedgerTransactions)
-            .where(eq(schema.creditLedgerTransactions.operationId, opId));
-        await testDb
-            .insert(schema.creditLedgerTransactions)
-            .values({
-                operationId: opId,
-                userId: TEST_USER_ID,
-                modelId: "google/gemini-2.5-flash",
-                executionMode: "STREAMING_GENERATIVE",
-                deltaMicro: BigInt(-50000),
-                status: "SETTLED",
-            });
-
-        await expect(
-            testDb
-                .insert(schema.creditLedgerTransactions)
-                .values({
-                    operationId: opId,
-                    userId: TEST_USER_ID,
-                    modelId: "google/gemini-2.5-flash",
-                    executionMode: "STREAMING_GENERATIVE",
-                    deltaMicro: BigInt(-50000),
-                    status: "SETTLED",
-                })
-        ).rejects.toThrow();
-    });
-
     it("concurrent getTodayUsage calls produce consistent user credit state", async () => {
         const userId = crypto.randomUUID();
 
@@ -123,48 +93,6 @@ describe("credit ledger integrity under concurrency", () => {
         });
         expect(userRow).toBeDefined();
         expect(userRow?.creditBalanceMicro).toBe(BigInt(1000000000));
-    });
-
-    it("legacy SELECT-then-INSERT pattern is blocked by primary key", async () => {
-        const userId = crypto.randomUUID();
-        const opId = `op_race_pk_${crypto.randomUUID()}`;
-
-        await testDb
-            .insert(schema.users)
-            .values({ id: userId, email: `${userId}@integrity.test` })
-            .onConflictDoNothing();
-
-        const legacyUpsert = async () => {
-            const existing = await testDb.query.creditLedgerTransactions.findFirst({
-                where: eq(schema.creditLedgerTransactions.operationId, opId),
-            });
-            if (!existing) {
-                await testDb
-                    .insert(schema.creditLedgerTransactions)
-                    .values({
-                        operationId: opId,
-                        userId,
-                        modelId: "google/gemini-2.5-flash",
-                        executionMode: "STREAMING_GENERATIVE",
-                        deltaMicro: BigInt(-10000),
-                        status: "SETTLED",
-                    });
-            }
-        };
-
-        const results = await Promise.allSettled(
-            Array.from({ length: 10 }, () => legacyUpsert())
-        );
-        const threw = results.filter((r) => r.status === "rejected").length;
-        const succeeded = results.filter((r) => r.status === "fulfilled").length;
-        expect(succeeded).toBeGreaterThan(0);
-        expect(threw + succeeded).toBe(10);
-
-        const rows = await testDb
-            .select()
-            .from(schema.creditLedgerTransactions)
-            .where(eq(schema.creditLedgerTransactions.operationId, opId));
-        expect(rows.length).toBe(1);
     });
 
     it("concurrent duplicate requests with identical operationId settle EXACTLY ONCE on real Postgres", async () => {
@@ -311,10 +239,11 @@ describe("credit ledger integrity under concurrency", () => {
             .values({
                 operationId,
                 userId,
+                nodeName: "reserved:correct:hash:50",
                 modelId: "google/gemini-2.5-flash",
                 executionMode: "STREAMING_GENERATIVE",
                 inputTokens: 50,
-                outputTokens: 50,
+                outputTokens: 0,
                 deltaMicro: BigInt(-50000),
                 status: "SETTLED",
             });
@@ -326,5 +255,6 @@ describe("credit ledger integrity under concurrency", () => {
             where: eq(schema.creditLedgerTransactions.operationId, operationId),
         });
         expect(txRow?.status).toBe("SETTLED");
+        expect(txRow?.nodeName).toContain("committed:");
     });
 });

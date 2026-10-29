@@ -19,11 +19,6 @@ import { acquireCronLock } from "@/lib/cron/lock";
 
 const inMemoryRedisLocks = new Map<string, string>();
 
-vi.mock("@/server/services/ai-settlement-service", () => ({
-    flushPendingSettlementsToPostgres: vi.fn(),
-    expireStaleReservations: vi.fn(),
-}));
-
 vi.mock("@/lib/redis", () => ({
     isRedisConfigured: vi.fn(() => true),
     redis: {
@@ -84,7 +79,7 @@ describe("Cron Overlap & Distributed Lock Protection Suite (Phase 13)", () => {
     describe("/api/cron/expire-reservations concurrency", () => {
         it("should allow only one execution when two requests arrive simultaneously and safely skip the second", async () => {
             // Simulate a batch draining task that takes 50ms to finish
-            vi.mocked(aiSettlement.flushPendingSettlementsToPostgres).mockImplementation(
+            const spyFlush = vi.spyOn(aiSettlement, "flushPendingSettlementsToPostgres").mockImplementation(
                 () => new Promise((resolve) => setTimeout(() => resolve({ flushedCount: 2, netDeltaMicro: BigInt(-50000) }), 50))
             );
 
@@ -113,7 +108,8 @@ describe("Cron Overlap & Distributed Lock Protection Suite (Phase 13)", () => {
             expect(oneExecuted).toBe(true);
 
             // aiSettlement.flushPendingSettlementsToPostgres should be called exactly once (for the 1 dirty user in single execution)
-            expect(aiSettlement.flushPendingSettlementsToPostgres).toHaveBeenCalledTimes(1);
+            expect(spyFlush).toHaveBeenCalledTimes(1);
+            spyFlush.mockRestore();
         });
     });
 

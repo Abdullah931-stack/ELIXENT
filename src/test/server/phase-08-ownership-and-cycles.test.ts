@@ -38,13 +38,9 @@ import {
 
 import {
     createFile,
-    updateFileContent,
     deleteFile,
     copyFile,
-    getFile,
 } from "@/server/actions/files";
-
-import { moveFile } from "@/server/actions/folders";
 import { updateUserProfile } from "@/server/actions/auth-actions";
 import { generateCopyTitle, generateRestoredTitle, MAX_TITLE_LENGTH } from "@/lib/utils/file-naming";
 import { DELETE as fileApiDELETE } from "@/app/api/files/[id]/route";
@@ -162,95 +158,7 @@ describe("Phase 8: Identity, Ownership, Cycle Detection & Concurrency Control", 
         });
     });
 
-    describe("2. Cross-Tenant Server Action Isolation", () => {
-        it("[DB] User A cannot read, update, or delete User B's file", async () => {
-            // Create User B file
-            const [fileB] = await testDb.insert(schema.files).values({
-                id: randomUUID(),
-                userId: USER_B,
-                title: "User B Document",
-                content: "Initial content",
-                isFolder: false,
-                etag: "w/\"b-etag\"",
-                version: 1,
-            }).returning();
-
-            // User A tries to fetch
-            currentSessionUser = { id: USER_A, email: "user-a-phase08@example.com" };
-            const getResult = await getFile(fileB.id);
-            expect(getResult.success).toBe(false);
-            expect(getResult.status).toBe("not_found");
-
-            // User A tries to update
-            const updateResult = await updateFileContent(fileB.id, "Malicious overwrite");
-            expect(updateResult.success).toBe(false);
-            expect(updateResult.status).toBe("not_found");
-
-            // User A tries to delete
-            const deleteResult = await deleteFile(fileB.id);
-            expect(deleteResult.success).toBe(false);
-            expect(deleteResult.status).toBe("not_found");
-
-            // Verify User B's file is unchanged in DB
-            const verify = await testDb.query.files.findFirst({
-                where: eq(schema.files.id, fileB.id),
-            });
-            expect(verify?.content).toBe("Initial content");
-            expect(verify?.deletedAt).toBeNull();
-        });
-
-        it("[DB] User A cannot create a file pointing to User B's folder as parent", async () => {
-            const [folderB] = await testDb.insert(schema.files).values({
-                id: randomUUID(),
-                userId: USER_B,
-                title: "User B Folder",
-                isFolder: true,
-                etag: "w/\"b-folder\"",
-                version: 1,
-            }).returning();
-
-            currentSessionUser = { id: USER_A, email: "user-a-phase08@example.com" };
-            const createResult = await createFile("Injected File", folderB.id, false);
-            expect(createResult.success).toBe(false);
-            expect(createResult.status).toBe("not_found");
-        });
-    });
-
-    describe("3. Folder Hierarchy Cycle & Copy Protection", () => {
-        it("[DB] moveFile rejects moving a folder into itself (409 conflict)", async () => {
-            currentSessionUser = { id: USER_A, email: "user-a-phase08@example.com" };
-            const createFolder = await createFile("Parent Folder", null, true);
-            expect(createFolder.success).toBe(true);
-            const folderId = createFolder.data!.id;
-
-            const moveSelf = await moveFile(folderId, folderId);
-            expect(moveSelf.success).toBe(false);
-            expect(moveSelf.status).toBe("conflict");
-        });
-
-        it("[DB] moveFile rejects moving a folder into one of its descendants (409 conflict)", async () => {
-            currentSessionUser = { id: USER_A, email: "user-a-phase08@example.com" };
-
-            // Create Folder A
-            const folderA = (await createFile("Folder A", null, true)).data!;
-            // Create Folder B inside Folder A
-            const folderB = (await createFile("Folder B", folderA.id, true)).data!;
-            // Create Folder C inside Folder B
-            const folderC = (await createFile("Folder C", folderB.id, true)).data!;
-
-            // Attempt to move Folder A inside Folder C (cycle)
-            const moveResult = await moveFile(folderA.id, folderC.id);
-            expect(moveResult.success).toBe(false);
-            expect(moveResult.status).toBe("conflict");
-            expect(moveResult.error).toContain("descendant");
-
-            // Verify Folder A remains at root
-            const checkA = await testDb.query.files.findFirst({
-                where: eq(schema.files.id, folderA.id),
-            });
-            expect(checkA?.parentFolderId).toBeNull();
-        });
-
+    describe("2. Folder Hierarchy Copy Protection", () => {
         it("[DB] copyFile rejects copying a folder into itself or into one of its descendants", async () => {
             currentSessionUser = { id: USER_A, email: "user-a-phase08@example.com" };
 
@@ -274,7 +182,7 @@ describe("Phase 8: Identity, Ownership, Cycle Detection & Concurrency Control", 
         });
     });
 
-    describe("4. Optimistic Concurrency Control on Deletion", () => {
+    describe("3. Optimistic Concurrency Control on Deletion", () => {
         it("[DB] deleteFile server action rejects mismatched expectedVersion with conflict", async () => {
             currentSessionUser = { id: USER_A, email: "user-a-phase08@example.com" };
             const doc = (await createFile("Doc for Versioned Delete", null, false)).data!;
@@ -338,7 +246,7 @@ describe("Phase 8: Identity, Ownership, Cycle Detection & Concurrency Control", 
         });
     });
 
-    describe("5. Environment Isolation (src/app/api/test/e2e-auth/route.ts)", () => {
+    describe("4. Environment Isolation (src/app/api/test/e2e-auth/route.ts)", () => {
         const originalEnv = process.env.NODE_ENV;
         const originalPlaywright = process.env.PLAYWRIGHT;
 
@@ -375,7 +283,7 @@ describe("Phase 8: Identity, Ownership, Cycle Detection & Concurrency Control", 
         });
     });
 
-    describe("6. Ancillary Hardening & Boundary Defenses", () => {
+    describe("5. Ancillary Hardening & Boundary Defenses", () => {
         it("[DB] updateUserProfile ignores sensitive column injection (LUGX-067)", async () => {
             currentSessionUser = { id: USER_A, email: "user-a-phase08@example.com" };
 

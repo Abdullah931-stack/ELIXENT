@@ -11,18 +11,36 @@
  * gap produces rowCount 0 and the caller receives an explicit 412
  * conflict instead of silent data loss.
  *
- * The algorithm is exercised against the real schema with SQL statements
- * identical in shape to those in the route.
+ * Real invocation of the production PUT route handler exercising the F1 guard.
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { eq, and, isNull } from "drizzle-orm";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+import { eq, and } from "drizzle-orm";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { randomUUID } from "crypto";
+import { PUT } from "@/app/api/files/[id]/route";
+import { NextRequest } from "next/server";
 
 const TEST_USER_ID = "77777777-7777-7777-7777-777777777777";
 let dbAvailable = false;
+
+vi.mock("@/lib/supabase/server", () => ({
+    getUser: vi.fn(async () => ({ id: TEST_USER_ID, email: `putguard-${TEST_USER_ID}@example.com` })),
+    createClient: vi.fn(async () => ({
+        auth: {
+            getUser: vi.fn(async () => ({ data: { user: { id: TEST_USER_ID, email: `putguard-${TEST_USER_ID}@example.com` } }, error: null })),
+        },
+    })),
+}));
+
+vi.mock("@/server/db", async () => {
+    const original = await vi.importActual<typeof import("@/server/db")>("@/server/db");
+    return {
+        ...original,
+        db: testDb,
+    };
+});
 
 beforeAll(async () => {
     dbAvailable = await isTestDbAvailable();
@@ -43,6 +61,7 @@ beforeEach(async (ctx) => {
         ctx.skip();
         return;
     }
+    try { await testDb.delete(schema.files).where(eq(schema.files.userId, TEST_USER_ID)); } catch { /* ignore */ }
     await testDb
         .insert(schema.users)
         .values({ id: TEST_USER_ID, email: `putguard-${TEST_USER_ID}@example.com` })
@@ -57,49 +76,40 @@ afterAll(async () => {
 });
 
 /**
- * Faithful in-process reproduction of the PUT /api/files/[id] update
- * algorithm after the F1 guard: read version → UPDATE conditioned on that
- * exact version → affected rows decide success vs conflict.
+ * Invokes the real production PUT route handler with optimistic concurrency controls.
  */
 async function routePutUpdate(fileId: string, newContent: string, opts: { version?: number } = {}) {
-    const current = await testDb.query.files.findFirst({
-        where: and(
-            eq(schema.files.id, fileId),
-            eq(schema.files.userId, TEST_USER_ID),
-            isNull(schema.files.deletedAt)
-        ),
-    });
-    if (!current) return { success: false, error: "not-found" as const, affected: 0 };
-
-    // The production route always uses the freshly-read version, but the
-    // contract under test is "UPDATE succeeds only against the version the
-    // writer held" — accept an injected held version so races and stale
-    // snapshots can be reproduced deterministically (opts.version is the
-    // writer's stale snapshot; when absent the writer holds the freshest).
-    const currentVersion = opts.version ?? (current.version ?? 0);
-    const newVersion = currentVersion + 1;
-    const now = new Date();
-
-    const [updated] = await testDb
-        .update(schema.files)
-        .set({ content: newContent, version: newVersion, updatedAt: now })
-        .where(and(
-            eq(schema.files.id, fileId),
-            eq(schema.files.userId, TEST_USER_ID),
-            eq(schema.files.version, currentVersion)
-        ))
-        .returning();
-
-    if (!updated) {
-        // Zero rows: file vanished (404) or another session moved the
-        // version inside the read-write window (412 conflict).
-        const refreshed = await testDb.query.files.findFirst({
+    let expectedVersion = opts.version;
+    if (expectedVersion === undefined) {
+        const current = await testDb.query.files.findFirst({
             where: and(eq(schema.files.id, fileId), eq(schema.files.userId, TEST_USER_ID)),
+            columns: { version: true },
         });
-        if (!refreshed) return { success: false, error: "not-found" as const, affected: 0 };
+        if (!current) return { success: false, error: "not-found" as const, affected: 0 };
+        expectedVersion = current.version ?? 0;
+    }
+
+    const req = new NextRequest(`http://localhost/api/files/${fileId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            content: newContent,
+            expectedVersion,
+        }),
+    });
+
+    const res = await PUT(req, { params: Promise.resolve({ id: fileId }) });
+    if (res.status === 200) {
+        const data = await res.json();
+        return { success: true, version: data.version, affected: 1 };
+    }
+    if (res.status === 412) {
         return { success: false, error: "conflict" as const, affected: 0 };
     }
-    return { success: true, version: newVersion, affected: 1 };
+    if (res.status === 404) {
+        return { success: false, error: "not-found" as const, affected: 0 };
+    }
+    return { success: false, error: "error" as const, affected: 0 };
 }
 
 describe("PUT /api/files/[id] version guard (F1)", () => {

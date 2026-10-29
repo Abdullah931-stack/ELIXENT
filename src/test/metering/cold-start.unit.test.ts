@@ -143,62 +143,38 @@ describe("Cold-Start Wallet Preloading & Flush-First Policy (cold-start.ts)", ()
   });
 
   describe("Warm Wallet Hits (Cache Hit Path)", () => {
-    it("should return confirmed balance directly from warm Redis cache without querying DB or flushing", async () => {
+    it.each([
+      { name: "confirmed balance", cachedValue: "7500000", expected: BigInt(7500000) },
+      { name: "zero cached balance", cachedValue: "0", expected: BigInt(0) },
+      { name: "high-precision 64-bit micro-credit balances", cachedValue: "9007199254740993000", expected: BigInt("9007199254740993000") },
+    ])("should return balance directly from warm Redis cache ($name)", async ({ cachedValue, expected }) => {
       const client = new MockRedisClient();
-      client.store.set(walletKey, "7500000");
+      client.store.set(walletKey, cachedValue);
 
       const balance = await ensureWalletLoadedFlushFirst(userId, client as any);
 
-      expect(balance).toBe(BigInt(7500000));
+      expect(balance).toBe(expected);
       expect(mockFlushPendingSettlementsToPostgres).not.toHaveBeenCalled();
       expect(mockGetUserCreditBalance).not.toHaveBeenCalled();
-    });
-
-    it("should handle zero cached balance correctly", async () => {
-      const client = new MockRedisClient();
-      client.store.set(walletKey, "0");
-
-      const balance = await ensureWalletLoadedFlushFirst(userId, client as any);
-
-      expect(balance).toBe(BigInt(0));
-      expect(mockGetUserCreditBalance).not.toHaveBeenCalled();
-    });
-
-    it("should handle high-precision 64-bit micro-credit balances accurately", async () => {
-      const client = new MockRedisClient();
-      const largeBal = "9007199254740993000"; // Exceeds JS Number.MAX_SAFE_INTEGER
-      client.store.set(walletKey, largeBal);
-
-      const balance = await ensureWalletLoadedFlushFirst(userId, client as any);
-
-      expect(balance).toBe(BigInt(largeBal));
     });
   });
 
   describe("Cold Start Without Pending Settlements", () => {
-    it("should query database balance, populate Redis with SETNX and 24h TTL, and return confirmed balance", async () => {
+    it.each([
+      { name: "confirmed database balance", dbBalance: BigInt(4200000), expectedStr: "4200000" },
+      { name: "new user with zero balance in database", dbBalance: BigInt(0), expectedStr: "0" },
+    ])("should query database balance, populate Redis with SETNX and 24h TTL ($name)", async ({ dbBalance, expectedStr }) => {
       const client = new MockRedisClient();
-      mockGetUserCreditBalance.mockResolvedValue(BigInt(4200000));
+      mockGetUserCreditBalance.mockResolvedValue(dbBalance);
 
       const balance = await ensureWalletLoadedFlushFirst(userId, client as any);
 
-      expect(balance).toBe(BigInt(4200000));
+      expect(balance).toBe(dbBalance);
       expect(mockFlushPendingSettlementsToPostgres).not.toHaveBeenCalled();
       expect(mockGetUserCreditBalance).toHaveBeenCalledWith(userId);
 
       // Verify Redis state populated
-      expect(client.store.get(walletKey)).toBe("4200000");
-      expect(client.ttls.get(walletKey)).toBe(WALLET_TTL_SECONDS);
-    });
-
-    it("should handle new user with zero balance in database", async () => {
-      const client = new MockRedisClient();
-      mockGetUserCreditBalance.mockResolvedValue(BigInt(0));
-
-      const balance = await ensureWalletLoadedFlushFirst(userId, client as any);
-
-      expect(balance).toBe(BigInt(0));
-      expect(client.store.get(walletKey)).toBe("0");
+      expect(client.store.get(walletKey)).toBe(expectedStr);
       expect(client.ttls.get(walletKey)).toBe(WALLET_TTL_SECONDS);
     });
   });

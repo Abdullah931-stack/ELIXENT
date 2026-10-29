@@ -32,12 +32,14 @@ import {
  * In-memory simulation of Redis client and atomic Lua script evaluations.
  * Provides high-fidelity state mutation and key isolation for unit testing.
  */
-class InMemoryRedisEvalClient implements RedisEvalClient {
+export class InMemoryRedisEvalClient implements RedisEvalClient {
   public wallets = new Map<string, number>();
-  public leases = new Map<string, Record<string, string | number>>();
+  public leases = new Map<string, Record<string, any>>();
   public stepDone = new Map<string, string>();
   public pendingSettlements = new Map<string, Map<string, string>>();
   public dirtyWallets = new Set<string>();
+  public ttls = new Map<string, number>();
+  public evalDelayMs: number = 0;
 
   public setWallet(userId: string, balanceMicro: number): void {
     this.wallets.set(REDIS_KEYS.wallet(userId), balanceMicro);
@@ -51,11 +53,61 @@ class InMemoryRedisEvalClient implements RedisEvalClient {
     this.stepDone.set(REDIS_KEYS.stepDone(stepKey), payload);
   }
 
+  // Direct Redis methods
+  public async exists(key: string): Promise<number> {
+    return this.wallets.has(key) ? 1 : 0;
+  }
+
+  public async get(key: string): Promise<string | number | null> {
+    return this.wallets.has(key) ? this.wallets.get(key)! : null;
+  }
+
+  public async set(
+    key: string,
+    value: string | number,
+    options?: { nx?: boolean; ex?: number }
+  ): Promise<string | null> {
+    if (options?.nx && this.wallets.has(key)) {
+      return null;
+    }
+    this.wallets.set(key, Number(value));
+    if (options?.ex) {
+      this.ttls.set(key, options.ex);
+    }
+    return "OK";
+  }
+
+  public async setnx(key: string, value: string | number): Promise<number> {
+    if (this.wallets.has(key)) return 0;
+    this.wallets.set(key, Number(value));
+    return 1;
+  }
+
+  public async expire(key: string, seconds: number): Promise<number> {
+    this.ttls.set(key, seconds);
+    return 1;
+  }
+
+  public async hlen(key: string): Promise<number> {
+    const map = this.pendingSettlements.get(key);
+    return map ? map.size : 0;
+  }
+
+  public async hgetall(key: string): Promise<Record<string, string>> {
+    const map = this.pendingSettlements.get(key);
+    if (!map) return {};
+    return Object.fromEntries(map.entries());
+  }
+
   public async eval<T = unknown>(
     script: string,
     keys: string[],
     args: (string | number)[]
   ): Promise<T> {
+    if (this.evalDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.evalDelayMs));
+    }
+
     if (script === RESERVE_OR_EXTEND_LUA) {
       const [walletKey, leaseKey, stepDoneKey] = keys;
       const [
@@ -195,6 +247,7 @@ class InMemoryRedisEvalClient implements RedisEvalClient {
         const cur = this.wallets.get(walletKey)!;
         const newBal = cur + Number(topupStr);
         this.wallets.set(walletKey, newBal);
+        this.ttls.set(walletKey, 86400);
         return JSON.stringify({
           applied: true,
           newBalanceMicro: newBal,
@@ -212,6 +265,42 @@ class InMemoryRedisEvalClient implements RedisEvalClient {
 }
 
 describe("Mathematical Derivations & Tokenizer Unit Tests", () => {
+  describe("Model Registry Specifications", () => {
+    it("retrieves valid model specifications including velocity, context, and pricing rates", () => {
+      const decisionModel = getModelRegistryEntry("microsoft/decision-1");
+      expect(decisionModel.modelId).toBe("microsoft/decision-1");
+      expect(decisionModel.executionMode).toBe("SINGLE_PASS_DECISION");
+      expect(decisionModel.V).toBe(0);
+      expect(decisionModel.creditsPer1kInput).toBe(0.10);
+      expect(decisionModel.creditsPer1kOutput).toBe(0);
+
+      const jev = getModelRegistryEntry("typesafe/jev-1.13");
+      expect(jev.modelId).toBe("typesafe/jev-1.13");
+      expect(jev.executionMode).toBe("SINGLE_PASS_DECISION");
+      expect(jev.V).toBe(0);
+      expect(jev.creditsPer1kInput).toBe(0.15);
+      expect(jev.creditsPer1kOutput).toBe(0);
+
+      const flash = getModelRegistryEntry("google/gemini-3.8-flash");
+      expect(flash.modelId).toBe("google/gemini-3.8-flash");
+      expect(flash.executionMode).toBe("STREAMING_GENERATIVE");
+      expect(flash.V).toBe(120);
+      expect(flash.creditsPer1kInput).toBe(0.15);
+      expect(flash.creditsPer1kOutput).toBe(0.60);
+
+      const glide = getModelRegistryEntry("fastino/glide");
+      expect(glide.modelId).toBe("fastino/glide");
+      expect(glide.executionMode).toBe("DISCRETE_THINKING");
+      expect(glide.V).toBe(85);
+      expect(glide.creditsPer1kInput).toBe(0.25);
+      expect(glide.creditsPer1kOutput).toBe(0.80);
+
+      expect(() => getModelRegistryEntry("non-existent-model")).toThrow(
+        /not found in model registry/
+      );
+    });
+  });
+
   describe("tokensToMicroCredits", () => {
     it("converts tokens and rates accurately to micro-credits", () => {
       // 1000 tokens at 1.0 credits per 1k = 1,000,000 micro-credits (1 credit)

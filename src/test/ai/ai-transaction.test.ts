@@ -17,11 +17,23 @@
  *      is executed ONLY after server commit confirms success.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { history } from "@codemirror/commands";
 import { CodeMirrorEditorAdapter } from "@/components/editor/markdown/editor-adapter";
 import { codeMirrorStreamingGhostField } from "@/components/editor/markdown/streaming-ghost";
+import { useAIStream } from "@/hooks/use-ai-stream";
+
+const mockCommitAIFileOperation = vi.fn();
+vi.mock("@/server/actions/ai-commit", () => ({
+    commitAIFileOperation: (...args: unknown[]) => mockCommitAIFileOperation(...args),
+}));
+
+const mockConsumeAIStream = vi.fn();
+vi.mock("@/lib/ai/stream-handler", () => ({
+    consumeAIStream: (...args: unknown[]) => mockConsumeAIStream(...args),
+}));
 
 const initialDoc = "Hello world, this is a test document with multiple paragraphs.\n\nSecond paragraph here.";
 
@@ -185,25 +197,103 @@ describe("Ephemeral Streaming Ghost Extension — Invariant Guarantees (CodeMirr
     it("does not apply local editor transaction if server commit fails (Server-First Invariant)", async () => {
         const before = adapter.getValue();
 
-        adapter.startStreamingGhost({
-            from: 0,
-            to: 10,
-            text: "Generated text awaiting commit",
+        mockConsumeAIStream.mockImplementationOnce(async (options: {
+            onMeta?: (meta: { sessionId: string; operationId: string }) => void;
+            onChunk?: (acc: string, chunk: string) => void;
+            onComplete?: (text: string) => Promise<void> | void;
+        }) => {
+            options.onMeta?.({ sessionId: "test-session-fail", operationId: "test-op-fail" });
+            options.onChunk?.("Generated text awaiting commit", " text");
+            await options.onComplete?.("Generated text awaiting commit");
         });
 
-        // Mock commit failure
-        const fakeServerCommit = vi.fn().mockResolvedValue({
+        mockCommitAIFileOperation.mockResolvedValueOnce({
             success: false,
             status: "error",
             error: "Commit rejected by DB",
         });
 
-        const res = await fakeServerCommit();
-        if (!res.success) {
-            // Local transaction aborted
-            adapter.clearStreamingGhost();
-        }
+        const { result } = renderHook(() =>
+            useAIStream({
+                onProgrammaticTransaction: (fn) => fn(),
+            })
+        );
 
+        adapter.setSelection(0, 10);
+
+        await act(async () => {
+            await result.current.startStream({
+                editor: adapter,
+                operation: "improve",
+                fileId: "file-test-fail-1",
+                expectedVersion: 1,
+                originalEtag: "etag-v1",
+                editorGeneration: 1,
+            });
+        });
+
+        await waitFor(() => expect(result.current.status).toBe("preview_ready"));
+        expect(view.state.field(codeMirrorStreamingGhostField).active).toBe(true);
+
+        await act(async () => {
+            await result.current.commitPreview();
+        });
+
+        // Verification: ghost preview cleared and pristine editor content retained
+        expect(view.state.field(codeMirrorStreamingGhostField).active).toBe(false);
         expect(adapter.getValue()).toBe(before);
+        expect(result.current.status).toBe("failed");
+        expect(result.current.error).toContain("Commit rejected by DB");
+    });
+
+    it("clears ghost preview and leaves document pristine when server commit returns conflict (412 Precondition Failed)", async () => {
+        const before = adapter.getValue();
+
+        mockConsumeAIStream.mockImplementationOnce(async (options: {
+            onMeta?: (meta: { sessionId: string; operationId: string }) => void;
+            onChunk?: (acc: string, chunk: string) => void;
+            onComplete?: (text: string) => Promise<void> | void;
+        }) => {
+            options.onMeta?.({ sessionId: "test-session-conflict", operationId: "test-op-conflict" });
+            options.onChunk?.("Conflicting generated text", " text");
+            await options.onComplete?.("Conflicting generated text");
+        });
+
+        mockCommitAIFileOperation.mockResolvedValueOnce({
+            success: false,
+            status: "conflict",
+            error: "Document version mismatch (412 Conflict)",
+            serverVersion: { version: 2, etag: "etag-v2" },
+        });
+
+        const { result } = renderHook(() =>
+            useAIStream({
+                onProgrammaticTransaction: (fn) => fn(),
+            })
+        );
+
+        adapter.setSelection(0, 10);
+
+        await act(async () => {
+            await result.current.startStream({
+                editor: adapter,
+                operation: "improve",
+                fileId: "file-test-conflict-1",
+                expectedVersion: 1,
+                originalEtag: "etag-v1",
+                editorGeneration: 1,
+            });
+        });
+
+        await waitFor(() => expect(result.current.status).toBe("preview_ready"));
+        expect(view.state.field(codeMirrorStreamingGhostField).active).toBe(true);
+
+        await act(async () => {
+            await result.current.commitPreview();
+        });
+
+        expect(view.state.field(codeMirrorStreamingGhostField).active).toBe(false);
+        expect(adapter.getValue()).toBe(before);
+        expect(result.current.status).toBe("conflict");
     });
 });

@@ -42,50 +42,46 @@ const mockDb = vi.hoisted(() => {
     query: {
       users: {
         findFirst: vi.fn(async (params: any) => {
-          const userId = params?.where?.__userId ?? params?.where?.value;
-          return usersTable.get(userId) ?? null;
+          const userId = params?.where?.value;
+          return (userId ? usersTable.get(userId) : null) ?? null;
         }),
       },
       creditLedgerTransactions: {
         findFirst: vi.fn(async (params: any) => {
-          const opId = params?.where?.__opId ?? params?.where?.value;
-          return ledgerTable.get(opId) ?? null;
+          const opId = params?.where?.value;
+          return (opId ? ledgerTable.get(opId) : null) ?? null;
         }),
-        findMany: vi.fn(async () => {
-          return Array.from(ledgerTable.values());
-        }),
+        findMany: vi.fn(async () => Array.from(ledgerTable.values())),
       },
     },
     insert: vi.fn((_table: any) => ({
       values: vi.fn((rows: any) => {
         const rowsArray = Array.isArray(rows) ? rows : [rows];
-        const insertedRows: MockLedgerTx[] = [];
         return {
           onConflictDoNothing: vi.fn((_opts?: any) => ({
             returning: vi.fn(async () => {
+              const inserted: any[] = [];
               for (const row of rowsArray) {
                 if (!ledgerTable.has(row.operationId)) {
-                  const record: MockLedgerTx = {
+                  const record = {
                     ...row,
                     createdAt: row.createdAt instanceof Date ? row.createdAt : new Date(),
                   };
                   ledgerTable.set(row.operationId, record);
-                  insertedRows.push(record);
+                  inserted.push(record);
                 }
               }
-              return insertedRows;
+              return inserted;
             }),
           })),
           returning: vi.fn(async () => {
             for (const row of rowsArray) {
-              const record: MockLedgerTx = {
+              ledgerTable.set(row.operationId, {
                 ...row,
                 createdAt: row.createdAt instanceof Date ? row.createdAt : new Date(),
-              };
-              ledgerTable.set(row.operationId, record);
-              insertedRows.push(record);
+              });
             }
-            return insertedRows;
+            return rowsArray;
           }),
         };
       }),
@@ -93,55 +89,50 @@ const mockDb = vi.hoisted(() => {
     update: vi.fn((_table: any) => ({
       set: vi.fn((updates: any) => ({
         where: vi.fn((condition: any) => {
-          const findUserId = (cond: any): string | undefined => {
+          const findId = (cond: any): string | undefined => {
             if (!cond) return undefined;
-            if (cond.__userId) return cond.__userId;
-            if (cond.__and && Array.isArray(cond.conditions)) {
+            if (cond.value) return cond.value;
+            if (cond.conditions) {
               for (const c of cond.conditions) {
-                const found = findUserId(c);
+                const found = findId(c);
                 if (found) return found;
               }
             }
-            return cond.value;
+            return undefined;
           };
 
           return {
             returning: vi.fn(async () => {
-              const userId = findUserId(condition);
-              const user = userId ? usersTable.get(userId) : undefined;
+              const targetUserId = findId(condition);
+              const user = targetUserId ? usersTable.get(targetUserId) : undefined;
               if (!user) return [];
 
-              if (typeof updates.creditBalanceMicro === "bigint" || typeof updates.creditBalanceMicro === "number") {
-                user.creditBalanceMicro = updates.creditBalanceMicro;
-              } else if (updates.creditBalanceMicro?.__delta !== undefined) {
+              if (updates?.creditBalanceMicro?.__delta !== undefined) {
                 const current = BigInt(user.creditBalanceMicro ?? 0);
                 const delta = BigInt(updates.creditBalanceMicro.__delta);
-                // When deducting, __delta is negative so check against -__delta
                 const required = -delta;
                 if (updates.creditBalanceMicro.__checkGte && current < required) {
                   return [];
                 }
                 user.creditBalanceMicro = current + delta;
+              } else if (typeof updates?.creditBalanceMicro === "bigint" || typeof updates?.creditBalanceMicro === "number") {
+                user.creditBalanceMicro = BigInt(updates.creditBalanceMicro);
               }
               user.updatedAt = new Date();
               return [{ id: user.id }];
             }),
             then: async (resolve: (val: any) => void) => {
-              // Direct update without returning
-              const opId = condition?.__opId ?? condition?.value;
-              const tx = opId ? ledgerTable.get(opId) : undefined;
+              const targetId = findId(condition);
+              const tx = targetId ? ledgerTable.get(targetId) : undefined;
               if (tx) {
                 if (updates.status) tx.status = updates.status;
                 if (updates.nodeName) tx.nodeName = updates.nodeName;
                 if (updates.outputTokens !== undefined) tx.outputTokens = updates.outputTokens;
               }
-
-              const userId = findUserId(condition);
-              const user = userId ? usersTable.get(userId) : undefined;
-              if (user && updates.creditBalanceMicro?.__delta !== undefined) {
+              const user = targetId ? usersTable.get(targetId) : undefined;
+              if (user && updates?.creditBalanceMicro?.__delta !== undefined) {
                 const current = BigInt(user.creditBalanceMicro ?? 0);
-                const delta = BigInt(updates.creditBalanceMicro.__delta);
-                user.creditBalanceMicro = current + delta;
+                user.creditBalanceMicro = current + updates.creditBalanceMicro.__delta;
                 user.updatedAt = new Date();
               }
               resolve({ rowCount: 1 });
@@ -150,9 +141,7 @@ const mockDb = vi.hoisted(() => {
         }),
       })),
     })),
-    transaction: vi.fn(async (cb: (tx: any) => Promise<any>) => {
-      return await cb(mockDb);
-    }),
+    transaction: vi.fn(async (cb: (tx: any) => Promise<any>) => cb(mockDb)),
   };
 });
 
@@ -165,18 +154,16 @@ vi.mock("@/server/db/transactional", () => ({
 }));
 
 vi.mock("drizzle-orm", () => ({
-  eq: vi.fn((col: any, val: any) => ({ col, value: val, __userId: val, __opId: val })),
-  and: vi.fn((...conditions: any[]) => ({ conditions, __and: true })),
+  eq: vi.fn((_col: any, val: any) => ({ value: val })),
+  and: vi.fn((...conditions: any[]) => ({ conditions })),
   sql: Object.assign(
     (strings: TemplateStringsArray, ...values: any[]) => {
-      // Analyze sql tagged template expressions like sql`${users.creditBalanceMicro} + ${delta}`
+      const num = values.find((v) => typeof v === "bigint" || typeof v === "number");
       if (strings[0]?.includes("-") || strings[1]?.includes("-")) {
-        const delta = values.find((v) => typeof v === "bigint" || typeof v === "number");
-        return { __delta: -BigInt(delta ?? 0), __checkGte: true };
+        return { __delta: -BigInt(num ?? 0), __checkGte: true, __required: BigInt(num ?? 0) };
       }
       if (strings[0]?.includes("+") || strings[1]?.includes("+")) {
-        const delta = values.find((v) => typeof v === "bigint" || typeof v === "number");
-        return { __delta: BigInt(delta ?? 0) };
+        return { __delta: BigInt(num ?? 0) };
       }
       return { raw: strings.join("?"), values };
     },

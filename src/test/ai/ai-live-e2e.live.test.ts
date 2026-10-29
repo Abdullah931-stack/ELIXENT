@@ -30,7 +30,6 @@ describe("AI Live Integration & Key Rotation", () => {
 
         expect(chunks).toBeGreaterThan(0);
         expect(fullOutput.trim().length).toBeGreaterThan(0);
-        console.log(`[E2E Stream Output] ${fullOutput.trim()}`);
     });
 
     it("should successfully process text with improve operation", async () => {
@@ -42,7 +41,6 @@ describe("AI Live Integration & Key Rotation", () => {
 
         expect(typeof result).toBe("string");
         expect(result.trim().length).toBeGreaterThan(0);
-        console.log(`[E2E Improve Output] ${result.trim()}`);
     });
 
     it("should inspect live rotation status in Upstash Redis", async () => {
@@ -50,6 +48,5 @@ describe("AI Live Integration & Key Rotation", () => {
         expect(status).toBeDefined();
         expect(typeof status.currentKeyIndex).toBe("number");
         expect(status.totalKeys).toBeGreaterThanOrEqual(1);
-        console.log(`[E2E Rotation Status]`, status);
     });
 });

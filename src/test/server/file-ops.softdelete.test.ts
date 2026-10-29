@@ -23,16 +23,39 @@
  * algorithm is exercised directly against the real schema via the
  * pg-backed test client. The SQL shapes are identical to production.
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { eq, and, inArray, isNull, isNotNull, sql } from "drizzle-orm";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { getDescendantIds } from "@/server/actions/folders";
+import { deleteFile, restoreFile } from "@/server/actions/file-ops";
 import { randomUUID } from "crypto";
 
 const TEST_USER_ID = "22222222-2222-2222-2222-222222222222";
 let dbAvailable = false;
+
+let currentSessionUser: { id: string; email: string } | null = {
+    id: TEST_USER_ID,
+    email: "softdelete-test@example.com",
+};
+
+vi.mock("@/lib/supabase/server", () => ({
+    getUser: vi.fn(async () => currentSessionUser),
+    createClient: vi.fn(async () => ({
+        auth: {
+            getUser: vi.fn(async () => ({ data: { user: currentSessionUser }, error: null })),
+        },
+    })),
+}));
+
+vi.mock("@/server/db", async () => {
+    const original = await vi.importActual<typeof import("@/server/db")>("@/server/db");
+    return {
+        ...original,
+        db: testDb,
+    };
+});
 
 const fileOf = (title: string, parent: string | null = null) => ({
     id: randomUUID(),
@@ -76,7 +99,9 @@ beforeAll(async () => {
 beforeEach((ctx) => {
     if (!dbAvailable) {
         ctx.skip();
+        return;
     }
+    currentSessionUser = { id: TEST_USER_ID, email: "softdelete-test@example.com" };
 });
 
 afterAll(async () => {
@@ -98,11 +123,9 @@ describe("soft delete lifecycle", () => {
         });
         expect(live?.deletedAt).toBeNull();
 
-        // Tombstone (production deleteFile does exactly this UPDATE)
-        await testDb
-            .update(schema.files)
-            .set({ deletedAt: new Date(), updatedAt: new Date() })
-            .where(and(eq(schema.files.id, file.id), eq(schema.files.userId, TEST_USER_ID)));
+        // Tombstone via production deleteFile server action
+        const delResult = await deleteFile(file.id);
+        expect(delResult.success).toBe(true);
 
         // Live read (all four production read queries) no longer sees it
         const queries = [
@@ -160,16 +183,12 @@ describe("soft delete lifecycle", () => {
     it("restoreFile clears the tombstone and the file reappears in reads", async () => {
         const file = fileOf("to-be-restored.md");
         await testDb.insert(schema.files).values(file);
-        await testDb
-            .update(schema.files)
-            .set({ deletedAt: new Date(), updatedAt: new Date() })
-            .where(eq(schema.files.id, file.id));
+        const delRes = await deleteFile(file.id);
+        expect(delRes.success).toBe(true);
 
-        // restoreFile: clear deleted_at
-        await testDb
-            .update(schema.files)
-            .set({ deletedAt: null, updatedAt: new Date() })
-            .where(and(eq(schema.files.id, file.id), eq(schema.files.userId, TEST_USER_ID)));
+        // restoreFile server action: clear deleted_at
+        const restoreRes = await restoreFile(file.id);
+        expect(restoreRes.success).toBe(true);
 
         const restored = await testDb.query.files.findFirst({
             where: and(
@@ -185,19 +204,16 @@ describe("soft delete lifecycle", () => {
         const gone = fileOf("gone-forever.md");
         await testDb.insert(schema.files).values({ ...gone, id: goneId, deletedAt: new Date() });
         await testDb.delete(schema.files).where(eq(schema.files.id, goneId));
-        const lookup = await testDb.query.files.findFirst({
-            where: and(eq(schema.files.id, goneId), eq(schema.files.userId, TEST_USER_ID)),
-        });
-        expect(lookup).toBeUndefined();
+        const goneRes = await restoreFile(goneId);
+        expect(goneRes.success).toBe(false);
+        expect(goneRes.status).toBe("not_found");
     });
 
     it("live writes reject tombstoned rows (updateContent / rename / move)", async () => {
         const file = fileOf("frozen-while-deleted.md");
         await testDb.insert(schema.files).values(file);
-        await testDb
-            .update(schema.files)
-            .set({ deletedAt: new Date(), updatedAt: new Date() })
-            .where(eq(schema.files.id, file.id));
+        const delRes = await deleteFile(file.id);
+        expect(delRes.success).toBe(true);
 
         const whereLive = and(
             eq(schema.files.id, file.id),
@@ -231,10 +247,8 @@ describe("soft delete lifecycle", () => {
         // Tombstone a row whose name will be reused
         const old = fileOf("same-name.md");
         await testDb.insert(schema.files).values(old);
-        await testDb
-            .update(schema.files)
-            .set({ deletedAt: new Date() })
-            .where(eq(schema.files.id, old.id));
+        const delRes = await deleteFile(old.id);
+        expect(delRes.success).toBe(true);
 
         // Live row with the same name in the same folder
         const fresh = fileOf("same-name.md");
@@ -259,13 +273,11 @@ describe("soft delete lifecycle", () => {
 
         await testDb.insert(schema.files).values([rootFolder, subFolder, childDoc1, childDoc2]);
 
-        // Soft-delete parent folder and all descendants (simulating folder delete cascade)
-        const deletedAt = new Date();
+        // Soft-delete parent folder and all descendants via production deleteFile server action
+        const delResult = await deleteFile(rootFolder.id);
+        expect(delResult.success).toBe(true);
+
         const allIds = [rootFolder.id, subFolder.id, childDoc1.id, childDoc2.id];
-        await testDb
-            .update(schema.files)
-            .set({ deletedAt, updatedAt: deletedAt })
-            .where(and(eq(schema.files.userId, TEST_USER_ID), inArray(schema.files.id, allIds)));
 
         // Verify all rows are tombstoned
         const tombstoned = await testDb.query.files.findMany({
@@ -284,19 +296,9 @@ describe("soft delete lifecycle", () => {
         const liveDescendants = await getDescendantIds(rootFolder.id, TEST_USER_ID, false);
         expect(liveDescendants).toHaveLength(0);
 
-        // Restore root folder and its descendants (matching files.ts restoreFile logic)
-        const restoredAt = new Date();
-        await testDb
-            .update(schema.files)
-            .set({ deletedAt: null, updatedAt: restoredAt })
-            .where(and(eq(schema.files.id, rootFolder.id), eq(schema.files.userId, TEST_USER_ID)));
-
-        if (descendantIds.length > 0) {
-            await testDb
-                .update(schema.files)
-                .set({ deletedAt: null, updatedAt: restoredAt })
-                .where(and(eq(schema.files.userId, TEST_USER_ID), inArray(schema.files.id, descendantIds)));
-        }
+        // Restore root folder and its descendants via production restoreFile server action
+        const restoreResult = await restoreFile(rootFolder.id);
+        expect(restoreResult.success).toBe(true);
 
         // Verify all 4 are completely restored and live queries see them
         const liveRows = await testDb.query.files.findMany({
