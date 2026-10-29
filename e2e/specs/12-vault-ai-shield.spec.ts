@@ -3,7 +3,7 @@ import { e2eDb } from "../fixtures/test-db";
 import * as schema from "../../src/server/db/schema";
 
 test.describe("Scenario 13: Zero-Knowledge AI Shield Gatekeeper & HTTP 403 Block", () => {
-    test("verifies that encrypted documents render the ai-encrypted-badge and block AI invocation with HTTP 403", async ({
+    test("encrypted documents should render the AI shield badge and reject AI requests with HTTP 403", async ({
         page,
         context,
         authSession,
@@ -34,7 +34,7 @@ test.describe("Scenario 13: Zero-Knowledge AI Shield Gatekeeper & HTTP 403 Block
         await page.waitForLoadState("domcontentloaded");
 
         // 3. Verify that the amber AI Shield badge is explicitly displayed in the UI toolbar
-        const aiBadge = page.locator('[data-testid="ai-encrypted-badge"]');
+        const aiBadge = page.getByTestId("ai-encrypted-badge");
         await expect(aiBadge).toBeVisible({ timeout: 15000 });
         await expect(aiBadge).toContainText(/ميزات الـ AI معطلة لحماية التشفير|التشفير محمي/);
 

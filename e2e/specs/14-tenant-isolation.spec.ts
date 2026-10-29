@@ -3,7 +3,7 @@ import { e2eDb, cleanupE2EUser } from "../fixtures/test-db";
 import * as schema from "../../src/server/db/schema";
 
 test.describe("Scenario 15: Cross-User Tenant Isolation & 404 Anti-Enumeration", () => {
-    test("strictly blocks access to foreign tenant files via direct navigation and API with 404 Anti-Enumeration masking", async ({
+    test("foreign tenant document access should be blocked with redirect and 404 anti-enumeration masking", async ({
         page,
         authSession: _authSession,
     }) => {
@@ -40,14 +40,17 @@ test.describe("Scenario 15: Cross-User Tenant Isolation & 404 Anti-Enumeration",
             await page.goto(`/workspace/editor/${foreignDoc.id}`);
             await page.waitForLoadState("domcontentloaded");
 
-            // Verify that the editor does NOT load the foreign content
-            const cmContent = page.locator(".cm-content");
-            if (await cmContent.isVisible()) {
-                await expect(cmContent).not.toContainText("Secret belonging exclusively to Tenant B");
-            }
+            // Verify that hydration enters fatal error state, editor is not rendered, and foreign content is never leaked
+            const fatalHeading = page.getByRole("heading", { name: "تعذّر فتح المستند" });
+            await expect(fatalHeading).toBeVisible({ timeout: 15000 });
+            await expect(page.locator(".cm-content")).toBeHidden();
+            await expect(page.getByText("Secret belonging exclusively to Tenant B")).toBeHidden();
 
-            // Verify that user A is safely redirected to workspace and foreign content is never loaded
-            await expect(page).toHaveURL(/\/workspace/);
+            // Clicking return button navigates safely back to workspace
+            const returnBtn = page.getByRole("button", { name: "العودة إلى مساحة العمل" });
+            await expect(returnBtn).toBeVisible();
+            await returnBtn.click();
+            await expect(page).toHaveURL(/\/workspace(?!\/editor)/, { timeout: 10000 });
 
             // 3. User A attempts programmatic API access to foreign file
             const apiRes = await page.request.get(`/api/files/${foreignDoc.id}`);

@@ -3,7 +3,7 @@ import { e2eDb, getDbFile, simulateRemoteFileUpdate } from "../fixtures/test-db"
 import * as schema from "../../src/server/db/schema";
 
 test.describe("Scenario 4: Offline-First Sync & Interactive Conflict Resolution", () => {
-    test("simulates offline edit, remote concurrent update (412), triggers ConflictDialog, and executes Diff3 merge resolution", async ({
+    test("offline concurrent edit should trigger conflict dialog and persist local resolution", async ({
         page,
         context,
         authSession,
@@ -33,17 +33,43 @@ test.describe("Scenario 4: Offline-First Sync & Interactive Conflict Resolution"
         // 3. Concurrently update document on server directly with version 2
         await simulateRemoteFileUpdate(
             doc.id,
-            "# Line 1: Server Remote Edit\nLine 2: Base content\nLine 3: Tail",
+            "# Line 1: Server Remote Edit Conflicting\nLine 2: Base content\nLine 3: Tail",
             2
         );
 
-        // 4. Restore online state
-        await context.setOffline(false);
+        // 4. In the UI, perform offline edit on the same line to force true 3-way conflict
+        await cmContent.click();
+        await page.keyboard.press("Home");
+        await page.keyboard.type("Client Local Edit - ");
 
-        // 5. In the UI, trigger a save or conflict check by updating state
-        // When server version is 2 while client has 1, conflict state is detected
-        const dbDoc = await getDbFile(doc.id);
-        expect(dbDoc?.version).toBe(2);
-        expect(dbDoc?.content).toContain("Server Remote Edit");
+        // 5. Restore online state and trigger save
+        await context.setOffline(false);
+        await page.keyboard.type(" ");
+
+        // 6. Assert Conflict Dialog / Resolution UI path
+        const conflictHeading = page.getByText("تعارض في التزامن");
+        const reviewBtn = page.getByRole("button", { name: "مراجعة وحل التعارض" });
+        await expect(conflictHeading.or(reviewBtn)).toBeVisible({ timeout: 25000 });
+
+        if (await reviewBtn.isVisible()) {
+            await reviewBtn.click();
+        }
+        await expect(conflictHeading).toBeVisible({ timeout: 10000 });
+
+        // 7. Select resolution strategy and confirm resolution
+        const keepLocalBtn = page.getByRole("button", { name: "اعتماد النسخة المحلية" });
+        await expect(keepLocalBtn).toBeVisible();
+        await keepLocalBtn.click();
+
+        const confirmBtn = page.getByRole("button", { name: "تأكيد وحفظ الحل في الخادم" });
+        await expect(confirmBtn).toBeVisible();
+        await confirmBtn.click();
+
+        // 8. Assert dialog closed and DB state reflects resolved merge
+        await expect(conflictHeading).toBeHidden({ timeout: 10000 });
+
+        const resolvedDoc = await getDbFile(doc.id);
+        expect(resolvedDoc?.version).toBeGreaterThan(1);
+        expect(resolvedDoc?.content).toContain("Client Local Edit");
     });
 });

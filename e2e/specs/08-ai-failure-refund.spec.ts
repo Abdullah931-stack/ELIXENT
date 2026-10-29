@@ -1,10 +1,9 @@
 import { test, expect } from "../fixtures/auth-fixture";
-import { e2eDb } from "../fixtures/test-db";
+import { e2eDb, getDbFile } from "../fixtures/test-db";
 import * as schema from "../../src/server/db/schema";
-import { eq } from "drizzle-orm";
 
 test.describe("Scenario 9: System AI Provider Failure (Full Refund Policy)", () => {
-    test("simulates upstream provider 500 failure, displays safe error banner, and executes automated full quota refund", async ({
+    test("upstream provider 500 failure should display error banner and preserve document content", async ({
         page,
         authSession,
     }) => {
@@ -34,34 +33,23 @@ test.describe("Scenario 9: System AI Provider Failure (Full Refund Policy)", () 
         await page.goto(`/workspace/editor/${doc.id}`);
         await page.waitForLoadState("domcontentloaded");
 
-        // 3. Create transaction in DB simulating transaction prior to stream failure
-        const failureOpId = `op-system-fail-${Date.now()}`;
-        const [reservation] = await e2eDb
-            .insert(schema.creditLedgerTransactions)
-            .values({
-                operationId: failureOpId,
-                userId: authSession.userId,
-                modelId: "google/gemini-2.5-flash",
-                executionMode: "STREAMING_GENERATIVE",
-                inputTokens: 50,
-                outputTokens: 50,
-                deltaMicro: BigInt(-500000),
-                status: "SETTLED",
-            })
-            .returning();
+        const cmContent = page.locator(".cm-content");
+        await expect(cmContent).toBeVisible({ timeout: 15000 });
+        await expect(cmContent).toContainText("Text awaiting AI refinement", { timeout: 20000 });
 
-        // 4. Trigger system refund on transaction (status -> ABORTED)
-        await e2eDb
-            .update(schema.creditLedgerTransactions)
-            .set({
-                status: "ABORTED",
-            })
-            .where(eq(schema.creditLedgerTransactions.operationId, reservation.operationId));
+        // 3. Trigger AI operation from UI
+        const improveBtn = page.getByRole("button", { name: "Improve" });
+        await expect(improveBtn).toBeVisible();
+        await improveBtn.click();
 
-        // 5. Verify DB: status is ABORTED
-        const refundedRes = await e2eDb.query.creditLedgerTransactions.findFirst({
-            where: eq(schema.creditLedgerTransactions.operationId, reservation.operationId),
-        });
-        expect(refundedRes?.status).toBe("ABORTED");
+        // 4. Assert UI error alert is displayed
+        const errorAlert = page.getByText(/حدث خطأ أثناء معالجة النص|Upstream AI service/).first();
+        await expect(errorAlert).toBeVisible({ timeout: 10000 });
+
+        // 5. Verify document content is preserved completely
+        await expect(cmContent).toContainText("Text awaiting AI refinement");
+        const currentDoc = await getDbFile(doc.id);
+        expect(currentDoc?.content).toBe("# Text awaiting AI refinement");
+        expect(currentDoc?.version).toBe(1);
     });
 });

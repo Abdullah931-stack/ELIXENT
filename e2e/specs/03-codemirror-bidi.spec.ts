@@ -1,10 +1,9 @@
 import { test, expect } from "../fixtures/auth-fixture";
 import { e2eDb, getDbFile } from "../fixtures/test-db";
 import * as schema from "../../src/server/db/schema";
-import { eq } from "drizzle-orm";
 
 test.describe("Scenario 3: Native CodeMirror 6 Markdown & BiDi RTL", () => {
-    test("verifies Pure-Markdown editing, Arabic auto-RTL detection, LTR code block locking, search/replace, and reload recovery", async ({
+    test("CodeMirror 6 editor should detect Arabic direction, lock code blocks LTR, and persist content via debounced autosave", async ({
         page,
         authSession,
     }) => {
@@ -41,24 +40,53 @@ test.describe("Scenario 3: Native CodeMirror 6 Markdown & BiDi RTL", () => {
         await expect(codeBlockLine).toBeVisible();
         await expect(page.locator('.cm-line[dir="ltr"]:has-text("const message"), .cm-line.cm-bidi-ltr:has-text("const message")')).toBeVisible();
 
-        // 7. Verify Bottom Status Bar stats
-        const statusBar = page.locator("text=words");
+        // 7. Drive actual keyboard input into .cm-content and verify RTL / BiDi direction markers in the DOM
+        await cmContent.click();
+        await page.keyboard.press("Control+End");
+        await page.keyboard.press("Enter");
+        await page.keyboard.type("سطر جديد مدخل بواسطة لوحة المفاتيح");
+
+        const typedArabicLine = page.locator('.cm-line:has-text("سطر جديد مدخل بواسطة لوحة المفاتيح")');
+        await expect(typedArabicLine).toBeVisible();
+        await expect(typedArabicLine).toHaveAttribute("dir", "auto");
+
+        // Drive keyboard input for code block and verify LTR locked markers
+        await page.keyboard.press("Enter");
+        await page.keyboard.type("```typescript");
+        await page.keyboard.press("Enter");
+        await page.keyboard.type("const dynamicallyTyped = true;");
+        await page.keyboard.press("Enter");
+        await page.keyboard.type("```");
+
+        const typedCodeLine = page.locator('.cm-line:has-text("const dynamicallyTyped")');
+        await expect(typedCodeLine).toBeVisible();
+        await expect(typedCodeLine).toHaveAttribute("dir", "ltr");
+        await expect(typedCodeLine).toHaveClass(/cm-bidi-ltr/);
+
+        // 8. Verify Bottom Status Bar stats
+        const statusBar = page.getByText(/words/i);
         await expect(statusBar).toBeVisible();
 
-        // 8. Test content update and debounced save fidelity
-        const updatedMarkdown = "# مرحبا بكم في محرر ماركداون المحدث\n\nنص عربي إضافي.\n\n```typescript\nconst val = 42;\n```";
-        await e2eDb
-            .update(schema.files)
-            .set({ content: updatedMarkdown, version: 2, updatedAt: new Date() })
-            .where(eq(schema.files.id, doc.id));
+        // 9. Drive editor typing via Playwright locators and verify debounced autosave persistence
+        await cmContent.click();
+        await page.keyboard.press("Control+End");
+        await page.keyboard.press("Enter");
+        const autosaveText = "نص إضافي لاختبار الحفظ التلقائي في قاعدة البيانات";
+        await page.keyboard.type(autosaveText);
 
-        // Reload page to verify exact Markdown recovery
+        // Wait for debounced autosave status indicator
+        const savedIndicator = page.getByTitle("Saved").or(page.getByText(/متزامن|محفوظ/));
+        await expect(savedIndicator.first()).toBeVisible({ timeout: 15000 });
+
+        // Assert database persistence matches typed text
+        await expect.poll(async () => {
+            const persisted = await getDbFile(doc.id);
+            return persisted?.content;
+        }, { timeout: 10000 }).toContain(autosaveText);
+
+        // Reload page to verify exact Markdown recovery in editor
         await page.reload();
         await page.waitForLoadState("domcontentloaded");
-        await expect(cmContent).toContainText("مرحبا بكم في محرر ماركداون المحدث");
-
-        // Verify DB persistence matches
-        const persistedDoc = await getDbFile(doc.id);
-        expect(persistedDoc?.content).toBe(updatedMarkdown);
+        await expect(cmContent).toContainText(autosaveText);
     });
 });

@@ -4,7 +4,7 @@ import * as schema from "../../src/server/db/schema";
 import { eq, and, isNull, isNotNull } from "drizzle-orm";
 
 test.describe("Scenario 2: File System, Folder Tree & Trash Lifecycle", () => {
-    test("creates nested folders, renames, soft deletes, verifies duplicate name coexistence, restores, and permanently purges", async ({
+    test("folder tree and trash lifecycle should support nested structures, soft deletion, and restoration", async ({
         page,
         authSession,
     }) => {
@@ -42,6 +42,21 @@ test.describe("Scenario 2: File System, Folder Tree & Trash Lifecycle", () => {
 
         await page.reload();
         await page.waitForLoadState("domcontentloaded");
+
+        // 1. Verify folder tree in DOM sidebar and open document in editor
+        const projectsItem = page.locator("li").filter({ hasText: "Projects" }).first();
+        await expect(projectsItem).toBeVisible({ timeout: 10000 });
+        const projectChevron = projectsItem.locator("> div > button").first();
+        await projectChevron.click();
+
+        const specsItem = page.locator("li").filter({ hasText: "Specs" }).last();
+        await expect(specsItem).toBeVisible({ timeout: 10000 });
+        const specsChevron = specsItem.locator("> div > button").first();
+        await specsChevron.click();
+
+        await expect(page.getByText("Roadmap").first()).toBeVisible({ timeout: 10000 });
+        await page.getByText("Roadmap").first().click();
+        await expect(page.locator(".cm-content")).toContainText("Platform Roadmap", { timeout: 25000 });
 
         // Verify folder and document exist in DB
         let dbDoc = await getDbFile(doc.id);

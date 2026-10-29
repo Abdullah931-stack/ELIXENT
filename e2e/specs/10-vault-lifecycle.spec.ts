@@ -1,74 +1,73 @@
 import { test, expect } from "../fixtures/auth-fixture";
-import { e2eDb, getDbFile } from "../fixtures/test-db";
+import { e2eDb } from "../fixtures/test-db";
 import * as schema from "../../src/server/db/schema";
-import { eq } from "drizzle-orm";
-import crypto from "node:crypto";
 
-test.describe("Scenario 11: Zero-Knowledge Encrypted Vault Creation & Deterministic AAD Sync", () => {
-    test("creates zero-knowledge encrypted file with AES-GCM-256 and validates deterministic AAD binding", async ({
+test.describe("Scenario 11: Encrypted Vault Lifecycle & Zero-Knowledge Browser Journey", () => {
+    test("user can view vault security in account and interact with unlock modal in editor", async ({
+        page,
         authSession,
     }) => {
-        // 1. Create a file for the authenticated user
+        // 1. Visit /account to verify Vault Security Card integration
+        await page.goto("/account");
+        await page.waitForLoadState("domcontentloaded");
+
+        const vaultCardTitle = page.getByText("أمان الخزنة وموثوقية الأجهزة");
+        await expect(vaultCardTitle).toBeVisible({ timeout: 15000 });
+
+        // 2. Seed an encrypted document in database for the authenticated user
         const [doc] = await e2eDb
             .insert(schema.files)
             .values({
                 userId: authSession.userId,
-                title: "Confidential Project Spec",
+                title: "Confidential Project Blueprint",
                 isFolder: false,
-                content: "Plaintext before zero-knowledge encryption.",
-                version: 1,
-            })
-            .returning();
-
-        // 2. Simulate transparent Zero-Knowledge client-side encryption:
-        // Key is derived from master secret, and AES-GCM ciphertext is produced with strict AAD binding
-        const mockKey = crypto.randomBytes(32);
-        const iv = crypto.randomBytes(12);
-        const expectedAad = `vault:file:${authSession.userId}:${doc.id}`;
-
-        const cipher = crypto.createCipheriv("aes-256-gcm", mockKey, iv);
-        cipher.setAAD(Buffer.from(expectedAad, "utf8"));
-
-        let ciphertext = cipher.update("TOP_SECRET_PLAINTEXT_CONTENT", "utf8", "base64");
-        ciphertext += cipher.final("base64");
-        const authTag = cipher.getAuthTag().toString("base64");
-
-        const encryptedPayload = `enc:${iv.toString("base64")}:${authTag}:${ciphertext}`;
-
-        // 3. Sync ciphertext to isolated Neon branch
-        await e2eDb
-            .update(schema.files)
-            .set({
-                content: encryptedPayload,
+                content: "enc:iv_lifecycle_123:tag_456:ciphertext_789",
                 isEncrypted: true,
                 encryptionMetadata: {
                     version: 1,
                     algorithm: "AES-GCM-256",
-                    keyId: "mk-1",
-                    salt: "salt",
-                    iv: iv.toString("base64"),
+                    keyId: "mk-lifecycle-1",
+                    salt: "salt-lifecycle",
+                    iv: "iv_lifecycle_123",
                     kdfIterations: 600000,
                 },
-                version: 2,
-                updatedAt: new Date(),
+                version: 1,
             })
-            .where(eq(schema.files.id, doc.id));
+            .returning();
 
-        // 4. Assert in DB:
-        // - isEncrypted is true
-        // - content does NOT contain raw plaintext
-        // - content contains valid ciphertext envelope
-        const encryptedDoc = await getDbFile(doc.id);
-        expect(encryptedDoc?.isEncrypted).toBe(true);
-        expect(encryptedDoc?.content).not.toContain("TOP_SECRET_PLAINTEXT_CONTENT");
-        expect(encryptedDoc?.content).toContain("enc:");
-        expect(encryptedDoc?.encryptionMetadata).toEqual({
-            version: 1,
-            algorithm: "AES-GCM-256",
-            keyId: "mk-1",
-            salt: "salt",
-            iv: iv.toString("base64"),
-            kdfIterations: 600000,
-        });
+        // 3. Open encrypted document in editor
+        await page.goto(`/workspace/editor/${doc.id}`);
+        await page.waitForLoadState("domcontentloaded");
+
+        // 4. Modal automatically opens upon opening locked encrypted document (LUGX-047 invariant)
+        const modalHeading = page.getByRole("heading", { name: "فتح قفل الخزنة المشفرة" });
+        await expect(modalHeading).toBeVisible({ timeout: 15000 });
+
+        // 5. Assert password input is rendered in the modal
+        const passwordInput = page.getByPlaceholder("أدخل كلمة المرور...");
+        await expect(passwordInput).toBeVisible();
+
+        // 6. Dismiss modal via Cancel button to inspect locked background state
+        const cancelBtn = page.getByRole("button", { name: "إلغاء" });
+        await expect(cancelBtn).toBeVisible();
+        await cancelBtn.click();
+        await expect(modalHeading).toBeHidden({ timeout: 5000 });
+
+        // 7. Verify locked state in background UI and manual unlock trigger
+        const lockBanner = page.getByRole("heading", { name: "المستند مشفر ومحمي" });
+        await expect(lockBanner).toBeVisible({ timeout: 10000 });
+
+        const unlockBtn = page.getByRole("button", { name: "فتح قفل الخزنة" });
+        await expect(unlockBtn).toBeVisible();
+        await unlockBtn.click();
+        await expect(modalHeading).toBeVisible({ timeout: 5000 });
+
+        // 8. Verify zero plaintext or master keys leaked to localStorage
+        const localStorageKeys = await page.evaluate(() => Object.keys(localStorage));
+        const leakedKeys = localStorageKeys.filter((k) =>
+            k.toLowerCase().includes("master_key") || k.toLowerCase().includes("private_key")
+        );
+        expect(leakedKeys).toHaveLength(0);
     });
 });
+

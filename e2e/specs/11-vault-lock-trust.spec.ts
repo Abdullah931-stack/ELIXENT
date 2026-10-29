@@ -3,7 +3,7 @@ import { e2eDb } from "../fixtures/test-db";
 import * as schema from "../../src/server/db/schema";
 
 test.describe("Scenario 12: Vault Inactivity Auto-Lock, Multi-Modal Unlock & Device Trust", () => {
-    test("asserts lock state triggers VaultUnlockModal on encrypted note and clears sensitive keys from volatile RAM", async ({
+    test("encrypted note should display lock indicator and maintain memory isolation", async ({
         page,
         authSession,
     }) => {
@@ -32,11 +32,28 @@ test.describe("Scenario 12: Vault Inactivity Auto-Lock, Multi-Modal Unlock & Dev
         await page.goto(`/workspace/editor/${doc.id}`);
         await page.waitForLoadState("domcontentloaded");
 
-        // 3. Verify that the encrypted file indicator or lock status is active
-        const lockIcon = page.locator('svg.lucide-lock, [data-testid="ai-encrypted-badge"]');
-        await expect(lockIcon.first()).toBeVisible({ timeout: 15000 });
+        // 3. Verify unlock modal automatically opens for locked encrypted note
+        const passwordInput = page.getByPlaceholder("أدخل كلمة المرور...");
+        await expect(passwordInput).toBeVisible({ timeout: 15000 });
 
-        // 4. Verify volatile memory isolation: window.__sessionKeyStore or RAM keys must not leak into localStorage
+        // 4. Test wrong password rejection in unlock modal
+        await expect(passwordInput).toBeVisible({ timeout: 5000 });
+        await passwordInput.fill("wrong-password-123");
+        await page.getByRole("button", { name: /فتح القفل|فك القفل/ }).click();
+        await expect(page.getByText(/غير صحيحة|فشل|تعذر/)).toBeVisible({ timeout: 5000 });
+
+        // 5. Dismiss modal via Cancel button and verify locked background state
+        const cancelBtn = page.getByRole("button", { name: "إلغاء" });
+        await cancelBtn.click();
+        await expect(passwordInput).toBeHidden({ timeout: 5000 });
+
+        const lockBanner = page.getByRole("heading", { name: "المستند مشفر ومحمي" });
+        await expect(lockBanner).toBeVisible({ timeout: 10000 });
+
+        const unlockBtn = page.getByRole("button", { name: "فتح قفل الخزنة" });
+        await expect(unlockBtn).toBeVisible();
+
+        // 6. Verify volatile memory isolation: RAM keys must not leak into localStorage
         const localStorageKeys = await page.evaluate(() => Object.keys(localStorage));
         const leakedKeys = localStorageKeys.filter((k) =>
             k.toLowerCase().includes("master_key") || k.toLowerCase().includes("private_key")

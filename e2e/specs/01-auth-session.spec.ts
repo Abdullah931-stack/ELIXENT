@@ -1,7 +1,7 @@
 import { test, expect } from "../fixtures/auth-fixture";
 
 test.describe("Scenario 1: Authentication & Session Lifecycle", () => {
-    test("validates login, SSR session cookies, cross-tab persistence, reload recovery, and logout teardown", async ({
+    test("authentication session lifecycle should persist across reloads/tabs and terminate on logout", async ({
         page,
         context,
         authSession: _authSession,
@@ -32,9 +32,15 @@ test.describe("Scenario 1: Authentication & Session Lifecycle", () => {
         await expect(secondaryPage.getByRole("heading", { name: "Workspace" })).toBeVisible();
         await secondaryPage.close();
 
-        // 5. Test clean logout teardown
-        const logoutRes = await page.request.delete("/api/test/e2e-auth");
-        expect(logoutRes.ok()).toBeTruthy();
+        // 5. Test clean logout teardown via user-facing UI logout flow
+        await page.getByRole("banner").locator('a[href="/account"]').click();
+        await page.waitForLoadState("domcontentloaded");
+        await expect(page).toHaveURL(/\/account/);
+
+        const signOutButton = page.getByRole("button", { name: /sign out/i });
+        await expect(signOutButton).toBeVisible();
+        await signOutButton.click();
+        await page.waitForURL("/", { timeout: 15000 });
 
         // Attempting to visit /workspace after logout must redirect to /login
         await page.goto("/workspace");

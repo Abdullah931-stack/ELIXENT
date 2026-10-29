@@ -1,10 +1,9 @@
 import { test, expect } from "../fixtures/auth-fixture";
-import { e2eDb, getDbSubscriptionEvents } from "../fixtures/test-db";
-import * as schema from "../../src/server/db/schema";
-import { eq } from "drizzle-orm";
+import { getDbSubscriptionEvents } from "../fixtures/test-db";
+import { createHmac } from "node:crypto";
 
 test.describe("Scenario 14: Stripe Subscription Checkout & Durable Event Ledger", () => {
-    test("validates account upgrade interface, processes webhook into subscription_events, and upgrades account tier", async ({
+    test("Stripe checkout webhook should record event ledger and reflect Pro tier in account UI", async ({
         page,
         authSession,
     }) => {
@@ -16,36 +15,52 @@ test.describe("Scenario 14: Stripe Subscription Checkout & Durable Event Ledger"
         const freeBadge = page.getByText("Free", { exact: true }).first();
         await expect(freeBadge).toBeVisible({ timeout: 15000 });
 
-        // 2. Simulate Stripe Webhook processing into durable ledger
+        // 2. Dispatch real signed HTTP POST to webhook endpoint instead of directly mutating database
         const eventId = `evt_e2e_${Date.now()}`;
         const subscriptionId = `sub_e2e_${Date.now()}`;
+        const timestamp = Math.floor(Date.now() / 1000);
+        const secret = process.env.STRIPE_WEBHOOK_SECRET || "whsec_test_mock_ci_secret";
 
-        // Directly persist webhook event into durable subscription_events table
-        await e2eDb
-            .insert(schema.subscriptionEvents)
-            .values({
-                eventId,
-                eventType: "customer.subscription.created",
-                userId: authSession.userId,
-                stripeSubscriptionId: subscriptionId,
-                status: "processed",
-            })
-            .onConflictDoNothing();
+        const webhookPayload = JSON.stringify({
+            id: eventId,
+            type: "checkout.session.completed",
+            data: {
+                object: {
+                    id: `cs_e2e_${Date.now()}`,
+                    object: "checkout.session",
+                    payment_status: "paid",
+                    created: timestamp,
+                    subscription: subscriptionId,
+                    metadata: {
+                        userId: authSession.userId,
+                        tier: "pro",
+                    },
+                },
+            },
+        });
 
-        // Atomically upgrade user tier to pro
-        await e2eDb
-            .update(schema.users)
-            .set({
-                tier: "pro",
-                updatedAt: new Date(),
-            })
-            .where(eq(schema.users.id, authSession.userId));
+        const signature = createHmac("sha256", secret)
+            .update(`${timestamp}.${webhookPayload}`)
+            .digest("hex");
 
-        // 3. Verify in database: subscription_events has recorded event
+        const stripeSignatureHeader = `t=${timestamp},v1=${signature}`;
+
+        // Dispatch real signed HTTP POST directly to canonical /api/stripe/webhook
+        const response = await page.request.post("/api/stripe/webhook", {
+            headers: {
+                "content-type": "application/json",
+                "stripe-signature": stripeSignatureHeader,
+            },
+            data: webhookPayload,
+        });
+
+        expect(response.ok()).toBeTruthy();
+
+        // 3. Verify in database: subscription_events has recorded event from webhook processing
         const events = await getDbSubscriptionEvents(authSession.userId);
         const recordedEvent = events.find((e) => e.eventId === eventId);
         expect(recordedEvent).toBeDefined();
-        expect(recordedEvent?.eventType).toBe("customer.subscription.created");
+        expect(recordedEvent?.eventType).toBe("checkout.session.completed");
         expect(recordedEvent?.status).toBe("processed");
 
         // 4. Reload /account and verify real-time UI tier reflection
