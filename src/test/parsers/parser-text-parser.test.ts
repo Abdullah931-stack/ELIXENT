@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { parseFileContent, parseTextFile } from "@/lib/parsers/text-parser";
-import { countWords } from "@/lib/utils";
 
 describe("Text and Markdown Parser (text-parser.ts)", () => {
     it("should parse standard UTF-8 text and count words accurately", async () => {
@@ -39,8 +38,8 @@ describe("Text and Markdown Parser (text-parser.ts)", () => {
 
         const result = await parseTextFile(file);
         expect(result.text).toBe("مرحبا بالعالم");
-        // countWords uses Math.max(spaceSeparated, Math.ceil(length / 6))
-        expect(result.wordCount).toBe(countWords("مرحبا بالعالم"));
+        // Static literal word count for "مرحبا بالعالم" (evaluated by countWords as Math.max(2, ceil(13/6)) = 3)
+        expect(result.wordCount).toBe(3);
         expect(result.language?.language).toBe("ara");
         expect(result.language?.hasArabic).toBe(true);
 

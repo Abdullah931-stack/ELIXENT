@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { pdfWorkerBridge, ExtractPdfOptions } from "@/lib/parsers/pdf-worker-bridge";
+import { pdfWorkerBridge, PdfWorkerBridge, ExtractPdfOptions } from "@/lib/parsers/pdf-worker-bridge";
 import {
     extractPdfTextDirect,
     normalizeExtractedText,
@@ -149,41 +149,62 @@ describe("PDF Worker Bridge & Extraction Engine", () => {
         expect(normalized).toBe("Heading 1\n\nParagraph 1 with spaces.\n\nParagraph 2");
     });
 
-    it("resets inactivity watchdog timer upon receiving PROGRESS message", () => {
-        const bridge = new (pdfWorkerBridge.constructor as any)(50);
-        let cleared = false;
-        const fakeTimer = 12345 as any;
+    it("resets inactivity watchdog timer upon receiving PROGRESS message", async () => {
+        vi.useFakeTimers();
 
-        const pendingMap = (bridge as any).pendingRequests;
-        pendingMap.set("test_req", {
-            timer: fakeTimer,
-            onProgress: vi.fn(),
-            resolve: vi.fn(),
-            reject: vi.fn(),
-        });
+        const mockWorkerInstance: any = {
+            onmessage: null,
+            onerror: null,
+            postMessage: vi.fn(),
+            terminate: vi.fn(),
+        };
+        class MockWorker {
+            constructor() {
+                return mockWorkerInstance;
+            }
+        }
 
-        const originalClearTimeout = globalThis.clearTimeout;
-        globalThis.clearTimeout = ((t: any) => {
-            if (t === fakeTimer) cleared = true;
-            originalClearTimeout(t);
-        }) as any;
+        const originalWindow = (globalThis as any).window;
+        const originalWorker = (globalThis as any).Worker;
+        (globalThis as any).window = globalThis;
+        (globalThis as any).Worker = MockWorker;
 
         try {
-            (bridge as any).handleWorkerMessage({
-                id: "test_req",
-                type: "PROGRESS",
-                currentPage: 1,
-                totalPages: 10,
-                percent: 10,
+            const bridge = new PdfWorkerBridge(100);
+            const pdfBytes = new Uint8Array([1, 2, 3]);
+
+            const extractPromise = bridge.extractText(pdfBytes);
+
+            expect(mockWorkerInstance).not.toBeNull();
+            const requestId = mockWorkerInstance.postMessage.mock.calls[0][0].id;
+
+            // Advance by 70ms (initial timer has 30ms remaining)
+            vi.advanceTimersByTime(70);
+
+            // Emit PROGRESS message from worker -> resets 100ms inactivity watchdog timer
+            mockWorkerInstance.onmessage?.({
+                data: {
+                    id: requestId,
+                    type: "PROGRESS",
+                    currentPage: 1,
+                    totalPages: 10,
+                    percent: 10,
+                },
             });
 
-            expect(cleared).toBe(true);
-            const updatedPending = pendingMap.get("test_req");
-            expect(updatedPending.timer).toBeDefined();
-            expect(updatedPending.timer).not.toBe(fakeTimer);
-            clearTimeout(updatedPending.timer);
+            // Advance by 50ms (total 120ms from start, but only 50ms since progress)
+            vi.advanceTimersByTime(50);
+
+            // Advance by remaining 60ms to trigger the reset 100ms inactivity timeout (50 + 60 = 110ms > 100ms)
+            vi.advanceTimersByTime(60);
+
+            await expect(extractPromise).rejects.toThrow(
+                "PDF extraction timed out after 100ms of inactivity"
+            );
         } finally {
-            globalThis.clearTimeout = originalClearTimeout;
+            (globalThis as any).window = originalWindow;
+            (globalThis as any).Worker = originalWorker;
+            vi.useRealTimers();
         }
     });
 });

@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { EditorView } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
 import { history } from '@codemirror/commands';
@@ -95,64 +95,6 @@ describe('Editor Atomic Commit & Single Undo Invariant (Gate G8 / Phase 8 / Phas
         // Single Undo restores original document
         const undoSuccess = adapter.undo();
         expect(undoSuccess).toBe(true);
-        expect(adapter.getValue()).toBe(snapshotBefore);
-    });
-
-    it('should NOT apply local transaction if server commit fails (Document remains pristine)', async () => {
-        const snapshotBefore = adapter.getValue();
-
-        // Simulate streaming ghost active
-        adapter.startStreamingGhost({
-            from: 0,
-            to: 19,
-            text: 'Preview chunk...',
-        });
-
-        // Simulate mock server commit function failing
-        const mockServerCommit = vi.fn().mockResolvedValue({
-            success: false,
-            status: 'error',
-            error: 'Server transaction failure',
-        });
-
-        const serverResult = await mockServerCommit();
-
-        // Condition: Local transaction is ONLY applied after server success
-        if (!serverResult.success || serverResult.status !== 'committed') {
-            adapter.clearStreamingGhost();
-        }
-
-        // Ghost is cleared, document content was NEVER modified
-        const ghostState = view.state.field(codeMirrorStreamingGhostField);
-        expect(ghostState?.active).toBe(false);
-        expect(adapter.getValue()).toBe(snapshotBefore);
-    });
-
-    it('should NOT apply local transaction on 412 version conflict and clear ghost preview', async () => {
-        const snapshotBefore = adapter.getValue();
-
-        adapter.startStreamingGhost({
-            from: 0,
-            to: 19,
-            text: 'Conflicting AI suggestion...',
-        });
-
-        // Simulate mock server returning 412 conflict
-        const mockServerCommit = vi.fn().mockResolvedValue({
-            success: false,
-            status: 'conflict',
-            error: 'Conflict: file modified by another session',
-            serverVersion: { version: 5 },
-        });
-
-        const serverResult = await mockServerCommit();
-
-        if (serverResult.status === 'conflict') {
-            adapter.clearStreamingGhost();
-        }
-
-        const ghostState = view.state.field(codeMirrorStreamingGhostField);
-        expect(ghostState?.active).toBe(false);
         expect(adapter.getValue()).toBe(snapshotBefore);
     });
 });

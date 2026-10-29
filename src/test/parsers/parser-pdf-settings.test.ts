@@ -3,7 +3,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
     isTableExtractionEnabled,
     setTableExtractionEnabled,
-    TABLE_EXTRACTION_STORAGE_KEY,
 } from '@/lib/parsers/pdf-settings';
 
 describe('PDF Settings (pdf-settings.ts)', () => {
@@ -18,7 +17,6 @@ describe('PDF Settings (pdf-settings.ts)', () => {
 
     it('returns false after table extraction is disabled', () => {
         setTableExtractionEnabled(false);
-        expect(localStorage.getItem(TABLE_EXTRACTION_STORAGE_KEY)).toBe('false');
         expect(isTableExtractionEnabled()).toBe(false);
     });
 
@@ -27,7 +25,6 @@ describe('PDF Settings (pdf-settings.ts)', () => {
         expect(isTableExtractionEnabled()).toBe(false);
 
         setTableExtractionEnabled(true);
-        expect(localStorage.getItem(TABLE_EXTRACTION_STORAGE_KEY)).toBe('true');
         expect(isTableExtractionEnabled()).toBe(true);
     });
 

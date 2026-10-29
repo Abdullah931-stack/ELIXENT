@@ -311,15 +311,21 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
         // Try to trigger another edit while conflict is unresolved
         vi.mocked(fileOps.updateFileContent).mockClear();
 
-        act(() => {
-            result.current.handleEditorChange("Further edit during unresolved conflict");
-        });
+        vi.useFakeTimers();
+        try {
+            act(() => {
+                result.current.handleEditorChange("Further edit during unresolved conflict");
+            });
 
-        // Wait a period to ensure debounced autosave does NOT call updateFileContent
-        await new Promise((resolve) => setTimeout(resolve, 1300));
+            act(() => {
+                vi.advanceTimersByTime(1300);
+            });
 
-        // Auto-save MUST be suspended; updateFileContent must not be called
-        expect(fileOps.updateFileContent).not.toHaveBeenCalled();
+            // Auto-save MUST be suspended; updateFileContent must not be called
+            expect(fileOps.updateFileContent).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it("should execute conflict resolution via authoritative conditioned write", async () => {
@@ -444,6 +450,33 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
             },
             { timeout: 2000 }
         );
+
+        // Dirty branch: user makes a local edit
+        act(() => {
+            adapter.setValue("Local dirty content in tab");
+            result.current.handleEditorChange("Local dirty content in tab");
+        });
+        expect(result.current.isDirty).toBe(true);
+
+        // Broadcast save event from sibling tab with newer version (version 8) while dirty
+        act(() => {
+            const channel = new BroadcastChannel("textai_cross_tab_sync");
+            channel.postMessage({
+                type: "file_saved",
+                fileId,
+                version: 8,
+                etag: "etag-v8",
+                senderTabId: "sibling_tab_999",
+                timestamp: Date.now(),
+            });
+            channel.close();
+        });
+
+        // When dirty, local expectedVersion / serverVersion must be retained to avoid overwriting baseline (LUGX-020)
+        await new Promise((r) => setTimeout(r, 100));
+        expect(result.current.serverVersion).toBe(7);
+        expect(result.current.serverEtag).toBe("etag-v7");
+        expect(result.current.isDirty).toBe(true);
     });
 
     it("suspends autosave while a completed preview waits for an explicit decision (preview_ready)", async () => {
@@ -531,20 +564,27 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
         );
         await waitFor(() => expect(result.current.title).toBe("Test Note"));
 
-        act(() => {
-            result.current.handleEditorChange("Unsaved user edit");
-        });
-        expect(result.current.isDirty).toBe(true);
+        vi.useFakeTimers();
+        try {
+            act(() => {
+                result.current.handleEditorChange("Unsaved user edit");
+            });
+            expect(result.current.isDirty).toBe(true);
 
-        const preventDefaultSpy = vi.spyOn(Event.prototype, "preventDefault");
-        act(() => {
-            window.dispatchEvent(new Event("beforeunload", { cancelable: true }));
-        });
-        expect(preventDefaultSpy).toHaveBeenCalled();
-        preventDefaultSpy.mockRestore();
+            const preventDefaultSpy = vi.spyOn(Event.prototype, "preventDefault");
+            act(() => {
+                window.dispatchEvent(new Event("beforeunload", { cancelable: true }));
+            });
+            expect(preventDefaultSpy).toHaveBeenCalled();
+            preventDefaultSpy.mockRestore();
 
-        // Allow debounce timer to settle
-        await new Promise((resolve) => setTimeout(resolve, 1300));
+            // Allow debounce timer to settle
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(1300);
+            });
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it("warns on unload while an undecided preview waits (preview_ready) even when clean", async () => {
@@ -627,11 +667,18 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
         expect(result.current.hydration).toBe("hydrating");
 
         // Eager edit BEFORE the fetch resolves: must never reach the server.
-        act(() => {
-            result.current.handleEditorChange("Eager pre-hydration edit");
-        });
-        await new Promise((resolve) => setTimeout(resolve, 1300));
-        expect(fileOps.updateFileContent).not.toHaveBeenCalled();
+        vi.useFakeTimers();
+        try {
+            act(() => {
+                result.current.handleEditorChange("Eager pre-hydration edit");
+            });
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(1300);
+            });
+            expect(fileOps.updateFileContent).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
 
         // Resolve with content IDENTICAL to the seeded local snapshot
         releaseGet({
@@ -646,16 +693,23 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
         });
         await waitFor(() => expect(result.current.hydration).toBe("ready"));
 
-        act(() => {
-            result.current.handleEditorChange("Post-hydration edit");
-        });
-        // Debounce (1s) must fully elapse before the anchored write lands.
-        await new Promise((resolve) => setTimeout(resolve, 1300));
-        expect(vi.mocked(fileOps.updateFileContent)).toHaveBeenCalledWith(
-            fileId,
-            "Post-hydration edit",
-            { expectedVersion: 2, expectedETag: "etag-v2" }
-        );
+        vi.useFakeTimers();
+        try {
+            act(() => {
+                result.current.handleEditorChange("Post-hydration edit");
+            });
+            // Debounce (1s) must fully elapse before the anchored write lands.
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(1300);
+            });
+            expect(vi.mocked(fileOps.updateFileContent)).toHaveBeenCalledWith(
+                fileId,
+                "Post-hydration edit",
+                { expectedVersion: 2, expectedETag: "etag-v2" }
+            );
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it("OFFLINE-FIRST: unreachable server with no local snapshot unlocks local composition", async () => {
@@ -673,18 +727,25 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
         // NOT fatal: hydration settles ready and releases the keyboard.
         await waitFor(() => expect(result.current.hydration).toBe("ready"));
 
-        act(() => {
-            result.current.handleEditorChange("Offline composition");
-        });
+        vi.useFakeTimers();
+        try {
+            act(() => {
+                result.current.handleEditorChange("Offline composition");
+            });
 
-        // The sync attempt is produced against the unreachable server...
-        await new Promise((resolve) => setTimeout(resolve, 1300));
-        expect(vi.mocked(fileOps.updateFileContent)).toHaveBeenCalledTimes(1);
-        expect(vi.mocked(fileOps.updateFileContent)).toHaveBeenCalledWith(
-            fileId,
-            "Offline composition",
-            { expectedVersion: 1, expectedETag: undefined }
-        );
+            // The sync attempt is produced against the unreachable server...
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(1300);
+            });
+            expect(vi.mocked(fileOps.updateFileContent)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(fileOps.updateFileContent)).toHaveBeenCalledWith(
+                fileId,
+                "Offline composition",
+                { expectedVersion: 1, expectedETag: undefined }
+            );
+        } finally {
+            vi.useRealTimers();
+        }
 
         // ...and COMPLETES LOCALLY: durable dirty snapshot in IndexedDB.
         const localRecord = mockLocalDb[fileId] as
@@ -975,8 +1036,15 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
             });
 
             // Wait past autosave debounce to confirm no server write was triggered
-            await new Promise((r) => setTimeout(r, 1200));
-            expect(fileOps.updateFileContent).not.toHaveBeenCalled();
+            vi.useFakeTimers();
+            try {
+                act(() => {
+                    vi.advanceTimersByTime(1200);
+                });
+                expect(fileOps.updateFileContent).not.toHaveBeenCalled();
+            } finally {
+                vi.useRealTimers();
+            }
 
             sessionKeyStore.purgeKeys(false);
         });

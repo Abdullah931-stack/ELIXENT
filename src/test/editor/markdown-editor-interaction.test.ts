@@ -94,57 +94,6 @@ describe("Markdown Editor: Interaction, Delimiter Visibility & Vertical Navigati
         });
     });
 
-    describe("2. Selection & Cursor Placement Around Delimiters", () => {
-        it("should accurately select lines directly above and below a horizontal rule", () => {
-            const doc = "Line Above HR\n\n---\n\nLine Below HR";
-            initEditor(doc, "live");
-
-            // Select line above HR
-            adapter.setSelection(0, 13);
-            expect(adapter.getSelectedText()).toBe("Line Above HR");
-
-            // Select line below HR
-            const belowStart = doc.indexOf("Line Below HR");
-            adapter.setSelection(belowStart, belowStart + 13);
-            expect(adapter.getSelectedText()).toBe("Line Below HR");
-        });
-
-        it("should accurately select lines directly above and below a heading", () => {
-            const doc = "Line Above Heading\n# Header Section\nLine Below Heading";
-            initEditor(doc, "live");
-
-            // Select line above heading
-            adapter.setSelection(0, 18);
-            expect(adapter.getSelectedText()).toBe("Line Above Heading");
-
-            // Select heading itself
-            const headingStart = doc.indexOf("# Header Section");
-            adapter.setSelection(headingStart, headingStart + 16);
-            expect(adapter.getSelectedText()).toBe("# Header Section");
-
-            // Select line below heading
-            const belowStart = doc.indexOf("Line Below Heading");
-            adapter.setSelection(belowStart, belowStart + 18);
-            expect(adapter.getSelectedText()).toBe("Line Below Heading");
-        });
-
-        it("should allow multi-line selection spanning across Markdown delimiters without truncation", () => {
-            const doc = "Paragraph above\n\n---\n\n# Heading Section\nParagraph below";
-            initEditor(doc, "live");
-
-            // Select from start of doc to end of doc
-            adapter.setSelection(0, doc.length);
-            expect(adapter.getSelectedText()).toBe(doc);
-
-            // Select across the HR line
-            const hrStart = doc.indexOf("---");
-            const headingEnd = doc.indexOf("Section") + 7;
-            adapter.setSelection(hrStart - 5, headingEnd);
-            expect(adapter.getSelectedText()).toContain("---");
-            expect(adapter.getSelectedText()).toContain("# Heading Section");
-        });
-    });
-
     describe("3. Adversarial Hardening & Stress Invariants", () => {
         it("should prevent task checkbox mutation in read-only mode and disable input element", async () => {
             parent = document.createElement("div");

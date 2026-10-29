@@ -14,6 +14,7 @@ import { renderHook, act } from "@testing-library/react";
 import { useEditorOrchestrator } from "../../hooks/use-editor-orchestrator";
 import { sessionKeyStore } from "../../lib/sync/session-key-store";
 import { SyncCryptoGateway } from "../../lib/sync/sync-crypto-gateway";
+import { AAD, AADValidationError } from "../../lib/crypto/aad";
 import * as fileOps from "../../server/actions/file-ops";
 import type { EditorAdapter } from "../../components/editor/markdown/types";
 
@@ -93,6 +94,34 @@ function createMockAdapter(initialValue = ""): EditorAdapter {
     } as unknown as EditorAdapter;
 }
 
+
+describe("LUGX-056: Empty User ID in AAD Derivation", () => {
+    it("throws AADValidationError when userId is empty or whitespace in file AAD", () => {
+        expect(() => AAD.file("", "file-123")).toThrow(AADValidationError);
+        expect(() => AAD.file("   ", "file-123")).toThrow(AADValidationError);
+        expect(() => AAD.file(null as unknown as string, "file-123")).toThrow(AADValidationError);
+        expect(() => AAD.file(undefined as unknown as string, "file-123")).toThrow(AADValidationError);
+    });
+
+    it("throws AADValidationError when fileId is empty or whitespace in file AAD", () => {
+        expect(() => AAD.file("user-123", "")).toThrow(AADValidationError);
+        expect(() => AAD.file("user-123", "   ")).toThrow(AADValidationError);
+    });
+
+    it("throws AADValidationError when userId is empty or whitespace across envelope AAD builders", () => {
+        expect(() => AAD.passwordWrap("")).toThrow(AADValidationError);
+        expect(() => AAD.passwordWrap("   ")).toThrow(AADValidationError);
+        expect(() => AAD.recoveryWrap("")).toThrow(AADValidationError);
+        expect(() => AAD.recoveryWrap("   ")).toThrow(AADValidationError);
+        expect(() => AAD.deviceWrap("")).toThrow(AADValidationError);
+        expect(() => AAD.deviceWrap("   ")).toThrow(AADValidationError);
+    });
+
+    it("generates canonical AAD format when valid identifiers are provided", () => {
+        expect(AAD.file("user-123", "file-456")).toBe("lugx:v1:file:user-123:file-456");
+        expect(AAD.file("  user-123  ", "  file-456  ")).toBe("lugx:v1:file:user-123:file-456");
+    });
+});
 
 describe("LUGX-004: Unmount Flush Plaintext Leak Prevention", () => {
     beforeEach(() => {

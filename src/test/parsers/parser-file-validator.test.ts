@@ -69,46 +69,23 @@ describe('File Validator Utility (Unit Tests)', () => {
     });
 
     describe('isDisguisedBinary (Magic Bytes Inspector)', () => {
-        it('detects Windows PE executable (MZ header)', () => {
-            const peBytes = new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00]);
-            const result = isDisguisedBinary(peBytes);
+        it.each([
+            { name: 'Windows PE executable (MZ header)', bytes: new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00]), expectedType: 'Windows Executable' },
+            { name: 'Linux ELF executable (\\x7fELF header)', bytes: new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01]), expectedType: 'Linux Executable' },
+            { name: 'ZIP and JAR archives (PK\\x03\\x04)', bytes: new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00]), expectedType: 'ZIP Archive' },
+            { name: '7-Zip archives (7z...)', bytes: new Uint8Array([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]), expectedType: '7-Zip Archive' },
+            { name: 'RAR archives (Rar!...)', bytes: new Uint8Array([0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x00]), expectedType: 'RAR Archive' },
+        ])('detects $name', ({ bytes, expectedType }) => {
+            const result = isDisguisedBinary(bytes);
             expect(result.isBinary).toBe(true);
-            expect(result.type).toContain('Windows Executable');
+            expect(result.type).toContain(expectedType);
         });
 
-        it('detects Linux ELF executable (\\x7fELF header)', () => {
-            const elfBytes = new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01]);
-            const result = isDisguisedBinary(elfBytes);
-            expect(result.isBinary).toBe(true);
-            expect(result.type).toContain('Linux Executable');
-        });
-
-        it('detects macOS Mach-O 64-bit and FAT binaries', () => {
-            const machO1 = new Uint8Array([0xfe, 0xed, 0xfa, 0xcf, 0x00]);
-            const machO2 = new Uint8Array([0xca, 0xfe, 0xba, 0xbe, 0x00]);
-            expect(isDisguisedBinary(machO1).isBinary).toBe(true);
-            expect(isDisguisedBinary(machO2).isBinary).toBe(true);
-        });
-
-        it('detects ZIP and JAR archives (PK\\x03\\x04)', () => {
-            const zipBytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00]);
-            const result = isDisguisedBinary(zipBytes);
-            expect(result.isBinary).toBe(true);
-            expect(result.type).toContain('ZIP Archive');
-        });
-
-        it('detects 7-Zip archives (7z...)', () => {
-            const sevenZipBytes = new Uint8Array([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]);
-            const result = isDisguisedBinary(sevenZipBytes);
-            expect(result.isBinary).toBe(true);
-            expect(result.type).toContain('7-Zip Archive');
-        });
-
-        it('detects RAR archives (Rar!...)', () => {
-            const rarBytes = new Uint8Array([0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x00]);
-            const result = isDisguisedBinary(rarBytes);
-            expect(result.isBinary).toBe(true);
-            expect(result.type).toContain('RAR Archive');
+        it.each([
+            { name: 'Mach-O 64-bit', bytes: new Uint8Array([0xfe, 0xed, 0xfa, 0xcf, 0x00]) },
+            { name: 'Mach-O FAT', bytes: new Uint8Array([0xca, 0xfe, 0xba, 0xbe, 0x00]) },
+        ])('detects macOS $name', ({ bytes }) => {
+            expect(isDisguisedBinary(bytes).isBinary).toBe(true);
         });
 
         it('returns false for plain Markdown and UTF-8 text', () => {
@@ -151,23 +128,12 @@ describe('File Validator Utility (Unit Tests)', () => {
             expect(result.error).toContain('missing %PDF header');
         });
 
-        it('rejects disguised Windows executable renamed to .md', () => {
-            const disguisedPe = new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00]);
-            const result = validateFileBuffer(disguisedPe, 'malicious.md');
-            expect(result.isValid).toBe(false);
-            expect(result.error).toContain('disguised binary detected');
-        });
-
-        it('rejects disguised Linux ELF executable renamed to .txt', () => {
-            const disguisedElf = new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01]);
-            const result = validateFileBuffer(disguisedElf, 'payload.txt');
-            expect(result.isValid).toBe(false);
-            expect(result.error).toContain('disguised binary detected');
-        });
-
-        it('rejects disguised ZIP archive renamed to .md', () => {
-            const disguisedZip = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00]);
-            const result = validateFileBuffer(disguisedZip, 'bundle.md');
+        it.each([
+            { desc: 'disguised Windows executable renamed to .md', bytes: new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00]), filename: 'malicious.md' },
+            { desc: 'disguised Linux ELF executable renamed to .txt', bytes: new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01]), filename: 'payload.txt' },
+            { desc: 'disguised ZIP archive renamed to .md', bytes: new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00]), filename: 'bundle.md' },
+        ])('rejects $desc', ({ bytes, filename }) => {
+            const result = validateFileBuffer(bytes, filename);
             expect(result.isValid).toBe(false);
             expect(result.error).toContain('disguised binary detected');
         });

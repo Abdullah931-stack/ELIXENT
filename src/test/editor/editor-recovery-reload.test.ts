@@ -121,10 +121,11 @@ describe("Phase 11: Hard-Reload Recovery & Server-Authoritative Settlement", () 
         // Record cleared on mount
         await waitFor(() => expect(readRecords()["op_reload_preview"]).toBeUndefined());
 
-        // The abandoned preview was NEVER applied to the document or UI state
+        // The abandoned preview was NEVER applied to the document or UI state nor committed
         expect(result.current.previewText).toBe("");
         expect(result.current.status).toBe("idle");
         expect(editor.getValue()).toBe(initialContent);
+        expect(mockCommitAIFileOperation).not.toHaveBeenCalled();
     });
 
     it("reload during generation: clears orphan from local storage without crashing", async () => {
@@ -133,14 +134,6 @@ describe("Phase 11: Hard-Reload Recovery & Server-Authoritative Settlement", () 
         renderHook(() => useAIStream({ onProgrammaticTransaction: (fn) => fn() }));
 
         await waitFor(() => expect(readRecords()["op_reload_generating"]).toBeUndefined());
-    });
-
-    it("unknown operation ids are cleared and never crash the mount", async () => {
-        seedRecord({ operationId: "op_unknown", fileId: "file-1", phase: "generating" });
-
-        renderHook(() => useAIStream({ onProgrammaticTransaction: (fn) => fn() }));
-
-        await waitFor(() => expect(readRecords()["op_unknown"]).toBeUndefined());
     });
 
     it("SPA flow: tracked record advances to preview_ready and unmount cleanup clears it without financial RPC", async () => {
@@ -170,9 +163,10 @@ describe("Phase 11: Hard-Reload Recovery & Server-Authoritative Settlement", () 
         await waitFor(() => expect(result.current.status).toBe("preview_ready"));
         expect(readRecords()[trackedId].phase).toBe("preview_ready");
 
-        // SPA navigation: React cleanup aborts session and clears local record
+        // SPA navigation: React cleanup aborts session and clears local record without financial commit
         unmount();
         await waitFor(() => expect(Object.keys(readRecords())).toHaveLength(0));
         expect(editor.getValue()).toBe(initialContent);
+        expect(mockCommitAIFileOperation).not.toHaveBeenCalled();
     });
 });

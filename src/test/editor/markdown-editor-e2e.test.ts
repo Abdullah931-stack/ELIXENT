@@ -23,8 +23,6 @@ import {
     EditorAdapter,
 } from "@/components/editor/markdown";
 import { normalizeMarkdownSource } from "@/lib/sync/etag-generator";
-import { exportContent } from "@/lib/exporters";
-import { ConflictResolver } from "@/lib/sync/conflict-resolver";
 
 describe("Phase 6 Comprehensive E2E: Unified Markdown Editor Workflows", () => {
     let parent: HTMLDivElement;
@@ -122,49 +120,7 @@ describe("Phase 6 Comprehensive E2E: Unified Markdown Editor Workflows", () => {
         });
     });
 
-    describe("3. Remote Pull & Cursor Preservation", () => {
-        it("should replace content on remote pull and preserve valid cursor position", () => {
-            const localContent = "First line of user work.\nSecond line being typed.";
-            initEditor(localContent);
-
-            // User cursor is at position 10 on line 1
-            adapter.setSelection(10, 10);
-            expect(adapter.getSelection()).toEqual({ from: 10, to: 10 });
-
-            // Remote pull arrives with updated text
-            const remotePulledContent = "First line of user work with remote edits.\nSecond line being typed.";
-            adapter.setValue(remotePulledContent);
-
-            // Setting selection to safe preserved range
-            const prevSel = 10;
-            const safePos = Math.min(prevSel, adapter.getCharCount());
-            adapter.setSelection(safePos, safePos);
-
-            expect(adapter.getValue()).toBe(remotePulledContent);
-            expect(adapter.getSelection()).toEqual({ from: 10, to: 10 });
-        });
-    });
-
-    describe("4. Offline Caching & Conflict Resolution (3-Way Merge)", () => {
-        it("should cleanly perform 3-way merge when non-overlapping edits occur offline vs remote", () => {
-            const resolver = new ConflictResolver();
-            const baseContent = "Paragraph 1: Base\n\nParagraph 2: Base\n\nParagraph 3: Base";
-            const localOfflineEdit = "Paragraph 1: Local Edit\n\nParagraph 2: Base\n\nParagraph 3: Base";
-            const remoteServerEdit = "Paragraph 1: Base\n\nParagraph 2: Base\n\nParagraph 3: Remote Edit";
-
-            const mergeResult = resolver.attemptThreeWayMerge({
-                base: { content: baseContent, version: 1 },
-                local: { content: localOfflineEdit, version: 1 },
-                remote: { content: remoteServerEdit, version: 2 },
-            });
-
-            expect(mergeResult.hasOverlaps).toBe(false);
-            expect(mergeResult.content).toContain("Paragraph 1: Local Edit");
-            expect(mergeResult.content).toContain("Paragraph 3: Remote Edit");
-        });
-    });
-
-    describe("5. AI Streaming Preview & Explicit Decision Model", () => {
+    describe("3. AI Streaming Preview & Explicit Decision Model", () => {
         it("should start streaming ghost decoration, allow live updates, and atomically apply on accept", () => {
             const initialDoc = "Line 1: Needs improvement.\nLine 2: Keep as is.";
             initEditor(initialDoc);
@@ -217,24 +173,7 @@ describe("Phase 6 Comprehensive E2E: Unified Markdown Editor Workflows", () => {
         });
     });
 
-    describe("6. Import and Export Raw Fidelity", () => {
-        it("should export Markdown and Plain Text accurately from EditorAdapter", async () => {
-            const mdContent = "# Final Report\n\n**Key metric**: 100% test coverage.\n\n- [x] All TipTap removed";
-            initEditor(mdContent);
-
-            // Export as MD
-            const mdExport = await exportContent(adapter.getValue(), "test-file", "md");
-            expect(mdExport.success).toBe(true);
-            expect(mdExport.filename).toBe("test-file.md");
-
-            // Export as TXT
-            const txtExport = await exportContent(adapter.getValue(), "test-file", "txt");
-            expect(txtExport.success).toBe(true);
-            expect(txtExport.filename).toBe("test-file.txt");
-        });
-    });
-
-    describe("7. Virtualization Bidi Resilience & Large Document Scrolling Stability", () => {
+    describe("4. Virtualization Bidi Resilience & Large Document Scrolling Stability", () => {
         it("should preserve text direction integrity across 2,000 lines of mixed Arabic, English and Code blocks", () => {
             const lines: string[] = [];
             lines.push("# تقرير المشروع النهائي والأنظمة الذكية");

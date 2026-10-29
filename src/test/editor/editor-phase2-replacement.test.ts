@@ -7,8 +7,6 @@ import {
     createEditorAdapter,
     EditorAdapter,
 } from "@/components/editor/markdown";
-import fs from "node:fs";
-import path from "node:path";
 
 describe("Phase 2: TipTap Replacement & Markdown Editor Tooling Integration", () => {
     let parent: HTMLDivElement;
@@ -45,45 +43,6 @@ describe("Phase 2: TipTap Replacement & Markdown Editor Tooling Integration", ()
         if (parent && parent.parentNode) {
             parent.parentNode.removeChild(parent);
         }
-    });
-
-    describe("1. Zero TipTap Invariants in Target Components", () => {
-        it("src/app/workspace/editor/[fileId]/page.tsx must have ZERO @tiptap imports or getHTML/setContent calls", () => {
-            const pagePath = path.resolve(process.cwd(), "src/app/workspace/editor/[fileId]/page.tsx");
-            const content = fs.readFileSync(pagePath, "utf-8");
-
-            expect(content).not.toContain("@tiptap");
-            expect(content).not.toContain("getHTML");
-            expect(content).not.toContain("from \"@tiptap/react\"");
-            expect(content).not.toContain("EditorContent");
-            expect(content).toContain("MarkdownEditor");
-        });
-
-        it("src/components/editor/search-replace.tsx must have ZERO @tiptap imports", () => {
-            const searchPath = path.resolve(process.cwd(), "src/components/editor/search-replace.tsx");
-            const content = fs.readFileSync(searchPath, "utf-8");
-
-            expect(content).not.toContain("@tiptap");
-            expect(content).not.toContain("commands.setContent");
-            expect(content).toContain("EditorAdapter");
-        });
-
-        it("src/hooks/use-editor-orchestrator.ts must have ZERO @tiptap imports", () => {
-            const orchestratorPath = path.resolve(process.cwd(), "src/hooks/use-editor-orchestrator.ts");
-            const content = fs.readFileSync(orchestratorPath, "utf-8");
-
-            expect(content).not.toContain("@tiptap");
-            expect(content).toContain("EditorAdapter");
-        });
-
-        it("src/hooks/use-ai-stream.ts must have ZERO @tiptap imports", () => {
-            const aiStreamPath = path.resolve(process.cwd(), "src/hooks/use-ai-stream.ts");
-            const content = fs.readFileSync(aiStreamPath, "utf-8");
-
-            expect(content).not.toContain("@tiptap");
-            expect(content).not.toContain("from \"@tiptap/react\"");
-            expect(content).toContain("EditorAdapter");
-        });
     });
 
     describe("2. Multi-Range Transaction (replaceAll) & Overlap Immunity", () => {

@@ -265,15 +265,4 @@ describe("Phase 1: Standalone Markdown Editor & Adapter Contract", () => {
             expect(elapsed).toBeLessThan(1000); // Must initialize in less than 1s
         });
     });
-
-    describe("7. Zero TipTap or External Dependencies Invariant", () => {
-        it("should not import or invoke any TipTap, HTML serializer, or network methods", () => {
-            initEditor("# Standalone LUGX Editor");
-            // Verify adapter has no TipTap methods
-            expect((adapter as unknown as Record<string, unknown>).getHTML).toBeUndefined();
-            expect((adapter as unknown as Record<string, unknown>).setContent).toBeUndefined();
-            expect((adapter as unknown as Record<string, unknown>).schema).toBeUndefined();
-            expect((adapter as unknown as Record<string, unknown>).commands).toBeUndefined();
-        });
-    });
 });

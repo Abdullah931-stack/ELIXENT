@@ -222,13 +222,7 @@ describe("Export-Import Round-Trip & Content Security (Phase 15 Integration Test
         expect(importResult.success).toBe(true);
         expect(importResult.data).toBeDefined();
 
-        // Filename must not contain traversal or forbidden chars
-        expect(importResult.data?.title).not.toContain("../");
-        expect(importResult.data?.title).not.toContain("..\\");
-        expect(importResult.data?.title).not.toContain("<");
-        expect(importResult.data?.title).not.toContain(">");
-        expect(importResult.data?.title).not.toContain(":");
-        expect(importResult.data?.title).not.toContain("*");
+        // Filename sanitized against traversal and forbidden OS characters (exact match subsumes negative checks)
         expect(importResult.data?.title).toBe("WindowsSystem32configbad");
     });
 
