@@ -165,6 +165,15 @@ export function getApiKeys(): string[] {
             }
         }
     }
+    if (keys.length === 0) {
+        const fallbackKey = process.env.GEMINI_API_KEY;
+        if (fallbackKey && typeof fallbackKey === "string") {
+            const trimmed = fallbackKey.trim().replace(/^["']|["']$/g, "");
+            if (trimmed && !trimmed.includes("...") && !trimmed.startsWith("CHANGE_ME")) {
+                return [trimmed];
+            }
+        }
+    }
     return keys;
 }
 
@@ -536,7 +545,7 @@ export async function markKeyDisabled(
  * Select a healthy API key for request execution with Fast-Path and Batch inspection.
  * Usage is atomically incremented only on confirmed success via confirmApiKeyUsage().
  */
-export async function getApiKeyForRequest(): Promise<KeyInfo> {
+export async function getApiKeyForRequest(_modelName?: string): Promise<KeyInfo> {
     const keys = getApiKeys();
     if (keys.length === 0) {
         throw new Error("No Gemini API keys configured");
