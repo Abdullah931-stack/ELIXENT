@@ -171,7 +171,7 @@ flowchart TB
 | **`Phase 4`**  | Build `Flush-First Cold Start`, PostgreSQL settlement service, `withMeteredNodeGate` wrapper, `StreamGovernor`, and upgrade Stripe tiers and Cron job.                                                                                 |  $4$ (`Waves 4.1–4.2`)  | `feat(metering): add Flush-First cold start, StreamGovernor, node gate, Stripe dual-write, and dirty wallet cron`<br>_(Status: CLOSED / EXECUTED)_ |
 | **`Phase 5`**  | Build the `Fence-Aware Heading Slicer`, `diff3MergeSection` function with exact parameter ordering, and hybrid `BM25 + AST` lexical search engine.                                                                                     |  $3$ (`Waves 5.1–5.2`)  | `feat(ast): implement fence-aware heading slicer, section-scoped Diff3 merge, and hybrid BM25 lexical search`                                 |
 | **`Phase 6`**  | Build the zero-knowledge `EphemeralVaultMemoryMap` (`vault_ref://` pointers), `EncryptedCheckpointSerializer`, and `CloudPostgresWorkspaceProvider`.                                                                                   |  $3$ (`Waves 6.1–6.2`)  | `feat(workspace): implement ephemeral vault memory map, encrypted checkpoint serializer, and cloud workspace provider`                        |
-| **`Phase 7`**  | Comprehensive definition of `PREDEFINED_CONCEPT_TAGS` and `Zod` contracts, unified `/v1/decisions` client, `Conformal APS` classifier, and `Vercel AI SDK v7` gateway.                                                                 |  $3$ (`Waves 7.1–7.2`)  | `feat(jev): define predefined concept tags taxonomy, unified /v1/decisions client, Conformal APS, and AI SDK v6 bridge`                       |
+| **`Phase 7`**  | Comprehensive definition of `PREDEFINED_CONCEPT_TAGS` and `Zod` contracts, unified `/v1/decisions` client, `Conformal APS` classifier, and `Vercel AI SDK v7` gateway.                                                                 |  $3$ (`Waves 7.1–7.2`)  | `feat(jev): define predefined concept tags taxonomy, unified /v1/decisions client, Conformal APS, and AI SDK v6 bridge`<br>_(Status: CLOSED / EXECUTED)_ |
 | **`Phase 8`**  | Build the `Justification-Driven ATMS DAG`, deterministic local candidate retriever, relational linker, and `resolveATMSCascadeBFS` algorithm.                                                                                          |  $3$ (`Waves 8.1–8.2`)  | `feat(atms): implement justification-driven ATMS DAG, deterministic candidate retriever, and cascade BFS`                                     |
 | **`Phase 9`**  | Build `AgentGraphState` channels and pure reducers, implement the 7-stage nodes (including `atms_relational_linker_node` and `pure_interrupt_node`), and compile `StateGraph`.                                                         |  $4$ (`Waves 9.1–9.3`)  | `feat(agent): implement pure state reducers, 14 stage nodes, and compiled LangGraph StateGraph with PostgresSaver`                            |
 | **`Phase 10`** | Upgrade CodeMirror 6 editor to `Multi-Hunk Ghost` (`GhostHunk[]` + `mapPos`) and build the unified agent stream route `/api/agent/stream` (`maxDuration = 300` + `after()`).                                                           |    $2$ (`Wave 10.1`)    | `feat(stream-editor): upgrade CM6 to multi-hunk ghost overlay and add /api/agent/stream SSE route`                                            |
@@ -845,10 +845,13 @@ flowchart LR
 - **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 3 Phase 6 suites (90 tests) passing 100%, 101 repository unit suites (1431 tests) passing 100%, Commit Gate 6 fully satisfied.
 - **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md`](../records/closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md)
 
-### [Phase 7: Comprehensive `PREDEFINED_CONCEPT_TAGS` Taxonomy, Unified `/v1/decisions` Client, `Conformal APS` Classifier & `AI SDK v6` Bridge]
+### [Phase 7: Comprehensive `PREDEFINED_CONCEPT_TAGS` Taxonomy, Unified `/v1/decisions` Client, `Conformal APS` Classifier & `AI SDK v6` Bridge] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 7 — Comprehensive Concept Taxonomy, Unified Decisions Client, Conformal APS Classifier & AI SDK v6 Bridge`  
-> **Single Responsibility Principle (`SRP`):** Complete the dedicated phase for comprehensively defining the hardcoded architectural concept tags (`PREDEFINED_CONCEPT_TAGS`) and structured `Zod` contracts, building the unified decisions client (`POST /v1/decisions`) and Adaptive Prediction Sets (`Conformal APS Classifier`), and upgrading the generative model client to run on `Vercel AI SDK v7`.  
+> **Status:** `CLOSED / EXECUTED` ✅ ([Closure Dossier](../records/closures/elixent-execution/phase-07-concept-taxonomy-unified-decisions-and-conformal-aps.md))  
+> **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 3 Phase 7 suites (84 tests) passing 100%, 104 repository unit suites (1557 tests) passing 100%, Commit Gate 7 fully satisfied.  
+> **Single Responsibility Principle (`SRP`):** Complete the dedicated phase for defining the universal, paradigm-agnostic concept taxonomy across 9 engineering domains (`DEFAULT_CONCEPT_TAGS` / `PREDEFINED_CONCEPT_TAGS`), project-scoped mutable tag registry (`applyProjectTagMutations`, `resolveProjectConceptTags`), dynamic Zod schema factories, building the unified decisions client (`POST /v1/decisions`) and Adaptive Prediction Sets (`Conformal APS Classifier`), and upgrading the generative model client to run on `Vercel AI SDK v7`.  
+> **Closure Record:** [`docs/records/closures/elixent-execution/phase-07-concept-taxonomy-unified-decisions-and-conformal-aps.md`](../records/closures/elixent-execution/phase-07-concept-taxonomy-unified-decisions-and-conformal-aps.md)  
 > **Post-Phase 6 Baseline State:** Phases 1–6 are completed and committed (including `models.config.json` with `calibrationPriors` from Phase 3, and the workspace and vault boundary from Phase 6).
 
 #### Phase 7 Sub-Agent Topology
@@ -870,30 +873,37 @@ flowchart LR
 
 #### Detailed Sub-Agent Tasks in Phase 7
 
-##### 1. Task `Sub-Agent 7.A`: Comprehensive Definition of Hardcoded Concept Tags (`PREDEFINED_CONCEPT_TAGS`) and `Zod` Contracts
+##### 1. Task `Sub-Agent 7.A`: Universal Concept Taxonomy, Project Tag Registry & Dynamic `Zod` Contracts
 
 - **Execution Mode & Dependencies:** `[PARALLEL — Wave 7.1]`.
 - **Exclusively Targeted Files:**
   - `src/core/agent/taxonomy/predefined-tags.ts` (new)
   - `src/core/agent/schemas/decision-schemas.ts` (new)
+  - `src/test/agent/taxonomy-and-schemas.test.ts` (new)
 - **Exact Implementation Actions:**
   1. **In `src/core/agent/taxonomy/predefined-tags.ts` (per `ELIXENT-ARCH-02` §3 & §4.1):**
-     - Define the comprehensive architectural concept taxonomy (`PREDEFINED_CONCEPT_TAGS`) as a hardcoded constant tuple (`as const`) covering all engineering and documentation domains (orchestration core & agent state, data schemas & migrations, billing, metering & settlement, encryption, zero-knowledge vault & authentication, synchronization, 3-way merge & version conflicts, structural AST inspection & search, UI & editor components, performance, reliability & Cron, and governance & documentation policies).
-     - **Strict Architectural Invariant:** The LLM is strictly prohibited from inventing free-text tags at runtime; it must exclusively select tags imported from `PREDEFINED_CONCEPT_TAGS` enforced via `z.enum(PREDEFINED_CONCEPT_TAGS)`.
+     - Define the universal, paradigm-agnostic concept taxonomy (`DEFAULT_CONCEPT_TAGS` with `PREDEFINED_CONCEPT_TAGS` alias) across **9 engineering domains** (System Architecture & Design; Libraries, SDKs & Public Contracts; Deep Learning, ML & Scientific Computing; Data Modeling, Storage & Persistence; Networking, Protocols & Distributed Sync; Security, Cryptography & Privacy; Performance, Runtime & Systems; Frontend, UI/UX & Client Interaction; Quality, Testing, CI/CD & Governance) with zero host-project coupling.
+     - Implement format validation regex `CONCEPT_TAG_FORMAT_REGEX = /^[a-z][a-z0-9_]{1,63}$/` and normalization helper `normalizeConceptTag`.
+     - Implement project-scoped tag mutation algebra `applyProjectTagMutations(current, mutation, baseTags)` maintaining deterministic set math `(baseTags \ removedTags) ∪ addedTags` and resolving non-empty active tags via `resolveProjectConceptTags` (throwing `EmptyProjectTaxonomyError` on empty set).
+     - Author system-reserved decision sentinel helpers (`PROJECT_TAXONOMY_SENTINEL_ID = "__PROJECT_TAXONOMY__"`, `isSystemReservedDecisionId`, `toTaxonomyLedgerPayload`, `fromTaxonomyLedgerPayload`) for lossless persistence in `project_decision_ledger`.
   2. **In `src/core/agent/schemas/decision-schemas.ts`:**
-     - Build `ConceptTagEnum = z.enum(PREDEFINED_CONCEPT_TAGS)`, `CanonicalOptionSchema` (`optionKey`, `neutralSummary`, `rationaleAndPremises`), `DecisionEvaluationItemSchema` (`options` constrained to $3\text{–}4$ alternatives, `conceptTags` constrained by `ConceptTagEnum`), `CanonicalDecisionBatchSchema`, and schemas for assumption extraction, search synthesis, and human-in-the-loop clarification (`ClarificationResponseSchema`).
+     - Build dynamic schema factories: `createConceptTagEnum(activeTags?)`, `createDecisionEvaluationItemSchema(activeTags?)`, `createCanonicalDecisionBatchSchema(activeTags?)`, `createAssumptionItemSchema(activeTags?)`, and `createAssumptionExtractionBatchSchema(activeTags?)`.
+     - Provide pre-instantiated default schemas (`ConceptTagEnum`, `DecisionEvaluationItemSchema`, `CanonicalDecisionBatchSchema`, `AssumptionItemSchema`, `AssumptionExtractionBatchSchema`), `CanonicalOptionSchema`, `SearchReportSchema`, `RelationalLinkPairInputSchema`, `RelationalAdjudicationBatchSchema`, and `ClarificationResponseSchema`.
+  3. **In `src/test/agent/taxonomy-and-schemas.test.ts`:**
+     - Author comprehensive unit tests covering universal taxonomy constants, formatting regex, project mutation algebra, empty set error prevention, dynamic schema factories, and sentinel payload conversions.
 
 ##### 2. Task `Sub-Agent 7.B`: Build Unified Decisions Client (`POST /v1/decisions`) and Adaptive Prediction Sets (`Conformal APS`) Classifier
 
-- **Execution Mode & Dependencies:** `[SEQUENTIAL — Wave 7.2 | Depends on: Sub-Agent 7.A]` (depends on the `Zod` schemas and `PREDEFINED_CONCEPT_TAGS` dictionary from `7.A`).
+- **Execution Mode & Dependencies:** `[SEQUENTIAL — Wave 7.2 | Depends on: Sub-Agent 7.A]` (depends on the `Zod` schemas and taxonomy contracts from `7.A`).
 - **Exclusively Targeted Files:**
   - `src/lib/jev/client.ts` (new)
   - `src/lib/jev/calibration-store.ts` (new)
   - `src/lib/jev/conformal-classifier.ts` (new)
   - `src/test/jev/conformal-classifier.test.ts` (new)
 - **Exact Implementation Actions:**
-  1. **In `src/lib/jev/client.ts`:** Build the `POST /v1/decisions` client to evaluate the four orthogonal dimensions in parallel (`evidence_grounding`, `coupling_level`, `rollback_cost`, `selected_option` including `"insufficient_evidence"`), implement the `Two-Tier Decision Cascade` (Tier 1 fast `Jev 1.13 / MS-Decision-1` $\rightarrow$ Tier 2 thinking escalation `Fastino GLiDE` for ambiguous core architectural decisions), and support batched relational link evaluation (`evaluateRelationalLinksBatch`).
-  2. **In `src/lib/jev/calibration-store.ts` and `src/lib/jev/conformal-classifier.ts`:** Implement the prior calibration store and sliding window ($N = 200$), and implement the 5-step deterministic mathematical algorithm (`classifyDecisionConformalAPS` with zero LLM involvement) to compute `ImpactIndex`, normalize option probabilities after isolating $p_{\text{abstain}}$, compute dominance margin $m(x) = \tilde{p}_{(1)} - \tilde{p}_{(2)}$, construct prediction set $\mathcal{C}_\alpha(x)$, and classify into `APPROVED_DIRECT`, `APPROVED_CONSERVATIVE` (persisting `selectionRationale`, `evaluatedAlternatives`, and `runnerUpOptionKey`), or `UNRESOLVED`.
+  1. **In `src/lib/jev/client.ts`:** Build the unified `POST /v1/decisions` client evaluating the four orthogonal dimensions in parallel (`evidence_grounding`, `coupling_level`, `rollback_cost`, `probabilities` with `"insufficient_evidence"`), implement the `Two-Tier Decision Cascade` (Tier 1 fast triage `typesafe/jev-1.13` $\rightarrow$ Tier 2 thinking escalation `fastino/glide` for ambiguous core decisions), deterministic mock generator for unconfigured environments, and batched relational link evaluation (`evaluateRelationalLinksBatch`).
+  2. **In `src/lib/jev/calibration-store.ts` and `src/lib/jev/conformal-classifier.ts`:** Implement the in-memory prior calibration store with sliding window ($N = 200$) and empirical quantile computation at rank $k = \min(n, \lceil(n+1)(1-\alpha)\rceil)$ with fallback to static priors in `models.config.json`; and implement the 5-step deterministic mathematical algorithm (`classifyDecisionConformalAPS` with zero LLM involvement) to compute `ImpactIndex`, normalize option probabilities after isolating $p_{\text{abstain}}$, compute top-2 dominance margin $m(x)$, construct prediction set $\mathcal{C}_\alpha(x)$, and classify into `APPROVED_DIRECT`, `APPROVED_CONSERVATIVE`, or `UNRESOLVED`.
+  3. **In `src/test/jev/conformal-classifier.test.ts`:** Author 55 exhaustive unit tests verifying all mathematical edge cases, abstention gating, conservative approval invariants, prediction set bounds, and calibration store behavior.
 
 ##### 3. Task `Sub-Agent 7.C`: Upgrade Generative Model Gateway to `Vercel AI SDK v7` and Support `GEMINI_API_KEY`
 
@@ -901,19 +911,27 @@ flowchart LR
 - **Exclusively Targeted Files:**
   - `src/lib/ai/key-rotation.ts` (modify)
   - `src/lib/ai/client.ts` (modify)
+  - `src/test/ai/ai-sdk-v7-gateway.test.ts` (new)
 - **Exact Implementation Actions:**
-  1. In `src/lib/ai/key-rotation.ts`, add fallback support for reading `process.env.GEMINI_API_KEY` when numbered keys `GEMINI_KEY_1..20` are not configured, while preserving full Redis key rotation and circuit-breaker logic.
-  2. In `src/lib/ai/client.ts`, build the `Vercel AI SDK v7` gateway functions (`executeStructuredGeneration` via `generateObject`, `executeToolAgentGeneration` via `generateText`, and `executeStreamingGeneration` via `streamText`) wired to key rotation, while temporarily keeping the legacy streaming function until `api/ai/stream` is deleted in Phase 12.
+  1. In `src/lib/ai/key-rotation.ts`, add fallback support for reading `process.env.GEMINI_API_KEY` when numbered keys `GEMINI_KEY_1..20` are not configured, while preserving full Redis key rotation, usage confirmation, and circuit-breaker logic.
+  2. In `src/lib/ai/client.ts`, build the modern `Vercel AI SDK v7` gateway functions (`executeStructuredGeneration` via `generateText` with `Output.object`, `executeToolAgentGeneration` via `generateText` with `stopWhen: stepCountIs(...)`, and `executeStreamingGeneration` via `streamText`) wired to key rotation, probe locks, and circuit breaker protection, while preserving legacy streaming functions until Phase 12.
+  3. In `src/test/ai/ai-sdk-v7-gateway.test.ts`, author 21 tests verifying structured output, tool agent execution, streaming text, error classification, and key rotation.
 
-#### Phase 7 Commit Gate
+#### Phase 7 Commit Gate — ✅ SATISFIED / CLOSED
 
-- Run `npx vitest run src/test/jev/conformal-classifier.test.ts` to verify rejection of any tag outside `PREDEFINED_CONCEPT_TAGS` and mathematical accuracy of `Conformal APS`, and confirm `npx tsc --noEmit` passes before running `git commit`.
+- Execute mandatory verification commands and confirm $100\%$ pass rate across Phase 7 test suites before running `git commit`:
+  ```bash
+  npx tsc --noEmit
+  npx vitest run src/test/agent/taxonomy-and-schemas.test.ts src/test/jev/conformal-classifier.test.ts src/test/ai/ai-sdk-v7-gateway.test.ts
+  ```
+- **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 3 Phase 7 suites (84 tests: 55 conformal classifier, 21 AI SDK v7 gateway, 8 taxonomy & schemas) passing 100%, 104 repository unit suites (1557 tests) passing 100%, Commit Gate 7 fully satisfied.
+- **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-07-concept-taxonomy-unified-decisions-and-conformal-aps.md`](../records/closures/elixent-execution/phase-07-concept-taxonomy-unified-decisions-and-conformal-aps.md)
 
 ### [Phase 8: Justification-Driven `ATMS DAG`, Deterministic Candidate Retriever & Relational Linker]
 
 > **Phase Identifier:** `Phase 8 — Justification-Driven ATMS DAG, Candidate Retriever & Contagious Cascade BFS`  
 > **Single Responsibility Principle (`SRP`):** Build the causal truth maintenance subsystem (`src/core/agent/atms/*`) including `ATMSDecisionNode` structures and their synchronization with `project_decision_ledger`, the deterministic local candidate retriever (`retrieveCandidatePriorDecisions`), the relational linker, and the upward/downward contagious cascade BFS algorithm (`resolveATMSCascadeBFS`).  
-> **Post-Phase 7 Baseline State:** The `project_decision_ledger` table is active (from Phase 2), the `BM25` engine is ready (from Phase 5), and `PREDEFINED_CONCEPT_TAGS` and the `/v1/decisions` client (`evaluateRelationalLinksBatch`) are ready (from Phase 7).
+> **Post-Phase 7 Baseline State:** The `project_decision_ledger` table is active (from Phase 2), the `BM25` engine is ready (from Phase 5), the universal concept taxonomy (`DEFAULT_CONCEPT_TAGS`), project-scoped tag registry, dynamic schema factories, the `/v1/decisions` client (`evaluateRelationalLinksBatch`), `Conformal APS`, and `AI SDK v7` gateway are ready (from Phase 7).
 
 #### Phase 8 Sub-Agent Topology
 
@@ -939,8 +957,8 @@ flowchart LR
 - **Exclusively Targeted Files:**
   - `src/core/agent/atms/dag.ts` (new)
 - **Exact Implementation Actions:**
-  1. Define the `ATMSDecisionNode` interface including justifications (`selectionRationale`), all evaluated alternatives and their contextual rejection reasons (`evaluatedAlternatives`), canonical concept tags (`conceptTags`), and `dependsOn`, `dependedBy`, and `affectedSections` lists.
-  2. Build the read and synchronization functions for `schema.projectDecisionLedger`: `loadProjectDecisionLedger(projectId, userId)` and `syncMasterLedgerToProjectStore(projectId, userId, masterLedger)`.
+  1. Define the `ATMSDecisionNode` interface including justifications (`selectionRationale`), all evaluated alternatives and their contextual rejection reasons (`evaluatedAlternatives`), active `conceptTags: string[]` resolved from project taxonomy, and `dependsOn`, `dependedBy`, and `affectedSections` lists.
+  2. Build the read and synchronization functions for `schema.projectDecisionLedger`: `loadProjectDecisionLedger(projectId, userId)` and `syncMasterLedgerToProjectStore(projectId, userId, masterLedger)`. Strict Invariant: Filter system-reserved decision sentinels (`isSystemReservedDecisionId`, e.g. `__PROJECT_TAXONOMY__`) from `masterLedger` DAG operations, while using `toTaxonomyLedgerPayload` / `fromTaxonomyLedgerPayload` to load and persist project taxonomy state.
 
 ##### 2. Task `Sub-Agent 8.B`: Build Deterministic Local Candidate Retriever (`src/core/agent/atms/candidate-retriever.ts`)
 
@@ -950,7 +968,7 @@ flowchart LR
 - **Exact Implementation Actions:**
   1. Implement the deterministic function `retrieveCandidatePriorDecisions(assumption, masterLedger, maxCandidates = 8)` per `ELIXENT-ARCH-02` §5.1 by combining three signals:
      - **AST Section Proximity:** Sharing `fileId` and `headingSlug` strictly as a retrieval signal for comparison rather than a mandatory dependency link (allowing multiple independent conservative sub-decisions to coexist under the same heading).
-     - **Predefined Concept Tags Intersection:** Overlap of `conceptTags` imported from `PREDEFINED_CONCEPT_TAGS`.
+     - **Concept Tags Intersection:** Overlap of active `conceptTags: string[]` resolved from project taxonomy without hardcoded tag constraints.
      - **BM25 Lexical Match:** Lexical similarity against `questionPrompt`, `selectionRationale`, and `evaluatedAlternatives`.
 
 ##### 3. Task `Sub-Agent 8.C`: Build Relational Linker, `resolveATMSCascadeBFS` Algorithm, and Differential Section Invalidation
@@ -974,7 +992,7 @@ flowchart LR
 
 > **Phase Identifier:** `Phase 9 — AgentGraphState, Pure Reducers, 7-Stage Nodes & Compiled LangGraph StateGraph`  
 > **Single Responsibility Principle (`SRP`):** Build the canonical state channels (`state.ts`) and pure reducers (`reducers.ts`), implement the 14 nodes across all 7 stages, and compile the complete state machine in `src/core/agent/graph.ts` backed by `PostgresSaver(getPgPool())`, `EncryptedCheckpointSerializer`, and `withMeteredNodeGate`.  
-> **Post-Phase 8 Baseline State:** All underlying agent infrastructure pillars are completed and committed: `getPgPool()` (Phase 2), `withMeteredNodeGate` and `StreamGovernor` (Phase 4), `IWorkspaceProvider`, `EphemeralVaultMemoryMap`, and `EncryptedCheckpointSerializer` (Phase 6), `PREDEFINED_CONCEPT_TAGS`, `/v1/decisions`, `Conformal APS`, and `AI SDK v6` (Phase 7), and `ATMS DAG` and `resolveATMSCascadeBFS` (Phase 8).
+> **Post-Phase 8 Baseline State:** All underlying agent infrastructure pillars are completed and committed: `getPgPool()` (Phase 2), `withMeteredNodeGate` and `StreamGovernor` (Phase 4), `IWorkspaceProvider`, `EphemeralVaultMemoryMap`, and `EncryptedCheckpointSerializer` (Phase 6), Universal Concept Taxonomy, dynamic schema factories, `/v1/decisions`, `Conformal APS`, and `AI SDK v7` (Phase 7), and `ATMS DAG` and `resolveATMSCascadeBFS` (Phase 8).
 
 #### Phase 9 Sub-Agent Topology
 
@@ -1004,7 +1022,7 @@ flowchart LR
   - `src/core/agent/reducers.ts` (new)
   - `src/core/agent/state.ts` (new)
 - **Exact Implementation Actions:**
-  1. Build side-effect-free pure reducer functions in `src/core/agent/reducers.ts` and define `AgentGraphAnnotation = Annotation.Root({...})` in `src/core/agent/state.ts` using strictly plain JSON-serializable structures (`messages`, `user_request`, `search_report`, `local_inspection_state`, `assumptions`, `master_ledger`, `unresolved_ledger`, `invalidation_map`, `question_queue`, `budget_tracking`, `search_loop_count`) per `ELIXENT-ARCH-02` §2.
+  1. Build side-effect-free pure reducer functions in `src/core/agent/reducers.ts` and define `AgentGraphAnnotation = Annotation.Root({...})` in `src/core/agent/state.ts` using strictly plain JSON-serializable structures (`messages`, `user_request`, `search_report`, `local_inspection_state`, `assumptions`, `master_ledger`, `unresolved_ledger`, `invalidation_map`, `question_queue`, `budget_tracking`, `search_loop_count`, and `project_taxonomy: ProjectTaxonomyState | null`) per `ELIXENT-ARCH-02` §2.
 
 ##### 2. Task `Sub-Agent 9.B`: Build Stage 1, 2 & 3 Nodes (`Orchestrator`, `Search`, `Assumption & Linker`, `Jev Scorer`)
 
@@ -1018,8 +1036,8 @@ flowchart LR
   1. Wrap model-consuming nodes with `withMeteredNodeGate` and dereference `vault_ref://` pointers strictly at prompt construction time via `resolveVaultRefJustInTime`.
   2. **In `orchestrator-node.ts`:** Export `orchestratorNode(state, config)` to inspect the request and initialize `search_loop_count` and the initial inspection plan.
   3. **In `search-nodes.ts`:** Export the three nodes `searchAgentNode` (bounded by `stopWhen: stepCountIs(6)`), `workspaceToolNode`, and `searchSynthesizerNode`, along with the conditional routing function `toolsCondition(state): "workspace_tool_node" | "search_synthesizer_node"`.
-  4. **In `assumption-and-linker-nodes.ts`:** Export the two Stage 2 nodes `assumptionAnalyzerNode` (which imports `PREDEFINED_CONCEPT_TAGS` and invokes `retrieveCandidatePriorDecisions`) and `atmsRelationalLinkerNode` (which calls `/v1/decisions` and executes `resolveATMSCascadeBFS`), along with the conditional routing function `routeAfterAssumptions(state): "jev_structuring_node" | "document_writer_node"`.
-  5. **In `jev-scoring-nodes.ts`:** Export the two Stage 3 nodes `jevStructuringNode` (injecting historical `evaluatedAlternatives` and their rationales whenever a prior decision is re-evaluated) and `decisionScorerNode`.
+  4. **In `assumption-and-linker-nodes.ts`:** Export the two Stage 2 nodes `assumptionAnalyzerNode` (which bounds tag assignment via dynamic schema factory `createAssumptionExtractionBatchSchema(resolveProjectConceptTags(state.project_taxonomy))` and invokes `retrieveCandidatePriorDecisions`) and `atmsRelationalLinkerNode` (which calls `/v1/decisions` and executes `resolveATMSCascadeBFS`), along with the conditional routing function `routeAfterAssumptions(state): "jev_structuring_node" | "document_writer_node"`.
+  5. **In `jev-scoring-nodes.ts`:** Export the two Stage 3 nodes `jevStructuringNode` (bounding items via `createCanonicalDecisionBatchSchema(resolveProjectConceptTags(state.project_taxonomy))` and injecting historical `evaluatedAlternatives` and their rationales whenever a prior decision is re-evaluated) and `decisionScorerNode`.
 
 ##### 3. Task `Sub-Agent 9.C`: Build Stage 4, 5, 6 & 7 Nodes (`Classifier`, `Ledger Commit`, `Pure Interrupt`, `Document Writer`)
 

@@ -38,7 +38,7 @@ flowchart TD
         end
 
         subgraph STAGE_2 ["Stage 2: Assumption Analysis, ATMS Candidate Retrieval & Relational Linker"]
-            ASSUMP_NODE["Assumption Analyzer & Tag Classifier Node (assumption_analyzer_node)<br/>1. Vercel AI SDK: generateObject to extract assumptions and assign bounded tags from PREDEFINED_CONCEPT_TAGS<br/>2. Deterministic Local Candidate Retriever: retrieves top-K prior decisions via heading overlap, predefined tags, and BM25 over rationales and alternatives"]
+            ASSUMP_NODE["Assumption Analyzer & Tag Classifier Node (assumption_analyzer_node)<br/>1. Vercel AI SDK: generateText + Output.object to extract assumptions and assign bounded tags from Universal Concept Taxonomy & Project Registry<br/>2. Deterministic Local Candidate Retriever: retrieves top-K prior decisions via heading overlap, concept tags, and BM25 over rationales and alternatives"]
             REL_LINKER_NODE["Relational Adjudication & Rationale Audit Node (atms_relational_linker_node)<br/>Unified Decisions API (POST /v1/decisions)<br/>Classifies relation of each new assumption against retrieved candidates (INDEPENDENT | DEPENDS_ON | REOPENS_OR_OVERRIDES | REFINES):<br/>• Pulls depended-upon conservative decisions to re-evaluate their alternatives under new evidence<br/>• Reopens decisions whose priorities shifted or premises failed while cascading dependents via Contagious BFS"]
             ASSUMP_ROUTER{"Conditional Edge: Readiness Gate<br/>(route_after_assumptions)<br/>Are there initial contextual gaps?"}
         end
@@ -163,7 +163,8 @@ To prevent serialization failures (`JSON.stringify`) in `PostgresSaver` and `Sql
 | **`search_report`** | `SearchReport` | Merges extracted evidence deduplicated by composite key `(fileId, headingSlug)`, using `vault_ref://${fileId}#${headingSlug}` pointers for encrypted vault files. |
 | **`local_inspection_state`** | `string[]` | Deduplicated set union: `Array.from(new Set([...prev, ...next]))` to prevent re-inspecting already visited paths during supplementary search loops. |
 | **`assumptions`** | `AssumptionItem[]` | Replaces or updates active assumptions in the current cycle keyed by `assumptionId` (including prior decisions pulled for re-evaluation or promotion). |
-| **`master_ledger`** | `Record<string, ATMSDecisionNode>` | Deep merge of Justification-Driven Truth Maintenance DAG nodes (`Justification-Driven ATMS DAG`); each node stores the approved option, its `selectionRationale`, underlying `premises`, all `evaluatedAlternatives` with their provisional exclusion reasons, code-imported canonical `conceptTags`, and `dependsOn` / `dependedBy` adjacency lists, updating or evicting any node whose premises shifted or that was promoted for re-evaluation. |
+| **`master_ledger`** | `Record<string, ATMSDecisionNode>` | Deep merge of Justification-Driven Truth Maintenance DAG nodes (`Justification-Driven ATMS DAG`); each node stores the approved option, its `selectionRationale`, underlying `premises`, all `evaluatedAlternatives` with their provisional exclusion reasons, resolved `conceptTags: string[]`, and `dependsOn` / `dependedBy` adjacency lists, updating or evicting any node whose premises shifted or that was promoted for re-evaluation. System-reserved decision sentinels (`isSystemReservedDecisionId`, e.g. `__PROJECT_TAXONOMY__`) are filtered from DAG execution. |
+| **`project_taxonomy`** | `ProjectTaxonomyState \| null` | `(prev, next) => next ?? prev`: Scoped project concept taxonomy state containing `projectId`, `addedTags`, `removedTags`, and `updatedAt`. Synchronized to/from `project_decision_ledger` under the reserved sentinel `__PROJECT_TAXONOMY__` (`PROJECT_TAXONOMY_SENTINEL_ID`). |
 | **`unresolved_ledger`** | `UnresolvedDecision[]` | Replaces with the remaining list of decisions that failed the conformal prediction criteria in the current cycle and await supplementary search or user escalation. |
 | **`invalidation_map`** | `Record<string, SectionTarget[]>` | Aggregates affected section targets (`fileId`, `headingSlug`) produced by breadth-first invalidation or parallel update propagation (`BFS`) across the `ATMS` DAG. |
 | **`question_queue`** | `ClarifyingQuestionBatch \| null` | Replaces with the structured question batch ready for presentation in `pure_interrupt_node`, and resets to `null` immediately upon session resumption. |
@@ -176,17 +177,17 @@ All graph nodes that invoke external models are wrapped by the pre-execution fin
 
 1. **`orchestrator_node`:**
    - Performs server-side verification of file ownership across `targetFileIds` and validates `allowAIOnEncryptedFiles` authorization for encrypted vault files.
-   - Loads the persistent project decision ledger (including rationales, alternatives, and dependency links) from the `project_decision_ledger` table and injects it into `state.master_ledger`.
+   - Loads persistent project decision ledger records and the system-reserved project taxonomy sentinel (`__PROJECT_TAXONOMY__`) from `project_decision_ledger`. Reconstitutes `state.project_taxonomy` via `fromTaxonomyLedgerPayload(projectId, row)` and injects active decisions (filtering out `isSystemReservedDecisionId` rows) into `state.master_ledger`.
    - Emits the initial query plan to transition into `search_agent_node`.
 2. **`search_agent_node` $\leftrightarrow$ `workspace_tool_node` $\rightarrow$ `search_synthesizer_node`:**
    - A local exploration loop bounded by `stopWhen: stepCountIs(6)` utilizing the hybrid inspection tools (`listHeadingsTree`, `readSectionByHeading`, `searchLexicalWithASTBreadcrumb`) defined in [03_workspace_ast_editor_and_vault_integration.md](./03_workspace_ast_editor_and_vault_integration.md).
    - `search_synthesizer_node` synthesizes extracted evidence into `state.search_report` and appends inspected paths to `local_inspection_state`.
 3. **`assumption_analyzer_node` $\rightarrow$ `atms_relational_linker_node` and `route_after_assumptions` edge:**
-   - `assumption_analyzer_node` extracts architectural assumptions and decision points from the user's request, identifies target document sections (`affectedSections`), and assigns conceptual tags (`conceptTags`) to each assumption **exclusively by importing and selecting from the in-code predefined taxonomy (`PREDEFINED_CONCEPT_TAGS`)**, strictly forbidding the model from inventing free-form string tags.
-   - Executes the deterministic function **`retrieveCandidatePriorDecisions`** to gather the most relevant prior candidate decisions from `state.master_ledger` (via heading intersection, predefined `conceptTags` intersection, and `BM25` lexical matching across decision prompts, rationales, and evaluated alternatives).
-   - **`atms_relational_linker_node`** receives the new assumptions alongside their retrieved candidate prior decisions, invokes the `POST /v1/decisions` API to classify the logical relationship (`INDEPENDENT`, `DEPENDS_ON`, `REOPENS_OR_OVERRIDES`, `REFINES`), and executes the **Contagious Load-Bearing Promotion & Override Cascade BFS** algorithm (§5).
+   - `assumption_analyzer_node` extracts architectural assumptions and decision points from the user's request, identifies target document sections (`affectedSections`), and assigns conceptual tags (`conceptTags`) strictly validated against the dynamic schema factory `createAssumptionExtractionBatchSchema(resolveProjectConceptTags(state.project_taxonomy))` (or `createConceptTagEnum`), preventing arbitrary LLM tag hallucination while empowering projects to register domain-specific tags via `applyProjectTagMutations`.
+   - Executes the deterministic function **`retrieveCandidatePriorDecisions`** to gather the most relevant prior candidate decisions from `state.master_ledger` (via heading intersection, `conceptTags` `string[]` intersection, and `BM25` lexical matching across decision prompts, rationales, and evaluated alternatives).
+   - **`atms_relational_linker_node`** receives the new assumptions alongside their retrieved candidate prior decisions, invokes the `POST /v1/decisions` API (`evaluateRelationalLinksBatch`) to classify the logical relationship (`INDEPENDENT`, `DEPENDS_ON`, `REOPENS_OR_OVERRIDES`, `REFINES`), and executes the **Contagious Load-Bearing Promotion & Override Cascade BFS** algorithm (§5).
 4. **`jev_structuring_node` $\rightarrow$ `decision_scorer_node`:**
-   - `jev_structuring_node` transforms each new assumption or pulled/reopened prior decision into a rhetorically neutral canonical adjudication item (`CanonicalDecisionBatchSchema`). When re-evaluating a prior decision (whether promoted from `APPROVED_CONSERVATIVE` or reopened due to changed premises), its previously evaluated alternatives (`evaluatedAlternatives`) and rationales are re-injected into the candidate option set so they can be re-weighed under the new evidence without permanent prior lock-in.
+   - `jev_structuring_node` transforms each new assumption or pulled/reopened prior decision into a rhetorically neutral canonical adjudication item bounded by `createCanonicalDecisionBatchSchema(resolveProjectConceptTags(state.project_taxonomy))`. When re-evaluating a prior decision (whether promoted from `APPROVED_CONSERVATIVE` or reopened due to changed premises), its previously evaluated alternatives (`evaluatedAlternatives`) and rationales are re-injected into the candidate option set so they can be re-weighed under the new evidence without permanent prior lock-in.
    - `decision_scorer_node` dispatches the batch in parallel to `POST /v1/decisions` (Tier 1 fast pass, followed by automatic Tier 2 escalation for ambiguous core architectural items).
 5. **`confidence_classifier_node` $\rightarrow$ `ledger_commit_node`:**
    - Two purely deterministic TypeScript nodes (zero LLM calls) that execute the adaptive conformal prediction equations (§4), update the `ATMS` DAG (including rationales, alternatives, and the parallel `invalidation_map` for dependent decisions in `dependedBy`) (§5), and synchronize the resulting ledger with `project_decision_ledger`.
@@ -198,16 +199,33 @@ All graph nodes that invoke external models are wrapped by the pre-execution fin
 
 ## 4. Unified Decisions API & Adaptive Conformal Prediction Cascade (`Unified Decisions API & Conformal APS Cascade`)
 
-### 4.1. Programmatic Contract for `POST /v1/decisions`, Option Neutralization, and Code-Imported Predefined Tags
+### 4.1. Programmatic Contract for `POST /v1/decisions`, Universal Concept Taxonomy & Dynamic Schema Factories
 
-To prevent the language model from drifting into arbitrary tag invention, the model is strictly prohibited from authoring ad-hoc tags at runtime. Instead, domain categories and concept tags are defined as an immutable in-code constant array (`src/core/agent/taxonomy/predefined-tags.ts` — *whose comprehensive taxonomy dictionary is finalized as a dedicated implementation step*), and the model in `assumption_analyzer_node` and `jev_structuring_node` is constrained to importing and selecting from them via `z.enum(PREDEFINED_CONCEPT_TAGS)`, while documenting the engineering rationale and contextual premises for each option (`src/core/agent/schemas/decision-schemas.ts`):
+To prevent the language model from drifting into arbitrary tag hallucination while avoiding rigid host-project coupling, the taxonomy is structured in two decoupled tiers:
+
+1. **Universal, Paradigm-Agnostic Concept Taxonomy (`DEFAULT_CONCEPT_TAGS` / `PREDEFINED_CONCEPT_TAGS`):**
+   - Defined in `src/core/agent/taxonomy/predefined-tags.ts` as an immutable baseline across **9 engineering domains** (System Architecture & Design; Libraries, SDKs & Public Contracts; Deep Learning, ML & Scientific Computing; Data Modeling, Storage & Persistence; Networking, Protocols & Distributed Sync; Security, Cryptography & Privacy; Performance, Runtime & Systems; Frontend, UI/UX & Client Interaction; Quality, Testing, CI/CD & Governance).
+   - **Zero Host Coupling:** Contains no internal LUGX or Elixent subsystem tokens.
+   - **Format Validation:** All tags strictly adhere to `CONCEPT_TAG_FORMAT_REGEX = /^[a-z][a-z0-9_]{1,63}$/` with automatic whitespace/dash normalization via `normalizeConceptTag`.
+
+2. **Project-Scoped Mutable Registry & Dynamic Schema Factories (`src/core/agent/schemas/decision-schemas.ts`):**
+   - Projects can customize their active taxonomy via `applyProjectTagMutations(current, mutation, baseTags)` adhering to deterministic set algebra: `(baseTags \ removedTags) ∪ addedTags`. At least one tag must remain active, otherwise throwing `EmptyProjectTaxonomyError`.
+   - Dynamic schema factories (`createConceptTagEnum`, `createDecisionEvaluationItemSchema`, `createCanonicalDecisionBatchSchema`, `createAssumptionExtractionBatchSchema`) bound LLM generation strictly to the project's active tags at runtime.
+   - Project taxonomy customizations are persisted in `project_decision_ledger` under the reserved sentinel `decisionId = "__PROJECT_TAXONOMY__"` (`PROJECT_TAXONOMY_SENTINEL_ID`), converted via `toTaxonomyLedgerPayload(state)` and reconstituted via `fromTaxonomyLedgerPayload(projectId, row)`.
 
 ```typescript
 import { z } from "zod";
-// Imports the immutable in-code list of predefined concept tags and categories (comprehensive dictionary populated during the dedicated taxonomy implementation step)
-import { PREDEFINED_CONCEPT_TAGS } from "../taxonomy/predefined-tags";
+import {
+  DEFAULT_CONCEPT_TAGS,
+  resolveProjectConceptTags,
+  type ProjectTaxonomyState,
+} from "../taxonomy/predefined-tags";
 
-export const ConceptTagEnum = z.enum(PREDEFINED_CONCEPT_TAGS);
+// Dynamic enum factory enforcing closed-world active tags for the specific project
+export function createConceptTagEnum(activeTags?: readonly string[]) {
+  const tags = activeTags ?? resolveProjectConceptTags();
+  return z.enum(tags as [string, ...string[]]);
+}
 
 export const CanonicalOptionSchema = z.object({
   optionKey: z.string().regex(/^[a-z0-9_]+$/).describe("Canonical semantic key for the proposed alternative"),
@@ -215,32 +233,37 @@ export const CanonicalOptionSchema = z.object({
   rationaleAndPremises: z.string().max(400).describe("Engineering justifications and contextual constraints that make this alternative suitable or unsuitable in the current context"),
 });
 
-export const DecisionEvaluationItemSchema = z.object({
-  decisionId: z.string(),
-  topicSlug: z.string().regex(/^[a-z0-9_]+$/),
-  questionPrompt: z.string(),
-  // Concept tags are strictly constrained to the in-code predefined constants; the model cannot invent external tags
-  conceptTags: z.array(ConceptTagEnum).min(1).max(6),
-  // Bounds architectural alternatives strictly to 3 to 4 mutually exclusive options to prevent nonconformity score dilution
-  options: z.array(CanonicalOptionSchema).min(3).max(4),
-  priorDecisionContext: z.object({
-    reopenedFromDecisionId: z.string().optional(),
-    previousSelectedOptionKey: z.string().optional(),
-    previousSelectionRationale: z.string().optional(),
-    triggerForReevaluation: z.string().optional(),
-  }).optional(),
-  dependsOnDecisionIds: z.array(z.string()),
-  affectedSections: z.array(
-    z.object({
-      fileId: z.string().uuid(),
-      headingSlug: z.string(),
-    })
-  ),
-});
+// Dynamic factory for DecisionEvaluationItem bounded to project taxonomy
+export function createDecisionEvaluationItemSchema(activeTags?: readonly string[]) {
+  const TagEnum = createConceptTagEnum(activeTags);
+  return z.object({
+    decisionId: z.string(),
+    topicSlug: z.string().regex(/^[a-z0-9_]+$/),
+    questionPrompt: z.string(),
+    conceptTags: z.array(TagEnum).min(1).max(6),
+    options: z.array(CanonicalOptionSchema).min(3).max(4),
+    priorDecisionContext: z.object({
+      reopenedFromDecisionId: z.string().optional(),
+      previousSelectedOptionKey: z.string().optional(),
+      previousSelectionRationale: z.string().optional(),
+      triggerForReevaluation: z.string().optional(),
+    }).optional(),
+    dependsOnDecisionIds: z.array(z.string()).default([]),
+    affectedSections: z.array(
+      z.object({
+        fileId: z.string(),
+        headingSlug: z.string(),
+      })
+    ).default([]),
+  });
+}
 
-export const CanonicalDecisionBatchSchema = z.object({
-  items: z.array(DecisionEvaluationItemSchema).min(1).max(12),
-});
+// Dynamic factory for canonical batch evaluation
+export function createCanonicalDecisionBatchSchema(activeTags?: readonly string[]) {
+  return z.object({
+    items: z.array(createDecisionEvaluationItemSchema(activeTags)).min(1).max(12),
+  });
+}
 ```
 
 When invoking `POST /v1/decisions` via `src/lib/jev/client.ts`, the canonical abstention option `"insufficient_evidence"` is automatically appended to the option array for every question, and the decision model evaluates four orthogonal dimensions in parallel within a single forward pass:
@@ -299,7 +322,7 @@ To ensure logical dependencies between decisions are never missed when the langu
 1. **Step 1 — Deterministic Local Candidate Retriever (`Deterministic Candidate Retriever` inside `assumption_analyzer_node`):**
    - Prior to relational adjudication, a deterministic TypeScript function (`retrieveCandidatePriorDecisions`) executes a fast local search over `state.master_ledger` to retrieve the top-$K$ candidate prior decisions ($K \le 8$) for each new assumption or modification, combining three retrieval signals:
      1. **Structural Proximity in the Heading Tree (`AST Section Proximity`):** Prior decisions sharing the same `fileId` and `headingSlug` (or immediate parent/child headings). *Strict Architectural Invariant:* Sharing a section heading is strictly a **candidate retrieval signal for comparison**, never an automatic dependency link, thereby allowing any number of independent conservative sub-decisions to coexist under the same heading.
-     2. **Predefined Concept Tags Intersection (`Predefined Concept Tags Intersection`):** Overlap across `conceptTags` selected from the immutable `PREDEFINED_CONCEPT_TAGS` dictionary regardless of file or heading location.
+     2. **Concept Tags Intersection (`Concept Tags Intersection`):** Overlap across active `conceptTags: string[]` resolved from the project-scoped taxonomy (`resolveProjectConceptTags`) regardless of file or heading location.
      3. **Lexical Similarity Across Rationales and Alternatives (`BM25 Lexical Match`):** Keyword overlap between the new request and the `questionPrompt`, `selectionRationale`, and `evaluatedAlternatives` texts of recorded decisions.
 2. **Step 2 — Relational Classification via Decision Model (`Relational Classification` inside `atms_relational_linker_node`):**
    - Each new assumption is paired with its $K$ retrieved candidate prior decisions (including their prior rationales and evaluated alternatives) in a single batched request to `POST /v1/decisions` to classify the logical relationship against each candidate $D_i$ into one of four canonical relations:

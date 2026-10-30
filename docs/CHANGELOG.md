@@ -4,6 +4,66 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.7.0] - 2026-10-30 (Phase 7: Comprehensive PREDEFINED_CONCEPT_TAGS Taxonomy, Unified /v1/decisions Client, Conformal APS Classifier & AI SDK v6 Bridge)
+
+### Universal Concept Taxonomy & Project Tag Registry (`src/core/agent/taxonomy/predefined-tags.ts`)
+
+- **Universal Engineering Taxonomy Across 9 Domains:** Implemented `DEFAULT_CONCEPT_TAGS` (aliased to `PREDEFINED_CONCEPT_TAGS`) spanning System Architecture & Design; Libraries, SDKs & Public Contracts; Deep Learning, ML & Scientific Computing; Data Modeling, Storage & Persistence; Networking, Protocols & Distributed Sync; Security, Cryptography & Privacy; Performance, Runtime & Systems; Frontend, UI/UX & Client Interaction; and Quality, Testing, CI/CD & Governance.
+- **Zero Host-Subsystem Coupling:** Purged all internal LUGX- or Elixent-specific tokens from the taxonomy, guaranteeing a paradigm-agnostic dictionary suitable for arbitrary technical documentation domains.
+- **Strict Format Regex & Normalization:** Validates tags via `CONCEPT_TAG_FORMAT_REGEX = /^[a-z][a-z0-9_]{1,63}$/` and normalizes arbitrary tag candidates using `normalizeConceptTag` (lowercasing, trimming, converting whitespace and hyphens to underscores, and collapsing consecutive delimiters).
+- **Project-Scoped Mutation Algebra:** Implemented `applyProjectTagMutations` enforcing deterministic set algebra `(baseTags \ removedTags) ∪ addedTags`. Resolves active tag tuples via `resolveProjectConceptTags`, throwing `EmptyProjectTaxonomyError` if an operation would leave a project with zero active concept tags.
+- **System-Reserved Decision Sentinel:** Authoritative metadata helpers (`PROJECT_TAXONOMY_SENTINEL_ID = "__PROJECT_TAXONOMY__"`, `isSystemReservedDecisionId`, `toTaxonomyLedgerPayload`, `fromTaxonomyLedgerPayload`) enabling lossless storage and reconstitution of project taxonomy configurations in `project_decision_ledger`.
+
+### Universal Decision & Agent State Zod Schemas (`src/core/agent/schemas/decision-schemas.ts`)
+
+- **Closed-World Dynamic Schema Factories:** Implemented dynamic Zod schema factories parameterized by active project tags:
+  - `createConceptTagEnum(activeTags?)`: Constructs a closed-world enum preventing LLM tag hallucination while honoring project-level custom tags.
+  - `createDecisionEvaluationItemSchema(activeTags?)`: Bounds options to $3\text{–}4$ mutually exclusive alternatives and concept tags to $1\text{–}6$ active tags.
+  - `createCanonicalDecisionBatchSchema(activeTags?)`: Enforces batches of $1\text{–}12$ canonical decision items.
+  - `createAssumptionItemSchema(activeTags?)` and `createAssumptionExtractionBatchSchema(activeTags?)`: Binds assumption extraction to authorized project tags.
+- **Pre-instantiated Default Schemas:** Exports `ConceptTagEnum`, `DecisionEvaluationItemSchema`, `CanonicalDecisionBatchSchema`, `AssumptionItemSchema`, and `AssumptionExtractionBatchSchema` pre-bound to `DEFAULT_CONCEPT_TAGS`.
+- **Static Structural Contracts:** Exports validated schemas for `CanonicalOptionSchema`, `SearchReportSchema`, `RelationalLinkPairInputSchema`, `RelationalAdjudicationBatchSchema`, `QuestionQueueSchema`, and `ClarificationResponseSchema`.
+
+### Unified Decisions API Client & Two-Tier Cascade (`src/lib/jev/client.ts`)
+
+- **POST /v1/decisions Unified Client:** Implemented decision client evaluating four orthogonal dimensions in parallel within a single forward pass: `evidence_grounding` ($[0, 1]$), `coupling_level` ($[0, 2]$), `rollback_cost` ($[0, 2]$), and `probabilities` across options plus canonical abstention `"insufficient_evidence"`.
+- **Two-Tier Decision Cascade:** Dispatches fast single-pass evaluation to `typesafe/jev-1.13` (Tier 1), automatically escalating ambiguous core architectural decisions (`CORE_ARCHITECTURAL` with $|C_{\alpha_{\text{core}}}| \ne 1$) to analytical thinking model `fastino/glide` (Tier 2) before interrupting the user.
+- **Deterministic Mock Generator:** Built deterministic offline mock generator ensuring seamless local development and automated CI testing when `JEV_API_KEY` is unconfigured.
+- **Batched Relational Adjudication:** Implemented `evaluateRelationalLinksBatch` classifying logical relationships (`INDEPENDENT`, `DEPENDS_ON`, `REOPENS_OR_OVERRIDES`, `REFINES`) between new assumptions and prior ledger candidates.
+
+### Conformal Adaptive Prediction Sets (APS) Classifier & Calibration Store (`src/lib/jev/conformal-classifier.ts` & `src/lib/jev/calibration-store.ts`)
+
+- **5-Step Deterministic Conformal APS Algorithm:** Implemented `classifyDecisionConformalAPS` executing pure mathematical classification with zero LLM involvement:
+  1. *Abstention Gate:* Rejects with `UNRESOLVED` if $p_{\text{abstain}} \ge 0.25$ or $\text{evidenceGrounding} < 0.50$; otherwise normalizes valid options $\tilde{p}(a_k) = p(a_k) / (1 - p_{\text{abstain}})$.
+  2. *Structural Impact Index:* $\text{ImpactIndex}(x) = \text{CORE\_ARCHITECTURAL}$ if $C \ge 1.5 \lor R \ge 1.5$ else $\text{PERIPHERAL}$.
+  3. *Top-2 Dominance Margin:* $m(x) = \tilde{p}_{(1)} - \tilde{p}_{(2)}$.
+  4. *Conformal Prediction Sets:* $\mathcal{C}_{\alpha}(x) = \{ a_k : (1 - \tilde{p}(a_k)) \le \hat{q}_{1-\alpha} \}$.
+  5. *Classification Rules:* `APPROVED_DIRECT` ($|\mathcal{C}_{\alpha_{\text{core}}}| == 1 \land m(x) \ge 0.25$); `APPROVED_CONSERVATIVE` ($\text{PERIPHERAL} \land 1 \le |\mathcal{C}_{\alpha_{\text{periph}}}| \le 2 \land m(x) \ge 0.15$); `UNRESOLVED` otherwise.
+- **Strict Conservative Approval Invariant:** Enforced strict invariant categorically forbidding `APPROVED_CONSERVATIVE` classification when $\text{ImpactIndex}(x) == \text{CORE\_ARCHITECTURAL}$.
+- **Sliding-Window Calibration Store:** Built `CalibrationStore` maintaining an in-memory sliding window ($N = 200$) with non-blocking Upstash Redis sync (`gemini:calibration_window:<modelId>`). Computes empirical quantiles at rank $k = \min(n, \lceil(n+1)(1-\alpha)\rceil)$ when $n \ge 20$ with fallback to static bootstrap priors registered in `models.config.json`.
+
+### Modern AI SDK v7 Gateway Bridge (`src/lib/ai/client.ts` & `src/lib/ai/key-rotation.ts`)
+
+- **Modern Structured Generation:** Implemented `executeStructuredGeneration` using `generateText` with `Output.object({ schema })`, adhering to Vercel AI SDK v7 deprecation policy.
+- **Multi-Step Tool Agent Generation:** Implemented `executeToolAgentGeneration` using `generateText` with `stopWhen: stepCountIs(...)`.
+- **Streaming Text Generation:** Implemented `executeStreamingGeneration` using `streamText` with key rotation usage confirmation in `onFinish` and circuit-breaker recording in `onError`.
+- **Rotated Google Provider Instances:** Implemented `getGoogleModel` returning initialized `@ai-sdk/google` instances backed by rotated API keys and half-open probe locks.
+- **Single GEMINI_API_KEY Fallback:** Hardened `getApiKeys()` in `src/lib/ai/key-rotation.ts` to automatically read `process.env.GEMINI_API_KEY` when numbered keys `GEMINI_KEY_1..20` are unconfigured.
+
+### Verification & Metrics Baseline
+
+- **Dedicated Phase 7 Suites:** 3 new test suites delivering 84 passing tests:
+  - `src/test/jev/conformal-classifier.test.ts` (55 tests)
+  - `src/test/ai/ai-sdk-v7-gateway.test.ts` (21 tests)
+  - `src/test/agent/taxonomy-and-schemas.test.ts` (8 tests)
+- **Synchronized SSOT Metrics:** Validated via `scripts/sync-doc-metrics.mjs`:
+  - Unit & Contract: 104 suites, 1,557 tests (100% green).
+  - Live Multi-System Integration: 21 suites, 117 tests (100% green).
+  - Browser E2E Journeys: 14 specs, 15 user journeys (100% green).
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/elixent-execution/phase-07-concept-taxonomy-unified-decisions-and-conformal-aps.md`](records/closures/elixent-execution/phase-07-concept-taxonomy-unified-decisions-and-conformal-aps.md).
+
+---
+
 ## [0.6.0] - 2026-10-30 (Phase 6: Zero-Knowledge Vault Boundary, Encrypted Checkpoints & CloudPostgresWorkspaceProvider)
 
 ### Ephemeral Vault Memory Map & Pointer Dereferencer (`src/lib/vault/ephemeral-memory-map.ts`)

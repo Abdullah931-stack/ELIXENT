@@ -19,7 +19,7 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-101%20Suites%20·%201431%2F1431%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 1431 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-104%20Suites%20·%201557%2F1557%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 1557 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-21%20Suites%20·%20108%2F108%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 108 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
@@ -54,6 +54,7 @@
   - [11. Browser-Driven End-to-End (E2E) Testing with Playwright](#11-browser-driven-end-to-end-e2e-testing-with-playwright)
   - [12. Fence-Aware AST Heading Slicer, Section-Scoped Diff3 & Hybrid BM25 Search Engine](#12-fence-aware-ast-heading-slicer-section-scoped-diff3--hybrid-bm25-search-engine)
   - [13. Zero-Knowledge Vault Boundary, Encrypted Checkpoints & Cloud Workspace Provider](#13-zero-knowledge-vault-boundary-encrypted-checkpoints--cloud-workspace-provider)
+  - [14. Universal Concept Taxonomy, Unified Decision Client & Conformal APS Classifier](#14-universal-concept-taxonomy-unified-decision-client--conformal-aps-classifier)
 - [Security Architecture](#security-architecture)
 - [Documentation Index](#documentation-index)
 - [Deployment Blueprints](#deployment-blueprints)
@@ -79,6 +80,7 @@
 - ⏱️ **Automated Quota & Maintenance Sweepers:** Scheduled crons for 30-day soft-delete purges (`/api/cron/purge-deleted`) and automated reclamation of expired AI quota leases (`/api/cron/expire-reservations`), resolving orphaned pending leases without manual intervention.
 - 📑 **Fence-Aware AST Heading Slicer & Path-Coupled BM25 Search Engine:** CommonMark §4.2 ATX and §4.5 code-fence tracking parser (`src/core/ast/heading-slicer.ts`) with pure TypeScript FIPS 180-4 SHA-256 (zero `node:crypto` imports), section-scoped 3-way merge (`diff3MergeSection` in `src/lib/sync/diff3.ts`), and path-coupled Okapi BM25 search engine (`src/core/workspace/lexical-bm25.ts`) featuring Arabic/Latin normalization, compound subword extraction, and ReDoS protection.
 - 🛡️ **Zero-Knowledge Vault Boundary & Authenticated Checkpoints:** Ephemeral in-memory section map (`EphemeralVaultMemoryMap`) backed by Node.js `AsyncLocalStorage` and `vault_ref://` pointers, `AES-256-GCM` authenticated checkpoint serializer (`EncryptedCheckpointSerializer`) with type-bound AAD and active plaintext leak prevention (`assertNoVaultPlaintextLeak`), and unified server-side workspace provider (`CloudPostgresWorkspaceProvider`) enforcing tenant isolation and user-consent AI gates.
+- 🏷️ **Universal Concept Taxonomy & Conformal APS Classifier:** 9 orthogonal predefined knowledge domains (`DEFAULT_CONCEPT_TAGS`), project-scoped dynamic tag registry algebra, Adaptive Prediction Sets (APS) multi-label conformal classification with distribution-free coverage guarantee ($1 - \alpha$), unified `/v1/decisions` client, and type-safe dynamic Zod batch extraction schemas.
 
 ---
 
@@ -299,7 +301,7 @@ npm run start
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 101 | 1431 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 104 | 1557 | 100% ✅ |
 | **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 108 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
@@ -314,7 +316,7 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).              |
 
 ```bash
-# Execute unit/contract test suites (101 test files, 1431 tests)
+# Execute unit/contract test suites (104 test files, 1557 tests)
 npm run test
 
 # Execute live database integration test suites on isolated Neon branch (21 test files, 108 tests)
@@ -653,6 +655,25 @@ flowchart TD
 - **Ephemeral Vault Memory Map (`src/lib/vault/ephemeral-memory-map.ts`):** Request-scoped in-memory storage using Node.js `AsyncLocalStorage` (`runWithEphemeralVaultScope`). Decrypted vault sections are sliced in memory and substituted with opaque reference pointers formatted as `vault_ref://${fileId}#${headingSlug}` (`formatVaultRef`, `isVaultRef`). Pointers are dereferenced just-in-time (`resolveVaultRefJustInTime`) at prompt dispatch or 3-way merge time without mutating `AgentGraphState`. Memory buffers are guaranteed to be zeroed out (`buffer.fill(0)`) in a `finally` block upon request termination or error unwinding.
 - **Authenticated Checkpoint Serializer (`src/core/agent/checkpoint-serializer.ts`):** Implements `SerializerProtocol` for `PostgresSaver`. Derives a 256-bit encryption key via `HKDF-SHA-256` and encrypts checkpoint states using authenticated `AES-256-GCM` with a 12-byte random IV, 16-byte authentication tag, and Additional Authenticated Data (AAD) bound to `elixent:v1:checkpoint:${innerType}`. Emits valid UTF-8 JSON representations of `EncryptedCheckpointEnvelope` compatible with PostgreSQL `JSONB` columns, provides idempotent pass-through preventing double-encryption during `_loadMetadata`, and enforces active vault plaintext leak assertions (`assertNoVaultPlaintextLeak`) throwing `CheckpointVaultLeakError` (`VAULT_PLAINTEXT_LEAK_DETECTED`).
 - **Cloud PostgreSQL Workspace Provider (`src/core/workspace/cloud-provider.ts`):** Implements `IWorkspaceProvider` backed by server-side PostgreSQL storage (`schema.files`). Strictly validates file ownership (`files.userId === session.userId`, `deletedAt IS NULL`), enforces the user consent gate in `schema.userVaultProfiles` (rejecting encrypted file operations with HTTP 403 `VaultAIAccessDeniedError` when disabled), redacts BM25 lexical search match excerpts on encrypted files into `vault_ref://` pointers, and executes section-scoped 3-way merges (`diff3MergeSection`) with JIT pointer dereferencing and syntax integrity validation (`validateMarkdownSyntaxIntegrity`).
+
+### 14. Universal Concept Taxonomy, Unified Decision Client & Conformal APS Classifier
+
+To eliminate static enum rigidity and provide mathematically rigorous uncertainty bounds for extracted architectural assertions, Elixent introduces a 9-domain extensible taxonomy, dynamic schema factories, Adaptive Prediction Sets (APS) multi-label conformal classification, and a unified decisions client.
+
+```mermaid
+flowchart TD
+    Raw["Raw Text / Document Input"] --> Extr["Assumption Analyzer Node<br/>createAssumptionExtractionBatchSchema(projectTags)"]
+    Extr --> Model["LLM Gateway (AI SDK v6 Bridge)<br/>generateObject() with Dynamic Schema"]
+    Model --> Calib["Conformal APS Classifier<br/>Temperature Scaling & Softmax Scoring"]
+    Calib --> APS["Adaptive Prediction Sets (APS)<br/>Marginal Coverage Guarantee (1 - α)"]
+    APS --> Ledger["Unified Decisions Client (/v1/decisions)<br/>applyProjectTagMutations() & Ledger Sync"]
+    Ledger --> Persist["PostgreSQL Project Decision Ledger<br/>Taxonomy Sentinel (__PROJECT_TAXONOMY__)"]
+```
+
+- **Universal Concept Taxonomy & Project Registry (`src/core/agent/concept-taxonomy.ts`):** Establishes 9 predefined knowledge domains (`architecture`, `concurrency`, `cryptography`, `database`, `governance`, `performance`, `resilience`, `security`, `testing`), slug format validation regex (`^[a-z][a-z0-9_]{1,63}$`), project-scoped mutation algebra (`applyProjectTagMutations`, `resolveProjectConceptTags`), empty set invariant protection (`EmptyProjectTaxonomyError`), `__PROJECT_TAXONOMY__` ledger sentinel row, and dynamic Zod enum/schema factories (`createConceptTagEnum`, `createAssumptionExtractionBatchSchema`, `createCanonicalDecisionBatchSchema`).
+- **Conformal APS Multi-Label Classifier (`src/core/jev/conformal-classifier.ts`):** Adaptive Prediction Sets (APS) multi-label conformal classification providing distribution-free finite-sample marginal coverage guarantees $P(Y \subseteq C(X)) \ge 1 - \alpha$. Features Platt temperature calibration, deterministic cumulative mass ranking, top-1 fallback against empty sets, and calibrated non-conformity quantile thresholds ($q^*$).
+- **Unified Decision Client (`src/lib/api/decisions-client.ts`):** Client interface for `/v1/decisions` supporting atomic ledger retrieval, filter-by-tag query predicates, client-side optimistic concurrency locking, and atomic project taxonomy synchronization.
+- **AI SDK v6 Gateway Bridge (`src/core/ai/ai-sdk-v6-gateway.ts`):** Unified LLM abstraction bridge harmonizing AI SDK v5 and v6 interfaces, structured object extraction, dynamic schema factory execution, and provider-agnostic observability.
 
 ---
 

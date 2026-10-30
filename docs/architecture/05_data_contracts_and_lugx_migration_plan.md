@@ -126,7 +126,7 @@ export type NewCreditLedgerTransaction =
 
 ### 1.3. Cross-Session Project Decision Ledger Table (`src/server/db/schema/project-decision-ledger.ts`)
 
-This table persists the Justification-Driven Assumption-Based Truth Maintenance System directed acyclic graph (`Justification-Driven ATMS DAG`), including the decision prompt, the selected option and its rationale (`selectionRationale`), all evaluated alternatives and their contextual rejection reasons (`evaluatedAlternatives`), standardized concept tags imported from code constants (`conceptTags`), and dependency links (`dependsOn` and `dependedBy`) scoped at the project level (`projectId`) so they remain available across all `thread_id` sessions:
+This table persists the Justification-Driven Assumption-Based Truth Maintenance System directed acyclic graph (`Justification-Driven ATMS DAG`), including the decision prompt, the selected option and its rationale (`selectionRationale`), all evaluated alternatives and their contextual rejection reasons (`evaluatedAlternatives`), concept tags resolved from the project-scoped dynamic taxonomy (`conceptTags`), and dependency links (`dependsOn` and `dependedBy`) scoped at the project level (`projectId`) so they remain available across all `thread_id` sessions (with project taxonomy mutations persisted under the reserved sentinel `decision_id = '__PROJECT_TAXONOMY__'`):
 
 ```typescript
 import {
@@ -158,7 +158,7 @@ export const projectDecisionLedger = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     topicSlug: text("topic_slug").notNull(),
     questionPrompt: text("question_prompt").notNull(),
-    // Concept tags strictly constrained to imports from the hardcoded taxonomy dictionary (PREDEFINED_CONCEPT_TAGS)
+    // Concept tags constrained to the project-scoped active concept taxonomy (resolved via resolveProjectConceptTags)
     conceptTags: jsonb("concept_tags").$type<string[]>().notNull().default([]),
     selectedOptionKey: text("selected_option_key").notNull(),
     selectionRationale: text("selection_rationale").notNull(),
@@ -377,7 +377,7 @@ This transformation matrix is grounded in a direct inventory of the actual file 
 
 | Newly Created Path | Functional Role & Reference Specification |
 | :--- | :--- |
-| **`src/core/agent/taxonomy/predefined-tags.ts`** | Hardcoded architectural taxonomy and concept tag dictionary (`PREDEFINED_CONCEPT_TAGS`) from which the model selects decision tags without free-form invention (Reference: [02_agent_orchestration_and_decision_engine](./02_agent_orchestration_and_decision_engine.md) §4.1). |
+| **`src/core/agent/taxonomy/predefined-tags.ts`** | Universal concept taxonomy across 9 domains (`DEFAULT_CONCEPT_TAGS` / `PREDEFINED_CONCEPT_TAGS`), format validation, and project-scoped mutable registry (`applyProjectTagMutations`, `resolveProjectConceptTags`) (Reference: [02_agent_orchestration_and_decision_engine](./02_agent_orchestration_and_decision_engine.md) §4.1). |
 | **`src/core/agent/{graph,state,reducers,nodes/*}.ts`** | `@langchain/langgraph` state machine, `AgentGraphState` channels, and the seven orchestration stage nodes including `atms_relational_linker_node` (Reference: [02_agent_orchestration_and_decision_engine](./02_agent_orchestration_and_decision_engine.md)). |
 | **`src/core/agent/atms/{dag,candidate-retriever,relational-linker,invalidation}.ts`** | Justification-Driven Assumption-Based Truth Maintenance System (`Justification-Driven ATMS DAG`), deterministic local candidate retriever, relational linker adjudication, and `resolveATMSCascadeBFS` algorithm (Reference: [02_agent_orchestration_and_decision_engine](./02_agent_orchestration_and_decision_engine.md) §5). |
 | **`src/lib/jev/{client,conformal-classifier,calibration-store}.ts`** | Unified decision client (`POST /v1/decisions`), two-tier model cascade, and `Conformal APS` prediction set classifier (Reference: [02_agent_orchestration_and_decision_engine](./02_agent_orchestration_and_decision_engine.md) §4). |
@@ -398,7 +398,7 @@ To guarantee a safe transition without breaking builds, user authentication, or 
 3. **Phase 3 (`Workspace, AST & Vault Boundary`):**
    - Build the `Fence-Aware Heading Slicer`, `CloudPostgresWorkspaceProvider` (with ordered parameters `diff3MergeText(live, base, proposed)` and hybrid `AST + BM25` search), `EphemeralVaultMemoryMap` (`vault_ref://` backed by `ephemeralVaultPayloads` and `liveDocumentSnapshots`), and `EncryptedCheckpointSerializer`.
 4. **Phase 4 (`Taxonomy, Agent & Decision Core`):**
-   - Define the comprehensive hardcoded architectural taxonomy in `src/core/agent/taxonomy/predefined-tags.ts` (`PREDEFINED_CONCEPT_TAGS`).
+   - Define the universal concept taxonomy (`DEFAULT_CONCEPT_TAGS` / `PREDEFINED_CONCEPT_TAGS`), project tag registry, and dynamic Zod schema factories in `src/core/agent/taxonomy/predefined-tags.ts` and `src/core/agent/schemas/decision-schemas.ts`.
    - Build `AgentGraphState` and pure state reducers, the `POST /v1/decisions` client with `Conformal APS` and foundational calibration protocol, the `Justification-Driven ATMS DAG` with deterministic local candidate retrieval, the relational adjudication node (`atms_relational_linker_node`), the `resolveATMSCascadeBFS` invalidation cascade algorithm, and `pure_interrupt_node`.
 5. **Phase 5 (`UI Integration & Legacy Purge`):**
    - Upgrade `streaming-ghost.ts` to support `GhostHunk[]` and granular acceptance synchronized with `useEditorAutosave`, upgrade `stream-handler.ts`, `stream-session.ts`, `ai-stream-status.tsx`, and `ai-contracts.ts`, build `/api/agent/stream` and the `HITL` UI components, delete the legacy five-operation files (`prompts.ts`, `ai-ops.ts`, `ai-commit.ts`, `pending-operation-store.ts`, `quota-settlement-reducer.ts`, `preview-buffer.ts`, `api/ai/stream/route.ts`, and duplicate webhook routes), update `vitest.constants.mts`, and synchronize `docs/METRICS.json` via `node scripts/sync-doc-metrics.mjs --update-docs`.
