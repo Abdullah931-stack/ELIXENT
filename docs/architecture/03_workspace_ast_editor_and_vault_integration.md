@@ -87,32 +87,54 @@ export interface IWorkspaceProvider {
 ### 2.1. Fence-Aware Heading Slicer (`Fence-Aware Heading Slicer`)
 
 Naive Regex slicing (`/^#{1,6}\s+/m`) suffers from a critical vulnerability: it captures `# comment` lines inside code blocks (` ```python ` or ` ```bash `) as section headings, corrupting section boundaries during merge operations.
-Therefore, `src/core/ast/heading-slicer.ts` is built directly upon the fence-tracking state machine (`Fence State Machine`) already implemented in `src/lib/sync/syntax-validator.ts`:
+Therefore, `src/core/ast/heading-slicer.ts` implements a CommonMark §4.2 and §4.5 compliant ATX heading and code fence tracking state machine:
 
-1. **Ignoring Lines Inside Closed Fences:** While scanning document lines, the slicer tracks the opening and closing state of code fences (` ``` ` or `~~~`) and `YAML Frontmatter` at the beginning of the file, registering a line starting with `#` as a heading only when the code fence state is closed (`inCodeFence === false`).
+1. **Ignoring Lines Inside Closed Fences:** While scanning document lines, the slicer tracks the opening and closing state of code fences (```` ``` ```` or `~~~`) and `YAML Frontmatter` at the beginning of the file, registering a line starting with `#` as a heading only when the code fence state is closed (`inCodeFence === false`).
 2. **Section Span Calculation (`Section Span Calculation`):** The span of each heading $H_k$ (at level $L \in [1, 6]$) extends from its starting line up to the line immediately preceding the next heading with a level **less than or equal to $L$** ($L_{\text{next}} \le L$), guaranteeing that the section encapsulates all of its paragraphs and sub-headings (`Sub-headings`) as a cohesive structural unit.
 3. **Parent Heading Breadcrumb Generation (`Heading Breadcrumb`):** The slicer maintains a hierarchical stack (`Heading Stack`) during scanning to generate the full structural path for every section and sub-heading (e.g., `"3. Economic Model > 3.4. Derivation Equations"`).
+4. **Unicode Heading Slug Generation (`generateHeadingSlug`):** Produces URL-friendly slugs preserving Arabic, Latin, and numeric characters while resolving duplicate collisions within the document via numeric suffixing (`base-1`, `base-2`).
+5. **Pure TypeScript FIPS 180-4 SHA-256 Hashing (`computeSectionHash`):** Computes a deterministic 64-character lowercase hex SHA-256 digest of normalized section content (`\0` removed, CRLF/CR to LF, Unicode NFC). Uses a pure bitwise implementation with zero `node:crypto` imports, guaranteeing 100% Next.js client bundle safety.
+6. **Section Extraction (`extractSectionBySlug`):** Extracts targeted section metadata, full `sectionContent`, and subordinate `sectionBody` excluding the heading line.
 
 ### 2.2. Hybrid Search Coupled with Structural Breadcrumb (`Lexical BM25 + AST Breadcrumb`)
 
-When the agent searches for a technical term, variable name, or value inside a table via `searchLexicalWithASTBreadcrumb`:
+When the agent searches for a technical term, variable name, or value inside a table via `searchLexicalWithASTBreadcrumb` (`src/core/workspace/lexical-bm25.ts`):
 
-1. The engine partitions each target document into paragraphs and tables categorized under their nearest enclosing parent heading node (`Nearest Enclosing HeadingNode`).
-2. It computes the lexical relevance score (`BM25 + Exact Token Boost`) for matching paragraphs.
-3. It returns the matching paragraph attached with its `headingSlug` and `headingBreadcrumb`, enabling the `assumption_analyzer_node` and the local candidate retriever (`Candidate Retriever`) to pinpoint the structural neighborhood of the affected section with $100\%$ precision and pass it to the relational arbitration node (`atms_relational_linker_node`).
+1. **Semantic Chunk Partitioning (`partitionDocumentIntoChunks`):** The engine partitions each target document into atomic chunks (GFM tables, fenced code blocks, and contiguous paragraphs/lists) categorized under their nearest enclosing parent heading node (`Nearest Enclosing HeadingNode`), decorated with `headingSlug`, `headingBreadcrumb`, and 1-based `lineRange`.
+2. **Multilingual Normalization (`normalizeLexicalText`):**
+   - Strips BiDi control characters (`\u200E\u200F\u202A-\u202E\u2066-\u2069`), Tashkeel diacritics, and Tatweel/Kashida (`\u0640`).
+   - Unifies Arabic character variants: Alef (`[إأآٱ] -> ا`), Teh Marbuta (`ة -> ه`), Yeh/Alef Maksura (`[ىئ] -> ي`), and Waw with Hamza (`ؤ -> و`).
+   - Maps Persian and Arabic-Indic digits (`[٠-٩۰-۹]`) to ASCII `0-9`.
+   - Normalizes punctuation and applies Latin case-folding.
+3. **Compound Identifier Subword Tokenization (`tokenizeLexicalText`):** Decomposes compound code identifiers (`camelCase`, `snake_case`, `kebab-case`) into both the unified token and individual subwords, enabling discovery of identifiers in technical prose.
+4. **Okapi BM25 Scoring (`LexicalBM25SearchEngine`):**
+   - Standard parameters: $k_1 = 1.5, b = 0.75$.
+   - Robertson-Spärck Jones non-negative IDF:
+     $$\text{IDF}(q_i) = \ln\left(1 + \frac{N - n(q_i) + 0.5}{n(q_i) + 0.5}\right)$$
+   - Guarded against division by zero on empty indices or documents.
+5. **ReDoS-Protected Exact / Regex Token Boosting:**
+   - Applies an exact match boost (default $2.0\times$) when queries match content or heading breadcrumbs.
+   - Protected against catastrophic backtracking via a 100-character length cap, static analysis rejection of dangerous nested quantifiers, and execution inside try/catch with literal substring fallback.
+6. **Deterministic Tie-Breaking:** Results are ordered by `bm25Score` descending, with secondary tie-breakers on `fileId` ascending and `lineRange[0]` ascending.
 
 ## 3. Section-Scoped 3-Way Merge and Syntax Integrity Validation (`Section-Scoped Diff3 & Syntax Validation`)
 
-The `document_writer_node` relies on the existing engineering assets in `src/lib/sync/diff3.ts` and `src/lib/sync/syntax-validator.ts` to update sections listed in `state.invalidation_map`:
+The `document_writer_node` relies on `src/lib/sync/diff3.ts` and `src/lib/sync/syntax-validator.ts` to update sections listed in `state.invalidation_map`:
 
 1. **Identifying Base Ancestor Reference (`baseSectionContent`) and Live Version (`liveSectionContent`):**
-   - When any section is read via `readSectionByHeading` during the exploration phase, the original section text at read time is recorded as the base ancestor reference (`Base Snapshot`) — either in a contextual map for standard files or retrieved from `EphemeralVaultMemoryMap` for encrypted files — while `liveSectionContent` is extracted from the latest live editor snapshot (`liveDocumentSnapshots[fileId]`) via the `Fence-Aware Heading Slicer` to determine its exact coordinates `(startOffset, endOffset)`.
+   - When any section is read via `readSectionByHeading` during the exploration phase, the original section text at read time is recorded as the base ancestor reference (`Base Snapshot`) — either in a contextual map for standard files or retrieved from `EphemeralVaultMemoryMap` for encrypted files — while `liveSectionContent` is extracted from the latest live editor snapshot (`liveDocumentSnapshots[fileId]`) via `extractSectionBySlug` to determine its exact coordinates `(startOffset, endOffset)`.
 2. **Section-Level and Sub-Line 3-Way Merge (`diff3MergeSection`):**
-   - The exported function in `src/lib/sync/diff3.ts:463` is invoked in the exact order matching its actual signature `(localContent, baseContent, remoteContent)`, where the middle argument (`baseSectionContent`) represents the common ancestor (`o`):
-     `diff3MergeText(liveSectionContent, baseSectionContent, agentProposedSectionContent)`
+   - The exported function `diff3MergeSection` in `src/lib/sync/diff3.ts` is invoked with the exact parameter order `(liveDocumentContent, baseSectionContent, agentProposedSectionContent, headingSlug, options)` or via options object `Diff3MergeSectionParams`.
+   - The middle argument (`baseSectionContent`) represents the common ancestor (`o`):
+     `diff3MergeText(liveSection.sectionContent, baseSectionContent, agentProposedSectionContent, options)`
      (which applies the `Hunt-McIlroy LCS` algorithm and intra-line partial merge `trySubLineMerge` to resolve adjacent edits without false-positive conflicts).
-3. **Pre-Stream Syntax Integrity Gate (`Pre-Stream Syntax Integrity Gate`):**
-   - The merged text is passed through `validateMarkdownSyntaxIntegrity` in `src/lib/sync/syntax-validator.ts` to verify that there are no unclosed code fences, broken Markdown tables, or truncated math delimiters before streaming the ghost hunk to the user's editor.
+3. **Conflict Containment & Quarantine:**
+   - If conflicts occur, `diff3MergeSection` halts without corrupting the document, returning `status: "conflict_quarantined"` with the replacement text containing conflict markers bounded to `hunkRange`.
+4. **Algebraic Replacement Invariant:**
+   - Guarantees that applying the replacement text to the live document preserves structural integrity:
+     $$\text{liveDocumentContent.slice}(0, \text{hunkRange.from}) + \text{hunkRange.replacementText} + \text{liveDocumentContent.slice}(\text{hunkRange.to}) \equiv \text{mergedDocumentContent}$$
+5. **Pre-Stream Syntax Integrity Gate (`validateMarkdownSyntaxIntegrity`):**
+   - The merged text is passed through `validateMarkdownSyntaxIntegrity` in `src/lib/sync/syntax-validator.ts` to verify that there are no unclosed code fences, broken Markdown tables, or truncated math delimiters. If validation fails, `diff3MergeSection` returns `status: "syntax_invalid"` with diagnostics.
 
 ## 4. Multi-Hunk Ghost Preview Architecture and Incremental Sync Contract (`Multi-Hunk Ghost & Incremental Sync Contract`)
 

@@ -712,10 +712,13 @@ flowchart LR
 - **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 98 unit suites (1221 tests) passing 100%, 21 live suites (119 tests) passing 100%, MTR-01 through MTR-06 verified, Commit Gate 4 fully satisfied.
 - **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md`](../records/closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md)
 
-### [Phase 5: Fence-Aware AST Heading Slicer, Section-Scoped Diff3 & Hybrid `BM25` Search Engine]
+### [Phase 5: Fence-Aware AST Heading Slicer, Section-Scoped Diff3 & Hybrid `BM25` Search Engine] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 5 — Fence-Aware AST Heading Slicer, Section-Scoped Diff3 & Hybrid BM25 Search Engine`  
+> **Status:** `CLOSED / EXECUTED` ✅ ([Closure Dossier](../records/closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md))  
+> **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 3 workspace suites (107 tests) passing 100%, 98 repository unit suites (1341 tests) passing 100%, Commit Gate 5 fully satisfied.  
 > **Single Responsibility Principle (`SRP`):** Build the pure structural text parsing, lexical search, and section-scoped 3-way merge engines (`heading-slicer.ts`, `diff3MergeSection`, `lexical-bm25.ts`) and verify them in isolation from the database and vault.  
+> **Closure Record:** [`docs/records/closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md`](../records/closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md)  
 > **Post-Phase 4 Baseline State:** Phases 1–4 are completed and committed (core hardened, new database tables active, and the `src/lib/metering/*` metering and settlement subsystem fully operational).
 
 #### Phase 5 Sub-Agent Topology
@@ -767,9 +770,15 @@ flowchart LR
      and validates the merged output via `validateMarkdownSyntaxIntegrity` from `src/lib/sync/syntax-validator.ts`.
   2. Author unit tests in `src/test/workspace/ast-slicer-and-diff3.test.ts` verifying that the slicer is never fooled by `# comment` lines inside code blocks and verifying accurate line-level 3-way section merging.
 
-#### Phase 5 Commit Gate
+#### Phase 5 Commit Gate — ✅ SATISFIED / CLOSED
 
-- Run `npx vitest run src/test/workspace/ast-slicer-and-diff3.test.ts` and `npx tsc --noEmit` and confirm $100\%$ pass rate before running `git commit`.
+- Execute mandatory verification commands and confirm $100\%$ pass rate before running `git commit`:
+  ```bash
+  npx tsc --noEmit
+  npx vitest run src/test/workspace/ast-heading-slicer.test.ts src/test/workspace/ast-slicer-and-diff3.test.ts src/test/workspace/lexical-bm25.test.ts
+  ```
+- **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 3 workspace suites (107 tests) passing 100%, 98 repository unit suites (1341 tests) passing 100%, Commit Gate 5 fully satisfied.
+- **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md`](../records/closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md)
 
 ### [Phase 6: Zero-Knowledge Vault Boundary (`EphemeralVaultMemoryMap`), Encrypted Checkpoints & `CloudPostgresWorkspaceProvider`]
 

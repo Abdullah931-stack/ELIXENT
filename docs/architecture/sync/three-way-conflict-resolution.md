@@ -206,6 +206,31 @@ graph TD
 
 ---
 
+### 2.11 Section-Scoped 3-Way Merge (`diff3MergeSection` in `src/lib/sync/diff3.ts`)
+- **Isolated Section Targeted Merging:** Enables AI agent synthesis and document writing nodes to merge localized section changes without re-merging or risking false conflicts across unaffected document sections.
+- **Heading Slicer Coupling:** Leverages `extractSectionBySlug` from `@/core/ast/heading-slicer` to locate the target section's UTF-16 character offsets `(startOffset, endOffset)` in the live document.
+- **Parameter Ordering & Common Ancestor:** Calls `diff3MergeText(liveSection.sectionContent, baseSectionContent, agentProposedSectionContent, options)` with canonical `(local, base, remote)` ordering where `baseSectionContent` serves as the common ancestor `o`.
+- **Conflict Containment & Quarantine:** When concurrent edits conflict within the target section, `diff3MergeSection` returns `status: "conflict_quarantined"`. Conflict markers are strictly bounded within `hunkRange = { from: startOffset, to: endOffset, replacementText }` without corrupting unaffected surrounding text.
+- **Algebraic Replacement Invariant:** Guarantees that splicing the replacement text preserves character accuracy:
+  $$\text{liveDocumentContent.slice}(0, \text{hunkRange.from}) + \text{hunkRange.replacementText} + \text{liveDocumentContent.slice}(\text{hunkRange.to}) \equiv \text{mergedDocumentContent}$$
+- **Markdown Syntax Integrity Gate:** The spliced document is validated against `validateMarkdownSyntaxIntegrity`. Unclosed code blocks, broken tables, or malformed math delimiters return `status: "syntax_invalid"` alongside structural diagnostics.
+
+```mermaid
+flowchart TD
+    In["Live Document + Base Section + Proposed Section + Heading Slug"] --> Slice["extractSectionBySlug(liveDoc, slug)"]
+    Slice --> Found{"Section Found?"}
+    Found -->|No| Invalid["Return status: syntax_invalid<br/>(Slug not found in live doc)"]
+    Found -->|Yes| Merge["diff3MergeText(liveSection, baseSection, proposedSection)"]
+    Merge --> ConflictCheck{"Merge Clean?"}
+    ConflictCheck -->|No: Conflicts| Quarantine["Return status: conflict_quarantined<br/>hunkRange: [startOffset, endOffset, conflictText]"]
+    ConflictCheck -->|Yes: Clean| Splice["Splice into Live Document<br/>live.slice(0, from) + merged + live.slice(to)"]
+    Splice --> SyntaxCheck{"validateMarkdownSyntaxIntegrity()"}
+    SyntaxCheck -->|Invalid| SyntaxErr["Return status: syntax_invalid<br/>diagnostics: syntaxErrors"]
+    SyntaxCheck -->|Valid| CleanOut["Return status: clean<br/>mergedDocumentContent & hunkRange"]
+```
+
+---
+
 ## 3. API & Resolution Contracts
 
 ### 3.1 Merge Result Contract

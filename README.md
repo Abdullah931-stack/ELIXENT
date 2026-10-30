@@ -19,7 +19,7 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-95%20Suites%20·%201234%2F1234%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 1234 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-98%20Suites%20·%201341%2F1341%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 1341 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-21%20Suites%20·%20108%2F108%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 108 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
@@ -52,6 +52,7 @@
   - [9. Dual-Mode Rate Limiting, Log Sanitization & Distributed Correlation Tracing](#9-dual-mode-rate-limiting-log-sanitization--distributed-correlation-tracing)
   - [10. Live Multi-System Integration & Isolated Database Test Infrastructure](#10-live-multi-system-integration--isolated-database-test-infrastructure)
   - [11. Browser-Driven End-to-End (E2E) Testing with Playwright](#11-browser-driven-end-to-end-e2e-testing-with-playwright)
+  - [12. Fence-Aware AST Heading Slicer, Section-Scoped Diff3 & Hybrid BM25 Search Engine](#12-fence-aware-ast-heading-slicer-section-scoped-diff3--hybrid-bm25-search-engine)
 - [Security Architecture](#security-architecture)
 - [Documentation Index](#documentation-index)
 - [Deployment Blueprints](#deployment-blueprints)
@@ -75,6 +76,7 @@
 - 📄 **Client-Side PDF & Multi-Modal Document Extraction:** 100% in-browser Web Worker text extraction (`pdfjs-dist`), 2D spatial clustering algorithm for automatic GitHub-Flavored Markdown tables, pure TypeScript Arabic Unicode normalization (de-spacing, un-shaping, BiDi correction), embedded font corruption detection (PUA range analysis), and on-demand bilingual OCR (`tesseract.js`).
 - 📡 **Dual-Mode Rate Limiting & Distributed Tracing:** Redis sliding-window limiters with Fail-Open resilience on public and file-sync operations, Fail-Closed protection on authentication Server Actions (`signInWithGoogle` by IP, `syncUserToDatabase` by user ID) and AI streaming quotas, distributed `X-Correlation-ID` context propagation across Server Actions and Route Handlers with CRLF injection sanitization, and Zero-Knowledge log masking with token-boundary isolation.
 - ⏱️ **Automated Quota & Maintenance Sweepers:** Scheduled crons for 30-day soft-delete purges (`/api/cron/purge-deleted`) and automated reclamation of expired AI quota leases (`/api/cron/expire-reservations`), resolving orphaned pending leases without manual intervention.
+- 📑 **Fence-Aware AST Heading Slicer & Path-Coupled BM25 Search Engine:** CommonMark §4.2 ATX and §4.5 code-fence tracking parser (`src/core/ast/heading-slicer.ts`) with pure TypeScript FIPS 180-4 SHA-256 (zero `node:crypto` imports), section-scoped 3-way merge (`diff3MergeSection` in `src/lib/sync/diff3.ts`), and path-coupled Okapi BM25 search engine (`src/core/workspace/lexical-bm25.ts`) featuring Arabic/Latin normalization, compound subword extraction, and ReDoS protection.
 
 ---
 
@@ -295,7 +297,7 @@ npm run start
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 95 | 1234 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 98 | 1341 | 100% ✅ |
 | **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 108 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
@@ -310,7 +312,7 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).              |
 
 ```bash
-# Execute unit/contract test suites (95 test files, 1234 tests)
+# Execute unit/contract test suites (98 test files, 1341 tests)
 npm run test
 
 # Execute live database integration test suites on isolated Neon branch (21 test files, 108 tests)
@@ -597,6 +599,29 @@ To validate full platform functionality under real user conditions, LUGX impleme
 - **Deterministic User Journey Execution:** 14 test specification suites under `e2e/specs/` cover 15 exhaustive user journeys, including SSR cookie authentication, nested folder operations, CodeMirror 6 BiDi typography, offline-first sync with conflict dialogs, client-side PDF extraction, AI streaming and atomic commit, user aborts/rejections (no refund), system AI failures (full refund), 412 collisions, zero-knowledge vault setup and auto-lock, AI shield HTTP 403 gating, Stripe billing ledger updates, and 404 anti-enumeration tenant isolation.
 - **Hermetic Isolation & Teardown Invariant:** Every E2E test runs with timestamped test user credentials (`9999...`), followed by explicit teardown via `cleanupE2EUser()` ensuring zero persistent database pollution and zero cross-test interference.
 - **Zero-Flakiness Guarantee:** Achieved 100% pass rate (15/15 journeys passed) across two consecutive automated validation runs (Run 1: 2.4m, Run 2: 2.1m), officially resolving technical debt item **TD-07**.
+
+### 12. Fence-Aware AST Heading Slicer, Section-Scoped Diff3 & Hybrid BM25 Search Engine
+
+To enable high-precision agentic Markdown manipulation without full-document re-renders or cross-section conflict bleed, Elixent introduces a pure in-memory AST slicing, section-targeted 3-way merge, and path-coupled lexical information retrieval subsystem.
+
+```mermaid
+flowchart LR
+    MD["Markdown Document"] --> AST["Fence-Aware AST Slicer<br/>CommonMark §4.2 / §4.5 Tracking"]
+    AST --> Tree["Heading Tree & Slugs<br/>Breadcrumb Hierarchy & Pure TS SHA-256"]
+    
+    Tree --> Slicer["extractSectionBySlug()"]
+    Tree --> BM25["Hybrid BM25 Search Engine<br/>Okapi BM25 (k1=1.5, b=0.75) + RSJ IDF"]
+    
+    Slicer --> Diff3["diff3MergeSection()<br/>Isolated Section 3-Way Merge"]
+    Diff3 --> SyntaxGate["validateMarkdownSyntaxIntegrity()<br/>Algebraic Replacement Invariant"]
+    
+    BM25 --> ReDoS["ReDoS Protection & Arabic Normalizer"]
+    ReDoS --> Match["LexicalMatchResult[]<br/>Annotated with Heading Breadcrumb & LineRange"]
+```
+
+- **Fence-Aware AST Heading Slicer (`src/core/ast/heading-slicer.ts`):** CommonMark §4.2 ATX heading parser and §4.5 code-fence state machine (```` ``` ```` or `~~~`), ignoring `#` comment lines within code blocks and YAML frontmatter. Computes section spans ($L_{\text{next}} \le L$), hierarchical breadcrumbs (`"Parent > Child"`), Unicode heading slugs with collision resolution, and pure bitwise FIPS 180-4 SHA-256 digests (`computeSectionHash`) with zero `node:crypto` imports.
+- **Section-Scoped 3-Way Merge Engine (`src/lib/sync/diff3.ts`):** `diff3MergeSection` executes localized 3-way merges on targeted sections extracted via `extractSectionBySlug`. Quarantines conflicts within section boundaries (`conflict_quarantined`), validates syntax integrity (`validateMarkdownSyntaxIntegrity`), and enforces the algebraic replacement invariant: `live.slice(0, from) + replacementText + live.slice(to) === merged`.
+- **Path-Coupled Hybrid BM25 Search Engine (`src/core/workspace/lexical-bm25.ts`):** Okapi BM25 engine with Robertson-Spärck Jones non-negative IDF, coupled with CommonMark AST headings. Features multilingual text normalization (Arabic diacritics/variants, Persian/Arabic-Indic digits to ASCII, Latin case-folding), compound subword tokenization (`camelCase`, `snake_case`, `kebab-case`), and 3-layer ReDoS protection (100-character cap, nested quantifier static guard, try/catch literal fallback).
 
 ---
 

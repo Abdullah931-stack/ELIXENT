@@ -4,6 +4,48 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.5.0] - 2026-10-30 (Phase 5: Fence-Aware AST Heading Slicer, Section-Scoped Diff3 & Hybrid BM25 Search Engine)
+
+### Fence-Aware AST Heading Slicer (`src/core/ast/heading-slicer.ts`)
+
+- **CommonMark §4.2 & §4.5 Compliant Parsing:** Implemented `parseMarkdownHeadingTree` with state-machine code fence tracking (```` ``` ```` and `~~~`), strictly ignoring `#` comment lines inside code blocks. Skips YAML frontmatter delimiters (`---` and `...`) at document start.
+- **Section Span Calculation:** Computes deterministic section boundaries where a section for heading $H_k$ (level $L \in [1, 6]$) extends up to the line immediately preceding the next heading with level $L_{\text{next}} \le L$.
+- **Hierarchical Breadcrumbs & Unicode Slugs:** Maintains an active heading stack to generate ancestor breadcrumb strings (`"Parent > Child"`) and emits URL-friendly, Unicode-aware heading slugs with collision resolution (`slug`, `slug-1`, `slug-2`).
+- **Pure TypeScript SHA-256 (Zero `node:crypto` Imports):** Built bitwise FIPS 180-4 SHA-256 implementation (`computeSectionHash`) to hash normalized section contents (`\0` removed, CRLF/CR to LF, Unicode NFC), guaranteeing 100% Next.js client-side bundle safety without polyfills.
+- **Section Body Slicing:** Exposes `extractSectionBySlug` extracting `heading`, `sectionContent`, and subordinate `sectionBody` excluding the heading line.
+
+### Section-Scoped 3-Way Merge Engine (`src/lib/sync/diff3.ts`)
+
+- **Section-Targeted Conflict Containment (`diff3MergeSection`):** Resolves targeted sections via `extractSectionBySlug`, executes 3-way merge via `diff3MergeText(liveSectionContent, baseSectionContent, agentProposedSectionContent)` with exact `(local, base, remote)` parameter ordering, and quaranitines conflicts strictly within section boundaries (`status: "conflict_quarantined"`).
+- **Algebraic Splicing Invariant:** Enforces the replacement guarantee:
+  $$\text{liveDoc.slice}(0, \text{from}) + \text{replacementText} + \text{liveDoc.slice}(\text{to}) \equiv \text{mergedDoc}$$
+- **Post-Merge Markdown Syntax Integrity Gate:** Validates merged output using `validateMarkdownSyntaxIntegrity`, catching unclosed code blocks or broken tables and returning `status: "syntax_invalid"` with diagnostics.
+
+### Path-Coupled Hybrid BM25 Search Engine (`src/core/workspace/lexical-bm25.ts`)
+
+- **Okapi BM25 with Robertson-Spärck Jones IDF:** Implemented `LexicalBM25SearchEngine` with $k_1 = 1.5, b = 0.75$ and non-negative IDF:
+  $$\text{IDF}(q_i) = \ln\left(1 + \frac{N - n(q_i) + 0.5}{n(q_i) + 0.5}\right)$$
+  guarded against division by zero on empty indexes.
+- **Arabic & Latin Normalization (`normalizeLexicalText`):** Strips BiDi control characters, Tashkeel diacritics, and Tatweel/Kashida; unifies Alef variants (`[إأآٱ] -> ا`), Teh Marbuta (`ة -> ه`), Yeh/Alef Maksura (`[ىئ] -> ي`), and Waw with Hamza (`ؤ -> و`); converts Persian and Arabic-Indic numerals (`[٠-٩۰-۹]`) to ASCII `0-9`; applies Latin case-folding and punctuation normalization.
+- **Compound Identifier Subword Tokenization (`tokenizeLexicalText`):** Splits `camelCase`, `snake_case`, and `kebab-case` into unified tokens and constituent subwords, enabling code and technical term discovery.
+- **ReDoS Resilience & Security Guards:** Enforces query length cap ($\le 100$), nested quantifier static analysis rejection, and safe regex evaluation inside try/catch with literal substring fallback.
+- **AST Heading Coupling:** Partitions documents into atomic semantic chunks (`partitionDocumentIntoChunks`) across GFM tables, code blocks, and paragraphs, associating each chunk with its nearest enclosing `HeadingNode` (`headingSlug`, `headingBreadcrumb`, 1-based `lineRange`).
+- **High-Level Search Orchestrator:** Implemented `searchLexicalWithASTBreadcrumb` supporting multi-document corpus searches with deterministic tie-breaking (`bm25Score` desc, `fileId` asc, `lineRange[0]` asc).
+
+### Verification & Metrics Baseline
+
+- **Dedicated Workspace Suites:** Authoritative coverage across 3 new unit test suites (107 tests):
+  - `src/test/workspace/ast-heading-slicer.test.ts` (40 tests)
+  - `src/test/workspace/ast-slicer-and-diff3.test.ts` (30 tests)
+  - `src/test/workspace/lexical-bm25.test.ts` (37 tests)
+- **Synchronized SSOT Metrics:** Validated via `scripts/sync-doc-metrics.mjs`:
+  - Unit & Contract: 98 suites, 1,341 tests (100% green).
+  - Live Multi-System Integration: 21 suites, 108 tests (100% green).
+  - Browser E2E Journeys: 14 specs, 15 user journeys (100% green).
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md`](records/closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md).
+
+---
+
 ## [0.4.6] - 2026-10-30 (Playwright E2E CI/CD Stability & Stripe Webhook Secret Hermeticity)
 
 ### Playwright E2E Stream Lifecycle & CI Secret Hermeticity
