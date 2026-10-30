@@ -166,7 +166,7 @@ In compliance with the architectural decision and trade-off documentation rules 
   2. **Vault Plaintext Isolation via Ephemeral References (`Ephemeral Vault References`):**
      - Strictly prohibit placing any decrypted vault file plaintext inside `AgentGraphState` objects.
      - Store decrypted plaintext exclusively inside an out-of-state ephemeral memory map (`EphemeralVaultMemoryMap`) scoped to the single HTTP request lifecycle and zeroed out immediately upon request completion, while writing only an opaque reference pointer into `state.search_report` formatted as **`vault_ref://${fileId}#${headingSlug}`**.
-     - As a second line of defense (`Defense-in-Depth`), wrap `PostgresSaver` with an encrypted serializer (`EncryptedCheckpointSerializer`) using a server-side encryption key (`AES-256-GCM`) to encrypt all `JSONB` checkpoint payloads at rest in the database.
+     - As a second line of defense (`Defense-in-Depth`), wrap `PostgresSaver` with an encrypted serializer (`EncryptedCheckpointSerializer`) using a server-side encryption key (`AES-256-GCM`) to encrypt all `JSONB` checkpoint payloads at rest in the database (implemented in Phase 6; see [Phase 6 Closure Dossier](../records/closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md)).
 - **Rejected Alternatives:**
   - _Relying on `PostgresSaver` alone to store project decisions:_ Traps architectural decisions inside a single conversation thread (`thread_id`) and forces the user to re-answer the same clarifying questions in every new session.
   - _Scrubbing state only before graph completion:_ Unsafe because `LangGraph` automatically persists a checkpoint after **every single node (`Super-step`)**, not merely at the end of the graph execution.

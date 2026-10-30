@@ -42,6 +42,22 @@ export interface SectionMergeOutcome {
   diagnostics?: string[];
 }
 
+export interface SectionReadResult {
+  breadcrumb: string;
+  contentOrVaultRef: string;
+  isVaultRef: boolean;
+}
+
+export interface AgentStreamRequestPayload {
+  threadId: string;
+  projectId: string;
+  prompt?: string;
+  targetFileIds: string[];
+  resumePayload?: unknown;
+  ephemeralVaultPayloads?: Record<string, string>;
+  liveDocumentSnapshots?: Record<string, string>;
+}
+
 export interface IWorkspaceProvider {
   /** Return the complete heading tree for target files without loading full document bodies */
   listHeadingsTree(fileIds: string[]): Promise<Record<string, HeadingNode[]>>;
@@ -50,11 +66,7 @@ export interface IWorkspaceProvider {
   readSectionByHeading(
     fileId: string,
     headingSlug: string,
-  ): Promise<{
-    breadcrumb: string;
-    contentOrVaultRef: string;
-    isVaultRef: boolean;
-  }>;
+  ): Promise<SectionReadResult>;
 
   /** Hybrid search (lexical BM25 / Regex) within paragraphs and tables with parent heading breadcrumb attached */
   searchLexicalWithASTBreadcrumb(params: {
@@ -71,6 +83,27 @@ export interface IWorkspaceProvider {
     agentProposedSectionContent: string;
     liveDocumentContent: string;
   }): Promise<SectionMergeOutcome>;
+}
+
+// Custom Workspace Domain Errors
+export class VaultAIAccessDeniedError extends Error {
+  readonly status = 403;
+  readonly code = "VAULT_AI_ACCESS_DENIED";
+}
+
+export class WorkspaceFileAccessDeniedError extends Error {
+  readonly status = 404;
+  readonly code = "WORKSPACE_FILE_ACCESS_DENIED";
+}
+
+export class WorkspaceSectionNotFoundError extends Error {
+  readonly status = 404;
+  readonly code = "WORKSPACE_SECTION_NOT_FOUND";
+}
+
+export class EncryptedPayloadMissingError extends Error {
+  readonly status = 400;
+  readonly code = "ENCRYPTED_PAYLOAD_MISSING";
 }
 ```
 
@@ -231,14 +264,75 @@ To preserve the end-to-end encryption (`Zero-Knowledge`) guarantees implemented 
 
 ### 5.2. Ephemeral Memory Map and `vault_ref://` Pointers (`EphemeralVaultMemoryMap`)
 
-Because the `files.content` column in PostgreSQL stores `AES-256-GCM` ciphertext for which the server holds no decryption key, processing encrypted files (when `allowAIOnEncryptedFiles === true`) follows this strict protocol:
+Because the `files.content` column in PostgreSQL stores `AES-256-GCM` ciphertext for which the server holds no decryption key, processing encrypted files (when `allowAIOnEncryptedFiles === true`) follows this strict protocol implemented in `src/lib/vault/ephemeral-memory-map.ts`:
 
-1. **Transient Per-Request Hydration (Including `Resume` Requests):**
+1. **Transient Per-Request Hydration via `AsyncLocalStorage` (`runWithEphemeralVaultScope`):**
    - The client browser decrypts target files locally via `SyncCryptoGateway` and passes their plaintext in the transient `ephemeralVaultPayloads` field within the `POST /api/agent/stream` request (both on the initial request and on any resume request following an `interrupt`, because the initial request's memory is completely wiped upon suspension).
-   - Upon receiving the request on the server, `CloudPostgresWorkspaceProvider` slices the texts in `ephemeralVaultPayloads` in memory via the `Fence-Aware Heading Slicer` and stores each section as a `Uint8Array` inside the `EphemeralVaultMemoryMap` (`Map<VaultRefUri, Uint8Array>`) scoped strictly to the active request context (`AsyncLocalStorage` / `RequestContext`).
-2. **Prohibition of Storage in `AgentGraphState`:** Inserting decrypted plaintext into `state.search_report` or any other channel in `AgentGraphState` is strictly prohibited, because `PostgresSaver` automatically persists a checkpoint snapshot after every node (`Super-step`).
-3. **Just-In-Time Prompt Resolution (`Just-In-Time Prompt Resolution`) and Deterministic Zeroization:**
-   - Only a non-disclosing reference pointer is written into `state.search_report` in the format:
-     `vault_ref://${fileId}#${headingSlug}`
-   - When `assumption_analyzer_node` or `document_writer_node` needs to pass evidence to the LLM or retrieve `baseSectionContent` for 3-way merge, the prompt builder (`Prompt Resolver`) dereferences the `vault_ref://` pointer from `EphemeralVaultMemoryMap` in transient memory at the exact moment of dispatch without mutating the `state` object.
-   - In the `finally` block of the `/api/agent/stream` route (whether the request concludes by completing the cycle, pausing at an `interrupt`, or throwing an error), deterministic zeroization (`Buffer.fill(0)`) is executed across all `EphemeralVaultMemoryMap` values in memory, followed by encrypting the session checkpoints themselves via `EncryptedCheckpointSerializer` as a second line of defense.
+   - Upon receiving the request on the server, `CloudPostgresWorkspaceProvider` slices the texts in `ephemeralVaultPayloads` in memory via the `Fence-Aware Heading Slicer` and stores each section as a `Uint8Array` inside the `EphemeralVaultMemoryMap` (`Map<string, Uint8Array>`) scoped strictly to the active request context using Node.js `AsyncLocalStorage`:
+     ```typescript
+     export async function runWithEphemeralVaultScope<T>(
+       callback: () => Promise<T> | T
+     ): Promise<T>;
+     ```
+2. **Prohibition of Storage in `AgentGraphState` & Canonical Pointer Format:**
+   - Inserting decrypted plaintext into `state.search_report` or any other channel in `AgentGraphState` is strictly prohibited, because `PostgresSaver` automatically persists a checkpoint snapshot after every node (`Super-step`).
+   - Sliced sections are stored transiently via `storeEphemeralVaultSection(fileId, headingSlug, plaintext)`, which returns an opaque pointer formatted as:
+     $$\text{vault\_ref://}\{fileId\}\#\{headingSlug\}$$
+   - Pointer formatting and inspection are validated by `formatVaultRef(fileId, headingSlug)` and `isVaultRef(value)`.
+3. **Just-In-Time Prompt Resolution (`resolveVaultRefJustInTime`):**
+   - When `assumption_analyzer_node` or `document_writer_node` needs to pass evidence to the LLM or retrieve `baseSectionContent` for 3-way merge, the prompt builder (`Prompt Resolver`) dereferences the `vault_ref://` pointer from `EphemeralVaultMemoryMap` in transient memory at the exact moment of dispatch without mutating the `state` object:
+     ```typescript
+     export function resolveVaultRefJustInTime(text: string): string;
+     ```
+   - Invariant 1 (Fast-Path): If `text` contains no `vault_ref://` prefix, returns immediately without allocating maps.
+   - Invariant 2 (Scope Check): If text contains pointers but executes outside an active scope, throws `EphemeralVaultResolutionError`.
+   - Invariant 3 (Zeroed Memory Rejection): Throws `EphemeralVaultResolutionError` if the target buffer has been wiped.
+4. **Deterministic Buffer Zeroization (`zeroOutEphemeralVaultMemory`):**
+   - In the `finally` block of `runWithEphemeralVaultScope` (whether completing normally, pausing at an `interrupt`, or throwing an unhandled exception), deterministic zeroization (`buffer.fill(0)`) is executed across all `Uint8Array` buffers in memory and the map is cleared:
+     ```typescript
+     export function zeroOutEphemeralVaultMemory(): void;
+     ```
+5. **Leak Assertions & Scope Introspection:**
+   - Exposes `getActiveEphemeralVaultPlaintexts(): string[]` and `hasActiveVaultPlaintextInMemory(): boolean` to allow downstream serializers to inspect and guarantee zero-knowledge boundaries.
+
+### 5.3. Authenticated Checkpoint Encryption & Zero-Knowledge Leak Assertion (`EncryptedCheckpointSerializer`)
+
+To prevent state persistence from storing unencrypted scratchpad data or leaked plaintexts in PostgreSQL, `src/core/agent/checkpoint-serializer.ts` implements `SerializerProtocol` from `@langchain/langgraph-checkpoint`:
+
+```mermaid
+flowchart LR
+    State["LangGraph Checkpoint State"] --> Inner["JsonPlusSerializer<br/>Preserve Date, Map, Set, DeltaSnapshot"]
+    Inner --> LeakAssert{"assertNoVaultPlaintextLeak()<br/>Inspect for active plaintexts >= 4 chars"}
+    LeakAssert -->|Leak Detected| LeakErr["throw CheckpointVaultLeakError<br/>(VAULT_PLAINTEXT_LEAK_DETECTED)"]
+    LeakAssert -->|Clean (pointers only)| HKDF["HKDF-SHA-256 Key Derivation<br/>256-bit Key from secretKey + salt + info"]
+    HKDF --> AES["AES-256-GCM Cipher<br/>12-byte IV · 16-byte Tag · AAD: innerType"]
+    AES --> Envelope["EncryptedCheckpointEnvelope<br/>Emits valid UTF-8 JSON bytes for JSONB"]
+    Envelope --> Postgres["PostgresSaver Checkpoint Table"]
+```
+
+1. **Authenticated AES-256-GCM Encryption with HKDF Key Derivation:**
+   - Derives a 32-byte (256-bit) encryption key using `crypto.hkdfSync("sha256", keyMaterial, salt, info, 32)` from `CHECKPOINT_ENCRYPTION_KEY`, `AUTH_SECRET`, or `NEXTAUTH_SECRET`.
+   - Encrypts serialized checkpoint payloads with `AES-256-GCM` using a 12-byte CSPRNG IV and a 16-byte authentication tag.
+   - Binds Additional Authenticated Data (AAD) to the inner serialization type: `elixent:v1:checkpoint:${innerType}`.
+2. **PostgresSaver JSONB Column Compatibility (`EncryptedCheckpointEnvelope`):**
+   - Serialized envelopes conform to the typed contract:
+     ```typescript
+     export interface EncryptedCheckpointEnvelope {
+       __elixentEncrypted: true;
+       v: 1;
+       alg: "AES-256-GCM";
+       innerType: string;
+       iv: string;  // Base64 12-byte IV
+       tag: string; // Base64 16-byte Tag
+       ct: string;  // Base64 Ciphertext
+     }
+     ```
+   - Emits valid UTF-8 JSON strings (`["encrypted_json", Buffer.from(JSON.stringify(envelope))]`), enabling seamless storage and querying within PostgreSQL `JSONB` checkpoint tables.
+3. **Idempotent Pass-Through Protection:**
+   - During `PostgresSaver._loadMetadata`, LangGraph re-serializes previously read checkpoint envelopes. `EncryptedCheckpointSerializer.dumpsTyped` inspects candidates using `isEncryptedCheckpointEnvelope` and passes them through directly, preventing catastrophic double-encryption.
+4. **Active Plaintext Leak Assertion (`assertNoVaultPlaintextLeak`):**
+   - Prior to encryption in `dumpsTyped`, the serializer queries `getActiveEphemeralVaultPlaintexts()`.
+   - If any active vault plaintext ($\ge 4$ characters, non-pointer) is detected anywhere within the serialized state string (either verbatim or JSON-escaped), the serializer halts execution and throws `CheckpointVaultLeakError` with code `VAULT_PLAINTEXT_LEAK_DETECTED`.
+5. **Complex Type Preservation & Legacy Fallback:**
+   - Wraps LangGraph's internal `JsonPlusSerializer` to preserve complex state objects (`Date`, `Map`, `Set`, `RegExp`, `DeltaSnapshot`, and custom LangChain classes).
+   - In `loadsTyped`, supports unencrypted fallback for legacy or development checkpoints.

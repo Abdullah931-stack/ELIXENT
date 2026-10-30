@@ -5,7 +5,7 @@ Each entry records the decision owner and the mitigation currently in place.
 Last reviewed: 2026-10-26 (v1.46.3 — AI Model Upgrade, Vitest 5, TD-15 liquidation & Phase 2 Green-Field Baseline).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 98 unit suites (1341 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 101 unit suites (1431 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ---

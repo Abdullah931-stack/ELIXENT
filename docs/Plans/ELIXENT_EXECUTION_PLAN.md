@@ -780,10 +780,13 @@ flowchart LR
 - **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 3 workspace suites (107 tests) passing 100%, 98 repository unit suites (1341 tests) passing 100%, Commit Gate 5 fully satisfied.
 - **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md`](../records/closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md)
 
-### [Phase 6: Zero-Knowledge Vault Boundary (`EphemeralVaultMemoryMap`), Encrypted Checkpoints & `CloudPostgresWorkspaceProvider`]
+### [Phase 6: Zero-Knowledge Vault Boundary (`EphemeralVaultMemoryMap`), Encrypted Checkpoints & `CloudPostgresWorkspaceProvider`] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 6 — Zero-Knowledge Vault Boundary, Encrypted Checkpoints & Cloud Workspace Provider`  
+> **Status:** `CLOSED / EXECUTED` ✅ ([Closure Dossier](../records/closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md))  
+> **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 3 Phase 6 suites (90 tests) passing 100%, 101 repository unit suites (1431 tests) passing 100%, Commit Gate 6 fully satisfied.  
 > **Single Responsibility Principle (`SRP`):** Build the zero-knowledge vault isolation layer (`EphemeralVaultMemoryMap`, `vault_ref://` pointers, and `Buffer.fill(0)` zeroing), the encrypted checkpoint serializer (`EncryptedCheckpointSerializer`), and the unified `IWorkspaceProvider` implementation (`CloudPostgresWorkspaceProvider`).  
+> **Closure Record:** [`docs/records/closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md`](../records/closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md)  
 > **Post-Phase 5 Baseline State:** Heading slicer `heading-slicer.ts`, `diff3MergeSection`, and `lexical-bm25.ts` are ready and tested from Phase 5.
 
 #### Phase 6 Sub-Agent Topology
@@ -832,9 +835,15 @@ flowchart LR
   1. Define the `IWorkspaceProvider` contract and `AgentStreamRequestPayload` (including `ephemeralVaultPayloads` and `liveDocumentSnapshots`) in `src/core/workspace/provider.ts`.
   2. Implement `CloudPostgresWorkspaceProvider` in `src/core/workspace/cloud-provider.ts` (using `heading-slicer.ts`, `lexical-bm25.ts`, and `diff3MergeSection` from Phase 5 and `EphemeralVaultMemoryMap` from `6.A`), enforcing strict file ownership verification in `schema.files` and checking `schema.userVaultProfiles.allowAIOnEncryptedFiles` (throwing `403 VAULT_AI_ACCESS_DENIED` when disabled).
 
-#### Phase 6 Commit Gate
+#### Phase 6 Commit Gate — ✅ SATISFIED / CLOSED
 
-- Run `npx vitest run src/test/workspace/cloud-provider-and-vault.test.ts` to verify rejection of encrypted files when `allowAIOnEncryptedFiles` is disabled, emission of `vault_ref://` pointers when enabled, and memory zeroing via `Buffer.fill(0)` before running `git commit`.
+- Execute mandatory verification commands and confirm $100\%$ pass rate across Phase 6 test suites before running `git commit`:
+  ```bash
+  npx tsc --noEmit
+  npx vitest run src/test/vault/ephemeral-memory-map.test.ts src/test/agent/checkpoint-serializer.test.ts src/test/workspace/cloud-provider-and-vault.test.ts
+  ```
+- **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 3 Phase 6 suites (90 tests) passing 100%, 101 repository unit suites (1431 tests) passing 100%, Commit Gate 6 fully satisfied.
+- **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md`](../records/closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md)
 
 ### [Phase 7: Comprehensive `PREDEFINED_CONCEPT_TAGS` Taxonomy, Unified `/v1/decisions` Client, `Conformal APS` Classifier & `AI SDK v6` Bridge]
 

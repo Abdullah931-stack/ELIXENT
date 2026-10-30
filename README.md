@@ -19,7 +19,7 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-98%20Suites%20·%201341%2F1341%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 1341 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-101%20Suites%20·%201431%2F1431%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 1431 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-21%20Suites%20·%20108%2F108%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 108 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
@@ -53,6 +53,7 @@
   - [10. Live Multi-System Integration & Isolated Database Test Infrastructure](#10-live-multi-system-integration--isolated-database-test-infrastructure)
   - [11. Browser-Driven End-to-End (E2E) Testing with Playwright](#11-browser-driven-end-to-end-e2e-testing-with-playwright)
   - [12. Fence-Aware AST Heading Slicer, Section-Scoped Diff3 & Hybrid BM25 Search Engine](#12-fence-aware-ast-heading-slicer-section-scoped-diff3--hybrid-bm25-search-engine)
+  - [13. Zero-Knowledge Vault Boundary, Encrypted Checkpoints & Cloud Workspace Provider](#13-zero-knowledge-vault-boundary-encrypted-checkpoints--cloud-workspace-provider)
 - [Security Architecture](#security-architecture)
 - [Documentation Index](#documentation-index)
 - [Deployment Blueprints](#deployment-blueprints)
@@ -77,6 +78,7 @@
 - 📡 **Dual-Mode Rate Limiting & Distributed Tracing:** Redis sliding-window limiters with Fail-Open resilience on public and file-sync operations, Fail-Closed protection on authentication Server Actions (`signInWithGoogle` by IP, `syncUserToDatabase` by user ID) and AI streaming quotas, distributed `X-Correlation-ID` context propagation across Server Actions and Route Handlers with CRLF injection sanitization, and Zero-Knowledge log masking with token-boundary isolation.
 - ⏱️ **Automated Quota & Maintenance Sweepers:** Scheduled crons for 30-day soft-delete purges (`/api/cron/purge-deleted`) and automated reclamation of expired AI quota leases (`/api/cron/expire-reservations`), resolving orphaned pending leases without manual intervention.
 - 📑 **Fence-Aware AST Heading Slicer & Path-Coupled BM25 Search Engine:** CommonMark §4.2 ATX and §4.5 code-fence tracking parser (`src/core/ast/heading-slicer.ts`) with pure TypeScript FIPS 180-4 SHA-256 (zero `node:crypto` imports), section-scoped 3-way merge (`diff3MergeSection` in `src/lib/sync/diff3.ts`), and path-coupled Okapi BM25 search engine (`src/core/workspace/lexical-bm25.ts`) featuring Arabic/Latin normalization, compound subword extraction, and ReDoS protection.
+- 🛡️ **Zero-Knowledge Vault Boundary & Authenticated Checkpoints:** Ephemeral in-memory section map (`EphemeralVaultMemoryMap`) backed by Node.js `AsyncLocalStorage` and `vault_ref://` pointers, `AES-256-GCM` authenticated checkpoint serializer (`EncryptedCheckpointSerializer`) with type-bound AAD and active plaintext leak prevention (`assertNoVaultPlaintextLeak`), and unified server-side workspace provider (`CloudPostgresWorkspaceProvider`) enforcing tenant isolation and user-consent AI gates.
 
 ---
 
@@ -297,7 +299,7 @@ npm run start
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 98 | 1341 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 101 | 1431 | 100% ✅ |
 | **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 108 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
@@ -312,7 +314,7 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).              |
 
 ```bash
-# Execute unit/contract test suites (98 test files, 1341 tests)
+# Execute unit/contract test suites (101 test files, 1431 tests)
 npm run test
 
 # Execute live database integration test suites on isolated Neon branch (21 test files, 108 tests)
@@ -622,6 +624,35 @@ flowchart LR
 - **Fence-Aware AST Heading Slicer (`src/core/ast/heading-slicer.ts`):** CommonMark §4.2 ATX heading parser and §4.5 code-fence state machine (```` ``` ```` or `~~~`), ignoring `#` comment lines within code blocks and YAML frontmatter. Computes section spans ($L_{\text{next}} \le L$), hierarchical breadcrumbs (`"Parent > Child"`), Unicode heading slugs with collision resolution, and pure bitwise FIPS 180-4 SHA-256 digests (`computeSectionHash`) with zero `node:crypto` imports.
 - **Section-Scoped 3-Way Merge Engine (`src/lib/sync/diff3.ts`):** `diff3MergeSection` executes localized 3-way merges on targeted sections extracted via `extractSectionBySlug`. Quarantines conflicts within section boundaries (`conflict_quarantined`), validates syntax integrity (`validateMarkdownSyntaxIntegrity`), and enforces the algebraic replacement invariant: `live.slice(0, from) + replacementText + live.slice(to) === merged`.
 - **Path-Coupled Hybrid BM25 Search Engine (`src/core/workspace/lexical-bm25.ts`):** Okapi BM25 engine with Robertson-Spärck Jones non-negative IDF, coupled with CommonMark AST headings. Features multilingual text normalization (Arabic diacritics/variants, Persian/Arabic-Indic digits to ASCII, Latin case-folding), compound subword tokenization (`camelCase`, `snake_case`, `kebab-case`), and 3-layer ReDoS protection (100-character cap, nested quantifier static guard, try/catch literal fallback).
+
+### 13. Zero-Knowledge Vault Boundary, Encrypted Checkpoints & Cloud Workspace Provider
+
+To enable intelligent agentic synthesis and multi-file reasoning over sensitive encrypted documents without violating zero-knowledge guarantees, Elixent introduces a request-scoped ephemeral pointer dereferencer, authenticated checkpoint encryption serializer, and tenant-isolated PostgreSQL workspace provider.
+
+```mermaid
+flowchart TD
+    ClientReq["Client Request (/api/agent/stream)<br/>ephemeralVaultPayloads: { [fileId]: plaintext }"] --> Scope["runWithEphemeralVaultScope<br/>Node.js AsyncLocalStorage Scope"]
+    
+    Scope --> Prov["CloudPostgresWorkspaceProvider<br/>Tenant Check: files.userId === session.userId<br/>Consent Gate: userVaultProfiles.allowAIOnEncryptedFiles"]
+    
+    Prov -->|readSectionByHeading| EphemMap["EphemeralVaultMemoryMap (ALS)<br/>Store Uint8Array Plaintexts"]
+    EphemMap -->|Emit Pointers| Ptr["vault_ref://${fileId}#${headingSlug}"]
+    Ptr --> State["AgentGraphState Channels<br/>Strictly Zero Plaintext in State Channels"]
+    
+    State --> Checkpoint["EncryptedCheckpointSerializer (serde)<br/>assertNoVaultPlaintextLeak() (>= 4 chars guard)"]
+    Checkpoint -->|Pass| HKDF["HKDF-SHA-256 Key Derivation"]
+    HKDF --> AES["AES-256-GCM Cipher (AAD: innerType)"]
+    AES --> Saver["PostgresSaver Checkpoint Table (JSONB Envelope)"]
+    
+    State -->|Prompt Compile / Diff3| Resolve["resolveVaultRefJustInTime()<br/>Dereference Pointers strictly at Call Site"]
+    Resolve --> PromptExec["LLM Dispatch / Section Diff3 Merge"]
+    
+    Scope -->|Finally Block| Wipe["zeroOutEphemeralVaultMemory()<br/>buffer.fill(0) & map.clear()"]
+```
+
+- **Ephemeral Vault Memory Map (`src/lib/vault/ephemeral-memory-map.ts`):** Request-scoped in-memory storage using Node.js `AsyncLocalStorage` (`runWithEphemeralVaultScope`). Decrypted vault sections are sliced in memory and substituted with opaque reference pointers formatted as `vault_ref://${fileId}#${headingSlug}` (`formatVaultRef`, `isVaultRef`). Pointers are dereferenced just-in-time (`resolveVaultRefJustInTime`) at prompt dispatch or 3-way merge time without mutating `AgentGraphState`. Memory buffers are guaranteed to be zeroed out (`buffer.fill(0)`) in a `finally` block upon request termination or error unwinding.
+- **Authenticated Checkpoint Serializer (`src/core/agent/checkpoint-serializer.ts`):** Implements `SerializerProtocol` for `PostgresSaver`. Derives a 256-bit encryption key via `HKDF-SHA-256` and encrypts checkpoint states using authenticated `AES-256-GCM` with a 12-byte random IV, 16-byte authentication tag, and Additional Authenticated Data (AAD) bound to `elixent:v1:checkpoint:${innerType}`. Emits valid UTF-8 JSON representations of `EncryptedCheckpointEnvelope` compatible with PostgreSQL `JSONB` columns, provides idempotent pass-through preventing double-encryption during `_loadMetadata`, and enforces active vault plaintext leak assertions (`assertNoVaultPlaintextLeak`) throwing `CheckpointVaultLeakError` (`VAULT_PLAINTEXT_LEAK_DETECTED`).
+- **Cloud PostgreSQL Workspace Provider (`src/core/workspace/cloud-provider.ts`):** Implements `IWorkspaceProvider` backed by server-side PostgreSQL storage (`schema.files`). Strictly validates file ownership (`files.userId === session.userId`, `deletedAt IS NULL`), enforces the user consent gate in `schema.userVaultProfiles` (rejecting encrypted file operations with HTTP 403 `VaultAIAccessDeniedError` when disabled), redacts BM25 lexical search match excerpts on encrypted files into `vault_ref://` pointers, and executes section-scoped 3-way merges (`diff3MergeSection`) with JIT pointer dereferencing and syntax integrity validation (`validateMarkdownSyntaxIntegrity`).
 
 ---
 

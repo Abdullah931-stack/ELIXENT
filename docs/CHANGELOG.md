@@ -4,6 +4,50 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.6.0] - 2026-10-30 (Phase 6: Zero-Knowledge Vault Boundary, Encrypted Checkpoints & CloudPostgresWorkspaceProvider)
+
+### Ephemeral Vault Memory Map & Pointer Dereferencer (`src/lib/vault/ephemeral-memory-map.ts`)
+
+- **Request-Scoped AsyncLocalStorage Isolation:** Implemented `runWithEphemeralVaultScope` to isolate decrypted vault section plaintexts in transient memory (`Map<string, Uint8Array>`) per HTTP request, preventing cross-request leaks in serverless runtimes.
+- **Opaque Vault Reference Pointers:** Replaced decrypted plaintexts within agent graph states with canonical pointers formatted as `vault_ref://${fileId}#${headingSlug}` (`formatVaultRef`, `isVaultRef`), eliminating plaintext from state channels.
+- **Just-In-Time Pointer Dereferencing:** Implemented `resolveVaultRefJustInTime` to dereference `vault_ref://` pointers strictly during prompt construction or 3-way merge without mutating stored graph state. Fast-returns when text contains no pointers; validates pointer memory integrity before string decoding.
+- **Deterministic Memory Zeroization:** Implemented `zeroOutEphemeralVaultMemory` executing `buffer.fill(0)` across all stored section buffers in a guaranteed `finally` block upon scope termination or error unwinding.
+- **Plaintext Leak Query API:** Exposes `getActiveEphemeralVaultPlaintexts` and `hasActiveVaultPlaintextInMemory` for proactive leak assertions by the checkpoint serializer.
+- **Domain Errors:** Introduces `EphemeralVaultScopeError` and `EphemeralVaultResolutionError`.
+
+### Encrypted Checkpoint Serializer (`src/core/agent/checkpoint-serializer.ts`)
+
+- **LangGraph Serializer Protocol:** Implemented `SerializerProtocol` for `PostgresSaver` checkpoint serialization, providing authenticated `AES-256-GCM` encryption for agent session checkpoints.
+- **HKDF Key Derivation:** Derives a 256-bit AES key via `crypto.hkdfSync("sha256", keyMaterial, salt, info, 32)` from server secret material (`CHECKPOINT_ENCRYPTION_KEY`, `AUTH_SECRET`, or `NEXTAUTH_SECRET`).
+- **Authenticated Encryption with Type-Bound AAD:** Encrypts serialized states using a 12-byte random IV, 16-byte authentication tag, and Additional Authenticated Data (AAD) bound to `elixent:v1:checkpoint:${innerType}`.
+- **PostgresSaver JSONB Compatibility:** Emits valid UTF-8 JSON representations of `EncryptedCheckpointEnvelope`, ensuring seamless parsing and querying by PostgreSQL `JSONB` columns.
+- **Idempotent Pass-Through Protection:** Prevents catastrophic double-encryption during `PostgresSaver._loadMetadata` by detecting pre-existing `EncryptedCheckpointEnvelope` objects.
+- **Zero-Knowledge Plaintext Leak Assertion:** Implemented `assertNoVaultPlaintextLeak`, inspecting serialized payloads prior to encryption to verify that no active decrypted vault plaintexts ($\ge 4$ characters) appear outside of `vault_ref://` pointers. Throws `CheckpointVaultLeakError` (`VAULT_PLAINTEXT_LEAK_DETECTED`) upon any violation.
+- **Complex Type Preservation & Legacy Fallback:** Encapsulates LangGraph's internal `JsonPlusSerializer` (via `MemorySaver().serde`) to preserve complex types (`Date`, `Map`, `Set`, `RegExp`, `DeltaSnapshot`), while supporting graceful fallback for unencrypted legacy checkpoints.
+
+### Unified Workspace Provider Contracts & Implementation (`src/core/workspace/provider.ts` & `src/core/workspace/cloud-provider.ts`)
+
+- **Unified IWorkspaceProvider Contract:** Defined the storage-agnostic `IWorkspaceProvider` interface (`listHeadingsTree`, `readSectionByHeading`, `searchLexicalWithASTBreadcrumb`, `mergeSectionThreeWay`), `SectionReadResult`, and `AgentStreamRequestPayload`.
+- **Tenant Isolation & File Ownership:** `CloudPostgresWorkspaceProvider` queries strictly enforce `files.userId === session.userId` and exclude soft-deleted records (`deletedAt IS NULL`), throwing `WorkspaceFileAccessDeniedError` (404) upon ownership mismatch.
+- **Zero-Knowledge User Consent Gate:** Checks `schema.userVaultProfiles.allowAIOnEncryptedFiles`, rejecting encrypted file operations with HTTP 403 `VaultAIAccessDeniedError` when disabled by user policy.
+- **Decrypted Payload Missing Gate:** Rejects operations on encrypted files with HTTP 400 `EncryptedPayloadMissingError` if no decrypted plaintext is supplied in `ephemeralVaultPayloads` or `liveDocumentSnapshots`.
+- **Automatic Vault Pointer Redaction:** In `readSectionByHeading`, stores decrypted sections in `EphemeralVaultMemoryMap` and returns opaque `vault_ref://` pointers. In `searchLexicalWithASTBreadcrumb`, intercepts BM25 lexical matches on encrypted files and redacts `matchedExcerpt` into ephemeral `vault_ref://` pointers.
+- **Section-Scoped 3-Way Merge Integration:** In `mergeSectionThreeWay`, dereferences embedded `vault_ref://` pointers just-in-time across base, proposed, and live text before invoking `diff3MergeSection`, validating output with `validateMarkdownSyntaxIntegrity`.
+
+### Verification & Metrics Baseline
+
+- **Dedicated Phase 6 Suites:** 3 new test suites delivering 90 passing tests:
+  - `src/test/vault/ephemeral-memory-map.test.ts` (24 tests)
+  - `src/test/agent/checkpoint-serializer.test.ts` (25 tests)
+  - `src/test/workspace/cloud-provider-and-vault.test.ts` (41 tests)
+- **Synchronized SSOT Metrics:** Validated via `scripts/sync-doc-metrics.mjs`:
+  - Unit & Contract: 101 suites, 1,431 tests (100% green).
+  - Live Multi-System Integration: 21 suites, 108 tests (100% green).
+  - Browser E2E Journeys: 14 specs, 15 user journeys (100% green).
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md`](records/closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md).
+
+---
+
 ## [0.5.0] - 2026-10-30 (Phase 5: Fence-Aware AST Heading Slicer, Section-Scoped Diff3 & Hybrid BM25 Search Engine)
 
 ### Fence-Aware AST Heading Slicer (`src/core/ast/heading-slicer.ts`)
