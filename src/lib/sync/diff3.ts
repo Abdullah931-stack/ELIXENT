@@ -13,6 +13,7 @@
  */
 
 import { validateMarkdownSyntaxIntegrity } from './syntax-validator';
+import { extractSectionBySlug } from '@/core/ast/heading-slicer';
 
 export interface Diff3Hunk {
     oStart: number;
@@ -512,4 +513,135 @@ export function diff3MergeText(
         hasConflicts,
         conflictMarkers: hasConflicts ? mergedContent : undefined,
     };
+}
+
+// ---------------------------------------------------------------------------
+// Section-Level 3-Way Merge Engine (Heading AST Integration)
+// ---------------------------------------------------------------------------
+
+export interface SectionMergeOutcome {
+  status: "clean" | "conflict_quarantined" | "syntax_invalid";
+  mergedDocumentContent: string;
+  hunkRange: { from: number; to: number; replacementText: string };
+  diagnostics?: string[];
+}
+
+export interface Diff3MergeSectionParams {
+  headingSlug: string;
+  liveDocumentContent: string;
+  baseSectionContent: string;
+  agentProposedSectionContent: string;
+  options?: Diff3Options;
+}
+
+/**
+ * Executes an isolated 3-way merge on a specific Markdown heading section.
+ *
+ * Implements section-targeted conflict containment:
+ * 1. Resolves target section span via `extractSectionBySlug`.
+ * 2. Merges section content against base and agent-proposed versions via `diff3MergeText`.
+ * 3. Quarantines conflicts if merge fails or produces conflict markers.
+ * 4. Splices resolved section into live document and validates syntax integrity.
+ * 5. Guarantees the algebraic replacement invariant:
+ *    `liveDocumentContent.slice(0, hunkRange.from) + hunkRange.replacementText + liveDocumentContent.slice(hunkRange.to) === mergedDocumentContent`
+ */
+export function diff3MergeSection(params: Diff3MergeSectionParams): SectionMergeOutcome;
+export function diff3MergeSection(
+  liveDocumentContent: string,
+  baseSectionContent: string,
+  agentProposedSectionContent: string,
+  headingSlug: string,
+  options?: Diff3Options
+): SectionMergeOutcome;
+export function diff3MergeSection(
+  paramOrLive: Diff3MergeSectionParams | string,
+  baseSectionContent?: string,
+  agentProposedSectionContent?: string,
+  headingSlug?: string,
+  options?: Diff3Options
+): SectionMergeOutcome {
+  let liveDoc: string;
+  let baseSec: string;
+  let agentProposedSec: string;
+  let targetSlug: string;
+  let mergeOptions: Diff3Options | undefined;
+
+  if (typeof paramOrLive === 'object' && paramOrLive !== null) {
+    liveDoc = paramOrLive.liveDocumentContent;
+    baseSec = paramOrLive.baseSectionContent;
+    agentProposedSec = paramOrLive.agentProposedSectionContent;
+    targetSlug = paramOrLive.headingSlug;
+    mergeOptions = paramOrLive.options;
+  } else {
+    liveDoc = paramOrLive;
+    baseSec = baseSectionContent ?? '';
+    agentProposedSec = agentProposedSectionContent ?? '';
+    targetSlug = headingSlug ?? '';
+    mergeOptions = options;
+  }
+
+  // Step 1: Extract live section span using heading slug
+  const liveSection = extractSectionBySlug(liveDoc, targetSlug);
+  if (!liveSection) {
+    return {
+      status: "syntax_invalid",
+      mergedDocumentContent: liveDoc,
+      hunkRange: { from: 0, to: 0, replacementText: "" },
+      diagnostics: ["Heading slug not found in live document: " + targetSlug],
+    };
+  }
+
+  // Step 2: 3-way merge on section content (live = local, base = common ancestor, agentProposed = remote)
+  const mergeResult = diff3MergeText(
+    liveSection.sectionContent,
+    baseSec,
+    agentProposedSec,
+    mergeOptions
+  );
+
+  // Step 3: Conflict detection & quarantine
+  if (!mergeResult.success || mergeResult.hasConflicts) {
+    return {
+      status: "conflict_quarantined",
+      mergedDocumentContent: liveDoc,
+      hunkRange: {
+        from: liveSection.startOffset,
+        to: liveSection.endOffset,
+        replacementText: mergeResult.content,
+      },
+      diagnostics: ["Unresolved conflict markers in merged section"],
+    };
+  }
+
+  // Step 4: Splice merged section into live document
+  const mergedDocumentContent =
+    liveDoc.slice(0, liveSection.startOffset) +
+    mergeResult.content +
+    liveDoc.slice(liveSection.endOffset);
+
+  // Step 5: Post-merge Markdown syntax integrity verification
+  const syntaxCheck = validateMarkdownSyntaxIntegrity(mergedDocumentContent);
+  if (!syntaxCheck.isValid) {
+    return {
+      status: "syntax_invalid",
+      mergedDocumentContent: liveDoc,
+      hunkRange: {
+        from: liveSection.startOffset,
+        to: liveSection.endOffset,
+        replacementText: mergeResult.content,
+      },
+      diagnostics: syntaxCheck.syntaxErrors || ["Syntax integrity validation failed"],
+    };
+  }
+
+  // Step 6: Clean merge outcome
+  return {
+    status: "clean",
+    mergedDocumentContent,
+    hunkRange: {
+      from: liveSection.startOffset,
+      to: liveSection.endOffset,
+      replacementText: mergeResult.content,
+    },
+  };
 }
