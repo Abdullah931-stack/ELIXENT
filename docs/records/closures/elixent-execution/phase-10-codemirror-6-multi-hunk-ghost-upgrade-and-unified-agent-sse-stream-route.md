@@ -284,8 +284,8 @@ node scripts/check-markdown-links.mjs (100% valid links, 0 broken links)
 
 ## 6. Related Documentation & Canonical References
 
-- Authoritative Architecture Spec: [`docs/architecture/03_workspace_ast_editor_and_vault_integration.md`](../../architecture/03_workspace_ast_editor_and_vault_integration.md)
-- Agent Orchestration Architecture Spec: [`docs/architecture/02_agent_orchestration_and_decision_engine.md`](../../architecture/02_agent_orchestration_and_decision_engine.md)
-- UI Streaming Living Contract: [`docs/reference/ui-streaming-readiness.md`](../../reference/ui-streaming-readiness.md)
-- Execution Plan Roadmap: [`docs/Plans/ELIXENT_EXECUTION_PLAN.md`](../../Plans/ELIXENT_EXECUTION_PLAN.md)
+- Authoritative Architecture Spec: [`docs/architecture/03_workspace_ast_editor_and_vault_integration.md`](../../../architecture/03_workspace_ast_editor_and_vault_integration.md)
+- Agent Orchestration Architecture Spec: [`docs/architecture/02_agent_orchestration_and_decision_engine.md`](../../../architecture/02_agent_orchestration_and_decision_engine.md)
+- UI Streaming Living Contract: [`docs/reference/ui-streaming-readiness.md`](../../../reference/ui-streaming-readiness.md)
+- Execution Plan Roadmap: [`docs/Plans/ELIXENT_EXECUTION_PLAN.md`](../../../Plans/ELIXENT_EXECUTION_PLAN.md)
 - Previous Phase Closure: [`docs/records/closures/elixent-execution/phase-09-agent-graph-state-channels-pure-reducers-7-stage-nodes-and-compiled-langgraph-stategraph.md`](./phase-09-agent-graph-state-channels-pure-reducers-7-stage-nodes-and-compiled-langgraph-stategraph.md)
