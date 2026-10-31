@@ -19,7 +19,7 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-105%20Suites%20·%201620%2F1620%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 1620 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-108%20Suites%20·%201742%2F1742%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 1742 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-21%20Suites%20·%20108%2F108%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 108 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
@@ -56,6 +56,7 @@
   - [13. Zero-Knowledge Vault Boundary, Encrypted Checkpoints & Cloud Workspace Provider](#13-zero-knowledge-vault-boundary-encrypted-checkpoints--cloud-workspace-provider)
   - [14. Universal Concept Taxonomy, Unified Decision Client & Conformal APS Classifier](#14-universal-concept-taxonomy-unified-decision-client--conformal-aps-classifier)
   - [15. Justification-Driven ATMS DAG, Deterministic Candidate Retriever & Relational Linker](#15-justification-driven-atms-dag-deterministic-candidate-retriever--relational-linker)
+  - [16. AgentGraphState Channels, Pure Reducers, 7-Stage Nodes & Compiled LangGraph StateGraph](#16-agentgraphstate-channels-pure-reducers-7-stage-nodes--compiled-langgraph-stategraph)
 - [Security Architecture](#security-architecture)
 - [Documentation Index](#documentation-index)
 - [Deployment Blueprints](#deployment-blueprints)
@@ -82,6 +83,8 @@
 - 📑 **Fence-Aware AST Heading Slicer & Path-Coupled BM25 Search Engine:** CommonMark §4.2 ATX and §4.5 code-fence tracking parser (`src/core/ast/heading-slicer.ts`) with pure TypeScript FIPS 180-4 SHA-256 (zero `node:crypto` imports), section-scoped 3-way merge (`diff3MergeSection` in `src/lib/sync/diff3.ts`), and path-coupled Okapi BM25 search engine (`src/core/workspace/lexical-bm25.ts`) featuring Arabic/Latin normalization, compound subword extraction, and ReDoS protection.
 - 🛡️ **Zero-Knowledge Vault Boundary & Authenticated Checkpoints:** Ephemeral in-memory section map (`EphemeralVaultMemoryMap`) backed by Node.js `AsyncLocalStorage` and `vault_ref://` pointers, `AES-256-GCM` authenticated checkpoint serializer (`EncryptedCheckpointSerializer`) with type-bound AAD and active plaintext leak prevention (`assertNoVaultPlaintextLeak`), and unified server-side workspace provider (`CloudPostgresWorkspaceProvider`) enforcing tenant isolation and user-consent AI gates.
 - 🏷️ **Universal Concept Taxonomy & Conformal APS Classifier:** 9 orthogonal predefined knowledge domains (`DEFAULT_CONCEPT_TAGS`), project-scoped dynamic tag registry algebra, Adaptive Prediction Sets (APS) multi-label conformal classification with distribution-free coverage guarantee ($1 - \alpha$), unified `/v1/decisions` client, and type-safe dynamic Zod batch extraction schemas.
+- ⚖️ **Justification-Driven ATMS DAG & Relational Linker:** Causal dependency graph linking every decision to its selection rationale and evaluated alternatives, multi-signal candidate retrieval (AST section proximity, concept tag Jaccard overlap, BM25 lexical match), batched waterfall-free relational adjudication (`POST /v1/decisions`), and bidirectional cascade BFS for load-bearing promotion and minimal section invalidation.
+- 🧠 **Compiled LangGraph StateGraph & 12-Channel Pure Reducers:** Full autonomous decision-making and architectural adjudication state machine (`src/core/agent/graph.ts`), featuring 12 canonical JSON-serializable channels (`AgentGraphState`), 8 pure synchronous reducers with immutability guarantees, 14 canonical nodes across Stages 0 to 7, 3 conditional routers (`toolsCondition`, `routeAfterAssumptions`, `resolutionGateRouter`), replay-safe stateless HITL interrupts (`pureInterruptNode`), and authenticated AES-256-GCM `PostgresSaver` checkpointers with lazy Proxy initialization.
 
 ---
 
@@ -302,7 +305,7 @@ npm run start
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 105 | 1620 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 108 | 1742 | 100% ✅ |
 | **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 108 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
@@ -317,7 +320,7 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).              |
 
 ```bash
-# Execute unit/contract test suites (105 test files, 1620 tests)
+# Execute unit/contract test suites (108 test files, 1742 tests)
 npm run test
 
 # Execute live database integration test suites on isolated Neon branch (21 test files, 108 tests)
@@ -710,6 +713,49 @@ flowchart TD
 - **Deterministic Multi-Signal Candidate Retriever (`src/core/agent/atms/candidate-retriever.ts`):** Fast local candidate retrieval (`retrieveCandidatePriorDecisions`) combining AST section proximity (exact = 1.0, prefix = 0.5, disjoint = 0.0), concept tag Jaccard similarity, and Okapi BM25 lexical similarity across decision prompts and rationales. Enforces that section proximity is strictly a candidate comparison signal rather than a forced dependency link.
 - **Waterfall-Free Relational Linker (`src/core/agent/atms/relational-linker.ts`):** Batch adjudicates assumption-candidate pairs across all assumptions in a single call to `POST /v1/decisions` (`evaluateRelationalLinksBatch`), avoiding $N+1$ serial roundtrips. Reconstitutes relations classified into `INDEPENDENT`, `DEPENDS_ON`, `REOPENS_OR_OVERRIDES`, and `REFINES`.
 - **Contagious Cascade BFS & Differential Section Invalidation (`src/core/agent/atms/invalidation.ts`):** Bidirectional BFS traversal (`resolveATMSCascadeBFS`) executing upward promotion of provisional peripheral decisions (`APPROVED_CONSERVATIVE`) upon which new requests depend into `CORE_ARCHITECTURAL`, and downward cascade traversal across `dependedBy` on foundational overrides (`REOPENS_OR_OVERRIDES`). Computes minimal section invalidation maps (`computeMinimalSectionInvalidationMap`) for differential document edits without touching unrelated sections.
+
+### 16. AgentGraphState Channels, Pure Reducers, 7-Stage Nodes & Compiled LangGraph StateGraph
+
+To execute end-to-end autonomous multi-turn reasoning and architectural editing with deterministic state transitions, Elixent introduces the 12-channel `AgentGraphState` annotation, 8 pure synchronous reducers, 14 canonical nodes spanning Stages 0 to 7, 3 conditional edge routers, and the authenticated `PostgresSaver` checkpointer.
+
+```mermaid
+flowchart TD
+    START((__start__)) --> S0["Stage 0: Orchestrator Node<br/>orchestrator_node (Project Ledger & Messages)"]
+    S0 --> S1A["Stage 1: Local Inspection Agent<br/>search_agent_node (stepCountIs: 6)"]
+    
+    S1A --> TC{"toolsCondition"}
+    TC -->|Call Tool| S1B["Stage 1: Tool Node<br/>workspace_tool_node"]
+    S1B --> S1A
+    TC -->|Done| S1C["Stage 1: Synthesizer<br/>search_synthesizer_node"]
+    
+    S1C --> S2A["Stage 2: Assumption Analyzer<br/>assumption_analyzer_node"]
+    S2A --> S2B["Stage 2: ATMS Relational Linker<br/>atms_relational_linker_node"]
+    
+    S2B --> RA{"routeAfterAssumptions"}
+    RA -->|Active Decisions| S3A["Stage 3: JEV Structuring<br/>jev_structuring_node"]
+    RA -->|No Assumptions| S7["Stage 7: Document Writer<br/>document_writer_node"]
+    RA -->|Context Gap| S1A
+    
+    S3A --> S3B["Stage 3: Decision Scorer<br/>decision_scorer_node"]
+    S3B --> S4["Stage 4: Confidence Classifier<br/>confidence_classifier_node (Pure Math)"]
+    S4 --> S5A["Stage 5: Ledger Commit<br/>ledger_commit_node (ATMS Invalidation)"]
+    
+    S5A --> RG{"resolutionGateRouter"}
+    RG -->|Resolved| S7
+    RG -->|Gap Loop < 3| S5B["Stage 5: Gap Planner<br/>internal_gap_planner_node"]
+    S5B --> S1A
+    RG -->|HITL Clarification| S6A["Stage 6: Question Organizer<br/>question_organizer_node"]
+    S6A --> S6B["Stage 6: Pure Interrupt<br/>pure_interrupt_node (Zero LLM)"]
+    RG -->|Credit Pause| S6B
+    
+    S6B -.->|Command Resume| S2A
+    S7 --> END((__end__))
+```
+
+- **12-Channel LangGraph State Annotation (`src/core/agent/state.ts`):** Defined via `Annotation.Root`, strictly enforcing JSON-serializable plain records, arrays, and decimal strings (avoiding `Map`, `Set`, or `BigInt` at channel boundaries). Channels include `messages`, `user_request`, `search_report`, `local_inspection_state`, `assumptions`, `master_ledger`, `project_taxonomy`, `unresolved_ledger`, `invalidation_map`, `question_queue`, `budget_tracking`, and `search_loop_count`.
+- **Pure Synchronous Reducers (`src/core/agent/reducers.ts`):** 8 deterministic reducer functions (`(current, update) => next`) with zero I/O, zero async, and zero mutation of input arguments (verified under `Object.freeze`). Implements composite key deduplication (`fileId:headingSlug`), set union, decimal string BigInt arithmetic, and monotonic loop count clamping (`MAX_SEARCH_LOOPS = 3`).
+- **14 Canonical Stage Nodes (`src/core/agent/nodes/*`):** Modular stage nodes across Stages 0 to 7 covering orchestration, hybrid inspection, assumption extraction, relational linking, JEV structuring, single-pass scoring, deterministic conformal triage, ATMS DAG commit, gap planning, replay-safe HITL interrupts, and 3-way document surgery (`diff3MergeSection`).
+- **Compiled StateGraph & Authenticated Checkpointer (`src/core/agent/graph.ts`):** StateGraph workflow builder (`buildAgentWorkflow`) connecting all 14 nodes and 3 conditional edge routers. Integrates `PostgresSaver` checkpointer with `EncryptedCheckpointSerializer` (AES-256-GCM) with `elixent:v1:checkpoint:${innerType}` AAD and active plaintext leak assertions (`assertNoVaultPlaintextLeak`). Provides `createElixentAgentGraph(options)` factory and `elixentAgentGraph` lazy singleton Proxy preventing premature database initialization in test environments.
 
 ---
 

@@ -4,7 +4,7 @@
 | :--- | :--- |
 | **Document ID** | `ELIXENT-ARCH-02` |
 | **Classification** | `LIVING SUBSYSTEM SPEC` (`src/core/agent/*` & `src/lib/jev/*`) |
-| **Version & Status** | `v3.1 — Accepted` |
+| **Version & Status** | `v4.0 — Accepted` |
 | **SSOT Scope** | Specification of the `@langchain/langgraph` state machine, canonical state channels (`AgentGraphState`) and `Pure Reducers`, structured `Zod` contracts, the Unified Decisions API protocol (`POST /v1/decisions`), the Adaptive Conformal Prediction algorithm (`Conformal APS & Top-2 Margin`), the Justification-Driven Truth Maintenance DAG (`Justification-Driven ATMS DAG`), and the replay-safe human interrupt protocol (`Replay-Safe HITL`). |
 | **Suite Index** | • [01_architecture_vision_and_adrs](./01_architecture_vision_and_adrs.md)<br>• [03_workspace_ast_editor_and_vault_integration](./03_workspace_ast_editor_and_vault_integration.md)<br>• [04_credit_metering_and_settlement_architecture](./04_credit_metering_and_settlement_architecture.md)<br>• [05_data_contracts_and_lugx_migration_plan](./05_data_contracts_and_lugx_migration_plan.md) |
 
@@ -196,6 +196,19 @@ All graph nodes that invoke external models are wrapped by the pre-execution fin
    - **Path 2 (`GAP_PLANNER_NODE`):** If unresolved decisions remain that can be resolved via local workspace inspection and `search_loop_count < MAX_SEARCH_LOOPS` $\leftarrow$ transition to `internal_gap_planner_node`.
    - **Path 3 (`Q_SYNTH_NODE`):** If internal search loops are exhausted (`search_loop_count >= MAX_SEARCH_LOOPS`) or the unresolved item is a sovereign architectural choice (or a promoted conservative decision that could not be confirmed internally) requiring user preference $\leftarrow$ transition to `question_organizer_node`.
    - **Path 4 (`HITL_NODE` directly):** If the financial gate indicates credit exhaustion prior to the next step $\leftarrow$ transition directly to `pure_interrupt_node` with code `INSUFFICIENT_CREDITS`.
+
+7. **`document_writer_node`:**
+   - Section-targeted three-way document editing (`synthesizeAgentSectionContent`, `diff3MergeSection`).
+   - Retrieves base section text via `IWorkspaceProvider.readSectionByHeading`, synthesizes non-conflicting edits reflecting committed decisions in `master_ledger`, and merges edits while quarantining true overlaps.
+   - Terminal node transitioning directly to `END`.
+
+### 3.1. StateGraph Assembly, Checkpointers & Invocation Interfaces (`src/core/agent/graph.ts`)
+
+- **StateGraph Builder (`buildAgentWorkflow`):** Instantiates `new StateGraph(AgentGraphAnnotation)`, registers all 14 canonical nodes across Stages 0 to 7, and binds 3 conditional routers (`toolsCondition`, `routeAfterAssumptions`, `resolutionGateRouter`).
+- **Production Checkpointer (`getProductionCheckpointer`):** Instantiates `PostgresSaver` backed by the global PostgreSQL pool (`getPgPool()`) and authenticated `EncryptedCheckpointSerializer` (AES-256-GCM) with `elixent:v1:checkpoint:${innerType}` AAD and active plaintext leak assertions (`assertNoVaultPlaintextLeak`).
+- **Factory & Singleton Architecture:**
+  - `createElixentAgentGraph(options?: ElixentAgentGraphOptions)`: Compiles the graph with the provided checkpointer (defaults to production `PostgresSaver`, or custom savers such as `MemorySaver` for unit/integration testing).
+  - `getElixentAgentGraph()` / `elixentAgentGraph`: Lazily compiles and exports the singleton production graph via a Proxy wrapper to eliminate eager database connection attempts during test initialization.
 
 ## 4. Unified Decisions API & Adaptive Conformal Prediction Cascade (`Unified Decisions API & Conformal APS Cascade`)
 

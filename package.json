@@ -1,6 +1,6 @@
 {
   "name": "elixent",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "engines": {
     "node": ">=22.0.0",
@@ -89,7 +89,8 @@
     "@esbuild/linux-x64": "^0.28.2"
   },
   "overrides": {
-    "esbuild": "$esbuild"
+    "esbuild": "$esbuild",
+    "minimatch": "^11.0.3"
   },
   "allowScripts": {
     "esbuild": true,

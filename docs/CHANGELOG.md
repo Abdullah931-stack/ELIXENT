@@ -4,6 +4,55 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.9.0] - 2026-10-31 (Phase 9: AgentGraphState Channels, Pure Reducers, 7-Stage Nodes & Compiled LangGraph StateGraph)
+
+### 12-Channel LangGraph State Annotation & Pure Reducers (`src/core/agent/state.ts` & `src/core/agent/reducers.ts`)
+
+- **Canonical 12-Channel Root Annotation (`AgentGraphAnnotation`):** Defined the root state annotation using `@langchain/langgraph` `Annotation.Root`, strictly enforcing JSON-serializable plain records, arrays, and decimal strings (avoiding non-serializable `Map`, `Set`, or `BigInt` at channel boundaries):
+  - `messages`: Merges conversation history using LangGraph's native `messagesStateReducer`.
+  - `user_request`: Encapsulates immutable `prompt`, `projectId`, and `targetFileIds` via last-write replacement.
+  - `search_report`: Merges evidence items deduplicated by composite key `(fileId, headingSlug)` with pointer preservation.
+  - `local_inspection_state`: Produces deduplicated set union of visited Markdown AST paths.
+  - `assumptions`: Upserts `AssumptionItem` records keyed by `assumptionId`.
+  - `master_ledger`: Deep-merges ATMS DAG nodes, filtering system-reserved sentinels (`isSystemReservedDecisionId`).
+  - `project_taxonomy`: Null-coalescing last-write replacement (`update ?? current`).
+  - `unresolved_ledger`: Last-write replacement for decisions failing conformal prediction criteria.
+  - `invalidation_map`: Aggregates affected section targets deduplicated by `(fileId, headingSlug)` per decision ID.
+  - `question_queue`: Structured `ClarifyingQuestionBatch` for HITL interrupts; resets to `null` on session resumption.
+  - `budget_tracking`: Arbitrary-precision micro-credit arithmetic (`reservedMicro`, `spentMicro`) using decimal strings and internal `BigInt` addition.
+  - `search_loop_count`: Monotonically incrementing loop counter clamped at `MAX_SEARCH_LOOPS = 3`.
+- **Pure & Synchronous Reducer Functions:** Implemented 8 deterministic pure reducer functions (`reduceSearchReport`, `reduceLocalInspectionState`, `reduceAssumptions`, `reduceMasterLedger`, `reduceProjectTaxonomy`, `reduceInvalidationMap`, `reduceBudgetTracking`, `reduceSearchLoopCount`) with zero I/O, zero async, and zero input argument mutation (verified under strict `Object.freeze` test assertions).
+
+### 14 Canonical Stage Nodes Across Stages 0 to 7 (`src/core/agent/nodes/*`)
+
+- **Stage 0 Master Orchestrator (`orchestratorNode`):** Validates user request, seeds initial `HumanMessage`, initializes inspection paths, and loads persistent project decision ledgers from `project_decision_ledger` with sentinel isolation.
+- **Stage 1 Hybrid Inspection & Synthesis Subgraph (`searchAgentNode`, `workspaceToolNode`, `searchSynthesizerNode`):** Implements metered inspection loop bounded by `stepCountIs(6)` executing `listHeadingsTree`, `readSectionByHeading`, and `searchLexicalWithASTBreadcrumb` against `IWorkspaceProvider`, synthesizing evidence items into `search_report`.
+- **Stage 2 Assumption Analysis & Relational Linker (`assumptionAnalyzerNode`, `atmsRelationalLinkerNode`):** Extracts architectural assumptions bounded by project taxonomy (`resolveProjectConceptTags`), retrieves top-$K$ candidate prior decisions, and executes batched relational adjudication with ATMS cascade BFS.
+- **Stage 3 Architectural Auditing & Decision Scoring (`jevStructuringNode`, `decisionScorerNode`):** Structurally neutralizes candidate options into 3–4 mutually exclusive alternatives, re-injecting historical alternatives upon re-evaluation, and executes four-dimensional single-pass decision scoring via `POST /v1/decisions`.
+- **Stages 4 & 5 Deterministic Triage, Ledger Commit & Gap Planner (`confidenceClassifierNode`, `ledgerCommitNode`, `internalGapPlannerNode`):** Executes pure mathematical conformal prediction classification (APS margin, zero LLM calls), commits approved decisions to ATMS DAG with minimal section invalidation, and plans supplementary search for unresolved decisions.
+- **Stage 6 Replay-Safe Stateless HITL Protocol (`questionOrganizerNode`, `pureInterruptNode`):** Structures clarifying question batches into `question_queue` prior to checkpoint persistence. Guarantees zero model calls or external writes before `interrupt()`, typed resumption validation via `ClarificationResponseSchema`, and clean re-entry via `new Command({ goto: 'assumption_analyzer_node' })`.
+- **Stage 7 Document Writer & Structural Merge (`documentWriterNode`):** Section-targeted three-way document surgery (`diff3MergeSection`, `synthesizeAgentSectionContent`) merging agent updates into live user documents while quarantining true overlaps.
+
+### StateGraph Assembly, Conditional Routers & Authenticated Checkpointer (`src/core/agent/graph.ts`)
+
+- **StateGraph Workflow Assembly (`buildAgentWorkflow`):** Assembles and wires all 14 canonical nodes and 3 conditional edge routers (`toolsCondition`, `routeAfterAssumptions`, `resolutionGateRouter`).
+- **Production Checkpointer (`getProductionCheckpointer`):** Configures `PostgresSaver` backed by the global PostgreSQL pool (`getPgPool()`) and authenticated `EncryptedCheckpointSerializer` (AES-256-GCM) with `elixent:v1:checkpoint:${innerType}` AAD and active plaintext leak assertions.
+- **Factory & Singleton Architecture:** Implemented `createElixentAgentGraph(options)` supporting custom savers (`MemorySaver` for unit/integration testing) and exported `elixentAgentGraph` lazy Proxy to eliminate eager database connection attempts during test initialization.
+
+### Verification & Metrics Baseline
+
+- **Dedicated Phase 9 Test Suites:** 3 new test suites delivering 122 passing tests:
+  - `src/test/agent/reducers-and-state.test.ts` (59 tests)
+  - `src/test/agent/stage-nodes-wave9-2.test.ts` (51 tests)
+  - `src/test/agent/langgraph-orchestration.test.ts` (12 tests)
+- **Synchronized SSOT Metrics:** Validated via `scripts/sync-doc-metrics.mjs`:
+  - Unit & Contract: 108 suites, 1,742 tests (100% green).
+  - Live Multi-System Integration: 21 suites, 108 tests (100% green).
+  - Browser E2E Journeys: 14 specs, 15 user journeys (100% green).
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/elixent-execution/phase-09-agent-graph-state-channels-pure-reducers-7-stage-nodes-and-compiled-langgraph-stategraph.md`](records/closures/elixent-execution/phase-09-agent-graph-state-channels-pure-reducers-7-stage-nodes-and-compiled-langgraph-stategraph.md).
+
+---
+
 ## [0.8.0] - 2026-10-31 (Phase 8: Justification-Driven ATMS DAG, Deterministic Candidate Retriever & Relational Linker)
 
 ### Justification-Driven ATMS DAG & Project Ledger Store (`src/core/agent/atms/dag.ts`)
