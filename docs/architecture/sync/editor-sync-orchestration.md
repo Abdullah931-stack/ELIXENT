@@ -832,7 +832,7 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
   - **Vault Subsystem Total:** 10/10 test files, 178/178 tests passing (100% success rate).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 104 unit suites (1557 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 105 unit suites (1620 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
   - **TypeScript Typecheck:** `npx tsc --noEmit` exits with code 0 (zero errors).

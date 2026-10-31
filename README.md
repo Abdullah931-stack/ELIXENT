@@ -19,7 +19,7 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-104%20Suites%20·%201557%2F1557%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 1557 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-105%20Suites%20·%201620%2F1620%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 1620 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-21%20Suites%20·%20108%2F108%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 108 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
@@ -55,6 +55,7 @@
   - [12. Fence-Aware AST Heading Slicer, Section-Scoped Diff3 & Hybrid BM25 Search Engine](#12-fence-aware-ast-heading-slicer-section-scoped-diff3--hybrid-bm25-search-engine)
   - [13. Zero-Knowledge Vault Boundary, Encrypted Checkpoints & Cloud Workspace Provider](#13-zero-knowledge-vault-boundary-encrypted-checkpoints--cloud-workspace-provider)
   - [14. Universal Concept Taxonomy, Unified Decision Client & Conformal APS Classifier](#14-universal-concept-taxonomy-unified-decision-client--conformal-aps-classifier)
+  - [15. Justification-Driven ATMS DAG, Deterministic Candidate Retriever & Relational Linker](#15-justification-driven-atms-dag-deterministic-candidate-retriever--relational-linker)
 - [Security Architecture](#security-architecture)
 - [Documentation Index](#documentation-index)
 - [Deployment Blueprints](#deployment-blueprints)
@@ -301,7 +302,7 @@ npm run start
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 104 | 1557 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 105 | 1620 | 100% ✅ |
 | **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 108 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
@@ -316,7 +317,7 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).              |
 
 ```bash
-# Execute unit/contract test suites (104 test files, 1557 tests)
+# Execute unit/contract test suites (105 test files, 1620 tests)
 npm run test
 
 # Execute live database integration test suites on isolated Neon branch (21 test files, 108 tests)
@@ -674,6 +675,41 @@ flowchart TD
 - **Conformal APS Multi-Label Classifier (`src/core/jev/conformal-classifier.ts`):** Adaptive Prediction Sets (APS) multi-label conformal classification providing distribution-free finite-sample marginal coverage guarantees $P(Y \subseteq C(X)) \ge 1 - \alpha$. Features Platt temperature calibration, deterministic cumulative mass ranking, top-1 fallback against empty sets, and calibrated non-conformity quantile thresholds ($q^*$).
 - **Unified Decision Client (`src/lib/api/decisions-client.ts`):** Client interface for `/v1/decisions` supporting atomic ledger retrieval, filter-by-tag query predicates, client-side optimistic concurrency locking, and atomic project taxonomy synchronization.
 - **AI SDK v6 Gateway Bridge (`src/core/ai/ai-sdk-v6-gateway.ts`):** Unified LLM abstraction bridge harmonizing AI SDK v5 and v6 interfaces, structured object extraction, dynamic schema factory execution, and provider-agnostic observability.
+
+### 15. Justification-Driven ATMS DAG, Deterministic Candidate Retriever & Relational Linker
+
+To manage architectural assertions as a living causal dependency graph and support surgical re-evaluations without accidental cascades or lost justifications, Elixent introduces the Justification-Driven Assumption-based Truth Maintenance System (`ATMS DAG`), multi-signal candidate decision retriever, waterfall-free relational linker, and bidirectional cascade BFS engine.
+
+```mermaid
+flowchart TD
+    Assump["New Extracted Assumptions<br/>(assumptionId, statement, conceptTags, sections)"] --> Retriever["Deterministic Candidate Retriever<br/>(candidate-retriever.ts)"]
+    
+    Ledger[("Master Decision Ledger<br/>(project_decision_ledger)<br/>ATMSDecisionNode[] & Sentinel Isolation")] --> Retriever
+    
+    subgraph SIGNALS ["3 Orthogonal Retrieval Signals"]
+        S1["AST Section Proximity (1.0 exact / 0.5 prefix)<br/>Comparison signal only · Never forced edge"]
+        S2["Concept Tags Jaccard Overlap<br/>Normalized project taxonomy comparison"]
+        S3["Okapi BM25 Lexical Match<br/>Question, rationale & alternatives search"]
+    end
+    
+    Retriever --- SIGNALS
+    Retriever --> TopK["Top-K Scored Candidates (K <= 8)<br/>Weighted Composite Score & Deterministic Tie-Breaking"]
+    
+    TopK --> Linker["Batched Relational Linker (relational-linker.ts)<br/>evaluateRelationalLinksBatch (POST /v1/decisions)<br/>Waterfall-Free Adjudication"]
+    
+    Linker --> Relations{"Relation Classification<br/>(INDEPENDENT | DEPENDS_ON | REOPENS_OR_OVERRIDES | REFINES)"}
+    
+    Relations -->|INDEPENDENT| Stable["Zero Modification<br/>Sibling sub-decisions stably coexist"]
+    Relations -->|DEPENDS_ON / REFINES| Upward["Upward BFS Promotion<br/>Promote APPROVED_CONSERVATIVE to CORE"]
+    Relations -->|REOPENS_OR_OVERRIDES| Downward["Downward BFS Invalidation<br/>Reopen root & cascade all dependedBy"]
+    
+    Downward --> DiffMap["computeMinimalSectionInvalidationMap<br/>Differential AST Section Surgery"]
+```
+
+- **Justification-Driven ATMS DAG (`src/core/agent/atms/dag.ts`):** Canonical JSON-serializable `ATMSDecisionNode` structures (no `Map`, `Set`, or `BigInt`), recording justifications (`selectionRationale`), all discarded alternatives (`evaluatedAlternatives`), and dependency links (`dependsOn`, `dependedBy`, `affectedSections`). Integrates multi-tenant synchronization with `project_decision_ledger` (`loadProjectDecisionLedger`, `syncMasterLedgerToProjectStore`) enforcing user ownership and strict sentinel row isolation (`isSystemReservedDecisionId`, `__PROJECT_TAXONOMY__`).
+- **Deterministic Multi-Signal Candidate Retriever (`src/core/agent/atms/candidate-retriever.ts`):** Fast local candidate retrieval (`retrieveCandidatePriorDecisions`) combining AST section proximity (exact = 1.0, prefix = 0.5, disjoint = 0.0), concept tag Jaccard similarity, and Okapi BM25 lexical similarity across decision prompts and rationales. Enforces that section proximity is strictly a candidate comparison signal rather than a forced dependency link.
+- **Waterfall-Free Relational Linker (`src/core/agent/atms/relational-linker.ts`):** Batch adjudicates assumption-candidate pairs across all assumptions in a single call to `POST /v1/decisions` (`evaluateRelationalLinksBatch`), avoiding $N+1$ serial roundtrips. Reconstitutes relations classified into `INDEPENDENT`, `DEPENDS_ON`, `REOPENS_OR_OVERRIDES`, and `REFINES`.
+- **Contagious Cascade BFS & Differential Section Invalidation (`src/core/agent/atms/invalidation.ts`):** Bidirectional BFS traversal (`resolveATMSCascadeBFS`) executing upward promotion of provisional peripheral decisions (`APPROVED_CONSERVATIVE`) upon which new requests depend into `CORE_ARCHITECTURAL`, and downward cascade traversal across `dependedBy` on foundational overrides (`REOPENS_OR_OVERRIDES`). Computes minimal section invalidation maps (`computeMinimalSectionInvalidationMap`) for differential document edits without touching unrelated sections.
 
 ---
 

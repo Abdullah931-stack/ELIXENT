@@ -4,6 +4,50 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.8.0] - 2026-10-31 (Phase 8: Justification-Driven ATMS DAG, Deterministic Candidate Retriever & Relational Linker)
+
+### Justification-Driven ATMS DAG & Project Ledger Store (`src/core/agent/atms/dag.ts`)
+
+- **JSON-Serializable Node Structure (`ATMSDecisionNode`):** Defined canonical plain-record state structures avoiding non-serializable JavaScript types (`Map`, `Set`, `BigInt`) for lossless LangGraph checkpointer persistence.
+- **Justification & Alternative Tracking:** Every decision node authoritatively stores its `selectionRationale`, `conceptTags: string[]`, `dependsOn`, `dependedBy`, `affectedSections`, and all non-selected options in `evaluatedAlternatives` paired with contextual exclusion rationales and normalized probabilities.
+- **System-Reserved Sentinel Isolation:** Strictly isolates metadata sentinels (`isSystemReservedDecisionId`, e.g. `__PROJECT_TAXONOMY__`) from DAG causal edges and eviction pruning, persisting project taxonomy states transparently via `toTaxonomyLedgerPayload` and `fromTaxonomyLedgerPayload`.
+- **Multi-Tenant Persistence Synchronization:** Built `loadProjectDecisionLedger` and `syncMasterLedgerToProjectStore` enforcing `userId` ownership checks across composite key `(project_id, decision_id)` queries, conflict-update clauses (`setWhere`), and eviction deletions. Deep-cloning utilities (`cloneATMSDecisionNode`, `cloneMasterLedger`) enforce immutability across state transitions.
+
+### Deterministic Local Candidate Retriever (`src/core/agent/atms/candidate-retriever.ts`)
+
+- **Multi-Signal Candidate Retrieval:** Implemented `retrieveCandidatePriorDecisions` evaluating candidate decisions across three orthogonal signals prior to relational adjudication:
+  - *AST Section Proximity:* Computes structural proximity ($1.0$ for exact `fileId` and `headingSlug` match, $0.5$ for hierarchical ancestor/child prefixes, $0.0$ for disjoint sections). Strictly enforces that heading proximity is a retrieval comparison signal, never an automatic dependency edge.
+  - *Concept Tags Jaccard Overlap:* Computes normalized Jaccard similarity across active project-scoped concept tags without static tag constraints.
+  - *Okapi BM25 Lexical Match:* Scores assumption statements against prior decision questions, rationales, and evaluated alternatives using path-coupled lexical information retrieval.
+- **Composite Scoring & Deterministic Tie-Breaking:** Combines signals using weighted formula (Proximity: 3.0, Concept Tags: 2.0, BM25: 1.5) with strict alphabetical tie-breaking by `decisionId` and configurable candidate bounds (`DEFAULT_MAX_CANDIDATE_DECISIONS = 8`).
+
+### Waterfall-Free Relational Linker (`src/core/agent/atms/relational-linker.ts`)
+
+- **Batched Adjudication (`evaluateRelationalLinksBatch`):** Flattens all assumption-candidate comparison pairs across all newly extracted assumptions into a single batch call to `POST /v1/decisions`, eliminating $N+1$ serial network waterfalls.
+- **Deterministic Relation Reconstruction:** Reconstitutes linked assumption groups (`LinkedAssumptionGroup`) keyed by `(assumptionId, targetDecisionId)` classified into `INDEPENDENT`, `DEPENDS_ON`, `REOPENS_OR_OVERRIDES`, or `REFINES`, preserving input ordering, confidence scores, and rationales.
+- **Closed-World Taxonomic Intersection:** Normalizes taxonomic tag comparisons using `normalizeConceptTag` while safely handling empty candidate sets and uninitialized ledgers.
+
+### Contagious Cascade BFS & Differential Section Invalidation (`src/core/agent/atms/invalidation.ts`)
+
+- **Bidirectional Cascade Algorithm (`resolveATMSCascadeBFS`):**
+  - *Upward Promotion Path:* Traverses `dependsOn` edges via BFS. If a new assumption depends on a provisional peripheral decision (`APPROVED_CONSERVATIVE`), the target is promoted to `CORE_ARCHITECTURAL` (`isLoadBearing: true`), pulled with its preserved alternatives, and evicted from the working ledger for formal re-evaluation under new evidence.
+  - *Downward Invalidation Path:* When a relation is classified as `REOPENS_OR_OVERRIDES`, reopens the root decision and traverses all downstream dependents via BFS over `dependedBy`, pulling them for parallel update.
+  - *Cycle-Safe Invariant:* Enforces dedicated visited sets (`upwardVisited`, `downwardVisited`) preventing infinite traversal loops on cyclic graphs.
+  - *Sibling Independence:* Guarantees that sibling sub-decisions under the same heading classified as `INDEPENDENT` remain completely untouched.
+- **Differential Section Invalidation (`computeMinimalSectionInvalidationMap`):** Traverses downward dependents to aggregate the exact `(fileId, headingSlug)` section targets impacted by an override, enabling surgical document updates without invalidating unrelated document sections.
+
+### Verification & Metrics Baseline
+
+- **Dedicated Phase 8 Test Suite:** 1 new test suite delivering 63 passing tests:
+  - `src/test/agent/atms-dag-and-cascade.test.ts` (63 tests)
+- **Synchronized SSOT Metrics:** Validated via `scripts/sync-doc-metrics.mjs`:
+  - Unit & Contract: 105 suites, 1,620 tests (100% green).
+  - Live Multi-System Integration: 21 suites, 108 tests (100% green).
+  - Browser E2E Journeys: 14 specs, 15 user journeys (100% green).
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/elixent-execution/phase-08-justification-driven-atms-dag-candidate-retriever-and-relational-linker.md`](records/closures/elixent-execution/phase-08-justification-driven-atms-dag-candidate-retriever-and-relational-linker.md).
+
+---
+
 ## [0.7.0] - 2026-10-30 (Phase 7: Comprehensive PREDEFINED_CONCEPT_TAGS Taxonomy, Unified /v1/decisions Client, Conformal APS Classifier & AI SDK v6 Bridge)
 
 ### Universal Concept Taxonomy & Project Tag Registry (`src/core/agent/taxonomy/predefined-tags.ts`)

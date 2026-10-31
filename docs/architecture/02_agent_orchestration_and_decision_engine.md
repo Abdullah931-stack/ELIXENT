@@ -314,7 +314,7 @@ $$\mathcal{C}_\alpha(x) = \left\{ a_k \in \mathcal{A}_{\text{valid}} : s(x, a_k)
 
 ## 5. Justification-Driven Truth Maintenance DAG & Relational Linker (`Justification-Driven ATMS DAG & Relational Linker`)
 
-Decisions recorded in `state.master_ledger` are managed as a live **Justification-Driven Assumption-based Truth Maintenance System (`Justification-Driven ATMS DAG`)**. Rather than treating the ledger as an immutable blocklist or permanent lock-in, it operates as a causal dependency graph linking every decision to its `selectionRationale`, its `evaluatedAlternatives`, and the downstream decisions that depend on it (`dependedBy`).
+Decisions recorded in `state.master_ledger` are managed as a live **Justification-Driven Assumption-based Truth Maintenance System (`Justification-Driven ATMS DAG`)**. Rather than treating the ledger as an immutable blocklist or permanent lock-in, it operates as a causal dependency graph linking every decision to its `selectionRationale`, its `evaluatedAlternatives`, and the downstream decisions that depend on it (`dependedBy`), implemented deterministically in `src/core/agent/atms/` (`dag.ts`, `candidate-retriever.ts`, `relational-linker.ts`, `invalidation.ts`).
 
 ### 5.1. Two-Stage Candidate Retrieval & Relational Classification (`Two-Stage Candidate Retrieval & Relational Classification`)
 To ensure logical dependencies between decisions are never missed when the language model varies its phrasing, and to allow multiple independent provisional sub-decisions to coexist under the same section heading without false forced linking, Stage 2 of the state graph operates in two complementary steps:

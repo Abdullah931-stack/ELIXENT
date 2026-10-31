@@ -21,7 +21,7 @@ Phase 3 introduces:
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 104 | 1557 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 105 | 1620 | 100% ✅ |
 | **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 108 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
@@ -37,7 +37,7 @@ flowchart TD
     end
 
     subgraph S2 ["Stage 2: Pure Unit Contracts"]
-        UC["npm run test (104 files, 1557 tests)<br/>Zero DB / Zero Network"]
+        UC["npm run test (105 files, 1620 tests)<br/>Zero DB / Zero Network"]
     end
 
     subgraph S3 ["Stage 3: Schema Integrity"]
