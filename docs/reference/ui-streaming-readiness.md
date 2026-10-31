@@ -179,3 +179,40 @@ branches on it — when disabled, generation runs through the `processWithAI` bu
 accumulator path and is framed to the client as a single NDJSON chunk (identical wire
 protocol, non-incremental delivery). All modules, schema migrations, and contracts remain
 tested and ready for progressive canary activation by setting the flag to `true`.
+
+
+---
+
+## 8. Unified Agent SSE Stream Protocol (`/api/agent/stream`)
+
+As part of the Elixent autonomous agent architecture (`ELIXENT-ARCH-03` §5.1 & `ELIXENT-ARCH-02`), the unified route `POST /api/agent/stream` serves server-authoritative Server-Sent Events (SSE) for LangGraph state machine execution:
+
+### 8.1 Route Segment & Security Invariants
+- **Execution Budget:** `export const maxDuration = 300;` (5-minute serverless execution window) with `export const dynamic = "force-dynamic";`.
+- **Pre-Execution Auth Guard:** Invokes `requireAuthenticatedUser()` prior to reading the request body; unauthenticated requests fail immediately with RFC 7807 `401 Unauthorized` (`urn:problem-type:unauthorized`).
+- **Fail-Closed Stream Rate Limiting:** Enforces `aiStreamRateLimiter.limit(user.id)`; returns RFC 7807 `429 Too Many Requests` if the user exceeds limits or Redis is unavailable.
+- **Strict Payload Schema (`src/core/agent/stream-payload.ts`):** Validated via `parseAgentStreamPayload`:
+  - `threadId`: string (max 256 chars, required).
+  - `projectId`: string (max 256 chars, required).
+  - `prompt`: string (max 100,000 chars, optional).
+  - `targetFileIds`: string array (max 100 files, required).
+  - `resumePayload`: unknown (optional, passed to `new Command({ resume })`).
+  - `ephemeralVaultPayloads`: Record<string, string> (max 100 keys, max 2MB per document, optional).
+  - `liveDocumentSnapshots`: Record<string, string> (max 100 keys, max 2MB per document, optional).
+  Schema violations return RFC 7807 `400 Bad Request` with `invalidParams` details.
+
+### 8.2 SSE Event Framing (`text/event-stream`)
+The route returns an SSE stream with headers `Content-Type: text/event-stream; charset=utf-8`, `Cache-Control: no-cache, no-transform`, and `X-Accel-Buffering: no`:
+
+| Event | Frame Structure | Trigger / Semantics |
+| :--- | :--- | :--- |
+| `start` | `event: start\ndata: {"type":"start","sessionId":"...","threadId":"...","operationId":"...","correlationId":"..."}\n\n` | Emitted immediately upon successful connection and stream initialization. |
+| `update` | `event: update\ndata: {"type":"update","chunk":{...}}\n\n` | Emitted for intermediate graph execution steps, messages, and state transitions. |
+| `interrupt` | `event: interrupt\ndata: {"type":"interrupt","threadId":"...","operationId":"...","interrupts":[...]}\n\n` | Emitted when LangGraph suspends for human-in-the-loop input or credit replenishment. |
+| `error` | `event: error\ndata: {"type":"error","code":"QUOTA_EXCEEDED"|"STREAM_EXECUTION_ERROR","message":"..."}\n\n` | Emitted on unhandled graph exceptions or quota exhaustion; aborts the stream. |
+| `done` | `event: done\ndata: {"type":"done","threadId":"...","operationId":"..."}\n\n` | Emitted upon clean graph completion to signal EOF to the client. |
+
+### 8.3 Metering & Memory Hygiene
+- **StreamGovernor Runway Metering:** Initial reservation of 1,200 tokens via `StreamGovernor(userId, operationId, "google/gemini-3.8-flash")`. Every token chunk is metered in real time; if quota is exhausted, governor aborts the stream with `GOVERNOR_QUOTA_EXHAUSTED`.
+- **Background Settlement via Next.js `after()`:** Asynchronous credit settlement persistence is queued via `after(async () => { await flushPendingSettlementsToPostgres(user.id); })`, decoupling database write latency from client stream closure.
+- **Zero-Knowledge Buffer Cleansing:** Decrypted file plaintexts loaded into `EphemeralVaultMemoryMap` via `runWithEphemeralVaultScope` are deterministically wiped (`Buffer.fill(0)`) in both normal completion and stream abort/cancel handlers via `zeroOutEphemeralVaultMemory()`.

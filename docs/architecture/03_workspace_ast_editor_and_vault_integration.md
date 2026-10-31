@@ -171,34 +171,64 @@ The `document_writer_node` relies on `src/lib/sync/diff3.ts` and `src/lib/sync/s
 
 ## 4. Multi-Hunk Ghost Preview Architecture and Incremental Sync Contract (`Multi-Hunk Ghost & Incremental Sync Contract`)
 
-### 4.1. Upgrading `streaming-ghost.ts` from Single Hunk to Hunk Array (`Multi-Hunk Ghost Decorations`)
+### 4.1. CodeMirror 6 Multi-Hunk Ghost Extension & StateField (`Multi-Hunk Ghost Decorations`)
 
-The current file `src/components/editor/markdown/streaming-ghost.ts` (lines 20–31) in `LUGX v1.46.3` supports only a single preview hunk (`from: number`, `to: number`, `text: string`). To enable the agent to modify multiple non-contiguous sections across a document in a single cycle, the state is upgraded to the following structure:
+The editor extension in `src/components/editor/markdown/streaming-ghost.ts` and `src/components/editor/markdown/types.ts` provides multi-hunk preview capabilities (`MultiHunkGhostState`), allowing the architectural agent to stream and render multiple non-contiguous section modifications across a document concurrently:
 
 ```typescript
 export interface GhostHunk {
   hunkId: string;
-  decisionIds: string[]; // Architectural decisions that produced this modification
+  decisionIds: string[];
   headingSlug: string;
   from: number;
   to: number;
   originalSlice: string;
   replacementText: string;
   status: "streaming" | "preview_ready";
+  operation?: string;
+  onApply?: () => void;
+  onReject?: () => void;
+  onRetry?: () => void;
+  onStop?: () => void;
 }
 
 export interface MultiHunkGhostState {
   sessionId: string | null;
   hunks: GhostHunk[];
+  readonly active?: boolean;
+  readonly from?: number;
+  readonly to?: number;
+  readonly text?: string;
+  readonly operation?: string;
+  readonly isStreaming?: boolean;
+  readonly onApply?: () => void;
+  readonly onReject?: () => void;
+  readonly onRetry?: () => void;
+  readonly onStop?: () => void;
 }
 ```
 
-- **Automatic Coordinate Mapping via `tr.changes.mapPos`:** Whenever the user types elsewhere in the document or accepts one of the ghost hunks, `StateField.update` in CodeMirror 6 maps the coordinates of all remaining hunks through:
+- **Dynamic StateEffects & Session Lifecycle:** State transitions are driven by typed `StateEffect` definitions:
+  - `startGhostSessionEffect`: Initializes a multi-hunk session with an array of `GhostHunk` instances.
+  - `upsertGhostHunkEffect`: Adds a new hunk or updates an existing hunk's replacement text or status in place.
+  - `removeGhostHunkEffect`: Removes a specific hunk by `hunkId` upon acceptance or rejection.
+  - `clearGhostSessionEffect`: Dismantles the entire ghost session.
+- **Automatic Coordinate Mapping via `tr.changes.mapPos`:** Whenever document edits occur outside or between ghost hunks, `codeMirrorStreamingGhostField.update` dynamically maps the coordinates of all remaining hunks:
   ```typescript
   hunk.from = tr.changes.mapPos(hunk.from, 1);
   hunk.to = tr.changes.mapPos(hunk.to, -1);
   ```
-  preserving the exact positioning of all remaining ghost hunks without any offset drift.
+  preserving precise positioning without cumulative offset drift.
+- **Granular Collision Invalidation:** If concurrent user edits intersect with an active ghost hunk's span (`fromA < hunk.to && toA > hunk.from`), only the directly colliding hunk is evicted (triggering its `onStop` callback), while all non-intersecting ghost hunks remain intact.
+- **Glassmorphism Preview Widget (`CMStreamingGhostWidget`):** Renders interactive dark glassmorphism cards above/below target ranges featuring operation/heading badges, streaming pulsing indicators, and inline action triggers ("إيقاف التوليد", "رفض", "إعادة المحاولة", "تطبيق") with dynamic text direction evaluation (`detectTextDirection`).
+- **Editor Adapter Integration (`EditorAdapter`):** Exposed through engine-agnostic adapter methods in `src/components/editor/markdown/editor-adapter.ts` and `markdown-editor.tsx`:
+  - `startGhostSession(sessionId, hunks)`
+  - `upsertGhostHunk(hunk)`
+  - `acceptGhostHunk(hunkId): boolean`
+  - `rejectGhostHunk(hunkId): boolean`
+  - `acceptAllGhostHunks(): boolean`
+  - `getGhostHunks(): GhostHunk[]`
+  - `clearGhostSession(): void`
 
 ### 4.2. Incremental Hunk Sync Contract for Partial Acceptance and `412` Conflict Prevention (`Incremental Hunk Sync Contract`)
 
@@ -238,10 +268,16 @@ sequenceDiagram
 
 To preserve the end-to-end encryption (`Zero-Knowledge`) guarantees implemented in `src/lib/crypto/*`, `src/lib/vault/*`, and `src/server/db/schema/vault.ts`:
 
-### 5.1. Server-Side Vault Consent Gate and Transient Transport Contract (`Server-Side Vault Consent Gate & Transient Transport Contract`)
+### 5.1. Server-Side Vault Consent Gate, Contract Payload & Unified Stream Route (`Server-Side Vault Consent Gate & Transient Transport Contract`)
 
-1. Every request to `/api/agent/stream` (whether initiating a session or resuming via `Command({ resume })`) adheres to the following programmatic contract separating persistent state data from transient in-memory payloads:
+1. **Framework-Agnostic Payload Contract (`src/core/agent/stream-payload.ts`):** Every request to `/api/agent/stream` (whether initiating a session or resuming via `Command({ resume })`) adheres to `AgentStreamRequestPayloadSchema` separating persistent state data from transient in-memory payloads:
    ```typescript
+   export const MAX_PROMPT_CHARS = 100_000;
+   export const MAX_TARGET_FILES = 100;
+   export const MAX_IDENTIFIER_LENGTH = 256;
+   export const MAX_DOCUMENT_SNAPSHOT_CHARS = 2_000_000;
+   export const MAX_RECORD_KEYS = 100;
+
    export interface AgentStreamRequestPayload {
      threadId: string;
      projectId: string;
@@ -259,7 +295,20 @@ To preserve the end-to-end encryption (`Zero-Knowledge`) guarantees implemented 
      liveDocumentSnapshots?: Record<string, string>;
    }
    ```
-2. Prior to starting or resuming `LangGraph`, the security guard layer and `orchestrator_node` query the target file attributes in the `files` table and the user's vault settings in the `user_vault_profiles` table (`schema.userVaultProfiles` in `src/server/db/schema/vault.ts`):
+   Validated via pure discriminated parsing helper `parseAgentStreamPayload(input)`.
+
+2. **Server-Authoritative SSE Stream Route (`src/app/api/agent/stream/route.ts`):**
+   - **Route Segment Configuration:** `export const dynamic = "force-dynamic"; export const maxDuration = 300;`.
+   - **Authentication Guard:** Strictly validates active session via `requireAuthenticatedUser()`, returning RFC 7807 `401 Unauthorized` problem details on failure before parsing the body.
+   - **Fail-Closed Rate Limiting:** Enforces `aiStreamRateLimiter.limit(user.id)`, returning RFC 7807 `429 Too Many Requests` problem details on rate limit breach or Redis unavailability.
+   - **Contract Validation:** Rejects malformed JSON with `400 Bad Request` and maps Zod schema issues into RFC 7807 `invalidParams`.
+   - **Ephemeral Vault Scope:** Executes `elixentAgentGraph` within `runWithEphemeralVaultScope`, populating `EphemeralVaultMemoryMap` by heading slugs via AST slicer (`loadEphemeralVaultPayloads`).
+   - **Dynamic Credit Metering:** Governed by `StreamGovernor` (`INITIAL_RESERVATION_TOKENS = 1200`, model `google/gemini-3.8-flash`), monitoring token runway and triggering fail-closed abort (`GOVERNOR_QUOTA_EXHAUSTED`) on quota depletion.
+   - **Background Settlement Flush:** Defers asynchronous ledger persistence to PostgreSQL via Next.js `after(async () => { await flushPendingSettlementsToPostgres(user.id); })`.
+   - **Deterministic Memory Zeroing:** Unconditionally invokes `zeroOutEphemeralVaultMemory()` (`Buffer.fill(0)`) in `finally` and `cancel` handlers.
+   - **Server-Sent Events Framing:** Emits framed events `start`, `update`, `interrupt`, `error`, and `done` over `text/event-stream; charset=utf-8` with `X-Accel-Buffering: no`.
+
+3. **Vault Permission Consent Gate:** Prior to starting or resuming `LangGraph`, the security guard layer and `orchestrator_node` query the target file attributes in the `files` table and the user's vault settings in the `user_vault_profiles` table (`schema.userVaultProfiles` in `src/server/db/schema/vault.ts`):
    - If any file in `targetFileIds` (or in `ephemeralVaultPayloads`) has `isEncrypted === true` while the user's setting in `user_vault_profiles` is `allowAIOnEncryptedFiles === false`, the request is immediately rejected with status `403 VAULT_AI_ACCESS_DENIED` without processing or consuming any credits.
 
 ### 5.2. Ephemeral Memory Map and `vault_ref://` Pointers (`EphemeralVaultMemoryMap`)

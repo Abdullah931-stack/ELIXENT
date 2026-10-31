@@ -4,6 +4,48 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.10.0] - 2026-10-31 (Phase 10: CodeMirror 6 Multi-Hunk Ghost Upgrade & Unified Agent SSE Stream Route)
+
+### CodeMirror 6 Multi-Hunk Ghost Preview Engine (`src/components/editor/markdown/streaming-ghost.ts` & `types.ts`)
+
+- **`MultiHunkGhostState` Architecture:** Upgraded the native CodeMirror 6 markdown editor extension from single-range preview to an array of concurrent ghost hunks (`sessionId: string | null`, `hunks: GhostHunk[]`), retaining legacy single-range properties for seamless backward compatibility.
+- **Dynamic Coordinate Remapping (`tr.changes.mapPos`):** Implemented linear coordinate shifting inside `codeMirrorStreamingGhostField.update` using `hunk.from = tr.changes.mapPos(hunk.from, 1)` and `hunk.to = tr.changes.mapPos(hunk.to, -1)`, preventing offset drift when non-overlapping text is edited elsewhere in the active document.
+- **Granular Collision Invalidation:** Added intelligent collision detection that evicts only the directly intersecting ghost hunk (firing its `onStop` callback) when user typing overlaps with a hunk's range, preserving all independent non-overlapping ghost hunks.
+- **Atomic Undo History Isolation:**
+  - `acceptGhostHunk`: Dispatches range replacement annotated with `Transaction.userEvent.of("ai.accept.hunk")` and `isolateHistory.of("full")`, enabling single-step `Ctrl+Z` undo for individual accepted hunks.
+  - `rejectGhostHunk`: Removes the hunk via `removeGhostHunkEffect` without modifying document content or adding undo history steps, invoking `onReject?.()`.
+  - `acceptAllGhostHunks`: Atomically combines sorted, non-overlapping changes across all remaining hunks into a single transaction annotated with `Transaction.userEvent.of("ai.accept.all")` and `isolateHistory.of("full")`, allowing a single `Ctrl+Z` to revert the entire batch.
+- **Glassmorphism Interactive Preview Card (`CMStreamingGhostWidget`):** Rendered dark glassmorphism preview cards above target ranges featuring operation/heading badges, streaming pulsating indicators, and inline action buttons ("إيقاف التوليد", "رفض", "إعادة المحاولة", "تطبيق") with dynamic text direction evaluation (`detectTextDirection`).
+- **Engine-Agnostic Adapter Methods (`EditorAdapter`):** Exposed multi-hunk operations through `CodeMirrorEditorAdapter` (`editor-adapter.ts`) and `MarkdownEditor` (`markdown-editor.tsx`): `startGhostSession`, `upsertGhostHunk`, `acceptGhostHunk`, `rejectGhostHunk`, `acceptAllGhostHunks`, `getGhostHunks`, and `clearGhostSession`.
+
+### Framework-Agnostic Stream Request Contract (`src/core/agent/stream-payload.ts`)
+
+- **Strict Bounded Schema (`AgentStreamRequestPayloadSchema`):** Defined isomorphic Zod schema with zero external Next.js or React runtime dependencies, enforcing strict bounds (`MAX_PROMPT_CHARS = 100_000`, `MAX_TARGET_FILES = 100`, `MAX_IDENTIFIER_LENGTH = 256`, `MAX_DOCUMENT_SNAPSHOT_CHARS = 2_000_000`, `MAX_RECORD_KEYS = 100`) and `.strict()` validation to prevent resource exhaustion attacks.
+- **Pure Parsing Helper (`parseAgentStreamPayload`):** Provided side-effect-free parsing function returning typed discriminated union results (`{ success: true, data } | { success: false, error }`).
+
+### Unified Server SSE Stream Route (`src/app/api/agent/stream/route.ts`)
+
+- **Server-Authoritative LangGraph Streaming:** Created the primary SSE endpoint (`POST /api/agent/stream`) executing `elixentAgentGraph` with `export const maxDuration = 300;` and `export const dynamic = "force-dynamic";`.
+- **Pre-Execution Security & Rate Limiting:** Enforced strict session authentication via `requireAuthenticatedUser()` (failing closed with RFC 7807 `401 Unauthorized`) and per-user streaming rate limiting via `aiStreamRateLimiter.limit(user.id)` (failing closed with RFC 7807 `429 Too Many Requests`).
+- **Transient Ephemeral Vault Hydration:** Slices client-decrypted file plaintexts by heading slugs via AST slicer (`loadEphemeralVaultPayloads`) and populates `EphemeralVaultMemoryMap` scoped to the request via `runWithEphemeralVaultScope`.
+- **Dynamic Token Runway Metering (`StreamGovernor`):** Metered intermediate token chunks via `StreamGovernor` (`INITIAL_RESERVATION_TOKENS = 1200`, model `google/gemini-3.8-flash`), monitoring token velocity and aborting streams with `GOVERNOR_QUOTA_EXHAUSTED` upon quota depletion.
+- **Asynchronous Settlement Flush via Next.js `after()`:** Queued non-blocking background credit settlement persistence to PostgreSQL via `after(async () => { await flushPendingSettlementsToPostgres(user.id); })`.
+- **Zero-Knowledge Memory Cleansing:** Enforced unconditional zeroing of decrypted buffers via `zeroOutEphemeralVaultMemory()` (`Buffer.fill(0)`) in both normal completion and stream abort/cancel handlers.
+- **Standardized SSE Framing:** Emitted framed events (`start`, `update`, `interrupt`, `error`, `done`) over `text/event-stream; charset=utf-8` with `X-Accel-Buffering: no`.
+
+### Verification & Metrics Baseline
+
+- **Dedicated Phase 10 Test Suites:** 2 new test suites delivering 73 passing tests:
+  - `src/test/editor/multi-hunk-ghost.test.ts` (32 tests)
+  - `src/test/agent/agent-stream-route.test.ts` (41 tests)
+- **Synchronized SSOT Metrics:** Validated via `scripts/sync-doc-metrics.mjs`:
+  - Unit & Contract: 110 suites, 1,815 tests (100% green).
+  - Live Multi-System Integration: 21 suites, 108 tests (100% green).
+  - Browser E2E Journeys: 14 specs, 15 user journeys (100% green).
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/elixent-execution/phase-10-codemirror-6-multi-hunk-ghost-upgrade-and-unified-agent-sse-stream-route.md`](records/closures/elixent-execution/phase-10-codemirror-6-multi-hunk-ghost-upgrade-and-unified-agent-sse-stream-route.md).
+
+---
+
 ## [0.9.0] - 2026-10-31 (Phase 9: AgentGraphState Channels, Pure Reducers, 7-Stage Nodes & Compiled LangGraph StateGraph)
 
 ### 12-Channel LangGraph State Annotation & Pure Reducers (`src/core/agent/state.ts` & `src/core/agent/reducers.ts`)
