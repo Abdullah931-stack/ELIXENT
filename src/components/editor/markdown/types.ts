@@ -27,6 +27,40 @@ export interface DirectionSettings {
 }
 
 /**
+ * Multi-Hunk Ghost Data Structures (ELIXENT-ARCH-03 §4.1)
+ */
+export interface GhostHunk {
+    hunkId: string;
+    decisionIds: string[];
+    headingSlug: string;
+    from: number;
+    to: number;
+    originalSlice: string;
+    replacementText: string;
+    status: "streaming" | "preview_ready";
+    operation?: string;
+    onApply?: () => void;
+    onReject?: () => void;
+    onRetry?: () => void;
+    onStop?: () => void;
+}
+
+export interface MultiHunkGhostState {
+    sessionId: string | null;
+    hunks: GhostHunk[];
+    readonly active?: boolean;
+    readonly from?: number;
+    readonly to?: number;
+    readonly text?: string;
+    readonly operation?: string;
+    readonly isStreaming?: boolean;
+    readonly onApply?: () => void;
+    readonly onReject?: () => void;
+    readonly onRetry?: () => void;
+    readonly onStop?: () => void;
+}
+
+/**
  * EditorAdapter interface
  * Provides an engine-agnostic abstraction over CodeMirror 6.
  * All callers in the app interact with this contract rather than CM6 directly.
@@ -98,6 +132,20 @@ export interface EditorAdapter {
     clearStreamingGhost?(): void;
     /** Get dynamically tracked streaming ghost range [from, to] */
     getGhostRange?(): { from: number; to: number } | null;
+    /** Start a multi-hunk ghost preview session */
+    startGhostSession?(sessionId: string, hunks?: GhostHunk[]): void;
+    /** Upsert (add or update) an individual ghost hunk */
+    upsertGhostHunk?(hunk: GhostHunk): void;
+    /** Atomically accept an individual ghost hunk by ID with isolated history undo */
+    acceptGhostHunk?(hunkId: string): boolean;
+    /** Reject an individual ghost hunk by ID without doc mutation or history addition */
+    rejectGhostHunk?(hunkId: string): boolean;
+    /** Atomically accept all remaining ghost hunks in a single combined transaction with isolated history undo */
+    acceptAllGhostHunks?(): boolean;
+    /** Get all active ghost hunks in the current session */
+    getGhostHunks?(): GhostHunk[];
+    /** Clear and dismantle the multi-hunk ghost session */
+    clearGhostSession?(): void;
     /** Destroy underlying editor instance */
     destroy(): void;
 }

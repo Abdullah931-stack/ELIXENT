@@ -2,7 +2,7 @@ import { EditorView } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { undo, redo, undoDepth, redoDepth } from "@codemirror/commands";
 import { syntaxTree, ensureSyntaxTree } from "@codemirror/language";
-import { EditorAdapter, EditorMode, EditorSelection, DirectionSettings } from "./types";
+import { EditorAdapter, EditorMode, EditorSelection, DirectionSettings, GhostHunk } from "./types";
 import {
     livePreviewPlugin,
     modeCompartment,
@@ -16,6 +16,12 @@ import {
     startGhostEffect,
     updateGhostEffect,
     clearGhostEffect,
+    startGhostSessionEffect,
+    upsertGhostHunkEffect,
+    clearGhostSessionEffect,
+    acceptGhostHunk,
+    rejectGhostHunk,
+    acceptAllGhostHunks,
     codeMirrorStreamingGhostField,
     CMStreamingGhostOptions,
 } from "./streaming-ghost";
@@ -308,11 +314,59 @@ export class CodeMirrorEditorAdapter implements EditorAdapter {
 
     getGhostRange(): { from: number; to: number } | null {
         const ghostState = this.view.state.field(codeMirrorStreamingGhostField, false);
-        if (!ghostState || !ghostState.active) return null;
+        if (!ghostState || !ghostState.active || ghostState.hunks.length === 0) return null;
         return {
-            from: ghostState.from,
-            to: ghostState.to,
+            from: ghostState.hunks[0].from,
+            to: ghostState.hunks[0].to,
         };
+    }
+
+    startGhostSession(sessionId: string, hunks?: GhostHunk[]): void {
+        const docLength = this.view.state.doc.length;
+        const safeHunks = (hunks || []).map((h) => ({
+            ...h,
+            from: Math.max(0, Math.min(h.from, docLength)),
+            to: Math.max(Math.max(0, Math.min(h.from, docLength)), Math.min(h.to, docLength)),
+        }));
+        this.view.dispatch({
+            effects: startGhostSessionEffect.of({ sessionId, hunks: safeHunks }),
+        });
+    }
+
+    upsertGhostHunk(hunk: GhostHunk): void {
+        const docLength = this.view.state.doc.length;
+        const safeFrom = Math.max(0, Math.min(hunk.from, docLength));
+        const safeTo = Math.max(safeFrom, Math.min(hunk.to, docLength));
+        this.view.dispatch({
+            effects: upsertGhostHunkEffect.of({
+                ...hunk,
+                from: safeFrom,
+                to: safeTo,
+            }),
+        });
+    }
+
+    acceptGhostHunk(hunkId: string): boolean {
+        return acceptGhostHunk(this.view, hunkId);
+    }
+
+    rejectGhostHunk(hunkId: string): boolean {
+        return rejectGhostHunk(this.view, hunkId);
+    }
+
+    acceptAllGhostHunks(): boolean {
+        return acceptAllGhostHunks(this.view);
+    }
+
+    getGhostHunks(): GhostHunk[] {
+        const ghostState = this.view.state.field(codeMirrorStreamingGhostField, false);
+        return ghostState ? [...ghostState.hunks] : [];
+    }
+
+    clearGhostSession(): void {
+        this.view.dispatch({
+            effects: clearGhostSessionEffect.of(),
+        });
     }
 
     destroy(): void {

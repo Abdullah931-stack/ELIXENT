@@ -90,6 +90,13 @@ export const MarkdownEditor = forwardRef<EditorAdapter, MarkdownEditorProps>(fun
         updateStreamingGhost: (text, isStreaming) => adapterRef.current?.updateStreamingGhost?.(text, isStreaming),
         clearStreamingGhost: () => adapterRef.current?.clearStreamingGhost?.(),
         getGhostRange: () => adapterRef.current?.getGhostRange?.() ?? null,
+        startGhostSession: (sessionId, hunks) => adapterRef.current?.startGhostSession?.(sessionId, hunks),
+        upsertGhostHunk: (hunk) => adapterRef.current?.upsertGhostHunk?.(hunk),
+        acceptGhostHunk: (hunkId) => adapterRef.current?.acceptGhostHunk?.(hunkId) ?? false,
+        rejectGhostHunk: (hunkId) => adapterRef.current?.rejectGhostHunk?.(hunkId) ?? false,
+        acceptAllGhostHunks: () => adapterRef.current?.acceptAllGhostHunks?.() ?? false,
+        getGhostHunks: () => adapterRef.current?.getGhostHunks?.() ?? [],
+        clearGhostSession: () => adapterRef.current?.clearGhostSession?.(),
         destroy: () => adapterRef.current?.destroy(),
     }), [dir, lockCodeBlocksLTR]);
 
