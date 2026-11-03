@@ -1,66 +1,18 @@
 'use client';
 
-export type AIOperationType = 'correct' | 'improve' | 'summarize' | 'translate' | 'toPrompt';
+import {
+    parseAgentStreamPayload,
+    type AgentStreamRequestPayload,
+} from '@/core/agent/stream-payload';
 
-export interface StreamStartEvent {
-    type: 'start' | 'meta' | 'metadata';
-    sessionId: string;
-    reservationId?: string;
-    operationId: string;
-}
+export type { AgentStreamRequestPayload };
 
-export type StreamMetaEvent = StreamStartEvent;
+export const AGENT_STREAM_ENDPOINT = '/api/agent/stream';
 
-export interface StreamChunkEvent {
-    type: 'chunk' | 'delta';
-    text: string;
-}
-
-export type StreamDeltaEvent = StreamChunkEvent;
-
-export interface StreamDoneEvent {
-    type: 'done';
-    usage?: { outputTokens?: number };
-}
-
-export interface StreamErrorEvent {
-    type: 'error';
-    code?: string;
-    message?: string;
-    retryable?: boolean;
-}
-
-export interface StreamCancelledEvent {
-    type: 'cancelled';
-    reason?: string;
-}
-
-export type StreamEvent =
-    | StreamStartEvent
-    | StreamChunkEvent
-    | StreamDoneEvent
-    | StreamErrorEvent
-    | StreamCancelledEvent
-    | { type: string; [key: string]: unknown };
-
-export interface StreamHandlerOptions {
-    operation: AIOperationType;
-    text: string;
-    operationId?: string;
-    fileId?: string;
-    expectedVersion?: number;
-    onMeta?: (meta: StreamMetaEvent) => void;
-    onChunk: (accumulatedText: string, latestChunk: string) => void;
-    onComplete: (finalText: string) => void;
-    onError: (error: Error) => void;
-    signal?: AbortSignal;
-    /** Ops/test hook: override the first-chunk watchdog threshold (ms). */
-    firstChunkTimeoutMs?: number;
-    /** Ops/test hook: override the absolute stream-duration watchdog threshold (ms). */
-    maxDurationMs?: number;
-}
-
-export const MAX_LINE_BUFFER_CHARS = 256 * 1024; // 256KB Line buffer safety ceiling
+/**
+ * 256 KB Line buffer safety ceiling preventing unbounded heap allocation (ADV-01).
+ */
+export const MAX_LINE_BUFFER_CHARS = 262_144;
 
 /**
  * Watchdog: maximum wait (ms) for the first streamed byte before failing the session.
@@ -71,44 +23,355 @@ export const FIRST_CHUNK_TIMEOUT_MS = 20_000;
 /**
  * Watchdog: absolute ceiling (ms) for a single streaming session regardless of activity.
  */
-export const MAX_STREAM_DURATION_MS = 120_000;
+export const MAX_STREAM_DURATION_MS = 300_000;
+
+export interface AgentStreamStartEvent {
+    type: 'start';
+    sessionId: string;
+    threadId: string;
+    operationId: string;
+    correlationId?: string;
+}
+
+export interface AgentStreamUpdateEvent {
+    type: 'update';
+    chunk: Record<string, unknown>;
+}
+
+export interface AgentInterruptItem {
+    value: unknown;
+    resumable?: boolean;
+    ns?: string[];
+    when?: string;
+}
+
+export interface AgentStreamInterruptEvent {
+    type: 'interrupt';
+    threadId: string;
+    operationId: string;
+    interrupts: AgentInterruptItem[];
+}
+
+export interface AgentStreamErrorEvent {
+    type: 'error';
+    code: string;
+    message: string;
+    retryable?: boolean;
+}
+
+export interface AgentStreamDoneEvent {
+    type: 'done';
+    threadId: string;
+    operationId: string;
+}
+
+export type AgentStreamEvent =
+    | AgentStreamStartEvent
+    | AgentStreamUpdateEvent
+    | AgentStreamInterruptEvent
+    | AgentStreamErrorEvent
+    | AgentStreamDoneEvent;
+
+export type StreamStartEvent = AgentStreamStartEvent;
+export type StreamUpdateEvent = AgentStreamUpdateEvent;
+export type StreamInterruptEvent = AgentStreamInterruptEvent;
+export type StreamErrorEvent = AgentStreamErrorEvent;
+export type StreamDoneEvent = AgentStreamDoneEvent;
+export type StreamEvent = AgentStreamEvent;
 
 /**
- * Consumes the /api/ai/stream response stream with resilient NDJSON protocol support.
- *
- * PHASE 7 HARDENED SPECIFICATION COMPLIANCE:
- * 1. Line-buffered decoder for NDJSON frames preventing chunk/newline split corruption.
- * 2. Unbounded line buffer guard (ADV-01) preventing Client Heap Out-Of-Memory attacks.
- * 3. Single-terminal-callback guarantee (ADV-05) preventing duplicate onError/onComplete emissions.
- * 4. UTF-8 multi-byte chunk boundary preservation with TextDecoder({ stream: true }).
- * 5. Canonical NDJSON schema support: start/meta/metadata, chunk/delta, done, error, cancelled.
- * 6. Resilient edge-case handling:
- *    - Incomplete stream termination detected as 'failed_incomplete_stream'.
- *    - Duplicate 'done' events accepted once and subsequent duplicates ignored.
- *    - Unknown message types ignored safely without crash.
- *    - Empty chunks ignored without mutating state.
- *    - Corrupted JSON chunks trigger clean error teardown without commit.
- * 7. Immediate reader.cancel() on user cancellation or signal abort.
+ * Structured error surfaced for HTTP non-2xx responses and SSE error frames.
  */
-export async function consumeAIStream({
-    operation,
-    text,
-    operationId,
-    fileId,
-    expectedVersion,
-    onMeta,
-    onChunk,
-    onComplete,
-    onError,
-    signal,
-    firstChunkTimeoutMs: firstChunkTimeoutMsOverride,
-    maxDurationMs: maxDurationMsOverride,
-}: StreamHandlerOptions): Promise<void> {
+export class AgentStreamError extends Error {
+    readonly code: string;
+    readonly status?: number;
+    readonly retryable: boolean;
+    readonly details?: Record<string, unknown>;
+
+    constructor(params: {
+        message: string;
+        code: string;
+        status?: number;
+        retryable?: boolean;
+        details?: Record<string, unknown>;
+    }) {
+        super(params.message);
+        this.name = 'AgentStreamError';
+        this.code = params.code;
+        this.status = params.status;
+        this.retryable = params.retryable ?? false;
+        this.details = params.details;
+        Object.setPrototypeOf(this, AgentStreamError.prototype);
+    }
+}
+
+export interface StreamHandlerOptions {
+    /** Validated or candidate request payload for POST /api/agent/stream */
+    payload?: AgentStreamRequestPayload;
+    threadId?: string;
+    projectId?: string;
+    prompt?: string;
+    targetFileIds?: string[];
+    resumePayload?: unknown;
+    ephemeralVaultPayloads?: Record<string, string>;
+    liveDocumentSnapshots?: Record<string, string>;
+    onStart?: (event: AgentStreamStartEvent) => void;
+    onUpdate?: (event: AgentStreamUpdateEvent) => void;
+    onInterrupt?: (event: AgentStreamInterruptEvent) => void;
+    onDone?: (event: AgentStreamDoneEvent) => void;
+    onError: (error: AgentStreamError | Error) => void;
+    onEvent?: (event: AgentStreamEvent) => void;
+    signal?: AbortSignal;
+    /** Ops/test hook: override the first-chunk watchdog threshold (ms). */
+    firstChunkTimeoutMs?: number;
+    /** Ops/test hook: override the absolute stream-duration watchdog threshold (ms). */
+    maxDurationMs?: number;
+}
+
+const DEFAULT_STATUS_ERROR_CODES: Record<number, string> = {
+    400: 'BAD_REQUEST',
+    401: 'UNAUTHORIZED',
+    402: 'INSUFFICIENT_CREDITS',
+    403: 'FORBIDDEN',
+    404: 'NOT_FOUND',
+    409: 'CONFLICT',
+    422: 'UNPROCESSABLE_ENTITY',
+    429: 'RATE_LIMIT_EXCEEDED',
+    500: 'INTERNAL_SERVER_ERROR',
+    502: 'BAD_GATEWAY',
+    503: 'SERVICE_UNAVAILABLE',
+    504: 'GATEWAY_TIMEOUT',
+};
+
+/**
+ * Resolves a deterministic error code and message from an HTTP non-2xx response.
+ */
+export function parseHttpStreamError(
+    status: number,
+    statusText: string,
+    rawBody: string
+): AgentStreamError {
+    let parsed: Record<string, unknown> | null = null;
+    const trimmed = rawBody.trim();
+    if (trimmed.startsWith('{')) {
+        try {
+            const candidate = JSON.parse(trimmed);
+            if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+                parsed = candidate as Record<string, unknown>;
+            }
+        } catch {
+            parsed = null;
+        }
+    }
+
+    let code = '';
+    if (parsed) {
+        if (typeof parsed.code === 'string' && parsed.code.trim()) {
+            code = parsed.code.trim();
+        } else if (typeof parsed.errorCode === 'string' && parsed.errorCode.trim()) {
+            code = parsed.errorCode.trim();
+        } else if (
+            typeof parsed.error === 'string' &&
+            /^[A-Z0-9_]+$/.test(parsed.error.trim())
+        ) {
+            code = parsed.error.trim();
+        }
+    }
+
+    const combinedText = `${rawBody} ${
+        parsed ? `${String(parsed.type ?? '')} ${String(parsed.title ?? '')} ${String(parsed.detail ?? '')}` : ''
+    }`;
+
+    if (!code) {
+        if (combinedText.includes('VAULT_AI_ACCESS_DENIED') || (status === 403 && /vault|encrypted/i.test(combinedText))) {
+            code = 'VAULT_AI_ACCESS_DENIED';
+        } else if (combinedText.includes('INSUFFICIENT_CREDITS') || combinedText.includes('QUOTA_EXCEEDED')) {
+            code = status === 402 ? 'INSUFFICIENT_CREDITS' : 'QUOTA_EXCEEDED';
+        } else if (combinedText.includes('RATE_LIMIT_EXCEEDED') || status === 429) {
+            code = 'RATE_LIMIT_EXCEEDED';
+        } else {
+            code = DEFAULT_STATUS_ERROR_CODES[status] || `HTTP_${status}`;
+        }
+    }
+
+    const extractedDetail =
+        (parsed && typeof parsed.detail === 'string' && parsed.detail.trim()) ||
+        (parsed && typeof parsed.message === 'string' && parsed.message.trim()) ||
+        (parsed && typeof parsed.error === 'string' && parsed.error.trim()) ||
+        (parsed && typeof parsed.title === 'string' && parsed.title.trim()) ||
+        trimmed ||
+        statusText ||
+        `HTTP Error ${status}`;
+
+    const message = extractedDetail.includes(code)
+        ? extractedDetail
+        : `${code}: ${extractedDetail}`;
+
+    const retryable =
+        parsed && typeof parsed.retryable === 'boolean'
+            ? parsed.retryable
+            : status === 429 || status === 503 || status === 504;
+
+    return new AgentStreamError({
+        code,
+        status,
+        message,
+        retryable,
+        details: parsed ?? undefined,
+    });
+}
+
+function buildRequestPayload(options: StreamHandlerOptions): AgentStreamRequestPayload {
+    const rawCandidate: AgentStreamRequestPayload = options.payload ?? {
+        threadId: options.threadId ?? '',
+        projectId: options.projectId ?? '',
+        ...(options.prompt !== undefined ? { prompt: options.prompt } : {}),
+        targetFileIds: options.targetFileIds ?? [],
+        ...(options.resumePayload !== undefined ? { resumePayload: options.resumePayload } : {}),
+        ...(options.ephemeralVaultPayloads !== undefined
+            ? { ephemeralVaultPayloads: options.ephemeralVaultPayloads }
+            : {}),
+        ...(options.liveDocumentSnapshots !== undefined
+            ? { liveDocumentSnapshots: options.liveDocumentSnapshots }
+            : {}),
+    };
+
+    const parsed = parseAgentStreamPayload(rawCandidate);
+    if (!parsed.success) {
+        const reason = parsed.error.issues
+            .map((i) => `${i.path.join('.') || 'payload'}: ${i.message}`)
+            .join('; ');
+        throw new AgentStreamError({
+            code: 'INVALID_STREAM_PAYLOAD',
+            status: 400,
+            message: `INVALID_STREAM_PAYLOAD: ${reason}`,
+            retryable: false,
+        });
+    }
+
+    return parsed.data;
+}
+
+/**
+ * Normalizes a parsed JSON frame and optional SSE `event:` header into a typed AgentStreamEvent.
+ */
+function normalizeParsedFrame(
+    eventHeader: string | null,
+    parsed: Record<string, unknown>,
+    fallbackThreadId: string
+): AgentStreamEvent | null {
+    const resolvedType = (
+        typeof parsed.type === 'string' && parsed.type.trim()
+            ? parsed.type.trim()
+            : eventHeader?.trim() || ''
+    ).toLowerCase();
+
+    if (resolvedType === 'start' || resolvedType === 'meta' || resolvedType === 'metadata') {
+        return {
+            type: 'start',
+            sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId : `session_${crypto.randomUUID()}`,
+            threadId: typeof parsed.threadId === 'string' ? parsed.threadId : fallbackThreadId,
+            operationId: typeof parsed.operationId === 'string' ? parsed.operationId : `op_${crypto.randomUUID()}`,
+            ...(typeof parsed.correlationId === 'string' ? { correlationId: parsed.correlationId } : {}),
+        };
+    }
+
+    if (resolvedType === 'update') {
+        const chunkCandidate =
+            'chunk' in parsed &&
+            parsed.chunk !== null &&
+            typeof parsed.chunk === 'object' &&
+            !Array.isArray(parsed.chunk)
+                ? (parsed.chunk as Record<string, unknown>)
+                : parsed;
+        return {
+            type: 'update',
+            chunk: chunkCandidate,
+        };
+    }
+
+    if (resolvedType === 'interrupt') {
+        const rawInterrupts = Array.isArray(parsed.interrupts)
+            ? parsed.interrupts
+            : '__interrupt__' in parsed && Array.isArray(parsed.__interrupt__)
+              ? (parsed.__interrupt__ as unknown[])
+              : 'value' in parsed
+                ? [{ value: parsed.value, resumable: true }]
+                : [];
+
+        const normalizedInterrupts: AgentInterruptItem[] = rawInterrupts.map((item) => {
+            if (item && typeof item === 'object' && 'value' in item) {
+                const record = item as Record<string, unknown>;
+                return {
+                    value: record.value,
+                    resumable: typeof record.resumable === 'boolean' ? record.resumable : true,
+                    ...(Array.isArray(record.ns) ? { ns: record.ns.map(String) } : {}),
+                    ...(typeof record.when === 'string' ? { when: record.when } : {}),
+                };
+            }
+            return {
+                value: item,
+                resumable: true,
+            };
+        });
+
+        return {
+            type: 'interrupt',
+            threadId: typeof parsed.threadId === 'string' ? parsed.threadId : fallbackThreadId,
+            operationId: typeof parsed.operationId === 'string' ? parsed.operationId : '',
+            interrupts: normalizedInterrupts,
+        };
+    }
+
+    if (resolvedType === 'error') {
+        const code =
+            typeof parsed.code === 'string' && parsed.code.trim()
+                ? parsed.code.trim()
+                : 'STREAM_EXECUTION_ERROR';
+        const rawMessage =
+            typeof parsed.message === 'string' && parsed.message.trim()
+                ? parsed.message.trim()
+                : code;
+        return {
+            type: 'error',
+            code,
+            message: rawMessage,
+            ...(typeof parsed.retryable === 'boolean' ? { retryable: parsed.retryable } : {}),
+        };
+    }
+
+    if (resolvedType === 'done') {
+        return {
+            type: 'done',
+            threadId: typeof parsed.threadId === 'string' ? parsed.threadId : fallbackThreadId,
+            operationId: typeof parsed.operationId === 'string' ? parsed.operationId : '',
+        };
+    }
+
+    return null;
+}
+
+/**
+ * Consumes the `/api/agent/stream` SSE response stream with resilient frame decoding,
+ * strict line-buffer ceiling (`MAX_LINE_BUFFER_CHARS = 262_144`), and first-chunk
+ * watchdog timer (`FIRST_CHUNK_TIMEOUT_MS = 20_000`).
+ */
+export async function consumeAgentStream(options: StreamHandlerOptions): Promise<void> {
+    const {
+        onStart,
+        onUpdate,
+        onInterrupt,
+        onDone,
+        onError,
+        onEvent,
+        signal,
+        firstChunkTimeoutMs: firstChunkTimeoutMsOverride,
+        maxDurationMs: maxDurationMsOverride,
+    } = options;
+
     let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
     let isTerminalCallbackEmitted = false;
 
-    // Runtime watchdog state. Guarantees the session always reaches a terminal
-    // callback even if the provider stalls before the first byte or mid-stream.
     const firstChunkTimeoutMs = firstChunkTimeoutMsOverride ?? FIRST_CHUNK_TIMEOUT_MS;
     const maxDurationMs = maxDurationMsOverride ?? MAX_STREAM_DURATION_MS;
     let receivedFirstChunk = false;
@@ -126,81 +389,80 @@ export async function consumeAIStream({
         }
     };
 
-    /**
-     * FIX (runtime remediation): the completion callback performs the whole atomic
-     * commit pipeline asynchronously. An exception thrown inside it previously became
-     * an unhandled promise rejection, leaving the session stuck in a non-terminal
-     * state — ghost never cleared, quota never refunded, and the in-flight mutex
-     * permanently locked so every subsequent trigger was silently dropped.
-     * Rejections are now deterministically routed into onError so exactly one
-     * terminal callback is always emitted.
-     */
-    const emitComplete = (finalText: string) => {
-        if (isTerminalCallbackEmitted) return;
-        clearWatchdogTimers();
-        isTerminalCallbackEmitted = true;
-
-        Promise.resolve()
-            .then(() => onComplete(finalText))
-            .catch((completionErr: unknown) => {
-                isTerminalCallbackEmitted = false;
-                emitError(
-                    completionErr instanceof Error
-                        ? completionErr
-                        : new Error(String(completionErr) || 'Stream completion pipeline failed')
-                );
-            });
-    };
-
-    const emitError = (err: Error) => {
+    const emitError = (err: AgentStreamError | Error): void => {
         clearWatchdogTimers();
         if (isTerminalCallbackEmitted) return;
         isTerminalCallbackEmitted = true;
         onError(err);
     };
 
+    const emitDone = (doneEvent: AgentStreamDoneEvent): void => {
+        if (isTerminalCallbackEmitted) return;
+        clearWatchdogTimers();
+        isTerminalCallbackEmitted = true;
+        try {
+            onDone?.(doneEvent);
+        } catch (doneErr) {
+            isTerminalCallbackEmitted = false;
+            emitError(
+                doneErr instanceof Error
+                    ? doneErr
+                    : new Error(String(doneErr) || 'Stream completion handler failed')
+            );
+        }
+    };
+
     const fireWatchdogTimeout = (code: string, detail: string): void => {
         try {
             reader?.cancel(code);
         } catch {
-            // Reader already released or locked elsewhere; error path proceeds.
+            // Reader already released or locked elsewhere.
         }
-        emitError(new Error(`${code}: ${detail}`));
+        emitError(
+            new AgentStreamError({
+                code,
+                message: `${code}: ${detail}`,
+                retryable: true,
+            })
+        );
     };
 
     try {
-        const response = await fetch('/api/ai/stream', {
+        const requestPayload = buildRequestPayload(options);
+
+        const response = await fetch(AGENT_STREAM_ENDPOINT, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                text,
-                operation,
-                operationId,
-                fileId,
-                expectedVersion,
-            }),
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'text/event-stream',
+            },
+            body: JSON.stringify(requestPayload),
             signal,
         });
 
         if (!response.ok) {
             const errText = await response.text();
-            throw new Error(errText || response.statusText || `HTTP Error ${response.status}`);
+            throw parseHttpStreamError(response.status, response.statusText, errText);
         }
 
         reader = response.body?.getReader() || null;
         if (!reader) {
-            throw new Error('No readable stream available in response');
+            throw new AgentStreamError({
+                code: 'NO_READABLE_STREAM',
+                message: 'No readable stream available in response',
+                retryable: false,
+            });
         }
 
-        // Arm runtime watchdogs (see constants above).
         firstChunkTimer = setTimeout(() => {
             if (!receivedFirstChunk) {
                 fireWatchdogTimeout(
                     'AI_STREAM_FIRST_CHUNK_TIMEOUT',
-                    `no data received from AI provider within ${firstChunkTimeoutMs}ms`
+                    `no data received from agent stream within ${firstChunkTimeoutMs}ms`
                 );
             }
         }, firstChunkTimeoutMs);
+
         durationTimer = setTimeout(() => {
             fireWatchdogTimeout(
                 'AI_STREAM_DURATION_EXCEEDED',
@@ -209,67 +471,166 @@ export async function consumeAIStream({
         }, maxDurationMs);
 
         const decoder = new TextDecoder('utf-8');
-        let accumulatedText = '';
         let lineBuffer = '';
+        let currentEventHeader: string | null = null;
+        let currentDataLines: string[] = [];
         let isDoneReceived = false;
-        let isCancelledReceived = false;
+        let isInterruptReceived = false;
+        let lastOperationId = '';
 
-        const processLine = (line: string) => {
-            const trimmed = line.trim();
-            if (!trimmed) return;
-
-            // Detect NDJSON structured frame
-            if (trimmed.startsWith('{')) {
-                let event: StreamEvent;
-                try {
-                    event = JSON.parse(trimmed);
-                } catch {
-                    throw new Error('Invalid JSON stream chunk received');
-                }
-
-                if (event.type === 'meta' || event.type === 'start' || event.type === 'metadata') {
-                    onMeta?.(event as StreamMetaEvent);
-                } else if (event.type === 'delta' || event.type === 'chunk') {
-                    const chunkText = (event as StreamChunkEvent).text;
-                    if (chunkText && chunkText.length > 0) {
-                        accumulatedText += chunkText;
-                        onChunk(accumulatedText, chunkText);
-                    }
-                } else if (event.type === 'error') {
-                    const errEvt = event as StreamErrorEvent;
-                    throw new Error(errEvt.message || errEvt.code || 'Stream error occurred');
-                } else if (event.type === 'cancelled') {
-                    isCancelledReceived = true;
-                    const cancelErr = new Error((event as StreamCancelledEvent).reason || 'Stream cancelled');
-                    cancelErr.name = 'AbortError';
-                    throw cancelErr;
-                } else if (event.type === 'done') {
-                    if (!isDoneReceived) {
-                        isDoneReceived = true;
-                    }
-                } else {
-                    // Unknown message type: safely ignore
-                }
+        const dispatchJsonPayload = (eventHeader: string | null, rawJson: string): void => {
+            const trimmedJson = rawJson.trim();
+            if (!trimmedJson) return;
+            if (trimmedJson === '[DONE]') {
+                isDoneReceived = true;
                 return;
             }
 
-            // Fallback for SSE / Raw text lines
+            let parsed: Record<string, unknown>;
+            try {
+                const candidate = JSON.parse(trimmedJson);
+                if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+                    throw new Error('SSE data payload must be a JSON object');
+                }
+                parsed = candidate as Record<string, unknown>;
+            } catch {
+                throw new AgentStreamError({
+                    code: 'INVALID_STREAM_JSON',
+                    message: 'Invalid JSON stream chunk received',
+                    retryable: false,
+                });
+            }
+
+            const event = normalizeParsedFrame(
+                eventHeader,
+                parsed,
+                requestPayload.threadId
+            );
+            if (!event) {
+                return;
+            }
+
+            onEvent?.(event);
+
+            switch (event.type) {
+                case 'start': {
+                    if (event.operationId) {
+                        lastOperationId = event.operationId;
+                    }
+                    onStart?.(event);
+                    break;
+                }
+                case 'update': {
+                    // Check if inline __interrupt__ exists inside the update chunk
+                    if ('__interrupt__' in event.chunk && Array.isArray(event.chunk.__interrupt__)) {
+                        isInterruptReceived = true;
+                        const interruptEvent = normalizeParsedFrame(
+                            'interrupt',
+                            {
+                                type: 'interrupt',
+                                threadId: requestPayload.threadId,
+                                operationId: lastOperationId,
+                                interrupts: event.chunk.__interrupt__,
+                            },
+                            requestPayload.threadId
+                        ) as AgentStreamInterruptEvent;
+                        onInterrupt?.(interruptEvent);
+                    } else {
+                        onUpdate?.(event);
+                    }
+                    break;
+                }
+                case 'interrupt': {
+                    isInterruptReceived = true;
+                    if (event.operationId) {
+                        lastOperationId = event.operationId;
+                    }
+                    onInterrupt?.(event);
+                    break;
+                }
+                case 'error': {
+                    const formattedMsg = event.message.includes(event.code)
+                        ? event.message
+                        : `${event.code}: ${event.message}`;
+                    throw new AgentStreamError({
+                        code: event.code,
+                        message: formattedMsg,
+                        retryable: event.retryable ?? false,
+                    });
+                }
+                case 'done': {
+                    if (event.operationId) {
+                        lastOperationId = event.operationId;
+                    }
+                    if (!isDoneReceived) {
+                        isDoneReceived = true;
+                        emitDone(event);
+                    }
+                    break;
+                }
+            }
+        };
+
+        const flushPendingSSEBlock = (): void => {
+            if (currentDataLines.length > 0) {
+                const joinedData = currentDataLines.join('\n');
+                const header = currentEventHeader;
+                currentEventHeader = null;
+                currentDataLines = [];
+                dispatchJsonPayload(header, joinedData);
+            } else {
+                currentEventHeader = null;
+            }
+        };
+
+        const processLine = (rawLine: string): void => {
+            const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+            const trimmed = line.trim();
+
+            // Blank line marks the end of an SSE event frame (\n\n)
+            if (!trimmed) {
+                flushPendingSSEBlock();
+                return;
+            }
+
+            // SSE comment / keep-alive line
+            if (trimmed.startsWith(':')) {
+                return;
+            }
+
+            if (trimmed.startsWith('event:')) {
+                if (currentDataLines.length > 0) {
+                    flushPendingSSEBlock();
+                }
+                currentEventHeader = trimmed.slice(6).trim();
+                return;
+            }
+
             if (trimmed.startsWith('data:')) {
-                const payload = trimmed.slice(5).trim();
-                if (payload === '[DONE]') {
+                const payloadFragment = trimmed.slice(5).trim();
+                if (payloadFragment === '[DONE]') {
+                    flushPendingSSEBlock();
                     isDoneReceived = true;
                     return;
                 }
-                if (payload.length > 0) {
-                    accumulatedText += payload;
-                    onChunk(accumulatedText, payload);
+
+                // If no prior multi-line fragments are buffered and this line is a complete
+                // single-line JSON object, dispatch immediately while also supporting \n\n.
+                if (currentDataLines.length === 0 && payloadFragment.startsWith('{') && payloadFragment.endsWith('}')) {
+                    const header = currentEventHeader;
+                    currentEventHeader = null;
+                    dispatchJsonPayload(header, payloadFragment);
+                    return;
                 }
-            } else {
-                // Raw text line fallback
-                accumulatedText += trimmed;
-                onChunk(accumulatedText, trimmed);
-                // In raw mode, receipt of line constitutes completion on stream end
-                isDoneReceived = true;
+
+                currentDataLines.push(payloadFragment);
+                return;
+            }
+
+            // Direct NDJSON line fallback
+            if (trimmed.startsWith('{')) {
+                flushPendingSSEBlock();
+                dispatchJsonPayload(null, trimmed);
             }
         };
 
@@ -293,7 +654,6 @@ export async function consumeAIStream({
                 const decoded = decoder.decode(value, { stream: true });
                 if (!decoded) continue;
 
-                // First-byte latch: disarm the time-to-first-token watchdog.
                 if (!receivedFirstChunk) {
                     receivedFirstChunk = true;
                     if (firstChunkTimer) {
@@ -302,17 +662,17 @@ export async function consumeAIStream({
                     }
                 }
 
-                // Process NDJSON line buffering
                 lineBuffer += decoded;
 
-                // ADV-01 Guard: Prevent unbounded line buffer growth if stream lacks newlines
                 if (lineBuffer.length > MAX_LINE_BUFFER_CHARS) {
-                    throw new Error('stream_buffer_overflow');
+                    throw new AgentStreamError({
+                        code: 'STREAM_BUFFER_OVERFLOW',
+                        message: 'stream_buffer_overflow',
+                        retryable: false,
+                    });
                 }
 
                 const lines = lineBuffer.split('\n');
-
-                // Keep the trailing uncompleted line fragment in lineBuffer
                 lineBuffer = lines.pop() ?? '';
 
                 for (const line of lines) {
@@ -320,17 +680,16 @@ export async function consumeAIStream({
                 }
             }
 
-            // Flush decoder for any residual multi-byte characters
             const flushed = decoder.decode();
             if (flushed) {
                 lineBuffer += flushed;
             }
 
-            // Flush any remaining text in lineBuffer
             if (lineBuffer.trim()) {
                 processLine(lineBuffer);
             }
 
+            flushPendingSSEBlock();
         } finally {
             try {
                 reader.releaseLock();
@@ -339,33 +698,38 @@ export async function consumeAIStream({
             }
         }
 
-        if (signal?.aborted || isCancelledReceived) {
+        if (signal?.aborted) {
             const abortErr = new Error('Operation cancelled by user');
             abortErr.name = 'AbortError';
             emitError(abortErr);
             return;
         }
 
-        // Verify stream completeness: response ended without a terminal 'done'
-        if (!isDoneReceived) {
-            throw new Error('failed_incomplete_stream');
+        if (!isDoneReceived && !isInterruptReceived) {
+            throw new AgentStreamError({
+                code: 'FAILED_INCOMPLETE_STREAM',
+                message: 'failed_incomplete_stream',
+                retryable: true,
+            });
         }
 
-        if (!accumulatedText.trim()) {
-            throw new Error('AI returned an empty response');
+        if (!isTerminalCallbackEmitted) {
+            emitDone({
+                type: 'done',
+                threadId: requestPayload.threadId,
+                operationId: lastOperationId,
+            });
         }
-
-        emitComplete(accumulatedText);
-
     } catch (err) {
         clearWatchdogTimers();
 
-        const errName = err instanceof Error ? err.name : "";
-        const errMessage = err instanceof Error
-            ? err.message
-            : typeof err === "string"
-              ? err
-              : "";
+        const errName = err instanceof Error ? err.name : '';
+        const errMessage =
+            err instanceof Error
+                ? err.message
+                : typeof err === 'string'
+                  ? err
+                  : '';
 
         if (signal?.aborted || errName === 'AbortError') {
             const abortErr = new Error('Operation cancelled by user');
@@ -374,18 +738,28 @@ export async function consumeAIStream({
             return;
         }
 
-        console.error('[AI Stream Handler] Error during streaming:', err);
+        if (err instanceof AgentStreamError) {
+            emitError(err);
+            return;
+        }
+
         const isNetworkError =
             errName === 'TypeError' ||
             errMessage.includes('Failed to fetch') ||
             errMessage.includes('network error');
 
         const errorToEmit = isNetworkError
-            ? new Error('Connection interrupted. Original content preserved.')
-            : (err instanceof Error ? err : new Error(errMessage || 'Unexpected streaming error'));
+            ? new AgentStreamError({
+                  code: 'NETWORK_ERROR',
+                  message: 'Connection interrupted. Original content preserved.',
+                  retryable: true,
+              })
+            : err instanceof Error
+              ? err
+              : new Error(errMessage || 'Unexpected streaming error');
 
         emitError(errorToEmit);
     }
 }
 
-
+export const consumeAIStream = consumeAgentStream;

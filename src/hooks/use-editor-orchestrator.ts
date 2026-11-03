@@ -3,18 +3,21 @@
 /**
  * useEditorOrchestrator
  *
- * Centralized State & Write Controller for Standalone Markdown Editor (Phase 2)
+ * Centralized State, Write & Architectural Agent Controller for Standalone Markdown Editor (Phase 11)
  *
  * Enforces:
- * 1. Single authoritative write path (manual save, AI commit, conflict resolution, sync replay).
- * 2. Strict auto-save suspension invariants (never saves during streaming, reserving, committing, conflict, or stopped).
- * 3. Manual edit during streaming policy: instantly aborts AI generation, clears ghost preview, refunds quota, and preserves user edits.
+ * 1. Single authoritative write path (manual save, debounced hunk sync, conflict resolution, sync replay).
+ * 2. 412-Free Incremental Synchronization on Multi-Hunk Ghost acceptance:
+ *    immediate local IndexedDB persistence (localRevision += 1, isDirty: true) + coalesced
+ *    debounced server write via useEditorAutosave (800ms–1000ms).
+ * 3. Zero-Knowledge Vault boundary for AI operations: verifies vault unlock & allowAIOnEncryptedFiles
+ *    before populating transient ephemeralVaultPayloads.
  * 4. Offline-first loading and optimistic concurrency synchronization with ETag and version precondition guards.
- * 5. Navigation & unload protection when dirty or in-flight committing.
+ * 5. Navigation & unload protection when dirty or in-flight saving.
  */
 
 import { useState, useEffect, useCallback, useRef, useLayoutEffect } from "react";
-import { EditorAdapter } from "@/components/editor/markdown/types";
+import type { EditorAdapter, GhostHunk } from "@/components/editor/markdown/types";
 import { getFile, updateFileContent, toggleFileEncryption, renameFile, deleteFile } from "@/server/actions/file-ops";
 import { getUserVaultProfile } from "@/server/actions/vault-actions";
 import type { FileEncryptionMetadata } from "@/types/storage-payload";
@@ -24,16 +27,18 @@ import { useEditorConflict, type RemoteUpdatePayload } from "@/hooks/use-editor-
 import { useAIStream } from "@/hooks/use-ai-stream";
 import { sessionKeyStore } from "@/lib/sync/session-key-store";
 import { createClient } from "@/lib/supabase/client";
-import { AIOperationType } from "@/lib/ai/stream-handler";
-import { SyncConflict } from "@/lib/sync/idb-types";
-import { ConflictResolutionPayload } from "@/components/sync/conflict-dialog";
+import type { SyncConflict } from "@/lib/sync/idb-types";
+import type { ConflictResolutionPayload } from "@/components/sync/conflict-dialog";
 import { broadcastCrossTabEvent } from "@/lib/sync/cross-tab-sync";
 import {
     classifyRemoteUpdate,
     type LocalBaseline,
 } from "@/lib/sync/reconciliation";
-import { AIStreamStatus } from "@/lib/ai/stream-session";
+import type { AIStreamStatus } from "@/lib/ai/stream-session";
 import { SyncCryptoGateway } from "@/lib/sync/sync-crypto-gateway";
+import type { ClarificationResponse } from "@/core/agent/schemas/decision-schemas";
+import type { ClarifyingQuestionBatch } from "@/core/agent/reducers";
+import type { ATMSDecisionNode } from "@/core/agent/atms/dag";
 
 export type { RemoteUpdatePayload } from "@/hooks/use-editor-conflict";
 
@@ -48,6 +53,7 @@ export type WriteStateType =
 export interface UseEditorOrchestratorOptions {
     fileId: string;
     userId: string | null;
+    projectId?: string;
     /** EditorAdapter instance for standalone Markdown editor */
     editor?: EditorAdapter | null;
     /** Alias for editor */
@@ -58,26 +64,38 @@ export interface UseEditorOrchestratorOptions {
 export interface UseEditorOrchestratorReturn {
     // 1. Document State
     title: string;
+    content: string;
     setTitle: (title: string) => void;
     handleTitleChange: (newTitle: string) => Promise<void>;
     handleDeleteFile: () => Promise<void>;
 
-    // 2. Preview & AI State
+    // 2. Architectural Agent & Multi-Hunk Ghost State (Phase 11)
     aiStatus: AIStreamStatus;
+    aiStreamStatus: AIStreamStatus;
+    aiError: string | null;
+    agentGraphStage: string | null;
+    activeQuestionQueue: ClarifyingQuestionBatch["questions"];
+    masterDecisionLedger: Record<string, ATMSDecisionNode>;
+    activeGhostHunks: GhostHunk[];
+    activeGhostHunksCount: number;
+    startAgentSession: (prompt: string, targetFileIds?: string[]) => Promise<void>;
+    resumeAgentInterrupt: (response: ClarificationResponse) => Promise<void>;
+    stopAIOperation: () => void;
+    resetAI: () => void;
+    acceptGhostHunk: (hunkId: string) => void;
+    rejectGhostHunk: (hunkId: string) => void;
+    acceptAllGhostHunks: () => void;
+    rejectAllGhostHunks: () => void;
+
+    // Legacy / Transitional Preview & AI Accessors
     previewText: string;
     isStreaming: boolean;
     isCommitting: boolean;
     isAIActive: boolean;
-    aiError: string | null;
     isAIConflict: boolean;
-    startAIOperation: (operation: AIOperationType) => Promise<void>;
-    stopAIOperation: () => void;
-    resetAI: () => void;
-    /** Accept the completed AI preview: server-first commit + atomic local replace. */
+    startAIOperation: (promptOrOperation: string) => Promise<void>;
     commitAIPreview: () => Promise<void>;
-    /** Reject the completed AI preview: discard output, settle quota as consumed. */
     rejectAIPreview: () => void;
-    /** Re-run the last AI operation with identical inputs after settling the current preview. */
     retryAIPreview: () => Promise<void>;
 
     // 3. Dirty & Save State
@@ -116,10 +134,10 @@ export interface UseEditorOrchestratorReturn {
     handleVaultUnlocked: () => Promise<void>;
 }
 
-
 export function useEditorOrchestrator({
     fileId,
     userId,
+    projectId,
     editor,
     adapter,
     onNavigate,
@@ -132,24 +150,25 @@ export function useEditorOrchestrator({
 
     // --- 1. Document State ---
     const [title, setTitle] = useState<string>("");
+    const [content, setContent] = useState<string>("");
 
     // --- 2. Save & Error State ---
     const [isSaving, setIsSaving] = useState<boolean>(false);
     const [lastSaved, setLastSaved] = useState<Date | null>(null);
     const [error, setError] = useState<string | null>(null);
 
-    // --- 3. Server Version State & Invariants ---
+    // --- 3. Server Version & Local Revision State ---
     const [serverVersion, setServerVersion] = useState<number>(1);
     const [serverEtag, setServerEtag] = useState<string | null>(null);
 
     const fileVersionRef = useRef<number>(1);
     const fileEtagRef = useRef<string | null>(null);
+    const localRevisionRef = useRef<number>(0);
     const editorGenerationRef = useRef<number>(1);
     const editorContentRef = useRef<string>("");
     const isProgrammaticUpdateRef = useRef<boolean>(false);
+    const isAcceptingHunkRef = useRef<boolean>(false);
     const pendingRemoteUpdateRef = useRef<RemoteUpdatePayload | null>(null);
-    // Synchronous mirror of the dirty flag, read by the reconciliation policy at
-    // decision time without waiting for a React state flush.
     const isDirtyRef = useRef<boolean>(false);
     const autosaveRef = useRef<UseEditorAutosaveReturn | null>(null);
 
@@ -175,6 +194,7 @@ export function useEditorOrchestrator({
             isProgrammaticUpdateRef.current = false;
         }
     }, []);
+
     const fileIdRef = useRef<string>(fileId);
     useEffect(() => {
         fileIdRef.current = fileId;
@@ -194,12 +214,8 @@ export function useEditorOrchestrator({
             }
         }
     }, [currentAdapter]);
-    // File-identity tracking guard: the initial load pipeline (IDB paint + background server fetch
-    // + reconciliation) must run exactly once per mounted fileId.
+
     const loadedFileIdRef = useRef<string | null>(null);
-    // HYDRATION LIFECYCLE (sync-before-write): the editor surface stays frozen
-    // until the offline-first pipeline settled. 'fatal' means NOTHING could be
-    // loaded from either side (server failure AND no local snapshot).
     const hydratedRef = useRef(false);
     const loadFailureRef = useRef(false);
     const [hydration, setHydration] = useState<"hydrating" | "ready" | "fatal" | "vault_locked">("hydrating");
@@ -232,6 +248,7 @@ export function useEditorOrchestrator({
         }
         fetchVaultProfile();
     }, [userId]);
+
     const pendingEncryptedPayloadRef = useRef<{
         content: string;
         metadata: FileEncryptionMetadata | null;
@@ -239,8 +256,7 @@ export function useEditorOrchestrator({
         version: number;
         etag: string | null;
     } | null>(null);
-    // SINGLE-FLIGHT guard: the initial pipeline must never fork into competing
-    // getFile server-action cycles when render-scoped identities change.
+
     const pipelineRef = useRef<Promise<void> | null>(null);
     const markServerPersisted = useCallback((updatedAt?: string | Date | null) => {
         setLastSaved(updatedAt ? new Date(updatedAt) : new Date());
@@ -267,69 +283,107 @@ export function useEditorOrchestrator({
     const syncHookRef = useRef<UseSyncReturn | null>(null);
     const pendingLocalSyncRef = useRef<boolean>(false);
 
-    // --- AI Stream Hook Integration ---
-    const aiStream = useAIStream({
-        transformCommitPayload: async (content: string) => {
-            if (!isEncryptedRef.current) {
-                return { content };
-            }
-            if (!sessionKeyStore.isVaultUnlocked()) {
-                setError("الخزنة مقفلة. يرجى فتح الخزنة لحفظ تعديلات الذكاء الاصطناعي المشفرة.");
-                setIsVaultLocked(true);
-                setIsUnlockModalOpen(true);
-                throw new Error("Vault master key missing from volatile memory");
-            }
-            const effectiveUid = await resolveEffectiveUserId();
-            const outbound = await SyncCryptoGateway.encryptOutbound(fileId, content, effectiveUid);
-            fileEncryptionMetadataRef.current = outbound.encryptionMetadata;
-            return {
-                content: outbound.ciphertextBase64,
-                encryptionMetadata: outbound.encryptionMetadata,
-            };
-        },
-        onCommitSuccess: async ({ version, etag, committedContent, encryptionMetadata }) => {
-            fileVersionRef.current = version;
-            setServerVersion(version);
-            fileEtagRef.current = etag;
-            setServerEtag(etag);
+    /**
+     * Persists accepted ghost hunk content immediately to local IndexedDB (localRevision += 1)
+     * and schedules coalesced server synchronization via useEditorAutosave (800ms–1000ms debounce).
+     */
+    const persistAcceptedHunkIncrementally = useCallback(
+        (updatedContent: string) => {
+            editorContentRef.current = updatedContent;
+            setContent(updatedContent);
             editorGenerationRef.current += 1;
-            editorContentRef.current = adapterRef.current?.getValue() || committedContent || "";
-            isDirtyRef.current = false;
-            setLastSaved(new Date());
+            localRevisionRef.current += 1;
+            const nextLocalRevision = localRevisionRef.current;
+            isDirtyRef.current = true;
 
-            if (syncHookRef.current?.isInitialized && adapterRef.current) {
+            const persistToLocalIDB = async () => {
+                const sh = syncHookRef.current;
+                if (!sh || typeof sh.saveLocal !== "function") return;
+
+                let contentToStore = updatedContent;
+                let metaToStore = fileEncryptionMetadataRef.current;
+
+                if (isEncryptedRef.current) {
+                    if (!sessionKeyStore.hasMasterKey()) {
+                        pendingLocalSyncRef.current = true;
+                        return;
+                    }
+                    try {
+                        const effectiveUid = await resolveEffectiveUserId();
+                        const encrypted = await SyncCryptoGateway.encryptOutbound(
+                            fileIdRef.current,
+                            updatedContent,
+                            effectiveUid
+                        );
+                        contentToStore = encrypted.ciphertextBase64;
+                        metaToStore = encrypted.encryptionMetadata;
+                        fileEncryptionMetadataRef.current = metaToStore;
+                    } catch (encErr) {
+                        console.error("[Orchestrator] Failed to encrypt accepted hunk for local IDB:", encErr);
+                        pendingLocalSyncRef.current = true;
+                        return;
+                    }
+                }
+
                 try {
-                    await syncHookRef.current.saveLocal({
-                        id: fileId,
-                        content: isEncryptedRef.current && committedContent ? committedContent : adapterRef.current.getValue(),
+                    await sh.saveLocal({
+                        id: fileIdRef.current,
+                        content: contentToStore,
                         title,
-                        version,
-                        etag: etag || "",
+                        version: fileVersionRef.current,
+                        etag: fileEtagRef.current || "",
                         isEncrypted: isEncryptedRef.current,
-                        encryptionMetadata: isEncryptedRef.current ? (encryptionMetadata ?? fileEncryptionMetadataRef.current) : null,
-                        isDirty: false,
+                        encryptionMetadata: metaToStore,
+                        isDirty: true,
+                        localRevision: nextLocalRevision,
                     });
                     pendingLocalSyncRef.current = false;
-                    markClean();
-                } catch (saveErr) {
-                    console.error("[Orchestrator] Post-commit local IndexedDB save error:", saveErr);
-                    // Defensive durability: retain dirty flag and schedule retry on tab wakeup
+                } catch (idbErr) {
+                    console.error("[Orchestrator] Local IDB persistence failed on hunk acceptance:", idbErr);
                     pendingLocalSyncRef.current = true;
-                    markDirty();
                 }
-            } else {
-                markClean();
-            }
+            };
 
-            broadcastCrossTabEvent({
-                type: "file_saved",
-                fileId,
-                version,
-                etag,
-            });
+            void persistToLocalIDB();
+
+            // Schedule coalesced server save via debounced autosave (800ms–1000ms)
+            isAcceptingHunkRef.current = true;
+            try {
+                autosaveRef.current?.handleEditorChange(updatedContent);
+            } finally {
+                isAcceptingHunkRef.current = false;
+            }
         },
-        onConflict: (svrVersion) => {
-            console.warn("[Orchestrator] AI commit version conflict:", svrVersion);
+        [resolveEffectiveUserId, title]
+    );
+
+    // --- Architectural Agent Stream Hook Integration ---
+    const aiStream = useAIStream({
+        fileId,
+        projectId: projectId || fileId,
+        getEditor: () => adapterRef.current,
+        getLiveContent: () => {
+            const anyAdapter = adapterRef.current as (EditorAdapter & { getContent?: () => string }) | null;
+            if (typeof anyAdapter?.getContent === "function") {
+                return anyAdapter.getContent();
+            }
+            if (typeof adapterRef.current?.getValue === "function") {
+                return adapterRef.current.getValue();
+            }
+            return editorContentRef.current;
+        },
+        isEncrypted: () => isEncryptedRef.current,
+        allowAIOnEncryptedFiles: () => allowAIOnEncryptedFilesRef.current,
+        isVaultUnlocked: () => sessionKeyStore.isVaultUnlocked(),
+        onVaultLocked: () => {
+            setIsVaultLocked(true);
+            setIsUnlockModalOpen(true);
+        },
+        onHunkAccepted: (updatedContent) => {
+            persistAcceptedHunkIncrementally(updatedContent);
+        },
+        onAllHunksAccepted: (updatedContent) => {
+            persistAcceptedHunkIncrementally(updatedContent);
         },
         onError: (err) => {
             setError(err.message);
@@ -426,6 +480,7 @@ export function useEditorOrchestrator({
         setServerEtag(pending.etag);
         editorGenerationRef.current += 1;
         editorContentRef.current = contentToDisplay;
+        setContent(contentToDisplay);
 
         isProgrammaticUpdateRef.current = true;
         try {
@@ -459,6 +514,7 @@ export function useEditorOrchestrator({
         getEditorContent: () => editorContentRef.current,
         setEditorContent: (c) => {
             editorContentRef.current = c;
+            setContent(c);
         },
         getAdapter: () => adapterRef.current,
         isProgrammaticUpdate: () => isProgrammaticUpdateRef.current,
@@ -473,11 +529,9 @@ export function useEditorOrchestrator({
         markDirty,
         cancelAutosave,
         isAIActive: () =>
-            aiStream.isLoading ||
-            aiStream.isStreaming ||
-            aiStream.isCommitting ||
-            aiStream.status === "reserved" ||
-            aiStream.status === "preview_ready",
+            aiStream.status === "running_graph" ||
+            aiStream.status === "streaming_hunks" ||
+            aiStream.status === "awaiting_hitl",
         isHydrated: () => hydratedRef.current,
         setHydration,
         setPendingRemoteUpdate: (p) => {
@@ -526,18 +580,16 @@ export function useEditorOrchestrator({
     // Write State Computation
     const writeState: WriteStateType = conflictHook.isResolvingConflict
         ? "resolving_conflict"
-        : aiStream.isCommitting
-        ? "ai_committing"
         : isSaving
-        ? "saving"
-        : syncHook.status === "syncing"
-        ? "syncing"
-        : syncHook.status === "stopped"
-        ? "stopped"
-        : "idle";
+          ? "saving"
+          : syncHook.status === "syncing"
+            ? "syncing"
+            : syncHook.status === "stopped"
+              ? "stopped"
+              : "idle";
 
     /**
-     * AutoSave Suspension Invariants Gate & Callbacks (Phase 17)
+     * AutoSave Suspension Invariants Gate & Callbacks
      */
     const isBlocked = useCallback((): boolean => {
         if (isProgrammaticUpdateRef.current) return true;
@@ -547,128 +599,126 @@ export function useEditorOrchestrator({
         return false;
     }, [isBlockedByConflict, syncHook.status]);
 
+    /**
+     * Write lock is active only while the agent graph or hunk stream is actively running.
+     * During `preview_ready`, `isWriteLocked` MUST be false so incremental hunk acceptances
+     * can coalesce and persist via `useEditorAutosave`.
+     */
     const isWriteLocked =
-        aiStream.isLoading ||
-        aiStream.isStreaming ||
-        aiStream.isCommitting ||
-        aiStream.status === "reserved" ||
-        aiStream.status === "preview_ready";
+        aiStream.status === "running_graph" ||
+        aiStream.status === "streaming_hunks";
 
-    const flushOnUnmount = useCallback((content: string, targetFileId: string) => {
-        if (!syncHookRef.current?.isInitialized) return;
+    const flushOnUnmount = useCallback(
+        (contentToFlush: string, targetFileId: string) => {
+            if (!syncHookRef.current?.isInitialized) return;
 
-        const performFlush = async () => {
-            let contentToSave = content;
-            let metaToSave = fileEncryptionMetadataRef.current;
+            const performFlush = async () => {
+                let contentToSave = contentToFlush;
+                let metaToSave = fileEncryptionMetadataRef.current;
 
-            if (isEncryptedRef.current) {
-                if (!sessionKeyStore.hasMasterKey()) {
-                    console.warn(
-                        `[Orchestrator] Unmount flush skipped for encrypted file ${targetFileId}: vault is locked, refusing to persist plaintext tagged as encrypted (LUGX-004).`
-                    );
-                    return;
+                if (isEncryptedRef.current) {
+                    if (!sessionKeyStore.hasMasterKey()) {
+                        console.warn(
+                            `[Orchestrator] Unmount flush skipped for encrypted file ${targetFileId}: vault is locked, refusing to persist plaintext tagged as encrypted (LUGX-004).`
+                        );
+                        return;
+                    }
+
+                    try {
+                        const effectiveUid = await resolveEffectiveUserId();
+                        const encrypted = await SyncCryptoGateway.encryptOutbound(
+                            targetFileId,
+                            contentToFlush,
+                            effectiveUid
+                        );
+                        contentToSave = encrypted.ciphertextBase64;
+                        metaToSave = encrypted.encryptionMetadata;
+                    } catch (err) {
+                        console.error("[Orchestrator] Failed to encrypt outbound payload during unmount flush:", err);
+                        return;
+                    }
                 }
 
                 try {
-                    const effectiveUid = await resolveEffectiveUserId();
-                    const encrypted = await SyncCryptoGateway.encryptOutbound(
-                        targetFileId,
-                        content,
-                        effectiveUid
-                    );
-                    contentToSave = encrypted.ciphertextBase64;
-                    metaToSave = encrypted.encryptionMetadata;
+                    await syncHookRef.current?.saveLocal({
+                        id: targetFileId,
+                        content: contentToSave,
+                        title,
+                        version: fileVersionRef.current,
+                        etag: fileEtagRef.current || "",
+                        isEncrypted: isEncryptedRef.current,
+                        encryptionMetadata: metaToSave,
+                        isDirty: true,
+                        localRevision: localRevisionRef.current,
+                    });
                 } catch (err) {
-                    console.error("[Orchestrator] Failed to encrypt outbound payload during unmount flush:", err);
-                    return;
+                    console.warn("[Orchestrator] Unmount flush error:", err);
+                }
+            };
+
+            void performFlush();
+        },
+        [title, resolveEffectiveUserId]
+    );
+
+    const onUserEdit = useCallback(
+        (editedContent: string) => {
+            const isActivelyStreaming =
+                aiStream.status === "running_graph" ||
+                aiStream.status === "streaming_hunks";
+
+            if (isActivelyStreaming && !isAcceptingHunkRef.current) {
+                const ghostHunks =
+                    typeof adapterRef.current?.getGhostHunks === "function"
+                        ? adapterRef.current.getGhostHunks()
+                        : [];
+                const ghostRange =
+                    typeof adapterRef.current?.getGhostRange === "function"
+                        ? adapterRef.current.getGhostRange()
+                        : null;
+
+                if (
+                    ghostHunks.length === 0 &&
+                    !ghostRange &&
+                    aiStream.activeGhostHunksCount > 0
+                ) {
+                    aiStream.stopStream();
                 }
             }
 
-            try {
-                await syncHookRef.current?.saveLocal({
-                    id: targetFileId,
-                    content: contentToSave,
-                    title,
-                    version: fileVersionRef.current,
-                    etag: fileEtagRef.current || "",
-                    isEncrypted: isEncryptedRef.current,
-                    encryptionMetadata: metaToSave,
-                    isDirty: true,
-                });
-            } catch (err) {
-                console.warn("[Orchestrator] Unmount flush error:", err);
-            }
-        };
-
-        performFlush();
-    }, [title, resolveEffectiveUserId]);
-
-    const onUserEdit = useCallback((content: string) => {
-        const isAIActive =
-            aiStream.isLoading ||
-            aiStream.isStreaming ||
-            aiStream.status === "reserved" ||
-            aiStream.status === "preview_ready";
-
-        if (isAIActive) {
-            const ghostRange =
-                typeof adapterRef.current?.getGhostRange === "function"
-                    ? adapterRef.current.getGhostRange()
-                    : null;
-
-            if (!ghostRange) {
-                console.warn(
-                    "[Orchestrator] User manual edit collided with AI target range or entire document was modified. Aborting AI generation."
-                );
-                aiStream.stopStream();
-            } else {
-                console.log(
-                    "[Orchestrator] User manual edit occurred outside AI target range. Retaining active stream at shifted range:",
-                    ghostRange
-                );
-            }
-        }
-
-        // Touch inactivity timer upon user keystrokes / activity (AUD-04)
-        sessionKeyStore.touch();
-
-        editorContentRef.current = content;
-        editorGenerationRef.current += 1;
-    }, [aiStream]);
+            sessionKeyStore.touch();
+            editorContentRef.current = editedContent;
+            setContent(editedContent);
+            editorGenerationRef.current += 1;
+        },
+        [aiStream]
+    );
 
     /**
      * Centralized Server Write with ETag & Version Precondition Guard
      */
     const executeServerWrite = useCallback(
-        async (content: string, targetFileId?: string) => {
+        async (contentArg: string, targetFileId?: string) => {
             const activeTargetId = targetFileId || fileId;
             if (activeTargetId !== fileIdRef.current) {
-                console.log("[Orchestrator] Auto-save skipped: target fileId mismatch with active file", {
-                    activeTargetId,
-                    currentFileId: fileIdRef.current,
-                });
                 return;
             }
             if (!hydratedRef.current) {
-                console.log("[Orchestrator] Auto-save deferred: hydration not complete.");
                 return;
             }
             if (isBlocked() || isWriteLocked) {
-                console.log("[Orchestrator] Auto-save skipped due to active suspension gate invariant");
                 return;
             }
 
             setIsSaving(true);
 
-            let contentToSend = content ?? editorContentRef.current ?? "";
+            let contentToSend = contentArg ?? editorContentRef.current ?? "";
             let metaToSend = fileEncryptionMetadataRef.current;
 
             try {
-
                 if (isEncryptedRef.current) {
                     const masterKey = sessionKeyStore.getMasterKeyRaw();
                     if (!masterKey) {
-                        console.error("[Orchestrator] Cannot save encrypted file: Master key missing from memory");
                         setIsSaving(false);
                         setError("الخزنة مقفلة. يرجى فتح الخزنة لحفظ التعديلات المشفرة بأمان.");
                         setIsVaultLocked(true);
@@ -706,21 +756,20 @@ export function useEditorOrchestrator({
                     setLastSaved(new Date());
                     markClean();
 
-                    // Update local storage clean first (always store ciphertext for encrypted files)
                     if (syncHook.isInitialized) {
                         await syncHook.saveLocal({
                             id: fileId,
-                            content: isEncryptedRef.current ? contentToSend : content,
+                            content: isEncryptedRef.current ? contentToSend : contentArg,
                             title,
                             version: saveRes.version,
                             etag: saveRes.etag || fileEtagRef.current || "",
                             isEncrypted: isEncryptedRef.current,
                             encryptionMetadata: metaToSend,
                             isDirty: false,
+                            localRevision: localRevisionRef.current,
                         });
                     }
 
-                    // Broadcast cross-tab only AFTER IndexedDB commit settles
                     broadcastCrossTabEvent({
                         type: "file_saved",
                         fileId,
@@ -730,44 +779,44 @@ export function useEditorOrchestrator({
                 } else if (saveRes.status === "conflict" && saveRes.serverVersion) {
                     await handle412Conflict(
                         saveRes.serverVersion,
-                        content ?? editorContentRef.current ?? "",
+                        contentArg ?? editorContentRef.current ?? "",
                         {
                             contentToSend,
                             metaToSend,
                         }
                     );
                 } else {
-                    // Offline / Network failure -> save dirty locally with ciphertext
                     if (syncHook.isInitialized) {
                         await syncHook.saveLocal({
                             id: fileId,
-                            content: isEncryptedRef.current ? contentToSend : content,
+                            content: isEncryptedRef.current ? contentToSend : contentArg,
                             title,
                             version: fileVersionRef.current,
                             etag: fileEtagRef.current || "",
                             isEncrypted: isEncryptedRef.current,
                             encryptionMetadata: metaToSend,
                             isDirty: true,
+                            localRevision: localRevisionRef.current,
                         });
                     }
                 }
             } catch (saveErr) {
                 console.warn("[Orchestrator] Save failed, saving dirty to IndexedDB:", saveErr);
                 if (syncHook.isInitialized) {
-                    if (isEncryptedRef.current && (!metaToSend?.iv || contentToSend === content)) {
-                        console.warn("[Orchestrator] Cannot save dirty encrypted file to IDB: content is not encrypted.");
+                    if (isEncryptedRef.current && (!metaToSend?.iv || contentToSend === contentArg)) {
                         return;
                     }
                     try {
                         await syncHook.saveLocal({
                             id: fileId,
-                            content: isEncryptedRef.current ? contentToSend : content,
+                            content: isEncryptedRef.current ? contentToSend : contentArg,
                             title,
                             version: fileVersionRef.current,
                             etag: fileEtagRef.current || "",
                             isEncrypted: isEncryptedRef.current,
                             encryptionMetadata: metaToSend,
                             isDirty: true,
+                            localRevision: localRevisionRef.current,
                         });
                     } catch (dirtySaveErr) {
                         console.error("[Orchestrator] Fallback dirty save to IndexedDB failed:", dirtySaveErr);
@@ -807,7 +856,6 @@ export function useEditorOrchestrator({
         isDirtyRef.current = autosave.isDirty;
     }, [autosave.isDirty]);
 
-
     // Initial Load - Offline-First with Background Server Sync
     useEffect(() => {
         let cancelled = false;
@@ -815,7 +863,6 @@ export function useEditorOrchestrator({
         async function loadInitialFile() {
             if (loadedFileIdRef.current === fileId) return;
 
-            // Freeze the editor surface so nothing can be typed pre-hydration.
             hydratedRef.current = false;
             loadFailureRef.current = false;
             setHydration("hydrating");
@@ -837,6 +884,9 @@ export function useEditorOrchestrator({
                         isEncryptedRef.current = fileIsEncrypted;
                         setIsEncrypted(fileIsEncrypted);
                         fileEncryptionMetadataRef.current = localFile.encryptionMetadata || null;
+                        if (typeof localFile.localRevision === "number") {
+                            localRevisionRef.current = localFile.localRevision;
+                        }
 
                         if (fileIsEncrypted && !sessionKeyStore.hasMasterKey()) {
                             isVaultLockedExit = true;
@@ -888,7 +938,6 @@ export function useEditorOrchestrator({
                                     if (adapterRef.current) adapterRef.current.setEditable(false);
                                     return;
                                 } else {
-                                    console.error("[Orchestrator] Local IDB decryption failure (LUGX-048):", inbound.error);
                                     setError("تعذّر فك تشفير محتوى الملف المحلي (بيانات تالفة أو مفتاح غير صالح).");
                                     isFatalExit = true;
                                     setHydration("fatal");
@@ -896,8 +945,7 @@ export function useEditorOrchestrator({
                                     if (adapterRef.current) adapterRef.current.setEditable(false);
                                     return;
                                 }
-                            } catch (decErr) {
-                                console.error("[Orchestrator] Local IDB decrypt error (LUGX-048):", decErr);
+                            } catch {
                                 setError("تعذّر فك تشفير محتوى الملف المحلي (بيانات تالفة أو مفتاح غير صالح).");
                                 isFatalExit = true;
                                 setHydration("fatal");
@@ -919,6 +967,7 @@ export function useEditorOrchestrator({
                         setServerEtag(localFile.etag || null);
                         editorGenerationRef.current += 1;
                         editorContentRef.current = initialContent;
+                        setContent(initialContent);
 
                         isProgrammaticUpdateRef.current = true;
                         try {
@@ -1001,7 +1050,6 @@ export function useEditorOrchestrator({
                                     if (adapterRef.current) adapterRef.current.setEditable(false);
                                     return;
                                 } else {
-                                    console.error("[Orchestrator] Remote decryption failed (LUGX-048):", inbound.error);
                                     setError("تعذّر فك تشفير محتوى الملف من الخادم (بيانات تالفة أو مفتاح غير صالح).");
                                     isFatalExit = true;
                                     setHydration("fatal");
@@ -1009,8 +1057,7 @@ export function useEditorOrchestrator({
                                     if (adapterRef.current) adapterRef.current.setEditable(false);
                                     return;
                                 }
-                            } catch (decErr) {
-                                console.error("[Orchestrator] Remote decrypt error (LUGX-048):", decErr);
+                            } catch {
                                 setError("تعذّر فك تشفير محتوى الملف من الخادم (بيانات تالفة أو مفتاح غير صالح).");
                                 isFatalExit = true;
                                 setHydration("fatal");
@@ -1038,6 +1085,7 @@ export function useEditorOrchestrator({
                     const paintServer = () => {
                         editorGenerationRef.current += 1;
                         editorContentRef.current = safeContent;
+                        setContent(safeContent);
                         isProgrammaticUpdateRef.current = true;
                         try {
                             adapterRef.current?.setValue(safeContent);
@@ -1056,6 +1104,7 @@ export function useEditorOrchestrator({
                                 isEncrypted: isEncryptedRef.current,
                                 encryptionMetadata: fileEncryptionMetadataRef.current,
                                 isDirty: false,
+                                localRevision: localRevisionRef.current,
                             });
                         }
                     };
@@ -1084,16 +1133,10 @@ export function useEditorOrchestrator({
                         }
                         case "adopt_metadata_keep_edits": {
                             adoptAnchors();
-                            console.warn(
-                                "[Orchestrator] Cold-start eager edits: adopted remote metadata anchors only; user text kept dirty."
-                            );
                             break;
                         }
                         case "keep_local":
                         default:
-                            console.warn(
-                                `[Orchestrator] Remote update retained locally during initial load (reason: ${decision.reason}). Optimistic locking will surface a conflict if required.`
-                            );
                             break;
                     }
                 }
@@ -1136,7 +1179,7 @@ export function useEditorOrchestrator({
                 if (pendingRemoteUpdateRef.current) {
                     const pending = pendingRemoteUpdateRef.current;
                     pendingRemoteUpdateRef.current = null;
-                    conflictHook.handleRemoteUpdate(pending);
+                    void conflictHook.handleRemoteUpdate(pending);
                 }
             }
         }
@@ -1163,6 +1206,7 @@ export function useEditorOrchestrator({
                 setIsUnlockModalOpen(true);
                 setHydration("vault_locked");
                 editorContentRef.current = "";
+                setContent("");
                 if (adapterRef.current) {
                     runProgrammaticUpdate(() => adapterRef.current?.setValue(""));
                     adapterRef.current.setEditable(false);
@@ -1174,11 +1218,16 @@ export function useEditorOrchestrator({
         };
     }, [runProgrammaticUpdate]);
 
-
     // Navigation & Unload Guard
     useEffect(() => {
         const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-            if (autosave.isDirty || aiStream.isCommitting || isSaving || aiStream.status === "preview_ready") {
+            if (
+                autosave.isDirty ||
+                isSaving ||
+                aiStream.status === "running_graph" ||
+                aiStream.status === "streaming_hunks" ||
+                aiStream.status === "preview_ready"
+            ) {
                 e.preventDefault();
                 e.returnValue = "لديك تعديلات غير محفوظة، هل أنت متأكد من مغادرة الصفحة؟";
                 return e.returnValue;
@@ -1189,7 +1238,7 @@ export function useEditorOrchestrator({
         return () => {
             window.removeEventListener("beforeunload", handleBeforeUnload);
         };
-    }, [autosave.isDirty, aiStream.isCommitting, isSaving, aiStream.status]);
+    }, [autosave.isDirty, isSaving, aiStream.status]);
 
     // Tab visibility & focus auto-healing for local IndexedDB durability
     useEffect(() => {
@@ -1201,18 +1250,19 @@ export function useEditorOrchestrator({
                 syncHookRef.current?.isInitialized &&
                 adapterRef.current
             ) {
-                // Synchronously consume flag before await to eliminate dual-event burst race conditions (visibilitychange + focus)
                 pendingLocalSyncRef.current = false;
-                console.log("[Orchestrator] Tab became active; retrying pending local IndexedDB persistence...");
                 try {
                     if (isEncryptedRef.current) {
                         if (!sessionKeyStore.isVaultUnlocked()) {
-                            console.warn("[Orchestrator] Vault is locked during wakeup; deferring local persistence.");
                             pendingLocalSyncRef.current = true;
                             return;
                         }
                         const uid = await resolveEffectiveUserId();
-                        const outbound = await SyncCryptoGateway.encryptOutbound(fileId, adapterRef.current.getValue(), uid);
+                        const outbound = await SyncCryptoGateway.encryptOutbound(
+                            fileId,
+                            adapterRef.current.getValue(),
+                            uid
+                        );
                         await syncHookRef.current.saveLocal({
                             id: fileId,
                             content: outbound.ciphertextBase64,
@@ -1222,6 +1272,7 @@ export function useEditorOrchestrator({
                             isDirty: isDirtyRef.current,
                             isEncrypted: true,
                             encryptionMetadata: outbound.encryptionMetadata,
+                            localRevision: localRevisionRef.current,
                         });
                     } else {
                         await syncHookRef.current.saveLocal({
@@ -1231,12 +1282,10 @@ export function useEditorOrchestrator({
                             version: fileVersionRef.current,
                             etag: fileEtagRef.current || "",
                             isDirty: isDirtyRef.current,
+                            localRevision: localRevisionRef.current,
                         });
                     }
-                    console.log("[Orchestrator] Pending local IndexedDB persistence recovered successfully on wakeup.");
-                } catch (err) {
-                    console.error("[Orchestrator] Wakeup retry of local IndexedDB persistence failed:", err);
-                    // Revert flag on failure so subsequent wakeup or focus can retry
+                } catch {
                     pendingLocalSyncRef.current = true;
                 }
             }
@@ -1250,32 +1299,80 @@ export function useEditorOrchestrator({
         };
     }, [fileId, title, resolveEffectiveUserId]);
 
-    // AI Operation Trigger
-    const startAIOperation = useCallback(
-        async (operation: AIOperationType) => {
-            if (!adapterRef.current) return;
-
-            // Zero-Knowledge AI Gatekeeper: block AI operations on encrypted files if user has not opted-in
+    /**
+     * Initiates an autonomous architectural agent session (`POST /api/agent/stream`).
+     */
+    const startAgentSession = useCallback(
+        async (prompt: string, targetFileIds?: string[]) => {
             if (isEncryptedRef.current && !allowAIOnEncryptedFilesRef.current) {
                 console.warn("[Orchestrator] AI operations are prohibited on encrypted files by vault privacy policy");
+                setError("VAULT_AI_ACCESS_DENIED: AI operations are disabled on encrypted files by vault privacy policy.");
                 return;
             }
 
-            // Invariant: cancel any pending auto-save before launching AI stream
+            if (isEncryptedRef.current && !sessionKeyStore.isVaultUnlocked()) {
+                setIsVaultLocked(true);
+                setIsUnlockModalOpen(true);
+                setError("VAULT_LOCKED: Unlock the vault before running AI operations on encrypted files.");
+                return;
+            }
+
             autosave.cancelAutosave();
 
-            await aiStream.startStream({
-                editor: adapterRef.current,
-                operation,
+            await aiStream.startAgentSession({
+                prompt,
+                targetFileIds: targetFileIds && targetFileIds.length > 0 ? targetFileIds : [fileId],
                 fileId,
+                projectId: projectId || fileId,
+                editor: adapterRef.current,
                 expectedVersion: fileVersionRef.current,
                 originalEtag: fileEtagRef.current,
                 editorGeneration: editorGenerationRef.current,
+                isEncrypted: isEncryptedRef.current,
+                allowAIOnEncryptedFiles: allowAIOnEncryptedFilesRef.current,
             });
         },
-        [aiStream, fileId, autosave]
+        [aiStream, autosave, fileId, projectId]
     );
 
+    /**
+     * Resumes a suspended HITL agent session (`awaiting_hitl`) with user clarification answers.
+     */
+    const resumeAgentInterrupt = useCallback(
+        async (response: ClarificationResponse) => {
+            await aiStream.resumeAgentInterrupt(response);
+        },
+        [aiStream]
+    );
+
+    const startAIOperation = useCallback(
+        async (promptOrOperation: string) => {
+            await startAgentSession(promptOrOperation, [fileId]);
+        },
+        [fileId, startAgentSession]
+    );
+
+    const acceptGhostHunk = useCallback(
+        (hunkId: string) => {
+            aiStream.acceptGhostHunk(hunkId);
+        },
+        [aiStream]
+    );
+
+    const rejectGhostHunk = useCallback(
+        (hunkId: string) => {
+            aiStream.rejectGhostHunk(hunkId);
+        },
+        [aiStream]
+    );
+
+    const acceptAllGhostHunks = useCallback(() => {
+        aiStream.acceptAllGhostHunks();
+    }, [aiStream]);
+
+    const rejectAllGhostHunks = useCallback(() => {
+        aiStream.rejectAllGhostHunks();
+    }, [aiStream]);
 
     // Title Change
     const handleTitleChange = useCallback(
@@ -1296,20 +1393,37 @@ export function useEditorOrchestrator({
 
     return {
         title,
+        content,
         setTitle,
         handleTitleChange,
         handleDeleteFile,
 
         aiStatus: aiStream.status,
+        aiStreamStatus: aiStream.status,
+        aiError: aiStream.error,
+        agentGraphStage: aiStream.agentGraphStage,
+        activeQuestionQueue: aiStream.activeQuestionQueue,
+        masterDecisionLedger: aiStream.masterDecisionLedger,
+        activeGhostHunks: aiStream.activeGhostHunks,
+        activeGhostHunksCount: aiStream.activeGhostHunksCount,
+        startAgentSession,
+        resumeAgentInterrupt,
+        stopAIOperation: aiStream.stopStream,
+        resetAI: aiStream.reset,
+        acceptGhostHunk,
+        rejectGhostHunk,
+        acceptAllGhostHunks,
+        rejectAllGhostHunks,
+
         previewText: aiStream.previewText,
         isStreaming: aiStream.isStreaming,
         isCommitting: aiStream.isCommitting,
-        isAIActive: aiStream.isLoading,
-        aiError: aiStream.error,
+        isAIActive:
+            aiStream.status === "running_graph" ||
+            aiStream.status === "streaming_hunks" ||
+            aiStream.status === "awaiting_hitl",
         isAIConflict: aiStream.isConflict,
         startAIOperation,
-        stopAIOperation: aiStream.stopStream,
-        resetAI: aiStream.reset,
         commitAIPreview: aiStream.commitPreview,
         rejectAIPreview: aiStream.rejectPreview,
         retryAIPreview: aiStream.retryPreview,
