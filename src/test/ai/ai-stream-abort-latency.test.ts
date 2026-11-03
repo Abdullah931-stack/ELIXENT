@@ -1,21 +1,19 @@
 /**
  * @vitest-environment jsdom
  *
- * AI Stream Zero-Latency Abort & Disconnect Settlement Test Suite
+ * AI Stream Zero-Latency Abort & Disconnect Settlement Test Suite (Phase 11 / Wave 11.1)
  *
- * Verifies TD-05 Canonical Resolution:
- * 1. stopStream() executes with zero client-side latency (< 15ms), immediately
+ * Verifies TD-05 & Wave 11.1 Canonical Resolution:
+ * 1. stopStream() executes with zero client-side latency (< 50ms), immediately
  *    aborting the active session without awaiting any network settlement round-trip.
- * 2. Editor ghost preview is dismantled instantly upon stop.
- * 3. In /api/ai/stream route handler:
- *    - Post-TTFT client disconnect (tokens were streamed): autonomously commits quota (commitAIReservation).
- *    - Pre-TTFT client disconnect (before any tokens were produced): refunds quota (refundAIReservation).
- *    - Mid-stream system failure: refunds quota.
+ * 2. Editor multi-hunk ghost preview is dismantled instantly upon stop.
+ * 3. Client hook never invokes client-side financial refund/commit RPCs on stop.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import type { EditorAdapter } from "@/components/editor/markdown/types";
+import type { StreamHandlerOptions } from "@/lib/ai/stream-handler";
 
 const mockCommitAIReservation = vi.fn().mockResolvedValue({ committed: true });
 const mockRefundAIReservation = vi.fn().mockResolvedValue({ refunded: true });
@@ -26,22 +24,15 @@ vi.mock("@/server/actions/ai-ops", () => ({
     getAIReservationStatus: vi.fn(),
 }));
 
-vi.mock("@/server/actions/ai-commit", () => ({
-    commitAIFileOperation: vi.fn(),
-    refundAIReservation: (...args: unknown[]) => mockRefundAIReservation(...args),
-}));
-
-type ConsumeCallbacks = {
-    onMeta?: (meta: { sessionId: string; operationId: string }) => void;
-    onChunk?: (accumulated: string, latestChunk: string) => void;
-    onComplete?: (finalRawText: string) => void | Promise<void>;
-    onError?: (err: Error) => void;
-};
-
-const mockConsumeAIStream = vi.fn();
-vi.mock("@/lib/ai/stream-handler", () => ({
-    consumeAIStream: (...args: unknown[]) => mockConsumeAIStream(...args),
-}));
+const mockConsumeAgentStream = vi.fn();
+vi.mock("@/lib/ai/stream-handler", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@/lib/ai/stream-handler")>();
+    return {
+        ...actual,
+        consumeAgentStream: (...args: unknown[]) => mockConsumeAgentStream(...args),
+        consumeAIStream: (...args: unknown[]) => mockConsumeAgentStream(...args),
+    };
+});
 
 import { useAIStream } from "@/hooks/use-ai-stream";
 
@@ -88,7 +79,7 @@ function createMockAdapter(initial = ""): EditorAdapter {
     };
 }
 
-describe("TD-05: Zero-Latency stopStream() & Disconnect Settlement", () => {
+describe("TD-05 & Wave 11.1: Zero-Latency stopStream() & Disconnect Settlement", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockCommitAIReservation.mockResolvedValue({ committed: true });
@@ -96,7 +87,6 @@ describe("TD-05: Zero-Latency stopStream() & Disconnect Settlement", () => {
     });
 
     it("executes stopStream immediately (0ms blocking wait) and updates status to aborted", async () => {
-        // Simulate a slow network where commitAIReservation takes 500ms to resolve
         let commitResolved = false;
         mockCommitAIReservation.mockImplementationOnce(() => {
             return new Promise((resolve) => {
@@ -107,10 +97,28 @@ describe("TD-05: Zero-Latency stopStream() & Disconnect Settlement", () => {
             });
         });
 
-        // Active streaming session that yields meta + first chunk
-        mockConsumeAIStream.mockImplementation(async (options: ConsumeCallbacks) => {
-            options.onMeta?.({ sessionId: "sess_latency_1", operationId: "op_latency_1" });
-            options.onChunk?.("Generated start... ", "Generated start... ");
+        mockConsumeAgentStream.mockImplementation(async (options: StreamHandlerOptions) => {
+            options.onStart?.({
+                type: "start",
+                sessionId: "sess_latency_1",
+                threadId: "thread_latency_1",
+                operationId: "op_latency_1",
+            });
+            options.onUpdate?.({
+                type: "update",
+                chunk: {
+                    stage: "document_writer_node",
+                    hunks: [
+                        {
+                            hunkId: "hunk_latency_1",
+                            headingSlug: "intro",
+                            from: 0,
+                            to: 10,
+                            replacementText: "Generated start... ",
+                        },
+                    ],
+                },
+            });
         });
 
         const editor = createMockAdapter("Initial document text.");
@@ -121,7 +129,7 @@ describe("TD-05: Zero-Latency stopStream() & Disconnect Settlement", () => {
         await act(async () => {
             await result.current.startStream({
                 editor,
-                operation: "improve",
+                prompt: "Improve initial document text",
                 fileId: "file_test_latency",
                 expectedVersion: 1,
                 originalEtag: "etag_latency_1",
@@ -129,30 +137,45 @@ describe("TD-05: Zero-Latency stopStream() & Disconnect Settlement", () => {
             });
         });
 
-        expect(result.current.status).toBe("streaming");
+        expect(result.current.status).toBe("streaming_hunks");
 
-        // Measure execution time of stopStream()
         const startTimestamp = performance.now();
-        await act(async () => {
-            await result.current.stopStream();
+        act(() => {
+            result.current.stopStream();
         });
         const elapsedMs = performance.now() - startTimestamp;
 
-        // In TD-05 resolution, stopStream() MUST NOT await any network round-trip.
-        // It must finish immediately (< 50ms in test environment).
         expect(elapsedMs).toBeLessThan(50);
         expect(result.current.status).toBe("aborted");
         expect(commitResolved).toBe(false);
 
-        // Ghost decoration must be cleared immediately
         expect(editor.clearStreamingGhost).toHaveBeenCalled();
         expect(mockRefundAIReservation).not.toHaveBeenCalled();
     });
 
     it("never refunds on user stopStream even if server disconnect races", async () => {
-        mockConsumeAIStream.mockImplementation(async (options: ConsumeCallbacks) => {
-            options.onMeta?.({ sessionId: "sess_2", operationId: "op_2" });
-            options.onChunk?.("Some words", "Some words");
+        mockConsumeAgentStream.mockImplementation(async (options: StreamHandlerOptions) => {
+            options.onStart?.({
+                type: "start",
+                sessionId: "sess_2",
+                threadId: "thread_2",
+                operationId: "op_2",
+            });
+            options.onUpdate?.({
+                type: "update",
+                chunk: {
+                    stage: "document_writer_node",
+                    hunks: [
+                        {
+                            hunkId: "hunk_2",
+                            headingSlug: "body",
+                            from: 0,
+                            to: 7,
+                            replacementText: "Some words",
+                        },
+                    ],
+                },
+            });
         });
 
         const editor = createMockAdapter("Content");
@@ -163,7 +186,7 @@ describe("TD-05: Zero-Latency stopStream() & Disconnect Settlement", () => {
         await act(async () => {
             await result.current.startStream({
                 editor,
-                operation: "correct",
+                prompt: "Correct grammar in content",
                 fileId: "file_2",
                 expectedVersion: 1,
                 originalEtag: "etag_2",
@@ -171,8 +194,8 @@ describe("TD-05: Zero-Latency stopStream() & Disconnect Settlement", () => {
             });
         });
 
-        await act(async () => {
-            await result.current.stopStream();
+        act(() => {
+            result.current.stopStream();
         });
 
         expect(mockRefundAIReservation).not.toHaveBeenCalled();

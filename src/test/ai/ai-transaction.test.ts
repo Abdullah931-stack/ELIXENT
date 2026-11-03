@@ -1,20 +1,18 @@
 /**
  * @vitest-environment jsdom
  *
- * M4/M5 / Gate G8 / Phase 8 / Phase 6: AI operation content-safety & UI streaming tests with CodeMirror 6.
+ * M4/M5 / Gate G8 / Phase 11: AI operation content-safety & Multi-Hunk Ghost tests with CodeMirror 6.
  *
  * Guarantees that an AI operation can NEVER corrupt or leave the document in a half-modified state:
- *   1. Streaming isolation: during active streaming, chunks update an
+ *   1. Streaming isolation: during active streaming, hunks update an
  *      ephemeral CodeMirror 6 StateField decoration without mutating the underlying
  *      document tree (docChanged is false, auto-save does NOT fire).
- *   2. Partial selection: only the target sub-range [from, to] is replaced;
+ *   2. Partial selection / section range: only the target sub-range [from, to] is replaced;
  *      preceding and subsequent paragraphs remain completely intact.
- *   3. On success: the change is applied as ONE undoable transaction,
- *      and a single Ctrl+Z restores the full original content.
- *   4. On failure / abort: the ephemeral decoration is cleared and the
+ *   3. On acceptance: each hunk or batch acceptance is applied as an isolated undoable
+ *      transaction (`isolateHistory.of("full")`), and Ctrl+Z restores the original content.
+ *   4. On stream failure / abort: the ephemeral ghost session is cleared and the
  *      document remains in its pristine pre-operation state.
- *   5. Server confirmation invariant: Local editor transaction
- *      is executed ONLY after server commit confirms success.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
@@ -23,30 +21,31 @@ import { EditorView } from "@codemirror/view";
 import { history } from "@codemirror/commands";
 import { CodeMirrorEditorAdapter } from "@/components/editor/markdown/editor-adapter";
 import { codeMirrorStreamingGhostField } from "@/components/editor/markdown/streaming-ghost";
+import type { StreamHandlerOptions } from "@/lib/ai/stream-handler";
 import { useAIStream } from "@/hooks/use-ai-stream";
 
-const mockCommitAIFileOperation = vi.fn();
-vi.mock("@/server/actions/ai-commit", () => ({
-    commitAIFileOperation: (...args: unknown[]) => mockCommitAIFileOperation(...args),
-}));
-
-const mockConsumeAIStream = vi.fn();
-vi.mock("@/lib/ai/stream-handler", () => ({
-    consumeAIStream: (...args: unknown[]) => mockConsumeAIStream(...args),
-}));
+const mockConsumeAgentStream = vi.fn();
+vi.mock("@/lib/ai/stream-handler", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@/lib/ai/stream-handler")>();
+    return {
+        ...actual,
+        consumeAgentStream: (...args: unknown[]) => mockConsumeAgentStream(...args),
+        consumeAIStream: (...args: unknown[]) => mockConsumeAgentStream(...args),
+    };
+});
 
 const initialDoc = "Hello world, this is a test document with multiple paragraphs.\n\nSecond paragraph here.";
 
-describe("Ephemeral Streaming Ghost Extension — Invariant Guarantees (CodeMirror 6)", () => {
+describe("Ephemeral Multi-Hunk Streaming Ghost Extension — Invariant Guarantees (CodeMirror 6)", () => {
     let adapter: CodeMirrorEditorAdapter;
     let view: EditorView;
     let parent: HTMLDivElement;
 
     beforeEach(() => {
-        if (typeof Range.prototype.getClientRects !== 'function') {
+        if (typeof Range.prototype.getClientRects !== "function") {
             Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
         }
-        if (typeof Range.prototype.getBoundingClientRect !== 'function') {
+        if (typeof Range.prototype.getBoundingClientRect !== "function") {
             Range.prototype.getBoundingClientRect = () => ({
                 top: 0,
                 bottom: 0,
@@ -65,10 +64,7 @@ describe("Ephemeral Streaming Ghost Extension — Invariant Guarantees (CodeMirr
 
         const state = EditorState.create({
             doc: initialDoc,
-            extensions: [
-                history(),
-                codeMirrorStreamingGhostField,
-            ],
+            extensions: [history(), codeMirrorStreamingGhostField],
         });
 
         view = new EditorView({
@@ -88,10 +84,9 @@ describe("Ephemeral Streaming Ghost Extension — Invariant Guarantees (CodeMirr
         }
     });
 
-    it("should start and update streaming ghost with real-time text chunks without mutating doc or triggering auto-save", () => {
+    it("starts and updates streaming ghost with real-time text chunks without mutating doc or triggering auto-save", () => {
         const initialText = adapter.getValue();
 
-        // 1. Start streaming ghost at range [0, 20]
         adapter.startStreamingGhost({
             from: 0,
             to: 20,
@@ -99,26 +94,19 @@ describe("Ephemeral Streaming Ghost Extension — Invariant Guarantees (CodeMirr
             operation: "improve",
         });
 
-        // Verify field state is active
         const state1 = view.state.field(codeMirrorStreamingGhostField);
         expect(state1.active).toBe(true);
         expect(state1.from).toBe(0);
         expect(state1.to).toBe(20);
-
-        // Crucial: document text must NOT have changed
         expect(adapter.getValue()).toBe(initialText);
 
-        // 2. Stream several chunks progressively
         adapter.updateStreamingGhost("Generating paragraph 1...", true);
         adapter.updateStreamingGhost("Generating paragraph 1... and paragraph 2.", true);
 
         const state2 = view.state.field(codeMirrorStreamingGhostField);
         expect(state2.text).toBe("Generating paragraph 1... and paragraph 2.");
-
-        // Document still completely pristine
         expect(adapter.getValue()).toBe(initialText);
 
-        // 3. Clear streaming ghost
         adapter.clearStreamingGhost();
         const state3 = view.state.field(codeMirrorStreamingGhostField);
         expect(state3.active).toBe(false);
@@ -138,14 +126,10 @@ describe("Ephemeral Streaming Ghost Extension — Invariant Guarantees (CodeMirr
         adapter.clearStreamingGhost();
         adapter.replaceRange(0, adapter.getCharCount(), aiResult);
 
-        // Doc changed: AI result is present, original wording replaced.
         expect(adapter.getValue()).toBe(aiResult);
-
-        // Streaming ghost is deactivated
         const ghostState = view.state.field(codeMirrorStreamingGhostField);
         expect(ghostState.active).toBe(false);
 
-        // Single undo restores the FULL original document exactly.
         const undoSuccess = adapter.undo();
         expect(undoSuccess).toBe(true);
         expect(adapter.getValue()).toBe(before);
@@ -160,19 +144,14 @@ describe("Ephemeral Streaming Ghost Extension — Invariant Guarantees (CodeMirr
 
         const before = adapter.getValue();
 
-        // Start streaming ghost on target range
         adapter.startStreamingGhost({ from, to, text: "an edited phrase" });
-
-        // Commit transaction
         adapter.clearStreamingGhost();
         adapter.replaceRange(from, to, "an edited phrase");
 
-        // Surrounding context preserved.
         expect(adapter.getValue()).toContain("Hello world,");
         expect(adapter.getValue()).toContain("Second paragraph here.");
         expect(adapter.getValue()).not.toContain("test document");
 
-        // Single undo restores everything including the unedited phrase.
         adapter.undo();
         expect(adapter.getValue()).toBe(before);
     });
@@ -180,37 +159,44 @@ describe("Ephemeral Streaming Ghost Extension — Invariant Guarantees (CodeMirr
     it("clearing streaming ghost on abort/error leaves pristine document untouched", () => {
         const before = adapter.getValue();
 
-        // Simulate streaming in progress
         adapter.startStreamingGhost({
             from: 0,
             to: 15,
             text: "Partial chunk before network drop...",
         });
 
-        // Simulate user abort / network drop -> clear ghost
         adapter.clearStreamingGhost();
 
         expect(view.state.field(codeMirrorStreamingGhostField).active).toBe(false);
         expect(adapter.getValue()).toBe(before);
     });
 
-    it("does not apply local editor transaction if server commit fails (Server-First Invariant)", async () => {
+    it("clears ghost preview and leaves document pristine when stream fails mid-session", async () => {
         const before = adapter.getValue();
 
-        mockConsumeAIStream.mockImplementationOnce(async (options: {
-            onMeta?: (meta: { sessionId: string; operationId: string }) => void;
-            onChunk?: (acc: string, chunk: string) => void;
-            onComplete?: (text: string) => Promise<void> | void;
-        }) => {
-            options.onMeta?.({ sessionId: "test-session-fail", operationId: "test-op-fail" });
-            options.onChunk?.("Generated text awaiting commit", " text");
-            await options.onComplete?.("Generated text awaiting commit");
-        });
-
-        mockCommitAIFileOperation.mockResolvedValueOnce({
-            success: false,
-            status: "error",
-            error: "Commit rejected by DB",
+        mockConsumeAgentStream.mockImplementationOnce(async (options: StreamHandlerOptions) => {
+            options.onStart?.({
+                type: "start",
+                sessionId: "test-session-fail",
+                threadId: "thread-fail",
+                operationId: "test-op-fail",
+            });
+            options.onUpdate?.({
+                type: "update",
+                chunk: {
+                    stage: "document_writer_node",
+                    hunks: [
+                        {
+                            hunkId: "hunk-fail-1",
+                            headingSlug: "intro",
+                            from: 0,
+                            to: 11,
+                            replacementText: "Generated text before stream drop",
+                        },
+                    ],
+                },
+            });
+            options.onError(new Error("STREAM_EXECUTION_ERROR: Upstream node failed"));
         });
 
         const { result } = renderHook(() =>
@@ -219,12 +205,10 @@ describe("Ephemeral Streaming Ghost Extension — Invariant Guarantees (CodeMirr
             })
         );
 
-        adapter.setSelection(0, 10);
-
         await act(async () => {
             await result.current.startStream({
                 editor: adapter,
-                operation: "improve",
+                prompt: "Rewrite intro",
                 fileId: "file-test-fail-1",
                 expectedVersion: 1,
                 originalEtag: "etag-v1",
@@ -232,53 +216,56 @@ describe("Ephemeral Streaming Ghost Extension — Invariant Guarantees (CodeMirr
             });
         });
 
-        await waitFor(() => expect(result.current.status).toBe("preview_ready"));
-        expect(view.state.field(codeMirrorStreamingGhostField).active).toBe(true);
-
-        await act(async () => {
-            await result.current.commitPreview();
-        });
-
-        // Verification: ghost preview cleared and pristine editor content retained
+        await waitFor(() => expect(result.current.status).toBe("failed"));
         expect(view.state.field(codeMirrorStreamingGhostField).active).toBe(false);
         expect(adapter.getValue()).toBe(before);
-        expect(result.current.status).toBe("failed");
-        expect(result.current.error).toContain("Commit rejected by DB");
+        expect(result.current.error).toContain("STREAM_EXECUTION_ERROR");
     });
 
-    it("clears ghost preview and leaves document pristine when server commit returns conflict (412 Precondition Failed)", async () => {
+    it("accepting a ghost hunk via useAIStream applies an isolated undoable transaction", async () => {
         const before = adapter.getValue();
 
-        mockConsumeAIStream.mockImplementationOnce(async (options: {
-            onMeta?: (meta: { sessionId: string; operationId: string }) => void;
-            onChunk?: (acc: string, chunk: string) => void;
-            onComplete?: (text: string) => Promise<void> | void;
-        }) => {
-            options.onMeta?.({ sessionId: "test-session-conflict", operationId: "test-op-conflict" });
-            options.onChunk?.("Conflicting generated text", " text");
-            await options.onComplete?.("Conflicting generated text");
-        });
-
-        mockCommitAIFileOperation.mockResolvedValueOnce({
-            success: false,
-            status: "conflict",
-            error: "Document version mismatch (412 Conflict)",
-            serverVersion: { version: 2, etag: "etag-v2" },
+        mockConsumeAgentStream.mockImplementationOnce(async (options: StreamHandlerOptions) => {
+            options.onStart?.({
+                type: "start",
+                sessionId: "test-session-accept",
+                threadId: "thread-accept",
+                operationId: "test-op-accept",
+            });
+            options.onUpdate?.({
+                type: "update",
+                chunk: {
+                    stage: "document_writer_node",
+                    hunks: [
+                        {
+                            hunkId: "hunk-accept-1",
+                            headingSlug: "intro",
+                            from: 0,
+                            to: 11,
+                            replacementText: "Greetings universe",
+                        },
+                    ],
+                },
+            });
+            options.onDone?.({
+                type: "done",
+                threadId: "thread-accept",
+                operationId: "test-op-accept",
+            });
         });
 
         const { result } = renderHook(() =>
             useAIStream({
+                editor: adapter,
                 onProgrammaticTransaction: (fn) => fn(),
             })
         );
 
-        adapter.setSelection(0, 10);
-
         await act(async () => {
             await result.current.startStream({
                 editor: adapter,
-                operation: "improve",
-                fileId: "file-test-conflict-1",
+                prompt: "Upgrade greeting",
+                fileId: "file-test-accept-1",
                 expectedVersion: 1,
                 originalEtag: "etag-v1",
                 editorGeneration: 1,
@@ -288,12 +275,16 @@ describe("Ephemeral Streaming Ghost Extension — Invariant Guarantees (CodeMirr
         await waitFor(() => expect(result.current.status).toBe("preview_ready"));
         expect(view.state.field(codeMirrorStreamingGhostField).active).toBe(true);
 
-        await act(async () => {
-            await result.current.commitPreview();
+        act(() => {
+            result.current.acceptGhostHunk("hunk-accept-1");
         });
 
         expect(view.state.field(codeMirrorStreamingGhostField).active).toBe(false);
+        expect(adapter.getValue()).toContain("Greetings universe");
+        expect(result.current.status).toBe("completed");
+
+        // Single undo restores the original pre-hunk content
+        expect(adapter.undo()).toBe(true);
         expect(adapter.getValue()).toBe(before);
-        expect(result.current.status).toBe("conflict");
     });
 });

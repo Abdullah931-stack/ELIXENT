@@ -18,7 +18,6 @@ import { EditorAdapter } from "@/components/editor/markdown/types";
 import { useEditorOrchestrator } from "@/hooks/use-editor-orchestrator";
 import { sessionKeyStore } from "@/lib/sync/session-key-store";
 import * as fileOps from "@/server/actions/file-ops";
-import { commitAIFileOperation } from "@/server/actions/ai-commit";
 
 // Mock server actions
 vi.mock("@/server/actions/file-ops", () => ({
@@ -39,18 +38,18 @@ vi.mock("@/server/actions/ai-ops", () => ({
     getAIReservationStatus: vi.fn(),
 }));
 
-// Manual-callback NDJSON consumer mock
-type ConsumeCallbacks = {
-    onMeta?: (meta: { sessionId: string; operationId: string }) => void;
-    onChunk?: (accumulated: string, latestChunk: string) => void;
-    onComplete?: (finalRawText: string) => void | Promise<void>;
-    onError?: (err: Error) => void;
-};
-const mockConsumeAIStream = vi.fn();
-vi.mock("@/lib/ai/stream-handler", () => ({
-    consumeAIStream: (...args: unknown[]) => mockConsumeAIStream(...args),
-}));
-let capturedCallbacks: ConsumeCallbacks;
+// Manual-callback Agent SSE consumer mock
+import type { StreamHandlerOptions } from "@/lib/ai/stream-handler";
+const mockConsumeAgentStream = vi.fn();
+vi.mock("@/lib/ai/stream-handler", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@/lib/ai/stream-handler")>();
+    return {
+        ...actual,
+        consumeAgentStream: (...args: unknown[]) => mockConsumeAgentStream(...args),
+        consumeAIStream: (...args: unknown[]) => mockConsumeAgentStream(...args),
+    };
+});
+let capturedCallbacks: StreamHandlerOptions;
 
 const mockLocalDb: Record<string, Record<string, unknown>> = {};
 let capturedRemoteUpdateCallback: ((event: any) => void) | null = null;
@@ -203,12 +202,31 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
 
         adapter = createMockAdapter("Original document content");
 
-        capturedCallbacks = {} as ConsumeCallbacks;
-        mockConsumeAIStream.mockImplementation(async (options: ConsumeCallbacks) => {
+        capturedCallbacks = {} as StreamHandlerOptions;
+        mockConsumeAgentStream.mockImplementation(async (options: StreamHandlerOptions) => {
             capturedCallbacks = options;
-            options.onMeta?.({ sessionId: "s1", operationId: "op1" });
-            options.onChunk?.("Partial ", "Partial ");
-            // Stream intentionally left open; individual tests complete it explicitly.
+            options.onStart?.({
+                type: "start",
+                sessionId: "s1",
+                threadId: "thread-1",
+                operationId: "op1",
+            });
+            options.onUpdate?.({
+                type: "update",
+                chunk: {
+                    stage: "document_writer_node",
+                    hunks: [
+                        {
+                            hunkId: "hunk-1",
+                            headingSlug: "overview",
+                            from: 0,
+                            to: 8,
+                            replacementText: "Partial ",
+                        },
+                    ],
+                },
+            });
+            // Stream intentionally left open; individual tests complete it explicitly via capturedCallbacks.onDone.
         });
     });
 
@@ -479,7 +497,7 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
         expect(result.current.isDirty).toBe(true);
     });
 
-    it("suspends autosave while a completed preview waits for an explicit decision (preview_ready)", async () => {
+    it("suspends autosave during active streaming and unlocks autosave in preview_ready for incremental hunk sync", async () => {
         const { result } = renderHook(() =>
             useEditorOrchestrator({ fileId, userId, adapter })
         );
@@ -487,22 +505,68 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
         await waitFor(() => expect(result.current.title).toBe("Test Note"));
 
         await act(async () => {
-            await result.current.startAIOperation("improve");
+            await result.current.startAIOperation("Improve document overview");
         });
-        await act(async () => {
-            await capturedCallbacks.onComplete?.("Improved AI output text");
-        });
-        await waitFor(() => expect(result.current.aiStatus).toBe("preview_ready"));
+        await waitFor(() => expect(result.current.aiStatus).toBe("streaming_hunks"));
+        // Write lock MUST suspend autosave while streaming hunks
         expect(result.current.canAutoSave()).toBe(false);
 
-        // Explicit decision settles the session and releases autosave
-        await act(async () => {
-            await result.current.rejectAIPreview();
+        act(() => {
+            capturedCallbacks.onDone?.({
+                type: "done",
+                threadId: "thread-1",
+                operationId: "op1",
+            });
         });
-        await waitFor(() => expect(result.current.aiStatus).toBe("aborted"));
+        await waitFor(() => expect(result.current.aiStatus).toBe("preview_ready"));
+        // In Wave 11.1, preview_ready unlocks autosave so incremental hunk acceptances coalesce cleanly
+        expect(result.current.canAutoSave()).toBe(true);
+
+        // Explicit rejection settles the session back to idle and clears ghost hunks
+        act(() => {
+            result.current.rejectAIPreview();
+        });
+        await waitFor(() => expect(result.current.aiStatus).toBe("idle"));
     });
 
-    it("blocks writes during ai_committing, warns on unload, then restores a single write path", async () => {
+    it("coalesces rapid multi-hunk acceptances into local IDB revisions and a single debounced updateFileContent call (412-free sync)", async () => {
+        mockConsumeAgentStream.mockImplementationOnce(async (options: StreamHandlerOptions) => {
+            capturedCallbacks = options;
+            options.onStart?.({
+                type: "start",
+                sessionId: "s-multi",
+                threadId: "thread-multi",
+                operationId: "op-multi",
+            });
+            options.onUpdate?.({
+                type: "update",
+                chunk: {
+                    stage: "document_writer_node",
+                    hunks: [
+                        {
+                            hunkId: "hunk-a",
+                            headingSlug: "part-a",
+                            from: 0,
+                            to: 8,
+                            replacementText: "Enhanced",
+                        },
+                        {
+                            hunkId: "hunk-b",
+                            headingSlug: "part-b",
+                            from: 18,
+                            to: 25,
+                            replacementText: "payload",
+                        },
+                    ],
+                },
+            });
+            options.onDone?.({
+                type: "done",
+                threadId: "thread-multi",
+                operationId: "op-multi",
+            });
+        });
+
         const { result } = renderHook(() =>
             useEditorOrchestrator({ fileId, userId, adapter })
         );
@@ -510,51 +574,49 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
         await waitFor(() => expect(result.current.title).toBe("Test Note"));
 
         await act(async () => {
-            await result.current.startAIOperation("improve");
-        });
-        await act(async () => {
-            await capturedCallbacks.onComplete?.("Commit candidate output");
+            await result.current.startAIOperation("Refine two sections");
         });
         await waitFor(() => expect(result.current.aiStatus).toBe("preview_ready"));
+        expect(result.current.activeGhostHunks).toHaveLength(2);
 
-        // Hang the server atomic commit to hold the session in committing state
-        let releaseCommit!: (value: unknown) => void;
-        const commitGate = new Promise((resolve) => {
-            releaseCommit = resolve;
+        vi.mocked(fileOps.updateFileContent).mockClear();
+        const baselineRevision = Number(mockLocalDb[fileId]?.localRevision ?? 0);
+
+        // Rapidly accept both hunks back-to-back within the same debounce window
+        act(() => {
+            result.current.acceptGhostHunk("hunk-a");
+            result.current.acceptGhostHunk("hunk-b");
         });
-        vi.mocked(commitAIFileOperation).mockImplementationOnce(
-            () => commitGate as unknown as ReturnType<typeof commitAIFileOperation>
+
+        expect(result.current.aiStatus).toBe("completed");
+        expect(result.current.isDirty).toBe(true);
+
+        // Local IndexedDB must immediately reflect the dirty state and monotonically incremented localRevision
+        await waitFor(() => {
+            expect(mockLocalDb[fileId]?.isDirty).toBe(true);
+            expect(Number(mockLocalDb[fileId]?.localRevision)).toBeGreaterThanOrEqual(baselineRevision + 2);
+        });
+
+        // Server write must NOT have fired yet before the debounce window elapses
+        expect(fileOps.updateFileContent).not.toHaveBeenCalled();
+
+        // Wait for coalesced debounced auto-save (1000ms) -> single authoritative server call
+        await waitFor(
+            () => {
+                expect(fileOps.updateFileContent).toHaveBeenCalledTimes(1);
+                expect(fileOps.updateFileContent).toHaveBeenCalledWith(
+                    fileId,
+                    "Enhanced document payload",
+                    { expectedVersion: 1, expectedETag: "etag-v1" }
+                );
+            },
+            { timeout: 3000 }
         );
 
-        let commitPromise: Promise<void> | null = null;
-        act(() => {
-            commitPromise = result.current.commitAIPreview();
-        });
-        await waitFor(() => expect(result.current.isCommitting).toBe(true));
-        expect(result.current.writeState).toBe("ai_committing");
-        expect(result.current.canAutoSave()).toBe(false);
-
-        // Navigation/unload guard MUST warn while a commit is in flight
-        const preventDefaultSpy = vi.spyOn(Event.prototype, "preventDefault");
-        act(() => {
-            window.dispatchEvent(new Event("beforeunload", { cancelable: true }));
-        });
-        expect(preventDefaultSpy).toHaveBeenCalled();
-        preventDefaultSpy.mockRestore();
-
-        // Release the commit: single authoritative completion
-        releaseCommit({
-            success: true,
-            status: "committed",
-            version: 3,
-            etag: "etag-v3",
-        });
-        await act(async () => {
-            await commitPromise;
-        });
         await waitFor(() => {
-            expect(result.current.serverVersion).toBe(3);
-            expect(result.current.serverEtag).toBe("etag-v3");
+            expect(result.current.serverVersion).toBe(2);
+            expect(result.current.serverEtag).toBe("etag-v2");
+            expect(result.current.isDirty).toBe(false);
         });
     });
 
@@ -594,10 +656,14 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
         await waitFor(() => expect(result.current.title).toBe("Test Note"));
 
         await act(async () => {
-            await result.current.startAIOperation("improve");
+            await result.current.startAIOperation("Improve document overview");
         });
-        await act(async () => {
-            await capturedCallbacks.onComplete?.("Undecided preview output");
+        act(() => {
+            capturedCallbacks.onDone?.({
+                type: "done",
+                threadId: "thread-1",
+                operationId: "op1",
+            });
         });
         await waitFor(() => expect(result.current.aiStatus).toBe("preview_ready"));
         expect(result.current.isDirty).toBe(false);
@@ -610,8 +676,8 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
         preventDefaultSpy.mockRestore();
 
         // After an explicit decision the guard releases navigation
-        await act(async () => {
-            await result.current.rejectAIPreview();
+        act(() => {
+            result.current.rejectAIPreview();
         });
         const afterDecisionSpy = vi.spyOn(Event.prototype, "preventDefault");
         act(() => {

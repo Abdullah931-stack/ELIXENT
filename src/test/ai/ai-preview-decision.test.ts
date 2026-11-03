@@ -1,71 +1,72 @@
 /**
  * @vitest-environment jsdom
  *
- * AI Preview Explicit Decision Model Tests
+ * AI Preview Explicit Decision & Multi-Hunk Ghost Model Tests (Phase 11 / Wave 11.1)
  *
- * Validates the preview_ready decision flow introduced by the explicit-decision
- * refactor of `useAIStream`:
- *
- * 1. Stream completion parks the sanitized output in `preview_ready` WITHOUT
- *    committing anything (no server commit, no document mutation).
- * 2. `rejectPreview()` keeps the document pristine and SETTLES the reservation
- *    as consumed (`commitAIReservation`) — it must NEVER refund it.
- * 3. `commitPreview()` performs the server-first atomic commit then applies a
- *    single atomic local transaction.
- * 4. `retryPreview()` settles the old reservation as consumed and starts a new
- *    stream (fresh reservation), never refunding either.
+ * Validates the preview_ready multi-hunk decision flow in `useAIStream`:
+ * 1. Stream completion parks proposed hunks in `preview_ready` WITHOUT mutating
+ *    the underlying document until the user explicitly accepts.
+ * 2. `rejectPreview()` / `rejectAllGhostHunks()` keeps the document pristine
+ *    and dismantles all ghost hunks without invoking any client-side financial RPC.
+ * 3. `commitPreview()` / `acceptAllGhostHunks()` applies one atomic local transaction
+ *    and notifies `onAllHunksAccepted` for coalesced debounced sync.
+ * 4. `retryPreview()` clears active hunks and starts a fresh agent stream session.
+ * 5. Dynamic coordinate remapping (`mapPos`) and granular collision eviction.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
-import { CodeMirrorEditorAdapter, createEditorAdapter } from '@/components/editor/markdown/editor-adapter';
+import {
+    CodeMirrorEditorAdapter,
+    createEditorAdapter,
+} from '@/components/editor/markdown/editor-adapter';
 import { createMarkdownExtensions } from '@/components/editor/markdown/markdown-extensions';
+import type { StreamHandlerOptions } from '@/lib/ai/stream-handler';
 import { useAIStream } from '@/hooks/use-ai-stream';
 
-// Mock server actions
 const mockCommitAIFileOperation = vi.fn();
 
 vi.mock('@/server/actions/ai-commit', () => ({
     commitAIFileOperation: (...args: unknown[]) => mockCommitAIFileOperation(...args),
 }));
 
-// Mock the NDJSON stream consumer — tests drive its callbacks manually.
-type ConsumeCallbacks = {
-    onMeta?: (meta: { sessionId: string; operationId: string }) => void;
-    onChunk?: (accumulated: string, latestChunk: string) => void;
-    onComplete?: (finalRawText: string) => void | Promise<void>;
-    onError?: (err: Error) => void;
-};
-const mockConsumeAIStream = vi.fn();
-vi.mock('@/lib/ai/stream-handler', () => ({
-    consumeAIStream: (...args: unknown[]) => mockConsumeAIStream(...args),
-}));
+const mockConsumeAgentStream = vi.fn();
+vi.mock('@/lib/ai/stream-handler', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/lib/ai/stream-handler')>();
+    return {
+        ...actual,
+        consumeAgentStream: (...args: unknown[]) => mockConsumeAgentStream(...args),
+        consumeAIStream: (...args: unknown[]) => mockConsumeAgentStream(...args),
+    };
+});
 
-describe('AI Preview Explicit Decision Model (preview_ready)', () => {
+describe('AI Preview Explicit Decision & Multi-Hunk Ghost Model (preview_ready)', () => {
     let editor: CodeMirrorEditorAdapter;
     let view: EditorView;
     let container: HTMLElement;
     const initialContent = 'The quick brown fox jumps over the lazy dog.';
 
-    const renderAIStream = () =>
+    const renderAIStream = (onAllHunksAccepted = vi.fn(), onHunkAccepted = vi.fn()) =>
         renderHook(() =>
             useAIStream({
-                onCommitSuccess: vi.fn(),
-                onConflict: vi.fn(),
+                onAllHunksAccepted,
+                onHunkAccepted,
                 onError: vi.fn(),
                 onProgrammaticTransaction: (fn) => fn(),
             })
         );
 
     const startDefaultStream = async (
-        result: { current: ReturnType<typeof useAIStream> }
+        result: { current: ReturnType<typeof useAIStream> },
+        targetEditor: CodeMirrorEditorAdapter = editor,
+        prompt = 'Improve the sentence clarity'
     ) => {
         await act(async () => {
             await result.current.startStream({
-                editor,
-                operation: 'improve',
+                editor: targetEditor,
+                prompt,
                 fileId: 'file-1',
                 expectedVersion: 1,
                 originalEtag: 'etag-v1',
@@ -94,11 +95,34 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
             });
         }
 
-        mockConsumeAIStream.mockImplementation(async (options: ConsumeCallbacks) => {
-            // Default successful stream: meta → chunk → done
-            options.onMeta?.({ sessionId: 's', operationId: 'op' });
-            options.onChunk?.('Better text', ' text');
-            await options.onComplete?.('Better text');
+        mockConsumeAgentStream.mockImplementation(async (options: StreamHandlerOptions) => {
+            options.onStart?.({
+                type: 'start',
+                sessionId: 's',
+                threadId: 'thread-1',
+                operationId: 'op',
+            });
+            options.onUpdate?.({
+                type: 'update',
+                chunk: {
+                    stage: 'document_writer_node',
+                    hunks: [
+                        {
+                            hunkId: 'hunk-1',
+                            headingSlug: 'overview',
+                            from: 0,
+                            to: initialContent.length,
+                            replacementText: 'Better text',
+                            operation: 'translate',
+                        },
+                    ],
+                },
+            });
+            options.onDone?.({
+                type: 'done',
+                threadId: 'thread-1',
+                operationId: 'op',
+            });
         });
 
         container = document.createElement('div');
@@ -119,15 +143,13 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
         await startDefaultStream(result);
         await waitFor(() => expect(result.current.status).toBe('preview_ready'));
 
-        // Nothing was committed anywhere
         expect(mockCommitAIFileOperation).not.toHaveBeenCalled();
-
-        // The document remains pristine; preview text is held for the decision
         expect(editor.getValue()).toBe(snapshotBefore);
         expect(result.current.previewText).toBe('Better text');
+        expect(result.current.activeGhostHunks).toHaveLength(1);
     });
 
-    it('rejectPreview settles the reservation as consumed and NEVER refunds it', async () => {
+    it('rejectPreview dismantles ghost hunks, keeps document untouched, and never triggers client financial RPCs', async () => {
         const snapshotBefore = editor.getValue();
         const { result } = renderAIStream();
 
@@ -138,79 +160,88 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
             result.current.rejectPreview();
         });
 
-        // Quota policy: user rejection leaves document untouched and triggers no client RPC
         expect(mockCommitAIFileOperation).not.toHaveBeenCalled();
-
-        // Ghost dismantled, document untouched, session released
         expect(editor.getValue()).toBe(snapshotBefore);
         expect(result.current.previewText).toBe('');
+        expect(result.current.activeGhostHunks).toHaveLength(0);
     });
 
-    it('commitPreview performs the server-first commit then applies one atomic local replace', async () => {
-        const { result } = renderAIStream();
+    it('commitPreview / acceptAllGhostHunks applies one atomic local replace and triggers onAllHunksAccepted', async () => {
+        const onAllHunksAccepted = vi.fn();
+        const { result } = renderAIStream(onAllHunksAccepted);
 
         await startDefaultStream(result);
         await waitFor(() => expect(result.current.status).toBe('preview_ready'));
-
-        mockCommitAIFileOperation.mockResolvedValueOnce({
-            success: true,
-            status: 'committed',
-            version: 2,
-            etag: 'etag-v2',
-            updatedAt: new Date().toISOString(),
-        });
 
         await act(async () => {
             await result.current.commitPreview();
         });
 
-        expect(mockCommitAIFileOperation).toHaveBeenCalledTimes(1);
+        expect(onAllHunksAccepted).toHaveBeenCalledTimes(1);
+        expect(onAllHunksAccepted).toHaveBeenCalledWith('Better text');
+        expect(mockCommitAIFileOperation).not.toHaveBeenCalled();
 
         expect(editor.getValue()).toContain('Better text');
-        expect(result.current.status).toBe('committed');
-        // The preview panel must disappear on acceptance (same as rejection)
+        expect(result.current.status).toBe('completed');
         expect(result.current.previewText).toBe('');
+        expect(result.current.activeGhostHunks).toHaveLength(0);
     });
 
-    it('retryPreview settles the old reservation as consumed and starts a fresh stream', async () => {
+    it('retryPreview clears previous hunks and starts a fresh agent stream session', async () => {
         const { result } = renderAIStream();
 
         await startDefaultStream(result);
         await waitFor(() => expect(result.current.status).toBe('preview_ready'));
 
-        mockConsumeAIStream.mockClear();
+        mockConsumeAgentStream.mockClear();
 
         await act(async () => {
             await result.current.retryPreview();
         });
 
-        // A brand-new stream session started (fresh quota reservation path)
-        expect(mockConsumeAIStream).toHaveBeenCalledTimes(1);
+        expect(mockConsumeAgentStream).toHaveBeenCalledTimes(1);
     });
 
-    it('stopStream mid-generation settles the reservation as consumed and never refunds', async () => {
-        // Stream stays open (never completes) to simulate an active generation
-        mockConsumeAIStream.mockImplementation(async (options: ConsumeCallbacks) => {
-            options.onMeta?.({ sessionId: 's', operationId: 'op' });
-            options.onChunk?.('Partial ', 'Partial ');
+    it('stopStream mid-generation aborts immediately and leaves document pristine', async () => {
+        mockConsumeAgentStream.mockImplementation(async (options: StreamHandlerOptions) => {
+            options.onStart?.({
+                type: 'start',
+                sessionId: 's',
+                threadId: 'thread-1',
+                operationId: 'op',
+            });
+            options.onUpdate?.({
+                type: 'update',
+                chunk: {
+                    stage: 'document_writer_node',
+                    hunks: [
+                        {
+                            hunkId: 'hunk-1',
+                            headingSlug: 'overview',
+                            from: 0,
+                            to: 10,
+                            replacementText: 'Partial ',
+                        },
+                    ],
+                },
+            });
         });
         const snapshotBefore = editor.getValue();
         const { result } = renderAIStream();
 
         await startDefaultStream(result);
-        await waitFor(() => expect(result.current.status).toBe('streaming'));
+        await waitFor(() => expect(result.current.status).toBe('streaming_hunks'));
 
-        await act(async () => {
-            await result.current.stopStream();
+        act(() => {
+            result.current.stopStream();
         });
 
-        // USER-INITIATED STOP POLICY: client stream aborted immediately without financial RPC
         expect(editor.getValue()).toBe(snapshotBefore);
         expect(result.current.status).toBe('aborted');
     });
 
     describe('Markdown EditorAdapter & Dynamic Ghost Range Shifting', () => {
-        it('should dynamically map ghost range forward when user edits document during stream and commit accurately', async () => {
+        it('dynamically maps ghost range forward when user edits document outside hunk range and accepts accurately', async () => {
             const initialText = 'Line 1: Prefix text.\nLine 2: TARGET_TO_IMPROVE.\nLine 3: Suffix text.';
             const testContainer = document.createElement('div');
             document.body.appendChild(testContainer);
@@ -222,18 +253,46 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
             const testView = new EditorView({ state, parent: testContainer });
             const adapter = createEditorAdapter(testView);
 
-            // Select "TARGET_TO_IMPROVE"
             const targetStart = initialText.indexOf('TARGET_TO_IMPROVE');
             const targetEnd = targetStart + 'TARGET_TO_IMPROVE'.length;
             adapter.setSelection(targetStart, targetEnd);
 
-            const { result } = renderAIStream();
+            mockConsumeAgentStream.mockImplementationOnce(async (options: StreamHandlerOptions) => {
+                options.onStart?.({
+                    type: 'start',
+                    sessionId: 's-cm-1',
+                    threadId: 'thread-cm-1',
+                    operationId: 'op-cm-1',
+                });
+                options.onUpdate?.({
+                    type: 'update',
+                    chunk: {
+                        stage: 'document_writer_node',
+                        hunks: [
+                            {
+                                hunkId: 'hunk-cm-1',
+                                headingSlug: 'target-section',
+                                from: targetStart,
+                                to: targetEnd,
+                                replacementText: 'Better text',
+                            },
+                        ],
+                    },
+                });
+                options.onDone?.({
+                    type: 'done',
+                    threadId: 'thread-cm-1',
+                    operationId: 'op-cm-1',
+                });
+            });
 
-            // Start stream
+            const onAllHunksAccepted = vi.fn();
+            const { result } = renderAIStream(onAllHunksAccepted);
+
             await act(async () => {
                 await result.current.startStream({
                     editor: adapter,
-                    operation: 'improve',
+                    prompt: 'Improve target line',
                     fileId: 'file-cm-1',
                     expectedVersion: 1,
                     originalEtag: 'etag-v1',
@@ -243,40 +302,29 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
 
             await waitFor(() => expect(result.current.status).toBe('preview_ready'));
 
-            // Ghost is currently active at [targetStart, targetEnd]
             const ghostRangeBefore = adapter.getGhostRange?.();
             expect(ghostRangeBefore).toEqual({ from: targetStart, to: targetEnd });
 
-            // SIMULATE CONCURRENT USER EDIT: User types 20 characters at the very beginning of the document
+            // Concurrent user edit BEFORE the hunk range
             const prefixAddition = 'EXTRA_PREFIX_CHARS!!';
             testView.dispatch({
                 changes: { from: 0, to: 0, insert: prefixAddition },
             });
 
-            // Dynamic Shifting: StateField must have automatically shifted ghost range forward!
+            // StateField automatically shifts ghost range forward by prefixAddition.length
             const ghostRangeAfter = adapter.getGhostRange?.();
             expect(ghostRangeAfter).toEqual({
                 from: targetStart + prefixAddition.length,
                 to: targetEnd + prefixAddition.length,
             });
 
-            mockCommitAIFileOperation.mockResolvedValueOnce({
-                success: true,
-                status: 'committed',
-                version: 2,
-                etag: 'etag-v2',
-                updatedAt: new Date().toISOString(),
-            });
-
-            // Accept / Commit preview
             await act(async () => {
                 await result.current.commitPreview();
             });
 
-            expect(result.current.status).toBe('committed');
-            expect(mockCommitAIFileOperation).toHaveBeenCalledTimes(1);
+            expect(result.current.status).toBe('completed');
+            expect(onAllHunksAccepted).toHaveBeenCalledTimes(1);
 
-            // Verify that replacement happened at the dynamically shifted position without corruption
             const currentDoc = adapter.getValue();
             expect(currentDoc).toContain(prefixAddition);
             expect(currentDoc).toContain('Better text');
@@ -286,7 +334,7 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
             testContainer.remove();
         });
 
-        it('should immediately abort stream and clear ghost when user edits directly inside the target range', async () => {
+        it('immediately aborts stream and clears ghost when user edits directly inside the target range', async () => {
             const initialText = 'Line 1: Prefix text.\nLine 2: TARGET_TO_IMPROVE.\nLine 3: Suffix text.';
             const testContainer = document.createElement('div');
             document.body.appendChild(testContainer);
@@ -298,18 +346,45 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
             const testView = new EditorView({ state, parent: testContainer });
             const adapter = createEditorAdapter(testView);
 
-            // Select "TARGET_TO_IMPROVE"
             const targetStart = initialText.indexOf('TARGET_TO_IMPROVE');
             const targetEnd = targetStart + 'TARGET_TO_IMPROVE'.length;
             adapter.setSelection(targetStart, targetEnd);
 
+            mockConsumeAgentStream.mockImplementationOnce(async (options: StreamHandlerOptions) => {
+                options.onStart?.({
+                    type: 'start',
+                    sessionId: 's-cm-2',
+                    threadId: 'thread-cm-2',
+                    operationId: 'op-cm-2',
+                });
+                options.onUpdate?.({
+                    type: 'update',
+                    chunk: {
+                        stage: 'document_writer_node',
+                        hunks: [
+                            {
+                                hunkId: 'hunk-cm-2',
+                                headingSlug: 'target-section',
+                                from: targetStart,
+                                to: targetEnd,
+                                replacementText: 'Better text',
+                            },
+                        ],
+                    },
+                });
+                options.onDone?.({
+                    type: 'done',
+                    threadId: 'thread-cm-2',
+                    operationId: 'op-cm-2',
+                });
+            });
+
             const { result } = renderAIStream();
 
-            // Start stream
             await act(async () => {
                 await result.current.startStream({
                     editor: adapter,
-                    operation: 'improve',
+                    prompt: 'Improve target line',
                     fileId: 'file-cm-2',
                     expectedVersion: 1,
                     originalEtag: 'etag-v1',
@@ -320,38 +395,67 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
             await waitFor(() => expect(result.current.status).toBe('preview_ready'));
             expect(adapter.getGhostRange?.()).toEqual({ from: targetStart, to: targetEnd });
 
-            // SIMULATE DIRECT COLLIDING EDIT: User deletes or modifies characters INSIDE the target range
+            // Direct colliding edit inside the target hunk range
             testView.dispatch({
                 changes: { from: targetStart + 2, to: targetStart + 8, insert: 'MODIFIED' },
             });
 
-            // Ghost range must be invalidated / cleared immediately
             expect(adapter.getGhostRange?.()).toBeNull();
-
-            // Stream should transition to aborted via onStop callback
             await waitFor(() => expect(result.current.status).toBe('aborted'));
 
             testView.destroy();
             testContainer.remove();
         });
 
-        it('should render unified inline widget with interactive buttons and trigger actions on click', async () => {
+        it('renders unified inline widget with interactive buttons and triggers accept on click', async () => {
             const testContainer = document.createElement('div');
             document.body.appendChild(testContainer);
 
+            const docText = 'Original text to translate';
             const state = EditorState.create({
-                doc: 'Original text to translate',
+                doc: docText,
                 extensions: createMarkdownExtensions({ mode: 'live' }),
             });
             const testView = new EditorView({ state, parent: testContainer });
             const adapter = createEditorAdapter(testView);
 
-            const { result } = renderAIStream();
+            mockConsumeAgentStream.mockImplementationOnce(async (options: StreamHandlerOptions) => {
+                options.onStart?.({
+                    type: 'start',
+                    sessionId: 's-widget-1',
+                    threadId: 'thread-widget-1',
+                    operationId: 'op-widget-1',
+                });
+                options.onUpdate?.({
+                    type: 'update',
+                    chunk: {
+                        stage: 'document_writer_node',
+                        hunks: [
+                            {
+                                hunkId: 'hunk-widget-1',
+                                headingSlug: 'translate-section',
+                                from: 0,
+                                to: docText.length,
+                                replacementText: 'Better text',
+                                operation: 'translate',
+                            },
+                        ],
+                    },
+                });
+                options.onDone?.({
+                    type: 'done',
+                    threadId: 'thread-widget-1',
+                    operationId: 'op-widget-1',
+                });
+            });
+
+            const onHunkAccepted = vi.fn();
+            const { result } = renderAIStream(vi.fn(), onHunkAccepted);
 
             await act(async () => {
                 await result.current.startStream({
                     editor: adapter,
-                    operation: 'translate',
+                    prompt: 'Translate section',
                     fileId: 'file-widget-1',
                     expectedVersion: 1,
                     originalEtag: 'etag-1',
@@ -361,7 +465,6 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
 
             await waitFor(() => expect(result.current.status).toBe('preview_ready'));
 
-            // Verify widget DOM exists inside editor
             await waitFor(() => {
                 const el = testContainer.querySelector('.cm-ai-ghost-widget');
                 expect(el).not.toBeNull();
@@ -371,28 +474,19 @@ describe('AI Preview Explicit Decision Model (preview_ready)', () => {
             const widgetElement = testContainer.querySelector<HTMLElement>('.cm-ai-ghost-widget');
             expect(widgetElement).not.toBeNull();
 
-            // Find interactive buttons
             const buttons = widgetElement!.querySelectorAll<HTMLButtonElement>('button');
-            expect(buttons.length).toBe(3);
-
-            const applyBtn = Array.from(buttons).find((b) => b.textContent?.includes('تطبيق التعديل'));
+            const applyBtn = Array.from(buttons).find((b) =>
+                b.textContent?.includes('تطبيق التعديل')
+            );
             expect(applyBtn).toBeDefined();
 
-            mockCommitAIFileOperation.mockResolvedValueOnce({
-                success: true,
-                status: 'committed',
-                version: 2,
-                etag: 'etag-v2',
-                updatedAt: new Date().toISOString(),
-            });
-
-            // Click Apply button directly in DOM
             await act(async () => {
                 applyBtn?.click();
             });
 
-            await waitFor(() => expect(result.current.status).toBe('committed'));
-            expect(mockCommitAIFileOperation).toHaveBeenCalledTimes(1);
+            await waitFor(() => expect(result.current.status).toBe('completed'));
+            expect(onHunkAccepted).toHaveBeenCalledTimes(1);
+            expect(adapter.getValue()).toBe('Better text');
 
             testView.destroy();
             testContainer.remove();

@@ -121,11 +121,10 @@ describe("LIVE: AI preview explicit decision model on isolated branch", () => {
         container.remove();
     });
 
-    const renderAIStream = () =>
+    const renderAIStream = (onAllHunksAccepted = vi.fn()) =>
         renderHook(() =>
             useAIStream({
-                onCommitSuccess: vi.fn(),
-                onConflict: vi.fn(),
+                onAllHunksAccepted,
                 onError: vi.fn(),
                 onProgrammaticTransaction: (fn) => fn(),
             })
@@ -138,7 +137,7 @@ describe("LIVE: AI preview explicit decision model on isolated branch", () => {
         await act(async () => {
             await result.current.startStream({
                 editor,
-                operation: "improve",
+                prompt: "Improve the sentence clarity",
                 fileId: fixture.fileId,
                 expectedVersion: 1,
                 originalEtag: "etag-v1",

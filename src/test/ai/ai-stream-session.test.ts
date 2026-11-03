@@ -1,62 +1,84 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
     createStreamSession,
     transitionSession,
     isValidTransition,
     assertSessionIntegrity,
     isTerminalStatus,
+    isActiveStreamStatus,
+    nextSessionToken,
+    getCurrentSessionToken,
+    resetSessionTokenCounter,
+    isSessionTokenValid,
+    isStaleSessionEvent,
 } from '@/lib/ai/stream-session';
 import { EphemeralPreviewBuffer } from '@/lib/ai/preview-buffer';
 
-describe('AIStreamSession State Machine & Integrity Guards (Phase 7 / Gate G6 & G8)', () => {
-    describe('FSM Transitions & Terminal States', () => {
-        it('should correctly identify terminal session states', () => {
-            expect(isTerminalStatus('committed')).toBe(true);
+describe('AIStreamSession State Machine, Monotonic Token & Integrity Guards (Phase 11 / Wave 11.1)', () => {
+    beforeEach(() => {
+        resetSessionTokenCounter();
+    });
+
+    describe('FSM States, Terminal & Active Predicates', () => {
+        it('correctly identifies terminal session states (completed, aborted, failed)', () => {
+            expect(isTerminalStatus('completed')).toBe(true);
             expect(isTerminalStatus('aborted')).toBe(true);
             expect(isTerminalStatus('failed')).toBe(true);
-            expect(isTerminalStatus('conflict')).toBe(true);
-            expect(isTerminalStatus('rolled_back')).toBe(true);
 
             expect(isTerminalStatus('idle')).toBe(false);
-            expect(isTerminalStatus('reserving')).toBe(false);
-            expect(isTerminalStatus('reserved')).toBe(false);
-            expect(isTerminalStatus('streaming')).toBe(false);
+            expect(isTerminalStatus('running_graph')).toBe(false);
+            expect(isTerminalStatus('awaiting_hitl')).toBe(false);
+            expect(isTerminalStatus('streaming_hunks')).toBe(false);
             expect(isTerminalStatus('preview_ready')).toBe(false);
-            expect(isTerminalStatus('completed')).toBe(false);
-            expect(isTerminalStatus('committing')).toBe(false);
-            expect(isTerminalStatus('aborting')).toBe(false);
         });
 
-        it('should correctly allow canonical legal state transitions', () => {
-            // Canonical path: idle -> reserving -> streaming -> preview_ready -> committing -> committed -> idle
-            expect(isValidTransition('idle', 'reserving')).toBe(true);
-            expect(isValidTransition('reserving', 'streaming')).toBe(true);
-            expect(isValidTransition('streaming', 'preview_ready')).toBe(true);
-            expect(isValidTransition('preview_ready', 'committing')).toBe(true);
-            expect(isValidTransition('committing', 'committed')).toBe(true);
-            expect(isValidTransition('committed', 'idle')).toBe(true);
+        it('correctly identifies active in-progress session states', () => {
+            expect(isActiveStreamStatus('running_graph')).toBe(true);
+            expect(isActiveStreamStatus('awaiting_hitl')).toBe(true);
+            expect(isActiveStreamStatus('streaming_hunks')).toBe(true);
+            expect(isActiveStreamStatus('preview_ready')).toBe(true);
 
-            // Backward-compatible path: idle -> reserved -> streaming -> completed -> committing -> committed
-            expect(isValidTransition('idle', 'reserved')).toBe(true);
-            expect(isValidTransition('reserved', 'streaming')).toBe(true);
-            expect(isValidTransition('streaming', 'completed')).toBe(true);
-            expect(isValidTransition('completed', 'committing')).toBe(true);
+            expect(isActiveStreamStatus('idle')).toBe(false);
+            expect(isActiveStreamStatus('completed')).toBe(false);
+            expect(isActiveStreamStatus('aborted')).toBe(false);
+            expect(isActiveStreamStatus('failed')).toBe(false);
         });
 
-        it('should strictly reject illegal transitions', () => {
-            expect(isValidTransition('idle', 'committed')).toBe(false);
-            expect(isValidTransition('idle', 'streaming')).toBe(false);
-            expect(isValidTransition('streaming', 'committed')).toBe(false);
-            expect(isValidTransition('committed', 'streaming')).toBe(false);
-            expect(isValidTransition('preview_ready', 'streaming')).toBe(false);
+        it('allows canonical legal state transitions across the 8-state Agent Graph lifecycle', () => {
+            expect(isValidTransition('idle', 'running_graph')).toBe(true);
+            expect(isValidTransition('running_graph', 'awaiting_hitl')).toBe(true);
+            expect(isValidTransition('awaiting_hitl', 'running_graph')).toBe(true);
+            expect(isValidTransition('running_graph', 'streaming_hunks')).toBe(true);
+            expect(isValidTransition('streaming_hunks', 'preview_ready')).toBe(true);
+            expect(isValidTransition('preview_ready', 'completed')).toBe(true);
+            expect(isValidTransition('completed', 'idle')).toBe(true);
+
+            expect(isValidTransition('running_graph', 'preview_ready')).toBe(true);
+            expect(isValidTransition('running_graph', 'completed')).toBe(true);
+            expect(isValidTransition('awaiting_hitl', 'streaming_hunks')).toBe(true);
+            expect(isValidTransition('awaiting_hitl', 'preview_ready')).toBe(true);
+            expect(isValidTransition('completed', 'running_graph')).toBe(true);
+            expect(isValidTransition('aborted', 'running_graph')).toBe(true);
+            expect(isValidTransition('failed', 'running_graph')).toBe(true);
         });
 
-        it('should execute full lifecycle on a session object with timestamps and validation', () => {
+        it('strictly rejects illegal transitions out of terminal states', () => {
+            expect(isValidTransition('completed', 'preview_ready')).toBe(false);
+            expect(isValidTransition('completed', 'streaming_hunks')).toBe(false);
+            expect(isValidTransition('completed', 'awaiting_hitl')).toBe(false);
+            expect(isValidTransition('aborted', 'completed')).toBe(false);
+            expect(isValidTransition('aborted', 'preview_ready')).toBe(false);
+            expect(isValidTransition('aborted', 'streaming_hunks')).toBe(false);
+            expect(isValidTransition('failed', 'completed')).toBe(false);
+            expect(isValidTransition('failed', 'preview_ready')).toBe(false);
+            expect(isValidTransition('failed', 'streaming_hunks')).toBe(false);
+        });
+
+        it('executes full lifecycle on a session object with timestamps and defaults', () => {
             const session = createStreamSession({
                 sessionId: 's-1',
-                operationId: 'op-1',
                 fileId: 'file-1',
-                operation: 'improve',
+                prompt: 'Design a resilient zero-knowledge sync layer',
                 originalMarkdown: '# Test Heading\ntest',
                 originalText: 'test',
                 selection: { from: 0, to: 4 },
@@ -66,62 +88,64 @@ describe('AIStreamSession State Machine & Integrity Guards (Phase 7 / Gate G6 & 
             });
 
             expect(session.status).toBe('idle');
+            expect(session.sessionToken).toBe(1);
+            expect(session.threadId).toMatch(/^thread_/);
+            expect(session.projectId).toBe('file-1');
+            expect(session.targetFileIds).toEqual(['file-1']);
+            expect(session.firstChunkAt).toBeUndefined();
+            expect(session.completedAt).toBeUndefined();
 
-            // idle -> reserving
-            transitionSession(session, 'reserving');
-            expect(session.status).toBe('reserving');
+            // idle -> running_graph (records firstChunkAt)
+            transitionSession(session, 'running_graph');
+            expect(session.status).toBe('running_graph');
+            expect(session.firstChunkAt).toBeTypeOf('number');
+            const initialFirstChunkAt = session.firstChunkAt;
 
-            // reserving -> streaming
-            transitionSession(session, 'streaming');
-            expect(session.status).toBe('streaming');
-            expect(session.firstChunkAt).toBeDefined();
+            // running_graph -> awaiting_hitl
+            transitionSession(session, 'awaiting_hitl');
+            expect(session.status).toBe('awaiting_hitl');
 
-            // streaming -> preview_ready
+            // awaiting_hitl -> running_graph -> streaming_hunks (preserves original firstChunkAt)
+            transitionSession(session, 'running_graph');
+            transitionSession(session, 'streaming_hunks');
+            expect(session.status).toBe('streaming_hunks');
+            expect(session.firstChunkAt).toBe(initialFirstChunkAt);
+
+            // streaming_hunks -> preview_ready (records completedAt)
             transitionSession(session, 'preview_ready');
             expect(session.status).toBe('preview_ready');
-            expect(session.completedAt).toBeDefined();
+            expect(session.completedAt).toBeTypeOf('number');
 
-            // preview_ready -> committing
-            transitionSession(session, 'committing');
-            expect(session.status).toBe('committing');
-
-            // committing -> committed
-            transitionSession(session, 'committed');
-            expect(session.status).toBe('committed');
-
-            // committed -> idle
+            // preview_ready -> completed -> idle
+            transitionSession(session, 'completed');
+            expect(session.status).toBe('completed');
             transitionSession(session, 'idle');
             expect(session.status).toBe('idle');
         });
 
-        it('should throw an error when attempting an invalid transition on a session', () => {
+        it('throws an error when attempting an invalid transition on a session', () => {
             const session = createStreamSession({
                 sessionId: 's-err',
-                operationId: 'op-err',
                 fileId: 'file-err',
-                operation: 'improve',
                 originalMarkdown: '# Test Heading\ntest',
                 originalText: 'test',
-                selection: { from: 0, to: 4 },
                 expectedVersion: 1,
                 originalEtag: 'etag-1',
                 editorGeneration: 1,
             });
 
-            transitionSession(session, 'reserving');
+            transitionSession(session, 'aborted');
 
-            // Illegal: reserving -> committed (must go through streaming -> preview_ready -> committing)
-            expect(() => transitionSession(session, 'committed')).toThrowError(
+            // Illegal: aborted -> completed directly without running_graph
+            expect(() => transitionSession(session, 'completed')).toThrowError(
                 /Invalid transition/
             );
         });
 
-        it('should allow cancellation transitions to aborting/aborted/conflict/rolled_back', () => {
+        it('allows cancellation and failure transitions with failureReason recording', () => {
             const session = createStreamSession({
                 sessionId: 's-2',
-                operationId: 'op-2',
                 fileId: 'file-2',
-                operation: 'correct',
                 originalMarkdown: 'hello world',
                 originalText: 'hello',
                 selection: { from: 0, to: 5 },
@@ -130,50 +154,74 @@ describe('AIStreamSession State Machine & Integrity Guards (Phase 7 / Gate G6 & 
                 editorGeneration: 1,
             });
 
-            transitionSession(session, 'reserving');
-            transitionSession(session, 'streaming');
-            transitionSession(session, 'aborting');
-            transitionSession(session, 'aborted');
+            transitionSession(session, 'running_graph');
+            transitionSession(session, 'streaming_hunks');
+            transitionSession(session, 'aborted', 'User clicked stop');
             expect(session.status).toBe('aborted');
+            expect(session.failureReason).toBe('User clicked stop');
+            expect(isTerminalStatus(session.status)).toBe(true);
 
-            // Can reset back to idle
+            // Can reset back to idle and re-run
             transitionSession(session, 'idle');
             expect(session.status).toBe('idle');
-        });
 
-        it('should handle conflict state during commit', () => {
-            const session = createStreamSession({
-                sessionId: 's-conflict',
-                operationId: 'op-conflict',
-                fileId: 'file-c',
-                operation: 'improve',
-                originalMarkdown: 'conflict document',
-                originalText: 'conflict',
-                selection: { from: 0, to: 8 },
-                expectedVersion: 1,
-                originalEtag: 'etag-c',
-                editorGeneration: 1,
-            });
-
-            transitionSession(session, 'reserving');
-            transitionSession(session, 'streaming');
-            transitionSession(session, 'preview_ready');
-            transitionSession(session, 'committing');
-            transitionSession(session, 'conflict', 'Version mismatch (412)');
-
-            expect(session.status).toBe('conflict');
-            expect(session.failureReason).toBe('Version mismatch (412)');
+            transitionSession(session, 'running_graph');
+            transitionSession(session, 'failed', 'INSUFFICIENT_CREDITS (402)');
+            expect(session.status).toBe('failed');
+            expect(session.failureReason).toBe('INSUFFICIENT_CREDITS (402)');
             expect(isTerminalStatus(session.status)).toBe(true);
         });
     });
 
+    describe('Monotonic Session Token Guards', () => {
+        it('mints strictly increasing tokens and detects stale session events', () => {
+            expect(getCurrentSessionToken()).toBe(0);
+            const t1 = nextSessionToken();
+            const t2 = nextSessionToken();
+            expect(t1).toBe(1);
+            expect(t2).toBe(2);
+            expect(getCurrentSessionToken()).toBe(2);
+
+            expect(isSessionTokenValid(2, 2)).toBe(true);
+            expect(isSessionTokenValid(1, 2)).toBe(false);
+            expect(isSessionTokenValid(0, 0)).toBe(false);
+
+            const staleSession = createStreamSession({
+                sessionId: 'sess-stale',
+                sessionToken: t1,
+                fileId: 'file-1',
+                originalMarkdown: 'doc',
+                originalText: 'doc',
+                expectedVersion: 1,
+                originalEtag: 'etag-1',
+                editorGeneration: 1,
+            });
+            const activeSession = createStreamSession({
+                sessionId: 'sess-active',
+                sessionToken: t2,
+                fileId: 'file-1',
+                originalMarkdown: 'doc',
+                originalText: 'doc',
+                expectedVersion: 1,
+                originalEtag: 'etag-1',
+                editorGeneration: 1,
+            });
+
+            expect(isStaleSessionEvent(staleSession, activeSession)).toBe(true);
+            expect(isStaleSessionEvent(activeSession, activeSession)).toBe(false);
+            expect(isStaleSessionEvent(null, activeSession)).toBe(true);
+
+            // Once abortController is aborted, events on that session are treated as stale
+            activeSession.abortController.abort();
+            expect(isStaleSessionEvent(activeSession, activeSession)).toBe(true);
+        });
+    });
+
     describe('Generation & Version Integrity Guards', () => {
-        it('should pass integrity assertion when generation and version match', () => {
+        it('passes integrity assertion when generation and version match', () => {
             const session = createStreamSession({
                 sessionId: 's-3',
-                operationId: 'op-3',
                 fileId: 'file-3',
-                operation: 'summarize',
                 originalMarkdown: 'content here',
                 originalText: 'content',
                 selection: { from: 0, to: 7 },
@@ -186,12 +234,10 @@ describe('AIStreamSession State Machine & Integrity Guards (Phase 7 / Gate G6 & 
             expect(check.valid).toBe(true);
         });
 
-        it('should reject commit if editor generation changed (stale session)', () => {
+        it('rejects commit if editor generation changed (stale session)', () => {
             const session = createStreamSession({
                 sessionId: 's-4',
-                operationId: 'op-4',
                 fileId: 'file-4',
-                operation: 'improve',
                 originalMarkdown: 'content here',
                 originalText: 'content',
                 selection: { from: 0, to: 7 },
@@ -200,18 +246,15 @@ describe('AIStreamSession State Machine & Integrity Guards (Phase 7 / Gate G6 & 
                 editorGeneration: 1,
             });
 
-            // Editor generation advanced to 2 (e.g. user reloaded or switched document)
             const check = assertSessionIntegrity(session, 2, 1);
             expect(check.valid).toBe(false);
             expect(check.reason).toContain('generation mismatch');
         });
 
-        it('should reject commit if file version changed concurrently', () => {
+        it('rejects commit if file version changed concurrently', () => {
             const session = createStreamSession({
                 sessionId: 's-5',
-                operationId: 'op-5',
                 fileId: 'file-5',
-                operation: 'improve',
                 originalMarkdown: 'content here',
                 originalText: 'content',
                 selection: { from: 0, to: 7 },
@@ -220,7 +263,6 @@ describe('AIStreamSession State Machine & Integrity Guards (Phase 7 / Gate G6 & 
                 editorGeneration: 1,
             });
 
-            // File version changed to 2 on server
             const check = assertSessionIntegrity(session, 1, 2);
             expect(check.valid).toBe(false);
             expect(check.reason).toContain('version mismatch');
@@ -228,7 +270,7 @@ describe('AIStreamSession State Machine & Integrity Guards (Phase 7 / Gate G6 & 
     });
 
     describe('EphemeralPreviewBuffer Memory Ceiling & Operations', () => {
-        it('should append and accumulate text chunks per session', () => {
+        it('appends and accumulates text chunks per session', () => {
             const buffer = new EphemeralPreviewBuffer(1000);
             buffer.open('sess-1');
 
@@ -245,7 +287,7 @@ describe('AIStreamSession State Machine & Integrity Guards (Phase 7 / Gate G6 & 
             expect(buffer.getText('sess-1')).toBe('');
         });
 
-        it('should truncate incoming text when exceeding memory ceiling', () => {
+        it('truncates incoming text when exceeding memory ceiling', () => {
             const smallBuffer = new EphemeralPreviewBuffer(10);
             smallBuffer.open('sess-2');
 
@@ -258,4 +300,3 @@ describe('AIStreamSession State Machine & Integrity Guards (Phase 7 / Gate G6 & 
         });
     });
 });
-
