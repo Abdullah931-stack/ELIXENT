@@ -2,12 +2,13 @@ import Link from "next/link";
 import Image from "next/image";
 import { redirect } from "next/navigation";
 import { getUser } from "@/lib/supabase/server";
-import { getUserProfile } from "@/server/actions/auth-actions";
-import { getRemainingQuota } from "@/server/actions/ai-ops";
+import { getUserProfile, signOut } from "@/server/actions/auth-actions";
+import { getUserCreditBalance } from "@/server/services/ai-settlement-service";
+import { TIER_LIMITS, type TierName, getTierDisplayName } from "@/config/tiers.config";
+import { MICRO_PER_CREDIT } from "@/lib/metering/constants";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { FileText, Settings, LogOut, Plus, Sparkles } from "lucide-react";
-import { signOut } from "@/server/actions/auth-actions";
+import { FileText, Settings, LogOut, Plus, Sparkles, Coins } from "lucide-react";
 
 export default async function DashboardPage({
     searchParams,
@@ -20,14 +21,21 @@ export default async function DashboardPage({
         redirect("/login");
     }
 
-    const [profileResult, quotaResult, params] = await Promise.all([
+    const [profileResult, balanceMicro, params] = await Promise.all([
         getUserProfile(),
-        getRemainingQuota(),
+        getUserCreditBalance(user.id),
         searchParams ? searchParams : Promise.resolve(undefined),
     ]);
 
     const profile = profileResult.data;
-    const quota = quotaResult;
+    const userTier: TierName = (profile?.tier as TierName) || "free";
+    const limits = TIER_LIMITS[userTier] || TIER_LIMITS.free;
+    const currentCredits = Number(balanceMicro / MICRO_PER_CREDIT);
+    const tierCredits = limits.creditsDisplay;
+    const percentageRemaining =
+        tierCredits > 0
+            ? Math.min(Math.max(0, Math.round((currentCredits / tierCredits) * 100)), 100)
+            : 0;
 
     return (
         <div className="min-h-screen bg-zinc-950">
@@ -95,14 +103,14 @@ export default async function DashboardPage({
                 </div>
 
                 {/* Quick Stats */}
-                <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
                     {/* Current Plan */}
                     <Card>
                         <CardHeader className="pb-2">
                             <CardDescription>Current Plan</CardDescription>
                             <CardTitle className="text-xl capitalize flex items-center gap-2">
-                                {quota?.tier || "Free"}
-                                {quota?.tier === "ultra" && (
+                                {getTierDisplayName(userTier)}
+                                {userTier === "ultra" && (
                                     <span className="text-xs px-2 py-0.5 rounded-full ultra-badge">
                                         ✦
                                     </span>
@@ -111,52 +119,36 @@ export default async function DashboardPage({
                         </CardHeader>
                     </Card>
 
-                    {/* Words Remaining */}
-                    <Card>
+                    {/* AI Architectural Credits */}
+                    <Card className="sm:col-span-1 lg:col-span-2">
                         <CardHeader className="pb-2">
-                            <CardDescription>Words Remaining ({quota?.correctImproveTranslate.period || "daily"})</CardDescription>
-                            <CardTitle className="text-xl">
-                                {quota?.correctImproveTranslate.remaining.toLocaleString() || 0}
-                                <span className="text-zinc-500 text-sm font-normal">
-                                    {" / "}
-                                    {quota?.correctImproveTranslate.limit.toLocaleString() || 0}
+                            <div className="flex items-center justify-between">
+                                <CardDescription className="flex items-center gap-1.5">
+                                    <Coins className="w-4 h-4 text-indigo-400" />
+                                    AI Architectural Credits
+                                </CardDescription>
+                                <span className="text-xs font-mono text-zinc-400">
+                                    {percentageRemaining}% available
+                                </span>
+                            </div>
+                            <CardTitle className="text-xl flex items-center justify-between">
+                                <span>
+                                    {currentCredits.toLocaleString()}
+                                    <span className="text-zinc-500 text-sm font-normal">
+                                        {" / "}
+                                        {tierCredits.toLocaleString()} Credits
+                                    </span>
                                 </span>
                             </CardTitle>
                         </CardHeader>
-                    </Card>
-
-                    {/* Summaries Remaining */}
-                    <Card>
-                        <CardHeader className="pb-2">
-                            <CardDescription>Summaries Remaining</CardDescription>
-                            <CardTitle className="text-xl">
-                                {quota?.summarize.remaining || 0}
-                                <span className="text-zinc-500 text-sm font-normal">
-                                    {" / "}
-                                    {quota?.summarize.limit || 0}
-                                </span>
-                            </CardTitle>
-                        </CardHeader>
-                    </Card>
-
-                    {/* Prompts Remaining */}
-                    <Card>
-                        <CardHeader className="pb-2">
-                            <CardDescription>Prompts Remaining</CardDescription>
-                            <CardTitle className="text-xl">
-                                {quota?.toPrompt ? (
-                                    <>
-                                        {quota.toPrompt.remaining}
-                                        <span className="text-zinc-500 text-sm font-normal">
-                                            {" / "}
-                                            {quota.toPrompt.limit}
-                                        </span>
-                                    </>
-                                ) : (
-                                    <span className="text-zinc-500 text-sm font-normal">Pro+</span>
-                                )}
-                            </CardTitle>
-                        </CardHeader>
+                        <div className="px-6 pb-4">
+                            <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
+                                <div
+                                    className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-300"
+                                    style={{ width: `${percentageRemaining}%` }}
+                                />
+                            </div>
+                        </div>
                     </Card>
                 </div>
 
@@ -193,7 +185,7 @@ export default async function DashboardPage({
                     </Link>
 
                     {/* Upgrade */}
-                    {quota?.tier === "free" && (
+                    {userTier === "free" && (
                         <Link href="/account">
                             <Card className="group hover:border-indigo-500/50 cursor-pointer transition-all h-full border-indigo-500/20 bg-gradient-to-br from-indigo-500/5 to-transparent">
                                 <CardHeader>
@@ -202,7 +194,7 @@ export default async function DashboardPage({
                                     </div>
                                     <CardTitle>Upgrade to Pro</CardTitle>
                                     <CardDescription>
-                                        Unlock more words, summaries, and ToPrompt feature
+                                        Unlock 1,000 monthly credits, multi-device sync, and priority AI reasoning
                                     </CardDescription>
                                 </CardHeader>
                             </Card>

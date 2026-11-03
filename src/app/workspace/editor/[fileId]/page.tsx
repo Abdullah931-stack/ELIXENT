@@ -10,7 +10,6 @@ import {
     type DirectionSettings,
     type TextDirectionMode,
 } from "@/components/editor/markdown";
-import { getRemainingQuota } from "@/server/actions/ai-ops";
 import { AIToolbar } from "@/components/editor/ai-toolbar";
 import { SearchReplace } from "@/components/editor/search-replace";
 import { countWords, detectTextDirection, countCharacters } from "@/lib/utils";
@@ -18,6 +17,7 @@ import { Loader2, AlertTriangle, Lock } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { SyncIndicator } from "@/components/sync/sync-indicator";
 import { AIStreamStatus } from "@/components/editor/ai-stream-status";
+import { AgentChatPanel } from "@/components/agent/chat-panel";
 import { ConflictDialog } from "@/components/sync/conflict-dialog";
 import { useEditorOrchestrator } from "@/hooks/use-editor-orchestrator";
 import { VaultUnlockModal } from "@/components/vault";
@@ -29,7 +29,7 @@ export default function EditorPage() {
     const fileId = params.fileId as string;
 
     const [userId, setUserId] = useState<string | null>(null);
-    const [showToPrompt, setShowToPrompt] = useState(false);
+    const [isAgentPanelOpen, setIsAgentPanelOpen] = useState(false);
     const [isSearchOpen, setIsSearchOpen] = useState(false);
     const [selectedText, setSelectedText] = useState("");
     const [editorMode, setEditorMode] = useState<EditorMode>("live");
@@ -89,15 +89,27 @@ export default function EditorPage() {
         title,
         hydration,
 
+        // Architectural Agent & Multi-Hunk Ghost State (Phase 11)
         aiStatus,
-        isCommitting,
-        isAIActive,
         aiError,
-        isAIConflict,
-        startAIOperation,
+        agentGraphStage,
+        activeQuestionQueue,
+        masterDecisionLedger,
+        activeGhostHunks,
+        activeGhostHunksCount,
+        startAgentSession,
+        resumeAgentInterrupt,
         stopAIOperation,
         resetAI,
+        acceptGhostHunk,
+        rejectGhostHunk,
+        acceptAllGhostHunks,
+        rejectAllGhostHunks,
 
+        // Editor & Sync State
+        isCommitting,
+        isAIActive,
+        isAIConflict,
         isSaving,
         lastSaved,
         error,
@@ -115,6 +127,7 @@ export default function EditorPage() {
         // Vault State
         isEncrypted,
         allowAIOnEncryptedFiles,
+        isVaultLocked,
         isUnlockModalOpen,
         setIsUnlockModalOpen,
         handleVaultUnlocked,
@@ -124,6 +137,8 @@ export default function EditorPage() {
         editor: adapter,
         onNavigate: handleNavigate,
     });
+
+    const isVaultUnlocked = !isVaultLocked;
 
     // Fetch authenticated user ID
     useEffect(() => {
@@ -141,19 +156,6 @@ export default function EditorPage() {
             }
         }
         fetchUser();
-    }, []);
-
-    // Check ToPrompt availability
-    useEffect(() => {
-        async function checkQuota() {
-            try {
-                const quota = await getRemainingQuota();
-                setShowToPrompt(quota?.toPrompt !== null);
-            } catch (quotaErr) {
-                console.warn("[Editor] checkQuota error:", quotaErr);
-            }
-        }
-        checkQuota();
     }, []);
 
     // Keyboard shortcuts (Ctrl+F for search, Escape for stopping AI generation, Ctrl+Alt+D for direction cycle)
@@ -297,11 +299,11 @@ export default function EditorPage() {
         <div className="h-full flex flex-col bg-zinc-950">
             {/* Toolbar - Fixed position */}
             <AIToolbar
-                onCorrect={() => startAIOperation("correct")}
-                onImprove={() => startAIOperation("improve")}
-                onSummarize={() => startAIOperation("summarize")}
-                onTranslate={() => startAIOperation("translate")}
-                onToPrompt={() => startAIOperation("toPrompt")}
+                onToggleAgentPanel={() => setIsAgentPanelOpen((prev) => !prev)}
+                isAgentPanelOpen={isAgentPanelOpen}
+                activeGhostHunksCount={activeGhostHunksCount}
+                onAcceptAllGhostHunks={acceptAllGhostHunks}
+                onRejectAllGhostHunks={rejectAllGhostHunks}
                 onUndo={() => adapter?.undo()}
                 onRedo={() => adapter?.redo()}
                 onExport={handleExport}
@@ -316,8 +318,9 @@ export default function EditorPage() {
                 canUndo={adapter?.canUndo() || false}
                 canRedo={adapter?.canRedo() || false}
                 isLoading={isAIActive}
-                showToPrompt={showToPrompt}
                 isEncrypted={isEncrypted}
+                isVaultUnlocked={isVaultUnlocked}
+                allowAIOnEncryptedFiles={allowAIOnEncryptedFiles}
                 allowAIOnEncrypted={allowAIOnEncryptedFiles}
             />
 
@@ -331,9 +334,13 @@ export default function EditorPage() {
             {/* AI Stream Ephemeral Status & Alerts */}
             <AIStreamStatus
                 status={aiStatus}
-                isConflict={isAIConflict}
+                currentStage={agentGraphStage}
+                error={aiError}
                 errorMessage={aiError}
+                activeGhostHunksCount={activeGhostHunksCount}
+                isConflict={isAIConflict}
                 onRetry={resetAI}
+                onStop={stopAIOperation}
                 onCancel={stopAIOperation}
             />
 
@@ -343,14 +350,14 @@ export default function EditorPage() {
                     <div className="flex items-center gap-2.5">
                         <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
                         <span>
-                            <strong>تنبيه تعارض:</strong> تم اكتشاف تعديلات جديدة على الخادم. الحفظ التلقائي متوقف لحماية بياناتك المحلية حتى تسوية التعارض.
+                            <strong>Conflict Warning:</strong> Remote modifications detected on the server. Autosave is paused to protect your local data until the conflict is resolved.
                         </span>
                     </div>
                     <button
                         onClick={() => setIsConflictDialogOpen(true)}
-                        className="px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-500 text-white font-medium transition-colors shadow-sm"
+                        className="px-3 py-1.5 rounded-md bg-amber-600 hover:bg-amber-500 text-white font-medium transition-colors shadow-sm cursor-pointer"
                     >
-                        مراجعة وحل التعارض
+                        Review & Resolve Conflict
                     </button>
                 </div>
             )}
@@ -367,10 +374,10 @@ export default function EditorPage() {
 
             {/* Error Message */}
             {error && (
-                <div className="mx-6 mt-4 p-3 rounded-md bg-red-900/20 border border-red-800/50 text-red-300 text-sm flex-shrink-0">
-                    {error}
+                <div className="mx-6 mt-4 p-3 rounded-md bg-red-900/20 border border-red-800/50 text-red-300 text-sm flex-shrink-0 flex items-center justify-between">
+                    <span>{error}</span>
                     <button
-                        className="ml-2 text-red-400 hover:text-red-300"
+                        className="ml-2 text-red-400 hover:text-red-300 cursor-pointer"
                         onClick={() => setError(null)}
                     >
                         Dismiss
@@ -378,76 +385,104 @@ export default function EditorPage() {
                 </div>
             )}
 
-            {/* Editor - Scrollable container */}
-            <div className="flex-1 overflow-auto custom-scrollbar relative">
-                {hydration === "hydrating" && !adapter?.getValue() && (
-                    <div className="absolute inset-0 bg-zinc-950/80 backdrop-blur-xs z-10 flex flex-col items-center justify-center gap-3">
-                        <Loader2 className="w-7 h-7 animate-spin text-indigo-400" />
-                        <span className="text-xs text-zinc-400 font-medium">جاري تحميل ومزامنة المستند...</span>
-                    </div>
-                )}
-                {hydration === "vault_locked" && (
-                    <div className="absolute inset-0 z-20 bg-zinc-950 flex items-center justify-center">
-                        <div className="m-6 p-8 rounded-xl bg-zinc-900 border border-zinc-800 text-center flex flex-col items-center justify-center gap-3 max-w-md mx-auto shadow-2xl">
-                            <div className="p-3 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 mb-1">
-                                <Lock className="w-8 h-8" />
-                            </div>
-                            <h3 className="text-base font-semibold text-zinc-100">المستند مشفر ومحمي</h3>
-                            <p className="text-xs text-zinc-400 leading-relaxed max-w-sm">
-                                هذا المستند مشفر طرف-إلى-طرف (Zero-Knowledge). يجب فتح قفل الخزنة لعرض المحتوى وتعديله.
-                            </p>
-                            <div className="flex items-center gap-2 mt-3">
-                                <button
-                                    onClick={() => setIsUnlockModalOpen(true)}
-                                    className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5"
-                                >
-                                    <Lock className="w-3.5 h-3.5" />
-                                    <span>فتح قفل الخزنة</span>
-                                </button>
-                                <button
-                                    onClick={() => router.push("/workspace")}
-                                    className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors cursor-pointer"
-                                >
-                                    العودة لمساحة العمل
-                                </button>
+            {/* Work Area: Editor Canvas + Side-by-Side Agent Chat Panel */}
+            <div className="flex-1 flex overflow-hidden relative">
+                {/* Editor - Scrollable container */}
+                <div className="flex-1 overflow-auto custom-scrollbar relative">
+                    {hydration === "hydrating" && !adapter?.getValue() && (
+                        <div className="absolute inset-0 bg-zinc-950/80 backdrop-blur-xs z-10 flex flex-col items-center justify-center gap-3">
+                            <Loader2 className="w-7 h-7 animate-spin text-indigo-400" />
+                            <span className="text-xs text-zinc-400 font-medium">Loading and synchronizing document...</span>
+                        </div>
+                    )}
+                    {hydration === "vault_locked" && (
+                        <div className="absolute inset-0 z-20 bg-zinc-950 flex items-center justify-center">
+                            <div className="m-6 p-8 rounded-xl bg-zinc-900 border border-zinc-800 text-center flex flex-col items-center justify-center gap-3 max-w-md mx-auto shadow-2xl">
+                                <div className="p-3 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 mb-1">
+                                    <Lock className="w-8 h-8" />
+                                </div>
+                                <h3 className="text-base font-semibold text-zinc-100">Document Encrypted & Protected</h3>
+                                <p className="text-xs text-zinc-400 leading-relaxed max-w-sm">
+                                    This document is end-to-end encrypted (Zero-Knowledge). Unlock your vault to view and edit content.
+                                </p>
+                                <div className="flex items-center gap-2 mt-3">
+                                    <button
+                                        onClick={() => setIsUnlockModalOpen(true)}
+                                        className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5"
+                                    >
+                                        <Lock className="w-3.5 h-3.5" />
+                                        <span>Unlock Vault</span>
+                                    </button>
+                                    <button
+                                        onClick={() => router.push("/workspace")}
+                                        className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors cursor-pointer"
+                                    >
+                                        Return to Workspace
+                                    </button>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                )}
-                {hydration === "fatal" ? (
-                    <div className="m-6 p-8 rounded-xl bg-red-950/30 border border-red-800/40 text-center flex flex-col items-center justify-center gap-3 max-w-md mx-auto mt-16">
-                        <AlertTriangle className="w-10 h-10 text-red-400" />
-                        <h3 className="text-base font-semibold text-red-200">تعذّر فتح المستند</h3>
-                        <p className="text-xs text-zinc-400 leading-relaxed">
-                            الملف المطلوب غير موجود على الخادم ولا تتوفر منه نسخة محلية محفوظة.
-                        </p>
-                        <button
-                            onClick={() => router.push("/workspace")}
-                            className="mt-2 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-medium transition-colors cursor-pointer"
-                        >
-                            العودة إلى مساحة العمل
-                        </button>
-                    </div>
-                ) : (
-                    <div className={`max-w-4xl mx-auto p-4 md:p-6 ${hydration === "vault_locked" ? "invisible pointer-events-none" : ""}`}>
-                        <MarkdownEditor
-                            onAdapterReady={setAdapter}
-                            onChange={handleEditorChange}
-                            onSelectionChange={(_sel: EditorSelection) => {
-                                if (adapter) {
-                                    setSelectedText(adapter.getSelectedText());
-                                }
-                            }}
-                            mode={editorMode}
-                            onModeChange={setEditorMode}
-                            dir={directionSettings.mode}
-                            lockCodeBlocksLTR={directionSettings.lockCodeBlocksLTR}
-                            onDirectionChange={handleDirectionSettingsChange}
-                            placeholder="ابدأ الكتابة بصيغة Markdown..."
-                            className="min-h-[70vh] text-zinc-300"
-                        />
-                    </div>
-                )}
+                    )}
+                    {hydration === "fatal" ? (
+                        <div className="m-6 p-8 rounded-xl bg-red-950/30 border border-red-800/40 text-center flex flex-col items-center justify-center gap-3 max-w-md mx-auto mt-16">
+                            <AlertTriangle className="w-10 h-10 text-red-400" />
+                            <h3 className="text-base font-semibold text-red-200">Unable to Open Document</h3>
+                            <p className="text-xs text-zinc-400 leading-relaxed">
+                                The requested document does not exist on the server and no local cached copy was found.
+                            </p>
+                            <button
+                                onClick={() => router.push("/workspace")}
+                                className="mt-2 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-medium transition-colors cursor-pointer"
+                            >
+                                Return to Workspace
+                            </button>
+                        </div>
+                    ) : (
+                        <div className={`max-w-4xl mx-auto p-4 md:p-6 ${hydration === "vault_locked" ? "invisible pointer-events-none" : ""}`}>
+                            <MarkdownEditor
+                                onAdapterReady={setAdapter}
+                                onChange={handleEditorChange}
+                                onSelectionChange={(_sel: EditorSelection) => {
+                                    if (adapter) {
+                                        setSelectedText(adapter.getSelectedText());
+                                    }
+                                }}
+                                mode={editorMode}
+                                onModeChange={setEditorMode}
+                                dir={directionSettings.mode}
+                                lockCodeBlocksLTR={directionSettings.lockCodeBlocksLTR}
+                                onDirectionChange={handleDirectionSettingsChange}
+                                placeholder="Start typing in Markdown..."
+                                className="min-h-[70vh] text-zinc-300"
+                            />
+                        </div>
+                    )}
+                </div>
+
+                {/* Elixent Architectural Agent Chat Panel */}
+                <AgentChatPanel
+                    isOpen={isAgentPanelOpen}
+                    onClose={() => setIsAgentPanelOpen(false)}
+                    status={aiStatus}
+                    currentStage={agentGraphStage}
+                    activeQuestionQueue={activeQuestionQueue}
+                    masterDecisionLedger={masterDecisionLedger}
+                    activeGhostHunksCount={activeGhostHunksCount}
+                    activeGhostHunks={activeGhostHunks}
+                    error={aiError}
+                    onStartSession={startAgentSession}
+                    onResumeInterrupt={resumeAgentInterrupt}
+                    onStopSession={stopAIOperation}
+                    onResetSession={resetAI}
+                    onAcceptGhostHunk={acceptGhostHunk}
+                    onRejectGhostHunk={rejectGhostHunk}
+                    onAcceptAllGhostHunks={acceptAllGhostHunks}
+                    onRejectAllGhostHunks={rejectAllGhostHunks}
+                    targetFileIds={[fileId]}
+                    isEncrypted={isEncrypted}
+                    isVaultUnlocked={isVaultUnlocked}
+                    allowAIOnEncryptedFiles={allowAIOnEncryptedFiles}
+                />
             </div>
 
             {/* Status Bar - Fixed at bottom */}

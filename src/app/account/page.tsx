@@ -3,15 +3,15 @@ import Image from "next/image";
 import { redirect } from "next/navigation";
 import { getUser } from "@/lib/supabase/server";
 import { getUserProfile, signOut } from "@/server/actions/auth-actions";
-import { getRemainingQuota } from "@/server/actions/ai-ops";
+import { getUserCreditBalance } from "@/server/services/ai-settlement-service";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { TIER_LIMITS, getTierDisplayName } from "@/config/tiers.config";
-import { ArrowLeft, User, CreditCard, LogOut, Check } from "lucide-react";
+import { TIER_LIMITS, type TierName, getTierDisplayName } from "@/config/tiers.config";
+import { MICRO_PER_CREDIT } from "@/lib/metering/constants";
+import { ArrowLeft, User, CreditCard, LogOut, Check, Coins } from "lucide-react";
 import { UpgradeButton } from "@/components/subscription/upgrade-button";
 import { VaultSecurityCard } from "@/components/vault";
 import { OcrSettingsCard } from "@/components/layout/ocr-settings-card";
-
 
 export default async function AccountPage() {
     const user = await getUser();
@@ -20,14 +20,20 @@ export default async function AccountPage() {
         redirect("/login");
     }
 
-    const [profileResult, quotaResult] = await Promise.all([
+    const [profileResult, balanceMicro] = await Promise.all([
         getUserProfile(),
-        getRemainingQuota(),
+        getUserCreditBalance(user.id),
     ]);
 
     const profile = profileResult.data;
-    const quota = quotaResult;
-    const currentTier = quota?.tier || "free";
+    const currentTier: TierName = (profile?.tier as TierName) || "free";
+    const limits = TIER_LIMITS[currentTier];
+    const currentCredits = Number(balanceMicro / MICRO_PER_CREDIT);
+    const tierCredits = limits.creditsDisplay;
+    const percentageRemaining =
+        tierCredits > 0
+            ? Math.min(Math.max(0, Math.round((currentCredits / tierCredits) * 100)), 100)
+            : 0;
 
     return (
         <div className="min-h-screen bg-zinc-950">
@@ -112,10 +118,10 @@ export default async function AccountPage() {
                         <CardHeader>
                             <CardTitle className="flex items-center gap-2">
                                 <CreditCard className="w-5 h-5" />
-                                Subscription
+                                Subscription & AI Credits
                             </CardTitle>
                             <CardDescription>
-                                Manage your subscription and billing
+                                Manage your plan and architectural AI credit settlement
                             </CardDescription>
                         </CardHeader>
                         <CardContent>
@@ -153,82 +159,36 @@ export default async function AccountPage() {
                                 </div>
                             </div>
 
-                            {/* Remaining Quota */}
+                            {/* Micro-Credit Metered AI Settlement */}
                             <div className="space-y-4">
-                                <h4 className="text-sm font-medium text-zinc-400">Remaining Quota</h4>
-
-                                {/* Words */}
-                                <div>
-                                    <div className="flex justify-between text-sm mb-1">
-                                        <span className="text-zinc-400">
-                                            Words ({quota?.correctImproveTranslate.period})
-                                        </span>
-                                        <span className="text-zinc-300">
-                                            {quota?.correctImproveTranslate.remaining.toLocaleString()} / {quota?.correctImproveTranslate.limit.toLocaleString()}
-                                        </span>
-                                    </div>
-                                    <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
-                                        <div
-                                            className="h-full bg-indigo-500 transition-all"
-                                            style={{
-                                                width: `${Math.min(
-                                                    ((quota?.correctImproveTranslate.remaining || 0) /
-                                                        (quota?.correctImproveTranslate.limit || 1)) *
-                                                    100,
-                                                    100
-                                                )}%`,
-                                            }}
-                                        />
-                                    </div>
+                                <div className="flex items-center justify-between">
+                                    <h4 className="text-sm font-medium text-zinc-400 flex items-center gap-1.5">
+                                        <Coins className="w-4 h-4 text-indigo-400" />
+                                        Micro-Credit Metered AI Settlement
+                                    </h4>
+                                    <span className="text-xs font-mono text-zinc-400">
+                                        Tier: <span className="text-zinc-200 font-semibold">{currentTier.toUpperCase()}</span>
+                                    </span>
                                 </div>
 
-                                {/* Summaries */}
                                 <div>
-                                    <div className="flex justify-between text-sm mb-1">
-                                        <span className="text-zinc-400">Summaries (daily)</span>
-                                        <span className="text-zinc-300">
-                                            {quota?.summarize.remaining} / {quota?.summarize.limit}
+                                    <div className="flex justify-between text-sm mb-1.5">
+                                        <span className="text-zinc-400">Current Balance</span>
+                                        <span className="text-zinc-200 font-medium font-mono">
+                                            {currentCredits.toLocaleString()} / {tierCredits.toLocaleString()} Credits
                                         </span>
                                     </div>
-                                    <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
+                                    <div className="h-2.5 bg-zinc-800 rounded-full overflow-hidden">
                                         <div
-                                            className="h-full bg-violet-500 transition-all"
-                                            style={{
-                                                width: `${Math.min(
-                                                    ((quota?.summarize.remaining || 0) /
-                                                        (quota?.summarize.limit || 1)) *
-                                                    100,
-                                                    100
-                                                )}%`,
-                                            }}
+                                            className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-300"
+                                            style={{ width: `${percentageRemaining}%` }}
                                         />
                                     </div>
-                                </div>
-
-                                {/* ToPrompt */}
-                                {quota?.toPrompt && (
-                                    <div>
-                                        <div className="flex justify-between text-sm mb-1">
-                                            <span className="text-zinc-400">ToPrompt (daily)</span>
-                                            <span className="text-zinc-300">
-                                                {quota.toPrompt.remaining} / {quota.toPrompt.limit}
-                                            </span>
-                                        </div>
-                                        <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
-                                            <div
-                                                className="h-full bg-amber-500 transition-all"
-                                                style={{
-                                                    width: `${Math.min(
-                                                        ((quota.toPrompt.remaining || 0) /
-                                                            (quota.toPrompt.limit || 1)) *
-                                                        100,
-                                                        100
-                                                    )}%`,
-                                                }}
-                                            />
-                                        </div>
+                                    <div className="flex justify-between text-xs text-zinc-500 mt-2">
+                                        <span>Allocation resets each monthly billing cycle</span>
+                                        <span className="font-mono">{percentageRemaining}% remaining</span>
                                     </div>
-                                )}
+                                </div>
                             </div>
                         </CardContent>
                     </Card>
@@ -238,26 +198,27 @@ export default async function AccountPage() {
                         <CardHeader>
                             <CardTitle>Available Plans</CardTitle>
                             <CardDescription>
-                                Compare features and upgrade your plan
+                                Compare architectural credit allocations and upgrade your plan
                             </CardDescription>
                         </CardHeader>
                         <CardContent>
                             <div className="grid md:grid-cols-3 gap-4">
                                 {(["free", "pro", "ultra"] as const).map((tier) => {
-                                    const limits = TIER_LIMITS[tier];
+                                    const tierConfig = TIER_LIMITS[tier];
                                     const isCurrentPlan = currentTier === tier;
 
                                     return (
                                         <div
                                             key={tier}
-                                            className={`p-4 rounded-lg border ${isCurrentPlan
-                                                ? "border-indigo-500/50 bg-indigo-500/5"
-                                                : "border-zinc-800"
-                                                }`}
+                                            className={`p-4 rounded-lg border ${
+                                                isCurrentPlan
+                                                    ? "border-indigo-500/50 bg-indigo-500/5"
+                                                    : "border-zinc-800"
+                                            }`}
                                         >
                                             <div className="flex items-center justify-between mb-3">
                                                 <span className="font-medium text-zinc-50 capitalize">
-                                                    {tier}
+                                                    {getTierDisplayName(tier)}
                                                 </span>
                                                 {isCurrentPlan && (
                                                     <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300">
@@ -266,27 +227,31 @@ export default async function AccountPage() {
                                                 )}
                                             </div>
                                             <div className="text-2xl font-medium text-zinc-50 mb-3">
-                                                ${limits.price.monthly}
+                                                ${tierConfig.price.monthly}
                                                 <span className="text-sm text-zinc-500 font-normal">/mo</span>
                                             </div>
                                             <ul className="space-y-2 text-sm text-zinc-400">
                                                 <li className="flex items-center gap-2">
-                                                    <Check className="w-4 h-4 text-emerald-500" />
-                                                    {limits.correctImproveTranslate.words.toLocaleString()} words/{limits.correctImproveTranslate.period}
+                                                    <Check className="w-4 h-4 text-emerald-500 shrink-0" />
+                                                    <span>{tierConfig.creditsDisplay.toLocaleString()} Credits/month</span>
                                                 </li>
                                                 <li className="flex items-center gap-2">
-                                                    <Check className="w-4 h-4 text-emerald-500" />
-                                                    {limits.summarize.dailyLimit} summaries/day
+                                                    <Check className="w-4 h-4 text-emerald-500 shrink-0" />
+                                                    <span>
+                                                        {tier === "free"
+                                                            ? "Standard LangGraph reasoning"
+                                                            : tier === "pro"
+                                                            ? "High-speed reasoning & HITL support"
+                                                            : "Ultra-fast priority reasoning & ATMS ledger"}
+                                                    </span>
                                                 </li>
                                                 <li className="flex items-center gap-2">
-                                                    {limits.toPrompt ? (
-                                                        <>
-                                                            <Check className="w-4 h-4 text-emerald-500" />
-                                                            {limits.toPrompt.dailyLimit} prompts/day
-                                                        </>
-                                                    ) : (
-                                                        <span className="text-zinc-500">No ToPrompt</span>
-                                                    )}
+                                                    <Check className="w-4 h-4 text-emerald-500 shrink-0" />
+                                                    <span>Zero-Knowledge E2E Encryption</span>
+                                                </li>
+                                                <li className="flex items-center gap-2">
+                                                    <Check className="w-4 h-4 text-emerald-500 shrink-0" />
+                                                    <span>Incremental Multi-Hunk Ghost Review</span>
                                                 </li>
                                             </ul>
                                         </div>
