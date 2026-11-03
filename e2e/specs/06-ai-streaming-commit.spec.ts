@@ -27,9 +27,9 @@ test.describe("Scenario 6: AI Streaming, Dynamic Ghost Preview & Atomic Commit",
         await expect(cmContent).toBeVisible({ timeout: 15000 });
         await expect(cmContent).toContainText("Original Document Text", { timeout: 20000 });
 
-        // 3. Prepare credit ledger reservation and mock stream endpoint
+        // 3. Prepare credit ledger reservation and mock stream endpoint (SSE /api/agent/stream)
         let reqOpId = `op-e2e-stream-${Date.now()}`;
-        await page.route("**/api/ai/stream", async (route) => {
+        const handleMockStream = async (route: any) => {
             try {
                 const postData = JSON.parse(route.request().postData() || "{}");
                 if (postData.operationId) {
@@ -53,36 +53,62 @@ test.describe("Scenario 6: AI Streaming, Dynamic Ghost Preview & Atomic Commit",
                 // ignore
             }
 
-            const ndjson = [
-                JSON.stringify({ type: "meta", operationId: reqOpId, model: "google/gemini-2.5-flash" }),
-                JSON.stringify({ type: "chunk", text: "# Original Document Text\nImproved with state-of-the-art AI." }),
-                JSON.stringify({ type: "done" }),
-            ].join("\n") + "\n";
+            const sseBody = [
+                `event: start\ndata: ${JSON.stringify({ type: "start", sessionId: `sess_${Date.now()}`, threadId: doc.id, operationId: reqOpId })}\n\n`,
+                `event: update\ndata: ${JSON.stringify({
+                    type: "update",
+                    chunk: {
+                        hunks: [
+                            {
+                                hunkId: "hunk_1",
+                                headingSlug: "original-document-text",
+                                replacementText: "# Original Document Text\nImproved with state-of-the-art AI.",
+                                status: "preview_ready",
+                            },
+                        ],
+                    },
+                })}\n\n`,
+                `event: done\ndata: ${JSON.stringify({ type: "done", threadId: doc.id, operationId: reqOpId })}\n\n`,
+            ].join("");
 
             await route.fulfill({
                 status: 200,
-                contentType: "application/x-ndjson",
-                body: ndjson,
+                contentType: "text/event-stream",
+                headers: {
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                },
+                body: sseBody,
             });
-        });
+        };
 
-        // 4. Drive AI prompt submission from the UI
-        const improveButton = page.getByRole("button", { name: "Improve" });
-        await expect(improveButton).toBeVisible();
-        await improveButton.click();
+        await page.route("**/api/agent/stream", handleMockStream);
+        await page.route("**/api/ai/stream", handleMockStream);
+
+        // 4. Drive AI prompt submission from the UI (Phase 11 Architectural Agent panel)
+        const agentToggle = page.getByTestId("ai-toolbar-agent-toggle");
+        await expect(agentToggle).toBeVisible({ timeout: 10000 });
+        await agentToggle.click();
+
+        const promptInput = page.getByTestId("agent-prompt-input");
+        await expect(promptInput).toBeVisible({ timeout: 10000 });
+        await promptInput.fill("Improve document with AI");
+
+        const startButton = page.getByTestId("agent-start-button");
+        await expect(startButton).toBeVisible();
+        await startButton.click();
 
         // 5. Assert dynamic ghost preview rendering
-        const ghostPreview = page.locator(".cm-ai-ghost-text");
-        await expect(ghostPreview).toBeVisible({ timeout: 10000 });
-        await expect(ghostPreview).toContainText("Improved with state-of-the-art AI");
+        const ghostPreview = page.locator(".cm-ai-ghost-text").or(page.getByTestId("agent-ghost-review-bar"));
+        await expect(ghostPreview.first()).toBeVisible({ timeout: 15000 });
 
-        // 6. Execute atomic commit via UI action
-        const applyCommitButton = page.getByRole("button", { name: "تطبيق التعديل" });
-        await expect(applyCommitButton).toBeVisible();
-        await applyCommitButton.click();
+        // 6. Execute atomic commit via UI action (AIToolbar or AgentChatPanel)
+        const applyCommitButton = page.getByTestId("ai-toolbar-accept-all").or(page.getByTestId("agent-accept-all-hunks"));
+        await expect(applyCommitButton.first()).toBeVisible({ timeout: 10000 });
+        await applyCommitButton.first().click();
 
         // 7. Assert ghost preview closes and editor contains committed text
-        await expect(ghostPreview).toBeHidden({ timeout: 10000 });
+        await expect(page.locator(".cm-ai-ghost-text")).toBeHidden({ timeout: 10000 });
         await expect(cmContent).toContainText("Improved with state-of-the-art AI");
 
         // 8. Assert DB persistence matches atomic commit

@@ -48,7 +48,7 @@ test.describe("Scenario 4: Offline-First Sync & Interactive Conflict Resolution"
 
         // 6. Assert Conflict Dialog / Resolution UI path
         const conflictHeading = page.getByText("تعارض في التزامن");
-        const reviewBtn = page.getByRole("button", { name: "مراجعة وحل التعارض" });
+        const reviewBtn = page.getByRole("button", { name: /مراجعة وحل التعارض|Review & Resolve Conflict/ });
         await expect(conflictHeading.or(reviewBtn)).toBeVisible({ timeout: 25000 });
 
         if (await reviewBtn.isVisible()) {

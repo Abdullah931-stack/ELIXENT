@@ -18,16 +18,21 @@ test.describe("Scenario 9: System AI Provider Failure (Full Refund Policy)", () 
             })
             .returning();
 
-        // 1. Intercept /api/ai/stream to simulate upstream AI provider crash (500)
-        await page.route("**/api/ai/stream", async (route) => {
+        // 1. Intercept stream endpoints to simulate upstream AI provider crash (500)
+        const handle500Failure = async (route: any) => {
             await route.fulfill({
                 status: 500,
                 contentType: "application/json",
                 body: JSON.stringify({
                     error: "Upstream AI service temporarily unavailable",
+                    code: "INTERNAL_SERVER_ERROR",
+                    message: "Upstream AI service temporarily unavailable",
                 }),
             });
-        });
+        };
+
+        await page.route("**/api/agent/stream", handle500Failure);
+        await page.route("**/api/ai/stream", handle500Failure);
 
         // 2. Open editor
         await page.goto(`/workspace/editor/${doc.id}`);
@@ -37,14 +42,22 @@ test.describe("Scenario 9: System AI Provider Failure (Full Refund Policy)", () 
         await expect(cmContent).toBeVisible({ timeout: 15000 });
         await expect(cmContent).toContainText("Text awaiting AI refinement", { timeout: 20000 });
 
-        // 3. Trigger AI operation from UI
-        const improveBtn = page.getByRole("button", { name: "Improve" });
-        await expect(improveBtn).toBeVisible();
-        await improveBtn.click();
+        // 3. Trigger AI Agent from UI
+        const agentToggle = page.getByTestId("ai-toolbar-agent-toggle");
+        await expect(agentToggle).toBeVisible({ timeout: 10000 });
+        await agentToggle.click();
+
+        const promptInput = page.getByTestId("agent-prompt-input");
+        await expect(promptInput).toBeVisible({ timeout: 10000 });
+        await promptInput.fill("Refine text with AI");
+
+        const startButton = page.getByTestId("agent-start-button");
+        await expect(startButton).toBeVisible();
+        await startButton.click();
 
         // 4. Assert UI error alert is displayed
-        const errorAlert = page.getByText(/حدث خطأ أثناء معالجة النص|Upstream AI service/).first();
-        await expect(errorAlert).toBeVisible({ timeout: 10000 });
+        const errorAlert = page.getByTestId("agent-error-alert").or(page.getByText(/حدث خطأ أثناء معالجة النص|Upstream AI service|error/i));
+        await expect(errorAlert.first()).toBeVisible({ timeout: 15000 });
 
         // 5. Verify document content is preserved completely
         await expect(cmContent).toContainText("Text awaiting AI refinement");

@@ -36,7 +36,7 @@ test.describe("Scenario 13: Zero-Knowledge AI Shield Gatekeeper & HTTP 403 Block
         // 3. Verify that the amber AI Shield badge is explicitly displayed in the UI toolbar
         const aiBadge = page.getByTestId("ai-encrypted-badge");
         await expect(aiBadge).toBeVisible({ timeout: 15000 });
-        await expect(aiBadge).toContainText(/ميزات الـ AI معطلة لحماية التشفير|التشفير محمي/);
+        await expect(aiBadge).toContainText(/AI Shield Active|Encrypted|ميزات الـ AI معطلة|التشفير محمي/);
 
         // 4. Verify that programmatic invocation of /api/ai/stream against this encrypted file is blocked with HTTP 403
         const streamResponse = await context.request.post("/api/ai/stream", {

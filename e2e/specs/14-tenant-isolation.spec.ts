@@ -41,13 +41,13 @@ test.describe("Scenario 15: Cross-User Tenant Isolation & 404 Anti-Enumeration",
             await page.waitForLoadState("domcontentloaded");
 
             // Verify that hydration enters fatal error state, editor is not rendered, and foreign content is never leaked
-            const fatalHeading = page.getByRole("heading", { name: "تعذّر فتح المستند" });
+            const fatalHeading = page.getByRole("heading", { name: /تعذّر فتح المستند|Unable to Open Document/ });
             await expect(fatalHeading).toBeVisible({ timeout: 15000 });
             await expect(page.locator(".cm-content")).toBeHidden();
             await expect(page.getByText("Secret belonging exclusively to Tenant B")).toBeHidden();
 
             // Clicking return button navigates safely back to workspace
-            const returnBtn = page.getByRole("button", { name: "العودة إلى مساحة العمل" });
+            const returnBtn = page.getByRole("button", { name: /العودة إلى مساحة العمل|Return to Workspace/ });
             await expect(returnBtn).toBeVisible();
             await returnBtn.click();
             await expect(page).toHaveURL(/\/workspace(?!\/editor)/, { timeout: 10000 });

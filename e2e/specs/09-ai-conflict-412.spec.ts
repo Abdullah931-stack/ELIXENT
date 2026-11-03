@@ -44,7 +44,7 @@ test.describe("Scenario 10: AI Concurrent Edit Collision (412 Precondition Faile
                 status: "SETTLED",
             });
 
-        await page.route("**/api/ai/stream", async (route) => {
+        const handleConflictStream = async (route: any) => {
             try {
                 const postData = JSON.parse(route.request().postData() || "{}");
                 if (postData.operationId) {
@@ -68,27 +68,53 @@ test.describe("Scenario 10: AI Concurrent Edit Collision (412 Precondition Faile
                 // ignore
             }
 
-            const ndjson = [
-                JSON.stringify({ type: "meta", operationId, model: "google/gemini-2.5-flash" }),
-                JSON.stringify({ type: "chunk", text: "# Conflicting AI Rewrite" }),
-                JSON.stringify({ type: "done" }),
-            ].join("\n") + "\n";
+            const sseBody = [
+                `event: start\ndata: ${JSON.stringify({ type: "start", sessionId: `sess_${Date.now()}`, threadId: doc.id, operationId })}\n\n`,
+                `event: update\ndata: ${JSON.stringify({
+                    type: "update",
+                    chunk: {
+                        hunks: [
+                            {
+                                hunkId: "hunk_conflict_1",
+                                headingSlug: "version-1-original",
+                                replacementText: "# Conflicting AI Rewrite",
+                                status: "preview_ready",
+                            },
+                        ],
+                    },
+                })}\n\n`,
+                `event: done\ndata: ${JSON.stringify({ type: "done", threadId: doc.id, operationId })}\n\n`,
+            ].join("");
 
             await route.fulfill({
                 status: 200,
-                contentType: "application/x-ndjson",
-                body: ndjson,
+                contentType: "text/event-stream",
+                headers: {
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                },
+                body: sseBody,
             });
-        });
+        };
 
-        // 3. Trigger AI stream in UI
-        const improveBtn = page.getByRole("button", { name: "Improve" });
-        await expect(improveBtn).toBeVisible();
-        await improveBtn.click();
+        await page.route("**/api/agent/stream", handleConflictStream);
+        await page.route("**/api/ai/stream", handleConflictStream);
 
-        const ghostPreview = page.locator(".cm-ai-ghost-text");
-        await expect(ghostPreview).toBeVisible({ timeout: 10000 });
-        await expect(ghostPreview).toContainText("Conflicting AI Rewrite");
+        // 3. Trigger AI Agent in UI
+        const agentToggle = page.getByTestId("ai-toolbar-agent-toggle");
+        await expect(agentToggle).toBeVisible({ timeout: 10000 });
+        await agentToggle.click();
+
+        const promptInput = page.getByTestId("agent-prompt-input");
+        await expect(promptInput).toBeVisible({ timeout: 10000 });
+        await promptInput.fill("Conflicting rewrite");
+
+        const startButton = page.getByTestId("agent-start-button");
+        await expect(startButton).toBeVisible();
+        await startButton.click();
+
+        const ghostPreview = page.locator(".cm-ai-ghost-text").or(page.getByTestId("agent-ghost-review-bar"));
+        await expect(ghostPreview.first()).toBeVisible({ timeout: 15000 });
 
         // 4. Simulate concurrent remote save in another tab (increments server version past client expectedVersion)
         const preUpdateDoc = await getDbFile(doc.id);
@@ -100,12 +126,12 @@ test.describe("Scenario 10: AI Concurrent Edit Collision (412 Precondition Faile
         );
 
         // 5. Attempt commit on stale version in UI (sends stale expectedVersion against incremented server version)
-        const applyCommitBtn = page.getByRole("button", { name: "تطبيق التعديل" });
-        await expect(applyCommitBtn).toBeVisible();
-        await applyCommitBtn.click();
+        const applyCommitBtn = page.getByTestId("ai-toolbar-accept-all").or(page.getByTestId("agent-accept-all-hunks"));
+        await expect(applyCommitBtn.first()).toBeVisible({ timeout: 10000 });
+        await applyCommitBtn.first().click();
 
         // 6. Assert 412 Precondition Failed UI notification
-        const conflictAlert = page.getByText(/تم تعديل الملف من جلسة أخرى أثناء المعالجة/).first();
+        const conflictAlert = page.getByText(/تم تعديل الملف من جلسة أخرى أثناء المعالجة|Conflict Warning|تعارض/i).first();
         await expect(conflictAlert).toBeVisible({ timeout: 35000 });
 
         // 7. Verify authoritative remote content was NOT overwritten

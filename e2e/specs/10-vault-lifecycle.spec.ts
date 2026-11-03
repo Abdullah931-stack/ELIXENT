@@ -54,10 +54,10 @@ test.describe("Scenario 11: Encrypted Vault Lifecycle & Zero-Knowledge Browser J
         await expect(modalHeading).toBeHidden({ timeout: 5000 });
 
         // 7. Verify locked state in background UI and manual unlock trigger
-        const lockBanner = page.getByRole("heading", { name: "المستند مشفر ومحمي" });
+        const lockBanner = page.getByRole("heading", { name: /المستند مشفر ومحمي|Document Encrypted & Protected/ });
         await expect(lockBanner).toBeVisible({ timeout: 10000 });
 
-        const unlockBtn = page.getByRole("button", { name: "فتح قفل الخزنة" });
+        const unlockBtn = page.getByRole("button", { name: /فتح قفل الخزنة|Unlock Vault/ });
         await expect(unlockBtn).toBeVisible();
         await unlockBtn.click();
         await expect(modalHeading).toBeVisible({ timeout: 5000 });

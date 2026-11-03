@@ -47,10 +47,10 @@ test.describe("Scenario 12: Vault Inactivity Auto-Lock, Multi-Modal Unlock & Dev
         await cancelBtn.click();
         await expect(passwordInput).toBeHidden({ timeout: 5000 });
 
-        const lockBanner = page.getByRole("heading", { name: "المستند مشفر ومحمي" });
+        const lockBanner = page.getByRole("heading", { name: /المستند مشفر ومحمي|Document Encrypted & Protected/ });
         await expect(lockBanner).toBeVisible({ timeout: 10000 });
 
-        const unlockBtn = page.getByRole("button", { name: "فتح قفل الخزنة" });
+        const unlockBtn = page.getByRole("button", { name: /فتح قفل الخزنة|Unlock Vault/ });
         await expect(unlockBtn).toBeVisible();
 
         // 6. Verify volatile memory isolation: RAM keys must not leak into localStorage
