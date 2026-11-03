@@ -487,3 +487,19 @@ According to the execution semantics of LangGraph.js Interrupts, invoking `new C
    - Upon receiving the schema-validated user answers on resume, the node returns an explicit routing command:
      `return new Command({ update: { question_queue: null, ...appliedAnswers }, goto: "assumption_analyzer_node" });`
 3. **Prohibition of Swallowing Interrupt Exceptions:** Wrapping the `interrupt()` call inside `pure_interrupt_node` with a generic `try / catch` block is strictly prohibited, because `LangGraph` relies on throwing an internal `GraphInterrupt` control exception to freeze execution state and cleanly terminate the serverless function invocation.
+
+---
+
+## 7. Interactive Agent Chat Panel & HITL Presentation Layer (`AgentChatPanel & HITLQuestionCard`)
+
+Phase 11 connects the compiled LangGraph `StateGraph` to the user via interactive presentation surfaces:
+
+1. **Architectural Agent Chat Panel (`src/components/agent/chat-panel.tsx`):**
+   - Renders active 7-stage graph progression in real time from SSE `update` events.
+   - Provides an interactive accordion inspecting the committed ATMS decision ledger (`master_ledger`), displaying each decision's rationale and evaluated alternatives with contextual exclusion reasons.
+   - Hosts multi-hunk review controls (`Accept All / Reject All`) and prompt input with vault/offline status awareness.
+
+2. **HITL Clarification Card (`src/components/agent/hitl-question-card.tsx`):**
+   - Displays structured question batches emitted by Stage 6 (`pure_interrupt_node`).
+   - Validates user selections and custom justifications against `ClarificationResponseSchema` in real time.
+   - Resumes the suspended graph thread via `POST /api/agent/stream` passing `resumePayload`, achieving replay-safe continuation without duplicate token expenditure.

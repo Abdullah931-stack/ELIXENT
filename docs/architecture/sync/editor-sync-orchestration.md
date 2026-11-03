@@ -797,6 +797,29 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
 
 ---
 
+## 6i. Architectural Agent Multi-Hunk Ghost Orchestration & Debounced Incremental Sync (Elixent Phase 11 Amendment)
+
+Phase 11 completes the integration between the CodeMirror 6 `MultiHunkGhost` extension, the unified `/api/agent/stream` SSE route, and the editor write controller:
+
+### 1. Architectural Agent State Slice & Dispatch
+The orchestrator exposes rich agent session controls and state channels directly to the UI layer:
+- **Lifecycle Methods:** `startAgentSession(prompt, targetFileIds)`, `resumeAgentInterrupt(response)`, `stopAIOperation()`, `resetAI()`.
+- **Ghost Hunk Actions:** `acceptGhostHunk(hunkId)`, `rejectGhostHunk(hunkId)`, `acceptAllGhostHunks()`, `rejectAllGhostHunks()`.
+- **Exposed Channels:** `agentGraphStage`, `activeQuestionQueue`, `masterDecisionLedger`, `activeGhostHunks`, `activeGhostHunksCount`.
+
+### 2. Immediate Local Persistence + Debounced Server Save (412 Conflict Elimination)
+When a user accepts an individual ghost hunk (or clicks "Accept All"):
+1. The hunk replacement is applied in CodeMirror 6 with `Transaction.userEvent.of("ai.accept.hunk")` and `isolateHistory.of("full")`.
+2. Local IndexedDB is immediately updated with the new text and `localRevision += 1`.
+3. `useEditorAutosave` is notified (`onHunkAccepted` / `onAllHunksAccepted`), resetting the debounce timer (800ms–1000ms).
+4. If multiple hunks are accepted in rapid succession, all local mutations coalesce into a **single sequential server PUT** carrying the latest `expectedVersion` and `serverEtag`.
+5. This eliminates the race condition where concurrent save requests with identical version numbers collided on the server, permanently preventing self-inflicted `412 Precondition Failed` errors.
+
+### 3. Complete Purge of Legacy 5-Operation UI Triggers
+All direct imports of `ai-ops.ts`, `ai-commit.ts`, `pending-operation-store.ts`, and `/api/ai/stream` have been permanently removed from `src/app`, `src/components`, and `src/hooks`. The editor toolbar (`AIToolbar`) now features the agent panel toggle and multi-hunk action bar, while the editor page mounts `AgentChatPanel` for end-to-end architectural collaboration.
+
+---
+
 ## 7. Verification Proof
 
 - **Automated Test Execution Evidence:**
@@ -832,7 +855,7 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
   - **Vault Subsystem Total:** 10/10 test files, 178/178 tests passing (100% success rate).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 110 unit suites (1815 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 112 unit suites (1899 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
   - **TypeScript Typecheck:** `npx tsc --noEmit` exits with code 0 (zero errors).

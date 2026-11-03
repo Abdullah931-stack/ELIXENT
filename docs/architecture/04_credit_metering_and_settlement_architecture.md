@@ -201,6 +201,13 @@ When a payment or subscription renewal event is received in `src/app/api/stripe/
 1. `users.credit_balance_micro` is updated and the event is recorded in `subscription_events` and `credit_ledger_transactions` inside a PostgreSQL transaction first.
 2. A Redis Lua script (`stripe_dual_write.lua`) is invoked to increment `lugx:wallet:${userId}` by the top-up amount via `INCRBY` **only if the key currently exists in memory (`EXISTS == 1`)**; otherwise, it is left to be hydrated via the `Flush-First Cold Start` protocol on the next user request.
 
+### 5.4. Client Credit Balance Views (`Dashboard & Account Pages`)
+
+In Phase 11, user-facing quota displays were migrated from legacy word-count metrics to the server-authoritative micro-credit architecture:
+
+- **Dashboard (`src/app/dashboard/page.tsx`):** Calls `getUserCreditBalance(user.id)` to fetch the authoritative `creditBalanceMicro` and displays available credits alongside a percentage progress bar derived from `TIER_LIMITS[tier].creditsDisplay`.
+- **Account (`src/app/account/page.tsx`):** Replaces legacy `getRemainingQuota` displays with real-time micro-credit balance visualization, breakdown by tier, and direct Stripe top-up / upgrade actions.
+
 ## 6. Standard Verification and Acceptance Criteria (Verification & Acceptance Criteria)
 
 | Criterion ID | Verification Test Scenario | Expected Deterministic Passing Behavior |

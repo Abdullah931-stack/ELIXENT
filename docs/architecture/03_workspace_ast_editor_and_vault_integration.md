@@ -264,6 +264,14 @@ sequenceDiagram
 1. **Independence of Financial Settlement from Editor Acceptance:** As established in `Phase 11` of `LUGX v1.46.3`, token costs are settled server-side upon generation; consequently, user acceptance or rejection of a ghost hunk is a **pure file editing and synchronization operation** that never re-invokes the billing engine.
 2. **Per-Hunk Atomic Undo (`Per-Hunk Atomic Undo`):** Accepting each `GhostHunk` is recorded as an independent CodeMirror transaction tagged with `Transaction.userEvent.of("ai.accept.hunk")`, so pressing `Ctrl+Z` cleanly reverts the last accepted hunk, whereas clicking **"Accept All Hunks (`Accept All Hunks`)"** applies all hunks in a single atomic CodeMirror transaction (`changes: hunks.map(...)`) that can be reverted all at once with a single `Ctrl+Z`.
 
+### 4.3. Client Presentation & Orchestrator Integration (Phase 11)
+
+In Phase 11, the multi-hunk ghost extension and incremental sync contract are fully wired to the workspace editor:
+
+1. **`AIToolbar` (`src/components/editor/ai-toolbar.tsx`):** Displays the architectural agent toggle button with active badge indicators, along with `Accept All` and `Reject All` multi-hunk ghost action controls.
+2. **`AgentChatPanel` (`src/components/agent/chat-panel.tsx`):** Slides out alongside the editor view, displaying 7-stage progress, the ATMS decision ledger, and the `HITLQuestionCard` for interactive clarifications.
+3. **`useEditorOrchestrator` (`src/hooks/use-editor-orchestrator.ts`):** Coordinates multi-hunk actions (`acceptGhostHunk`, `rejectGhostHunk`, `acceptAllGhostHunks`, `rejectAllGhostHunks`) with immediate IndexedDB writes and debounced sequential server synchronization via `useEditorAutosave`.
+
 ## 5. Zero-Knowledge Vault Boundary and Isolated Ephemeral References (`Zero-Knowledge Vault Boundary & Ephemeral References`)
 
 To preserve the end-to-end encryption (`Zero-Knowledge`) guarantees implemented in `src/lib/crypto/*`, `src/lib/vault/*`, and `src/server/db/schema/vault.ts`:

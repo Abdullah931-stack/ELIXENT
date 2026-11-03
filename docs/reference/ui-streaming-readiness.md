@@ -25,6 +25,7 @@ This document specifies the architecture and implementation of the **Hybrid Stre
 | **G9** | Editor orchestration and authoritative write integration tests with zero regression. | `src/test/editor/editor-orchestration.integration.test.ts`<br>[`docs/architecture/sync/editor-sync-orchestration.md`](../architecture/sync/editor-sync-orchestration.md) | **Validated** |
 | **G10** | Feature Flag gating (`AI_STREAMING_ENABLED = false` by default) with zero sensitive prompt leakage in server logs. | `src/config/features.config.ts`<br>`src/app/api/ai/stream/route.ts` | **Implemented & Enforced (v1.5.0)** — the route now branches on the flag with `processWithAI` as a buffered NDJSON fallback |
 | **G11** | Zero-Knowledge AI Safety Gatekeeper: Mandatory non-empty `fileId` with HTTP 400 (`MISSING_FILE_ID`), database ownership check, amber UI badge (`ai-encrypted-badge`), server-side check against `userVaultProfiles.allowAIOnEncryptedFiles` rejecting encrypted files with HTTP 403 (`AI_PROHIBITED_ON_ENCRYPTED_FILES`) unless opted-in, and commit IV re-encryption guard. | `src/components/editor/ai-toolbar.tsx`<br>`src/hooks/use-editor-orchestrator.ts`<br>`src/app/api/ai/stream/route.ts`<br>`src/server/actions/ai-commit.ts`<br>`src/test/ai/ai-stream-fileid-governance.test.ts` | **Implemented & Hardened (v1.38.0)** |
+| **G12** | Architectural Agent Presentation & Incremental Sync: Integration of `AgentChatPanel`, `HITLQuestionCard`, and debounced incremental autosave via `useEditorAutosave` (800ms–1000ms), purging legacy 5-operation UI references from `src/app`, `src/components`, and `src/hooks`. | `src/components/agent/chat-panel.tsx`<br>`src/components/agent/hitl-question-card.tsx`<br>`src/components/editor/ai-toolbar.tsx`<br>`src/hooks/use-ai-stream.ts`<br>`src/hooks/use-editor-orchestrator.ts` | **Implemented & Verified (v0.11.0 / Phase 11)** |
 
 ---
 
@@ -57,27 +58,31 @@ flowchart TD
 
 ## 4. Session Finite State Machine (FSM)
 
+The agent session transitions through 8 deterministic states governed by `src/lib/ai/stream-session.ts`:
+
 ```mermaid
 stateDiagram-v2
     [*] --> idle
-    idle --> reserving: startStream()
-    reserving --> streaming: onMeta / onStart received
-    streaming --> preview_ready: onDone received (Result parked, NO auto-commit)
-    preview_ready --> committing: User ACCEPTS (commitPreview)
-    committing --> committed: Local atomic Editor transaction
-    committed --> idle: Session recycled
-
-    streaming --> aborted: User STOPS (settle-as-consumed, never refund)
-    preview_ready --> aborted: User REJECTS / RETRIES (settle-as-consumed)
-
-    reserving --> failed: Startup / quota error (refund)
-    streaming --> failed: Network / model error (refund)
-    committing --> failed: Database commit error (refund)
-    committing --> conflict: Version mismatch (HTTP 412, refund)
+    idle --> running_graph: startAgentSession() (POST /api/agent/stream)
+    running_graph --> awaiting_hitl: interrupt frame received (question_queue populated)
+    awaiting_hitl --> running_graph: resumeAgentInterrupt() (new Command({ resume }))
+    running_graph --> streaming_hunks: section synthesis active (ghost hunks rendered)
+    streaming_hunks --> preview_ready: graph execution complete (all hunks parked)
     
-    aborted --> idle: Reset
-    failed --> idle: Reset
-    conflict --> idle: Reset
+    preview_ready --> completed: acceptAllGhostHunks() or all hunks accepted
+    preview_ready --> aborted: rejectAllGhostHunks() or all hunks rejected
+
+    running_graph --> aborted: stopAIOperation() (client abort)
+    awaiting_hitl --> aborted: stopAIOperation() (client abort)
+    streaming_hunks --> aborted: stopAIOperation() (client abort)
+
+    running_graph --> failed: Stream error / rate limit / quota exhausted
+    awaiting_hitl --> failed: Network or validation failure
+    streaming_hunks --> failed: Stream connection dropped
+
+    completed --> idle: resetAI() / recycled
+    aborted --> idle: resetAI() / recycled
+    failed --> idle: resetAI() / recycled
 ```
 
 ---
@@ -216,3 +221,28 @@ The route returns an SSE stream with headers `Content-Type: text/event-stream; c
 - **StreamGovernor Runway Metering:** Initial reservation of 1,200 tokens via `StreamGovernor(userId, operationId, "google/gemini-3.8-flash")`. Every token chunk is metered in real time; if quota is exhausted, governor aborts the stream with `GOVERNOR_QUOTA_EXHAUSTED`.
 - **Background Settlement via Next.js `after()`:** Asynchronous credit settlement persistence is queued via `after(async () => { await flushPendingSettlementsToPostgres(user.id); })`, decoupling database write latency from client stream closure.
 - **Zero-Knowledge Buffer Cleansing:** Decrypted file plaintexts loaded into `EphemeralVaultMemoryMap` via `runWithEphemeralVaultScope` are deterministically wiped (`Buffer.fill(0)`) in both normal completion and stream abort/cancel handlers via `zeroOutEphemeralVaultMemory()`.
+
+---
+
+## 9. Architectural Agent Chat Panel, HITL Question Cards & Incremental Editor Sync (Phase 11)
+
+Phase 11 completes the end-to-end integration of the autonomous architectural agent into the client presentation and editing layer:
+
+### 9.1 Agent Chat Panel (`src/components/agent/chat-panel.tsx`)
+- **7-Stage Architectural Progress:** Ephemeral visual indicator displaying active graph stages (`Orchestrator`, `Structural Inspection`, `Assumption Analysis`, `Decision Audit`, `Conformal Triage`, `HITL Clarification`, `Document Writer`).
+- **ATMS Decision Ledger (`master_ledger`):** Live accordion view rendering committed architectural decisions, rationale summaries, and evaluated alternatives with exclusion reasons.
+- **Prompt Composer & Lifecycle Controls:** Provides session initiation, abort (`stopAIOperation`), reset (`resetAI`), and vault lock status badges with automatic dark-theme styling.
+
+### 9.2 Human-in-the-Loop Clarification Gate (`src/components/agent/hitl-question-card.tsx`)
+- **Diagnostic Clarification Batches:** Renders clarifying question batches emitted by Stage 6 (`pure_interrupt_node`) upon LangGraph suspension.
+- **Contractual Response Validation:** Validates answers in real time against `ClarificationResponseSchema` before enabling the submit action.
+- **Stateless Resumption:** Submits validated user responses to `/api/agent/stream` passing `resumePayload`, resuming the graph execution thread with zero duplicate billing.
+
+### 9.3 Client Hook Orchestration (`useAIStream` & `useEditorOrchestrator`)
+- **Decoupled Architecture:** `useAIStream` coordinates stream consumption (`consumeAgentStream`), event handling, and multi-hunk ghost state in CodeMirror 6.
+- **Programmatic Transaction Isolation:** Dispatches all ghost hunk applications inside `onProgrammaticTransaction`, raising `isProgrammaticUpdateRef` in `useEditorOrchestrator` to prevent false classification as manual user edits.
+- **Incremental Sync Contract (412 Elimination):** Ghost hunk acceptance writes directly to local IndexedDB (`localRevision += 1`) and notifies `useEditorAutosave`, coalescing multiple rapid hunk acceptances into a single debounced server save (800ms–1000ms) with matching `expectedVersion`, permanently eliminating self-inflicted 412 Precondition Failed conflicts.
+
+### 9.4 Real-Time Micro-Credit Balance Presentation
+- **Server-Authoritative Ledger:** Dashboard (`src/app/dashboard/page.tsx`) and Account (`src/app/account/page.tsx`) pages read live balances via `getUserCreditBalance(user.id)` from `src/server/services/ai-settlement-service.ts`.
+- **Percentage Available Indicator:** Renders visual progress bar comparing `currentCredits` against `TIER_LIMITS[tier].creditsDisplay`.

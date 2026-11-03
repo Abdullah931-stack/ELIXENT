@@ -4,6 +4,43 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.11.0] - 2026-11-03 (Phase 11: Agent Chat Panel, HITL Question Cards, Credit Balance Views & Incremental Editor Sync)
+
+### Architectural Agent Chat Panel & HITL Clarification Cards (`src/components/agent/*`)
+
+- **Interactive Agent Chat Panel (`chat-panel.tsx`):** Built the primary control surface for the 7-stage architectural agent (`AgentChatPanel`), featuring real-time stage progress indicators, an accordion-based ATMS master decision ledger viewer with selection rationales and evaluated alternatives, multi-hunk review counters with batch action triggers, and session lifecycle controls with Zero-Knowledge vault lock awareness.
+- **Human-in-the-Loop Clarification Gate (`hitl-question-card.tsx`):** Implemented `HITLQuestionCard` rendering structured clarifying question batches from Stage 6 (`pure_interrupt_node`), with option selection, custom notes (max 500 chars), and real-time schema validation via `ClarificationResponseSchema` before stateless resumption dispatch.
+- **Editor Toolbar Upgrade (`src/components/editor/ai-toolbar.tsx`):** Added agent chat panel drawer toggle and multi-hunk ghost preview action bar (`activeGhostHunksCount`, `onAcceptAllGhostHunks`, `onRejectAllGhostHunks`) while preserving legacy callback interfaces for backward compatibility.
+
+### Incremental Multi-Hunk Sync & 412 Conflict Elimination (`src/hooks/use-editor-orchestrator.ts` & `src/hooks/use-ai-stream.ts`)
+
+- **Immediate Local Persistence + Debounced Server Autosave:** Replaced client-driven `commitAIFileOperation` with an incremental sync pipeline: accepting a ghost hunk applies the replacement in CodeMirror 6 with `isolateHistory.of("full")`, writes immediately to IndexedDB (`localRevision += 1`), and notifies `useEditorAutosave` to coalesce rapid acceptances into a single debounced server save (800ms–1000ms), permanently eliminating racing parallel PUT requests and self-inflicted `412 Precondition Failed` conflicts.
+- **Programmatic Transaction Isolation:** Routed all ghost hunk replacements through `onProgrammaticTransaction`, raising `isProgrammaticUpdateRef` in `useEditorOrchestrator` to prevent editor changes from being misclassified as manual user typing.
+- **Agent Session FSM Evolution (`src/lib/ai/stream-session.ts`):** Transitioned `AIStreamStatus` to an 8-state finite state machine (`idle`, `running_graph`, `awaiting_hitl`, `streaming_hunks`, `preview_ready`, `completed`, `aborted`, `failed`) and updated `src/components/editor/ai-stream-status.tsx` to reflect active graph stages.
+
+### Real-Time Micro-Credit Balance Views (`src/app/dashboard/page.tsx` & `src/app/account/page.tsx`)
+
+- **Micro-Credit Architecture Integration:** Removed legacy word-count quota calls (`getRemainingQuota`), wiring dashboard and account pages to `getUserCreditBalance(user.id)` from `src/server/services/ai-settlement-service.ts`.
+- **Visual Progress & Tier Allocations:** Rendered available credit balances alongside percentage progress bars derived from `TIER_LIMITS[tier].creditsDisplay` and provided direct links to Stripe upgrade flows.
+
+### Legacy 5-Operation UI Triggers & Reference Purge
+
+- **Commit Gate 11 Compliance:** Verified via strict repository grep that zero references to `ai-ops.ts`, `ai-commit.ts`, `pending-operation-store.ts`, or `/api/ai/stream` remain in `src/app`, `src/components`, or `src/hooks`.
+- **Editor Workspace Page Integration (`src/app/workspace/editor/[fileId]/page.tsx`):** Fully integrated `AgentChatPanel`, `AIToolbar`, and `AIStreamStatus` with `useEditorOrchestrator` outputs and keyboard shortcuts.
+
+### Verification & Metrics Baseline
+
+- **Dedicated Phase 11 Test Suites:** 2 new test suites delivering 79 passing tests:
+  - `src/test/agent/wave-11-1-ui-and-sync.test.tsx` (32 tests)
+  - `src/test/agent/wave-11-2-ui-and-pages.test.tsx` (47 tests)
+- **Synchronized SSOT Metrics:** Validated via `scripts/sync-doc-metrics.mjs`:
+  - Unit & Contract: 112 suites, 1,899 tests (100% green).
+  - Live Multi-System Integration: 21 suites, 108 tests (100% green).
+  - Browser E2E Journeys: 14 specs, 15 user journeys (100% green).
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/elixent-execution/phase-11-agent-chat-panel-hitl-question-cards-credit-balance-views-and-incremental-editor-sync.md`](records/closures/elixent-execution/phase-11-agent-chat-panel-hitl-question-cards-credit-balance-views-and-incremental-editor-sync.md).
+
+---
+
 ## [0.10.0] - 2026-10-31 (Phase 10: CodeMirror 6 Multi-Hunk Ghost Upgrade & Unified Agent SSE Stream Route)
 
 ### CodeMirror 6 Multi-Hunk Ghost Preview Engine (`src/components/editor/markdown/streaming-ghost.ts` & `types.ts`)

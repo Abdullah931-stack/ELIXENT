@@ -19,7 +19,7 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-110%20Suites%20·%201815%2F1815%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 1815 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-112%20Suites%20·%201899%2F1899%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 1899 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-21%20Suites%20·%20108%2F108%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 108 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
@@ -57,6 +57,7 @@
   - [14. Universal Concept Taxonomy, Unified Decision Client & Conformal APS Classifier](#14-universal-concept-taxonomy-unified-decision-client--conformal-aps-classifier)
   - [15. Justification-Driven ATMS DAG, Deterministic Candidate Retriever & Relational Linker](#15-justification-driven-atms-dag-deterministic-candidate-retriever--relational-linker)
   - [16. AgentGraphState Channels, Pure Reducers, 7-Stage Nodes & Compiled LangGraph StateGraph](#16-agentgraphstate-channels-pure-reducers-7-stage-nodes--compiled-langgraph-stategraph)
+  - [17. Agent Chat Panel, HITL Question Cards & Incremental Editor Sync](#17-agent-chat-panel-hitl-question-cards--incremental-editor-sync)
 - [Security Architecture](#security-architecture)
 - [Documentation Index](#documentation-index)
 - [Deployment Blueprints](#deployment-blueprints)
@@ -305,7 +306,7 @@ npm run start
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 110 | 1815 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 112 | 1899 | 100% ✅ |
 | **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 108 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
@@ -320,7 +321,7 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).              |
 
 ```bash
-# Execute unit/contract test suites (110 test files, 1815 tests)
+# Execute unit/contract test suites (112 test files, 1899 tests)
 npm run test
 
 # Execute live database integration test suites on isolated Neon branch (21 test files, 108 tests)
@@ -756,6 +757,15 @@ flowchart TD
 - **Pure Synchronous Reducers (`src/core/agent/reducers.ts`):** 8 deterministic reducer functions (`(current, update) => next`) with zero I/O, zero async, and zero mutation of input arguments (verified under `Object.freeze`). Implements composite key deduplication (`fileId:headingSlug`), set union, decimal string BigInt arithmetic, and monotonic loop count clamping (`MAX_SEARCH_LOOPS = 3`).
 - **14 Canonical Stage Nodes (`src/core/agent/nodes/*`):** Modular stage nodes across Stages 0 to 7 covering orchestration, hybrid inspection, assumption extraction, relational linking, JEV structuring, single-pass scoring, deterministic conformal triage, ATMS DAG commit, gap planning, replay-safe HITL interrupts, and 3-way document surgery (`diff3MergeSection`).
 - **Compiled StateGraph & Authenticated Checkpointer (`src/core/agent/graph.ts`):** StateGraph workflow builder (`buildAgentWorkflow`) connecting all 14 nodes and 3 conditional edge routers. Integrates `PostgresSaver` checkpointer with `EncryptedCheckpointSerializer` (AES-256-GCM) with `elixent:v1:checkpoint:${innerType}` AAD and active plaintext leak assertions (`assertNoVaultPlaintextLeak`). Provides `createElixentAgentGraph(options)` factory and `elixentAgentGraph` lazy singleton Proxy preventing premature database initialization in test environments.
+
+### 17. Agent Chat Panel, HITL Question Cards & Incremental Editor Sync
+
+To connect the autonomous agent core with the human editor, Elixent Phase 11 introduces the interactive `AgentChatPanel`, `HITLQuestionCard` clarification cards, debounced incremental sync without 412 conflicts, and real-time micro-credit balance views:
+
+- **Architectural Agent Chat Panel (`src/components/agent/chat-panel.tsx`):** Slide-out workspace drawer displaying real-time 7-stage graph execution progress, accordion-based ATMS master decision ledger viewer (`selectionRationale`, `evaluatedAlternatives`), active ghost hunk review controls, and session lifecycle management.
+- **Human-in-the-Loop Clarification Gate (`src/components/agent/hitl-question-card.tsx`):** Renders diagnostic question batches emitted by Stage 6 interrupts (`pure_interrupt_node`) with real-time `ClarificationResponseSchema` validation before stateless graph resumption via `POST /api/agent/stream`.
+- **Incremental Sync Contract & 412 Elimination (`src/hooks/use-editor-orchestrator.ts` & `src/hooks/use-ai-stream.ts`):** Replaces legacy client-side `commitAIFileOperation` with an immediate local IndexedDB write (`localRevision += 1`) and debounced server autosave via `useEditorAutosave` (800ms–1000ms), coalescing rapid ghost hunk acceptances into a single server save and eliminating self-inflicted 412 conflicts.
+- **Real-Time Credit Balance Presentation (`src/app/dashboard/page.tsx` & `src/app/account/page.tsx`):** Replaced legacy word-count quota displays with server-authoritative micro-credit balance tracking via `getUserCreditBalance(user.id)` and tier visual progress indicators.
 
 ---
 
