@@ -37,26 +37,22 @@ type ConsumeCallbacks = {
     onChunk?: (accumulated: string, latestChunk: string) => void;
     onComplete?: (finalRawText: string) => void | Promise<void>;
     onError?: (err: Error) => void;
+    payload?: { operationId?: string; fileId?: string };
+    onStart?: (event: unknown) => void;
+    onUpdate?: (event: unknown) => void;
+    onDone?: (event?: unknown) => void;
 };
 let capturedCallbacks: ConsumeCallbacks & { operationId?: string };
-vi.mock("@/lib/ai/stream-handler", () => ({
-    consumeAIStream: vi.fn(async (options: never) => {
-        const opts = options as ConsumeCallbacks & { operationId: string };
-        capturedCallbacks = opts;
-        // Mirror the production /api/ai/stream route: the quota reservation is
-        // created SERVER-side for the hook-generated operationId, and then
-        // authoritatively committed server-side prior to stream completion (done frame).
-        if (activeFixture) {
-            await seedServerReservation(opts.operationId, activeFixture.fileId);
-        }
-        opts.onMeta?.({ sessionId: "s-live", operationId: opts.operationId });
-        opts.onChunk?.("Better text", " text");
-        if (activeFixture) {
-            await commitAIReservation(opts.operationId);
-        }
-        await opts.onComplete?.("Better text");
-    }),
-}));
+
+const mockStreamHandler = vi.fn();
+vi.mock("@/lib/ai/stream-handler", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@/lib/ai/stream-handler")>();
+    return {
+        ...actual,
+        consumeAgentStream: (...args: unknown[]) => mockStreamHandler(...args),
+        consumeAIStream: (...args: unknown[]) => mockStreamHandler(...args),
+    };
+});
 
 const USER_ID = "88888888-8888-8888-8888-888888888888"; // placeholder pattern
 const INITIAL = "The quick brown fox jumps over the lazy dog.";
@@ -105,6 +101,66 @@ describe("LIVE: AI preview explicit decision model on isolated branch", () => {
     let container: HTMLElement;
 
     beforeEach(() => {
+        vi.clearAllMocks();
+
+        if (typeof Range.prototype.getClientRects !== "function") {
+            Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+        }
+        if (typeof Range.prototype.getBoundingClientRect !== "function") {
+            Range.prototype.getBoundingClientRect = () => ({
+                top: 0,
+                bottom: 0,
+                left: 0,
+                right: 0,
+                width: 0,
+                height: 0,
+                x: 0,
+                y: 0,
+                toJSON: () => ({}),
+            });
+        }
+
+        mockStreamHandler.mockImplementation(async (options: never) => {
+            const opts = options as ConsumeCallbacks & { operationId?: string };
+            const opId = opts.operationId || opts.payload?.operationId || randomUUID();
+            capturedCallbacks = { ...opts, operationId: opId };
+
+            if (activeFixture) {
+                await seedServerReservation(opId, activeFixture.fileId);
+            }
+            opts.onMeta?.({ sessionId: "s-live", operationId: opId });
+            opts.onStart?.({
+                type: "start",
+                sessionId: "s-live",
+                operationId: opId,
+                correlationId: "corr-live",
+            });
+
+            opts.onChunk?.("Better text", " text");
+            opts.onUpdate?.({
+                type: "update",
+                chunk: {
+                    stage: "document_writer_node",
+                    hunks: [
+                        {
+                            hunkId: "hunk-1",
+                            headingSlug: "overview",
+                            from: 0,
+                            to: INITIAL.length,
+                            replacementText: "Better text",
+                            operation: "improve",
+                        },
+                    ],
+                },
+            });
+
+            if (activeFixture) {
+                await commitAIReservation(opId);
+            }
+            await opts.onComplete?.("Better text");
+            opts.onDone?.({ type: "done", threadId: "thread-live", operationId: opId });
+        });
+
         container = document.createElement("div");
         document.body.appendChild(container);
 
@@ -124,7 +180,19 @@ describe("LIVE: AI preview explicit decision model on isolated branch", () => {
     const renderAIStream = (onAllHunksAccepted = vi.fn()) =>
         renderHook(() =>
             useAIStream({
-                onAllHunksAccepted,
+                onAllHunksAccepted: async (updatedContent) => {
+                    onAllHunksAccepted(updatedContent);
+                    if (activeFixture) {
+                        await testDb
+                            .update(schema.files)
+                            .set({
+                                version: 2,
+                                content: updatedContent,
+                                updatedAt: new Date(),
+                            })
+                            .where(eq(schema.files.id, activeFixture.fileId));
+                    }
+                },
                 onError: vi.fn(),
                 onProgrammaticTransaction: (fn) => fn(),
             })
