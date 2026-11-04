@@ -135,20 +135,20 @@ _For the full comparative trade-off matrix, complexity analysis, and quantitativ
 
 ## Architecture & Tech Stack
 
-| Domain                      | Technology / Specification                                   | Purpose / Implementation Highlights                                                               |
-| --------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| **Runtime & Framework**     | Next.js 16 (App Router) · React 19 · Node.js 22 LTS          | Turbopack compilation, Server Components, and Edge Proxies                                        |
-| **Language & Typings**      | TypeScript 5 (Strict Mode)                                   | Full type-safety across client hooks, server actions, and DB schemas                              |
-| **Styling & Design System** | Tailwind CSS 4 · Radix UI Primitives · Lucide Icons          | Dark Glassmorphism, tailored typography, and accessible UI controls                               |
-| **Markdown Editor & Bidi**  | Standalone CodeMirror 6 (`MarkdownEditor` & `EditorAdapter`) | Live AST preview decorations, line-level Bidi isolation, LTR code block lock                      |
-| **Database & ORM**          | PostgreSQL (Neon Cloud / Local) · Drizzle ORM                | Smart Hybrid DB Client (`neon-http` / `pg.Pool`), Migrations 0001–0010 (`src/lib/db/migrations/`) |
-| **Authentication & Proxy**  | Supabase Auth SSR · Next.js 16 Edge Proxy (`src/proxy.ts`)   | Deep-link preservation, session renewal, and protected route gating                               |
-| **Offline Synchronization** | Custom Engine · IndexedDB (`textai_db_${userId}`)            | 3-Way Merge, ETag optimistic locks (HTTP 412), Bounded Queue, GC, DLQ                             |
-| **AI LLM Engine**           | Google Gemini SDK (`@google/generative-ai`)                  | NDJSON streaming, 2-phase quota reservation, 3-state circuit breaker                              |
-| **Client-Side Cryptography**| Web Crypto API · Web Workers · BIP-39 · WebAuthn PRF         | PBKDF2-SHA256 600K worker, AES-GCM-256, hardware biometric trust, memory wiping                  |
-| **Payment & Billing**       | Stripe SDK · Webhook Signature Verification                  | 8-state fail-closed state machine, partial unique constraint idempotency                          |
-| **Rate Limiting & Telemetry**| Upstash Redis · Sliding Window · Distributed Tracing        | Dual-mode rate limiting (Fail-Open sync, Fail-Closed AI), X-Correlation-ID tracking, ZK log masking|
-| **Testing Harness**         | Vitest · Neon Isolated Branch Integration Runner             | Multi-tier automated verification harness passing 100% (see [Automated Test Suite](#5-automated-test-suite))|
+| Domain                        | Technology / Specification                                   | Purpose / Implementation Highlights                                                                          |
+| ----------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| **Runtime & Framework**       | Next.js 16 (App Router) · React 19 · Node.js 22 LTS          | Turbopack compilation, Server Components, and Edge Proxies                                                   |
+| **Language & Typings**        | TypeScript 5 (Strict Mode)                                   | Full type-safety across client hooks, server actions, and DB schemas                                         |
+| **Styling & Design System**   | Tailwind CSS 4 · Radix UI Primitives · Lucide Icons          | Dark Glassmorphism, tailored typography, and accessible UI controls                                          |
+| **Markdown Editor & Bidi**    | Standalone CodeMirror 6 (`MarkdownEditor` & `EditorAdapter`) | Live AST preview decorations, line-level Bidi isolation, LTR code block lock                                 |
+| **Database & ORM**            | PostgreSQL (Neon Cloud / Local) · Drizzle ORM                | Smart Hybrid DB Client (`neon-http` / `pg.Pool`), Migrations 0001–0010 (`src/lib/db/migrations/`)            |
+| **Authentication & Proxy**    | Supabase Auth SSR · Next.js 16 Edge Proxy (`src/proxy.ts`)   | Deep-link preservation, session renewal, and protected route gating                                          |
+| **Offline Synchronization**   | Custom Engine · IndexedDB (`textai_db_${userId}`)            | 3-Way Merge, ETag optimistic locks (HTTP 412), Bounded Queue, GC, DLQ                                        |
+| **AI LLM Engine**             | Google Gemini SDK (`@google/generative-ai`)                  | NDJSON streaming, 2-phase quota reservation, 3-state circuit breaker                                         |
+| **Client-Side Cryptography**  | Web Crypto API · Web Workers · BIP-39 · WebAuthn PRF         | PBKDF2-SHA256 600K worker, AES-GCM-256, hardware biometric trust, memory wiping                              |
+| **Payment & Billing**         | Stripe SDK · Webhook Signature Verification                  | 8-state fail-closed state machine, partial unique constraint idempotency                                     |
+| **Rate Limiting & Telemetry** | Upstash Redis · Sliding Window · Distributed Tracing         | Dual-mode rate limiting (Fail-Open sync, Fail-Closed AI), X-Correlation-ID tracking, ZK log masking          |
+| **Testing Harness**           | Vitest · Neon Isolated Branch Integration Runner             | Multi-tier automated verification harness passing 100% (see [Automated Test Suite](#5-automated-test-suite)) |
 
 ---
 
@@ -236,8 +236,8 @@ lugx/
 
 ```bash
 # Clone the repository
-git clone https://github.com/Abdullah931-stack/LUGX.git
-cd LUGX
+git clone https://github.com/Abdullah931-stack/ELIXENT.git
+cd ELIXENT
 
 # Install project dependencies
 npm install
@@ -317,8 +317,8 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | ------------------- | ---------------------------- | ---------------------------------------------------------------------- |
 | `npm run test`      | Unit & Contract test suites  | Zero external dependencies; runs in ~10–25s.                           |
 | `npm run test:live` | LIVE Integration test suites | Executes against an isolated Neon test branch with fail-closed guards. |
-| `npm run test:e2e`  | Browser E2E User Journeys    | 14 Playwright specs covering 15 complete user journeys in Chromium.   |
-| `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).              |
+| `npm run test:e2e`  | Browser E2E User Journeys    | 14 Playwright specs covering 15 complete user journeys in Chromium.    |
+| `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).               |
 
 ```bash
 # Execute unit/contract test suites (112 test files, 1892 tests)
@@ -468,19 +468,19 @@ LUGX delivers a dual-tier client-side Zero-Knowledge encryption engine that keep
 ```mermaid
 flowchart TD
     Editor["Editor Surface (CodeMirror 6)<br/>Plaintext Markdown in volatile RAM"]
-    
+
     Standard["Standard File (isEncrypted: false)"]
     Vault["Vault File (isEncrypted: true)"]
-    
+
     Editor --> Standard
     Editor --> Vault
-    
+
     Standard --> SyncPlain["TLS Sync to PostgreSQL"]
     Vault --> Worker["Crypto Web Worker (PBKDF2 600K / AES-GCM-256)<br/>Non-Extractable Keys · Buffer Zeroing (.fill(0))"]
-    
+
     Worker --> IDBLocal["Encrypted Local IndexedDB (LocalDeviceKey)"]
     Worker --> CloudCipher["Encrypted Envelope over TLS (AES-GCM-256)<br/>AAD: vault:file:${userId}:${fileId}"]
-    
+
     Vault -.-> AIGate["AI Gatekeeper: HTTP 403 & UI Suppression<br/>Prevents Plaintext Leakage to AI Models"]
 
     style Editor fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
@@ -515,21 +515,21 @@ LUGX eliminates server-side PDF processing entirely, purging all legacy `pdf-par
 ```mermaid
 flowchart TD
     File["PDF / MD / TXT Upload"] --> Detector{"Document Format?"}
-    
+
     Detector -->|MD / TXT| PlainText["Read UTF-8 Plaintext via FileReader"]
     Detector -->|PDF| Worker["Web Worker: pdf.worker.ts (pdfjs-dist)<br/>Page Memory Cleanup (page.cleanup / destroy)"]
-    
+
     Worker --> SpatialEngine["2D Spatial Clustering Engine (pdf-table-extractor.ts)<br/>Y-Tolerance: 3.5pt · X-Gap: 25pt · RTL Column Alignment"]
     SpatialEngine --> Normalizer["Arabic Unicode Normalizer (arabic-normalizer.ts)<br/>De-spacing · NFKC Un-shaping · BiDi Preservation"]
     Normalizer --> PUAFilter{"Font PUA Scan (pdf-corruption-detector.ts)"}
-    
+
     PUAFilter -->|Clean| CanonicalMD["Structured GFM Markdown"]
     PUAFilter -->|Corrupted (>15% PUA)| PromptModal["PdfCorruptedFontDialog<br/>Prompt User for On-Demand OCR"]
-    
+
     PromptModal -->|Run OCR| OCREngine["On-Demand Bilingual OCR (pdf-ocr-engine.ts)<br/>tesseract.js (ara+eng) · Offscreen Canvas"]
     OCREngine --> CanonicalMD
     PlainText --> CanonicalMD
-    
+
     CanonicalMD --> VaultOption{"Destination Vault?"}
     VaultOption -->|Standard| ServerImport["importFile(textContent: string)<br/>10MB Payload Limit · Null-Byte Scrubbing"]
     VaultOption -->|Encrypted Vault| VaultCrypto["cryptoWorkerBridge.encryptAESGCM()<br/>Deterministic AAD: vault:file:${userId}:${fileId}"]
@@ -551,16 +551,16 @@ To ensure enterprise-grade resilience under load and protect sensitive user secr
 flowchart TD
     Req["Incoming Request / Server Action"] --> CID["Correlation Engine (correlation.ts)<br/>Extract / Generate X-Correlation-ID · Strip CRLF ([^\\w-])"]
     CID --> Limiter{"Dual-Mode Rate Limiter (rate-limit.ts)"}
-    
+
     Limiter -->|Public / Sync Route| R1["Fail-Open Strategy (onRateLimitError: 'allow')<br/>Upstash Redis Sliding Window · Unhindered Local/Sync Access"]
     Limiter -->|AI Stream Route| R2["Fail-Closed Strategy (onRateLimitError: 'deny')<br/>30 req / 60s · Retry-After >= 1 · Zero Quota Drain"]
-    
+
     R1 --> ActionExec["Execute Business Logic"]
     R2 --> ActionExec
-    
+
     ActionExec --> Sanitizer["ZK Log Sanitizer (log-sanitizer.ts)<br/>Token-Boundary Regex ((^|[^a-zA-Z0-9_]))<br/>Redact: vaultKey, privateKey, seedPhrase, auth tokens"]
     Sanitizer --> Telemetry["Sanitized Structured Output (X-Correlation-ID)"]
-    
+
     ActionExec -->|Catch 500| SafeErr["Opaque 500 Response<br/>Shield internal provider details · Return correlationId"]
 
     style Req fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
@@ -592,13 +592,13 @@ To ensure platform-wide stability across complex asynchronous boundaries, LUGX d
 - **Serialized Execution Invariant (`vitest.live.config.mts`):** Integration suites execute under `singleFork: true` serialization to prevent concurrent database teardown races and connection pool starvation across suites.
 - **Fail-Closed Database Guard (`src/test/test-db-guard.ts`):** Enforces strict endpoint inspection before connection pool creation, terminating execution immediately if credentials point to main production branches or non-test hosts.
 - **Seven Core Multi-System Integration Axes Verified:**
-  1. *Files & Sync Lifecycle:* Real row initialization, debounced auto-save persistence, 3-way Diff3 merge resolution, and deterministic ETag generation.
-  2. *AI Happy Path & Atomic Commit:* Quota reservation leases, streaming NDJSON with correlation tracing, and atomic ACID commits (file version bump + quota settlement + usage advancement) in a single database transaction.
-  3. *AI Failure & Quota Sweeper (TD-02):* Upstream provider error handling, client abort propagation, single-refund idempotency, and automated cron sweepers (`/api/cron/expire-reservations`) with bounded 100-row batch execution.
-  4. *Stripe Billing & Event Ledger:* Live HMAC signature verification, ACID event deduplication in `subscription_events`, and terminal state protection.
-  5. *Zero-Knowledge Encrypted Vault:* Client-side AES-GCM-256 encryption, deterministic AAD context binding `vault:file:${userId}:${fileId}`, optimistic concurrency control on ciphertext versions, and HTTP 403 AI shielding.
-  6. *Document Ingestion Pipeline:* Disguised binary rejection (PE/ELF/ZIP magic bytes), PostgreSQL null-byte scrubbing, and 100% round-trip fidelity.
-  7. *Tenant Isolation & Security Boundary:* 404 Anti-Enumeration masking across unauthorized files, folders, and stream operations.
+  1. _Files & Sync Lifecycle:_ Real row initialization, debounced auto-save persistence, 3-way Diff3 merge resolution, and deterministic ETag generation.
+  2. _AI Happy Path & Atomic Commit:_ Quota reservation leases, streaming NDJSON with correlation tracing, and atomic ACID commits (file version bump + quota settlement + usage advancement) in a single database transaction.
+  3. _AI Failure & Quota Sweeper (TD-02):_ Upstream provider error handling, client abort propagation, single-refund idempotency, and automated cron sweepers (`/api/cron/expire-reservations`) with bounded 100-row batch execution.
+  4. _Stripe Billing & Event Ledger:_ Live HMAC signature verification, ACID event deduplication in `subscription_events`, and terminal state protection.
+  5. _Zero-Knowledge Encrypted Vault:_ Client-side AES-GCM-256 encryption, deterministic AAD context binding `vault:file:${userId}:${fileId}`, optimistic concurrency control on ciphertext versions, and HTTP 403 AI shielding.
+  6. _Document Ingestion Pipeline:_ Disguised binary rejection (PE/ELF/ZIP magic bytes), PostgreSQL null-byte scrubbing, and 100% round-trip fidelity.
+  7. _Tenant Isolation & Security Boundary:_ 404 Anti-Enumeration masking across unauthorized files, folders, and stream operations.
 - **Consolidated 8-Stage Lifecycle Scenario (`src/test/infrastructure/multi-system-lifecycle.live.test.ts`):** Validates all platform subsystems combined in an end-to-end sequential scenario under live transactional conditions.
 
 ### 11. Browser-Driven End-to-End (E2E) Testing with Playwright
@@ -617,18 +617,18 @@ To enable high-precision agentic Markdown manipulation without full-document re-
 flowchart LR
     MD["Markdown Document"] --> AST["Fence-Aware AST Slicer<br/>CommonMark §4.2 / §4.5 Tracking"]
     AST --> Tree["Heading Tree & Slugs<br/>Breadcrumb Hierarchy & Pure TS SHA-256"]
-    
+
     Tree --> Slicer["extractSectionBySlug()"]
     Tree --> BM25["Hybrid BM25 Search Engine<br/>Okapi BM25 (k1=1.5, b=0.75) + RSJ IDF"]
-    
+
     Slicer --> Diff3["diff3MergeSection()<br/>Isolated Section 3-Way Merge"]
     Diff3 --> SyntaxGate["validateMarkdownSyntaxIntegrity()<br/>Algebraic Replacement Invariant"]
-    
+
     BM25 --> ReDoS["ReDoS Protection & Arabic Normalizer"]
     ReDoS --> Match["LexicalMatchResult[]<br/>Annotated with Heading Breadcrumb & LineRange"]
 ```
 
-- **Fence-Aware AST Heading Slicer (`src/core/ast/heading-slicer.ts`):** CommonMark §4.2 ATX heading parser and §4.5 code-fence state machine (```` ``` ```` or `~~~`), ignoring `#` comment lines within code blocks and YAML frontmatter. Computes section spans ($L_{\text{next}} \le L$), hierarchical breadcrumbs (`"Parent > Child"`), Unicode heading slugs with collision resolution, and pure bitwise FIPS 180-4 SHA-256 digests (`computeSectionHash`) with zero `node:crypto` imports.
+- **Fence-Aware AST Heading Slicer (`src/core/ast/heading-slicer.ts`):** CommonMark §4.2 ATX heading parser and §4.5 code-fence state machine (` ``` ` or `~~~`), ignoring `#` comment lines within code blocks and YAML frontmatter. Computes section spans ($L_{\text{next}} \le L$), hierarchical breadcrumbs (`"Parent > Child"`), Unicode heading slugs with collision resolution, and pure bitwise FIPS 180-4 SHA-256 digests (`computeSectionHash`) with zero `node:crypto` imports.
 - **Section-Scoped 3-Way Merge Engine (`src/lib/sync/diff3.ts`):** `diff3MergeSection` executes localized 3-way merges on targeted sections extracted via `extractSectionBySlug`. Quarantines conflicts within section boundaries (`conflict_quarantined`), validates syntax integrity (`validateMarkdownSyntaxIntegrity`), and enforces the algebraic replacement invariant: `live.slice(0, from) + replacementText + live.slice(to) === merged`.
 - **Path-Coupled Hybrid BM25 Search Engine (`src/core/workspace/lexical-bm25.ts`):** Okapi BM25 engine with Robertson-Spärck Jones non-negative IDF, coupled with CommonMark AST headings. Features multilingual text normalization (Arabic diacritics/variants, Persian/Arabic-Indic digits to ASCII, Latin case-folding), compound subword tokenization (`camelCase`, `snake_case`, `kebab-case`), and 3-layer ReDoS protection (100-character cap, nested quantifier static guard, try/catch literal fallback).
 
@@ -639,21 +639,21 @@ To enable intelligent agentic synthesis and multi-file reasoning over sensitive 
 ```mermaid
 flowchart TD
     ClientReq["Client Request (/api/agent/stream)<br/>ephemeralVaultPayloads: { [fileId]: plaintext }"] --> Scope["runWithEphemeralVaultScope<br/>Node.js AsyncLocalStorage Scope"]
-    
+
     Scope --> Prov["CloudPostgresWorkspaceProvider<br/>Tenant Check: files.userId === session.userId<br/>Consent Gate: userVaultProfiles.allowAIOnEncryptedFiles"]
-    
+
     Prov -->|readSectionByHeading| EphemMap["EphemeralVaultMemoryMap (ALS)<br/>Store Uint8Array Plaintexts"]
     EphemMap -->|Emit Pointers| Ptr["vault_ref://${fileId}#${headingSlug}"]
     Ptr --> State["AgentGraphState Channels<br/>Strictly Zero Plaintext in State Channels"]
-    
+
     State --> Checkpoint["EncryptedCheckpointSerializer (serde)<br/>assertNoVaultPlaintextLeak() (>= 4 chars guard)"]
     Checkpoint -->|Pass| HKDF["HKDF-SHA-256 Key Derivation"]
     HKDF --> AES["AES-256-GCM Cipher (AAD: innerType)"]
     AES --> Saver["PostgresSaver Checkpoint Table (JSONB Envelope)"]
-    
+
     State -->|Prompt Compile / Diff3| Resolve["resolveVaultRefJustInTime()<br/>Dereference Pointers strictly at Call Site"]
     Resolve --> PromptExec["LLM Dispatch / Section Diff3 Merge"]
-    
+
     Scope -->|Finally Block| Wipe["zeroOutEphemeralVaultMemory()<br/>buffer.fill(0) & map.clear()"]
 ```
 
@@ -687,26 +687,26 @@ To manage architectural assertions as a living causal dependency graph and suppo
 ```mermaid
 flowchart TD
     Assump["New Extracted Assumptions<br/>(assumptionId, statement, conceptTags, sections)"] --> Retriever["Deterministic Candidate Retriever<br/>(candidate-retriever.ts)"]
-    
+
     Ledger[("Master Decision Ledger<br/>(project_decision_ledger)<br/>ATMSDecisionNode[] & Sentinel Isolation")] --> Retriever
-    
+
     subgraph SIGNALS ["3 Orthogonal Retrieval Signals"]
         S1["AST Section Proximity (1.0 exact / 0.5 prefix)<br/>Comparison signal only · Never forced edge"]
         S2["Concept Tags Jaccard Overlap<br/>Normalized project taxonomy comparison"]
         S3["Okapi BM25 Lexical Match<br/>Question, rationale & alternatives search"]
     end
-    
+
     Retriever --- SIGNALS
     Retriever --> TopK["Top-K Scored Candidates (K <= 8)<br/>Weighted Composite Score & Deterministic Tie-Breaking"]
-    
+
     TopK --> Linker["Batched Relational Linker (relational-linker.ts)<br/>evaluateRelationalLinksBatch (POST /v1/decisions)<br/>Waterfall-Free Adjudication"]
-    
+
     Linker --> Relations{"Relation Classification<br/>(INDEPENDENT | DEPENDS_ON | REOPENS_OR_OVERRIDES | REFINES)"}
-    
+
     Relations -->|INDEPENDENT| Stable["Zero Modification<br/>Sibling sub-decisions stably coexist"]
     Relations -->|DEPENDS_ON / REFINES| Upward["Upward BFS Promotion<br/>Promote APPROVED_CONSERVATIVE to CORE"]
     Relations -->|REOPENS_OR_OVERRIDES| Downward["Downward BFS Invalidation<br/>Reopen root & cascade all dependedBy"]
-    
+
     Downward --> DiffMap["computeMinimalSectionInvalidationMap<br/>Differential AST Section Surgery"]
 ```
 
@@ -723,24 +723,24 @@ To execute end-to-end autonomous multi-turn reasoning and architectural editing 
 flowchart TD
     START((__start__)) --> S0["Stage 0: Orchestrator Node<br/>orchestrator_node (Project Ledger & Messages)"]
     S0 --> S1A["Stage 1: Local Inspection Agent<br/>search_agent_node (stepCountIs: 6)"]
-    
+
     S1A --> TC{"toolsCondition"}
     TC -->|Call Tool| S1B["Stage 1: Tool Node<br/>workspace_tool_node"]
     S1B --> S1A
     TC -->|Done| S1C["Stage 1: Synthesizer<br/>search_synthesizer_node"]
-    
+
     S1C --> S2A["Stage 2: Assumption Analyzer<br/>assumption_analyzer_node"]
     S2A --> S2B["Stage 2: ATMS Relational Linker<br/>atms_relational_linker_node"]
-    
+
     S2B --> RA{"routeAfterAssumptions"}
     RA -->|Active Decisions| S3A["Stage 3: JEV Structuring<br/>jev_structuring_node"]
     RA -->|No Assumptions| S7["Stage 7: Document Writer<br/>document_writer_node"]
     RA -->|Context Gap| S1A
-    
+
     S3A --> S3B["Stage 3: Decision Scorer<br/>decision_scorer_node"]
     S3B --> S4["Stage 4: Confidence Classifier<br/>confidence_classifier_node (Pure Math)"]
     S4 --> S5A["Stage 5: Ledger Commit<br/>ledger_commit_node (ATMS Invalidation)"]
-    
+
     S5A --> RG{"resolutionGateRouter"}
     RG -->|Resolved| S7
     RG -->|Gap Loop < 3| S5B["Stage 5: Gap Planner<br/>internal_gap_planner_node"]
@@ -748,7 +748,7 @@ flowchart TD
     RG -->|HITL Clarification| S6A["Stage 6: Question Organizer<br/>question_organizer_node"]
     S6A --> S6B["Stage 6: Pure Interrupt<br/>pure_interrupt_node (Zero LLM)"]
     RG -->|Credit Pause| S6B
-    
+
     S6B -.->|Command Resume| S2A
     S7 --> END((__end__))
 ```
@@ -772,36 +772,36 @@ To connect the autonomous agent core with the human editor, Elixent Phase 11 int
 
 ## Security Architecture
 
-| Security Domain                 | Technical Implementation                                                     | Security Property Enforced                                                                    |
-| ------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| **Content Model Security**      | Pure UTF-8 Markdown strings & AST token decorations                          | Zero HTML storage, zero `dangerouslySetInnerHTML`, total elimination of stored XSS vectors.   |
-| **Authentication & Proxy**      | Next.js 16 Edge Proxy (`src/proxy.ts`) with Supabase SSR                     | Route protection on `/workspace`, `/dashboard`, `/account` with Fast-Path public route bypass, 2500ms AbortSignal watchdog timeout against Chromium socket exhaustion (TD-12), and deep-link query preservation. |
-| **Brute-Force & Rate Limiting** | Sliding window rate limiting on Upstash Redis                                | Per-user and per-endpoint sliding window limits on Auth, Sync, and AI routes.                 |
-| **Distributed Tracing**         | `X-Correlation-ID` UUID v4 header propagation with CRLF sanitization (`[^\w-]`) | Eliminates HTTP response splitting, header injection, and isolates distributed incidents.    |
-| **Telemetry & Log Sanitization**| Denylist pattern masking with token-boundary regex (`(^|[^a-zA-Z0-9_])`)     | Eliminates false positives while guaranteeing zero plaintext secret, PIN, or seed leakage.    |
-| **Tenant Resource Isolation**   | SQL ownership predicates (`WHERE id = :id AND user_id = :userId`)            | Prevents IDOR and resource enumeration by returning uniform `404 Not Found` for foreign IDs.  |
-| **Financial Webhook Security**  | Cryptographic HMAC signature verification (`stripe.webhooks.constructEvent`) | Mitigates replay attacks and validates webhook payload authenticity before DB mutation.       |
-| **Database Injection Safety**   | Drizzle ORM parameterized SQL queries                                        | Eliminates SQL injection across all dynamic query and transaction paths.                      |
-| **Zero-Knowledge Encryption**   | AES-GCM-256 · PBKDF2 600K Web Worker · WebAuthn PRF · BIP-39                 | End-to-end Zero-Knowledge storage, domain AAD (`vault:file:${userId}:${fileId}`), RAM zeroing. |
-| **Fail-Closed AI Protection**   | Upstash Redis fail-closed rate limiting on `/api/agent/stream` (30 req / 60s) | Prevents unauthorized LLM credit consumption and protects infrastructure during Redis outages.|
-| **Secure Document Ingestion**   | Web Worker client-side extraction · 10MB text limit · Null-byte stripping   | Zero binary server processing, eliminates server-side PDF attack surface, protects DB. |
+| Security Domain                  | Technical Implementation                                                        | Security Property Enforced                                                                                                                                                                                       |
+| -------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| **Content Model Security**       | Pure UTF-8 Markdown strings & AST token decorations                             | Zero HTML storage, zero `dangerouslySetInnerHTML`, total elimination of stored XSS vectors.                                                                                                                      |
+| **Authentication & Proxy**       | Next.js 16 Edge Proxy (`src/proxy.ts`) with Supabase SSR                        | Route protection on `/workspace`, `/dashboard`, `/account` with Fast-Path public route bypass, 2500ms AbortSignal watchdog timeout against Chromium socket exhaustion (TD-12), and deep-link query preservation. |
+| **Brute-Force & Rate Limiting**  | Sliding window rate limiting on Upstash Redis                                   | Per-user and per-endpoint sliding window limits on Auth, Sync, and AI routes.                                                                                                                                    |
+| **Distributed Tracing**          | `X-Correlation-ID` UUID v4 header propagation with CRLF sanitization (`[^\w-]`) | Eliminates HTTP response splitting, header injection, and isolates distributed incidents.                                                                                                                        |
+| **Telemetry & Log Sanitization** | Denylist pattern masking with token-boundary regex (`(^                         | [^a-zA-Z0-9_])`)                                                                                                                                                                                                 | Eliminates false positives while guaranteeing zero plaintext secret, PIN, or seed leakage. |
+| **Tenant Resource Isolation**    | SQL ownership predicates (`WHERE id = :id AND user_id = :userId`)               | Prevents IDOR and resource enumeration by returning uniform `404 Not Found` for foreign IDs.                                                                                                                     |
+| **Financial Webhook Security**   | Cryptographic HMAC signature verification (`stripe.webhooks.constructEvent`)    | Mitigates replay attacks and validates webhook payload authenticity before DB mutation.                                                                                                                          |
+| **Database Injection Safety**    | Drizzle ORM parameterized SQL queries                                           | Eliminates SQL injection across all dynamic query and transaction paths.                                                                                                                                         |
+| **Zero-Knowledge Encryption**    | AES-GCM-256 · PBKDF2 600K Web Worker · WebAuthn PRF · BIP-39                    | End-to-end Zero-Knowledge storage, domain AAD (`vault:file:${userId}:${fileId}`), RAM zeroing.                                                                                                                   |
+| **Fail-Closed AI Protection**    | Upstash Redis fail-closed rate limiting on `/api/agent/stream` (30 req / 60s)   | Prevents unauthorized LLM credit consumption and protects infrastructure during Redis outages.                                                                                                                   |
+| **Secure Document Ingestion**    | Web Worker client-side extraction · 10MB text limit · Null-byte stripping       | Zero binary server processing, eliminates server-side PDF attack surface, protects DB.                                                                                                                           |
 
 ---
 
 ## Documentation Index
- 
+
 Comprehensive architectural designs, specifications, guides, and engineering records are maintained under [`docs/`](./docs). The complete map lives in the **[Documentation Master Index](./docs/README.md)**:
- 
-| Directory | Content Scope | Key Documents |
-| :--- | :--- | :--- |
-| [`docs/architecture/`](./docs/architecture/) | Elixent architecture suite (`01`–`05`) & subsystem designs (`sync/`, `ai/`, `security/`) | [`01_architecture_vision_and_adrs.md`](./docs/architecture/01_architecture_vision_and_adrs.md), [`02_agent_orchestration_and_decision_engine.md`](./docs/architecture/02_agent_orchestration_and_decision_engine.md), [`03_workspace_ast_editor_and_vault_integration.md`](./docs/architecture/03_workspace_ast_editor_and_vault_integration.md), [`04_credit_metering_and_settlement_architecture.md`](./docs/architecture/04_credit_metering_and_settlement_architecture.md), [`05_data_contracts_and_lugx_migration_plan.md`](./docs/architecture/05_data_contracts_and_lugx_migration_plan.md), [`sync-lifecycle-architecture.md`](./docs/architecture/sync/sync-lifecycle-architecture.md), [`sync-architecture-overview.md`](./docs/architecture/sync/sync-architecture-overview.md), [`editor-sync-orchestration.md`](./docs/architecture/sync/editor-sync-orchestration.md), [`ai-atomic-commit-architecture.md`](./docs/architecture/ai/ai-atomic-commit-architecture.md), [`ai-quota-reservation-lifecycle.md`](./docs/architecture/ai/ai-quota-reservation-lifecycle.md), [`ai-streaming-protocol.md`](./docs/architecture/ai/ai-streaming-protocol.md), [`three-way-conflict-resolution.md`](./docs/architecture/sync/three-way-conflict-resolution.md), [`security-and-rate-limiting.md`](./docs/architecture/security/security-and-rate-limiting.md) |
-| [`docs/Plans/`](./docs/Plans/) | Active official technical execution roadmaps (English) | [`ELIXENT_EXECUTION_PLAN.md`](./docs/Plans/ELIXENT_EXECUTION_PLAN.md) |
-| [`docs/reference/`](./docs/reference/) | Living API contracts & test runner specifications | [`sync-api.md`](./docs/reference/sync-api.md), [`test-database-isolation.md`](./docs/reference/test-database-isolation.md), [`ui-streaming-readiness.md`](./docs/reference/ui-streaming-readiness.md) |
-| [`docs/records/`](./docs/records/) | Engineering records, incident post-mortems, completed plans & closures | [`test-database-safety.md`](./docs/records/incidents/test-database-safety.md), [`unified-security-and-engineering-audit.md`](./docs/records/audits/unified-security-and-engineering-audit.md), [`Completed Plans`](./docs/records/plans/comprehensive-technical-remediation-plan-lugx-v1.md), [`Phase Closures`](./docs/records/closures/), [`Archive`](./docs/records/archive/) |
-| [`docs/specs/`](./docs/specs/) | Living technical specifications & blueprints | [`offline-sync-blueprint.md`](./docs/specs/offline-sync-blueprint.md), [`ai-key-rotation-and-resilience.md`](./docs/specs/ai-key-rotation-and-resilience.md), [`ui-streaming-requirements.md`](./docs/specs/ui-streaming-requirements.md) |
-| [`docs/guides/`](./docs/guides/) | Developer & operational how-tos (`billing/`, `editor/`, `ai/`) | [`stripe-integration.md`](./docs/guides/billing/stripe-integration.md), [`stripe-setup.md`](./docs/guides/billing/stripe-setup.md), [`ai-models-config.md`](./docs/guides/ai/ai-models-config.md), [`editor-ui-enhancements.md`](./docs/guides/editor/editor-ui-enhancements.md), [`search-replace-feature.md`](./docs/guides/editor/search-replace-feature.md), [`data-export-guide.md`](./docs/guides/editor/data-export-guide.md) |
-| [`docs/records/archive/lugx-v1/`](./docs/records/archive/lugx-v1/) | Historical LUGX v1 baseline archive & living architecture baseline | [`01_architecture_vision_and_adrs.md`](./docs/architecture/01_architecture_vision_and_adrs.md), [`DESIGN_VS_REALITY.md`](./docs/records/archive/lugx-v1/foundation/DESIGN_VS_REALITY.md), [`CHANGELOG-LUGX-v1.md`](./docs/records/archive/lugx-v1/CHANGELOG-LUGX-v1.md), [`LUGX platform subscription plans.md`](<./docs/records/archive/lugx-v1/foundation/LUGX platform subscription plans.md>) |
-| Root Registers | Release history & debt tracking | [`CHANGELOG.md`](./docs/CHANGELOG.md), [`TECHNICAL_DEBT_REGISTER.md`](./docs/TECHNICAL_DEBT_REGISTER.md), [`DOCUMENTATION_GUIDELINES.md`](./docs/DOCUMENTATION_GUIDELINES.md) |
+
+| Directory                                                          | Content Scope                                                                            | Key Documents                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| :----------------------------------------------------------------- | :--------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`docs/architecture/`](./docs/architecture/)                       | Elixent architecture suite (`01`–`05`) & subsystem designs (`sync/`, `ai/`, `security/`) | [`01_architecture_vision_and_adrs.md`](./docs/architecture/01_architecture_vision_and_adrs.md), [`02_agent_orchestration_and_decision_engine.md`](./docs/architecture/02_agent_orchestration_and_decision_engine.md), [`03_workspace_ast_editor_and_vault_integration.md`](./docs/architecture/03_workspace_ast_editor_and_vault_integration.md), [`04_credit_metering_and_settlement_architecture.md`](./docs/architecture/04_credit_metering_and_settlement_architecture.md), [`05_data_contracts_and_lugx_migration_plan.md`](./docs/architecture/05_data_contracts_and_lugx_migration_plan.md), [`sync-lifecycle-architecture.md`](./docs/architecture/sync/sync-lifecycle-architecture.md), [`sync-architecture-overview.md`](./docs/architecture/sync/sync-architecture-overview.md), [`editor-sync-orchestration.md`](./docs/architecture/sync/editor-sync-orchestration.md), [`ai-atomic-commit-architecture.md`](./docs/architecture/ai/ai-atomic-commit-architecture.md), [`ai-quota-reservation-lifecycle.md`](./docs/architecture/ai/ai-quota-reservation-lifecycle.md), [`ai-streaming-protocol.md`](./docs/architecture/ai/ai-streaming-protocol.md), [`three-way-conflict-resolution.md`](./docs/architecture/sync/three-way-conflict-resolution.md), [`security-and-rate-limiting.md`](./docs/architecture/security/security-and-rate-limiting.md) |
+| [`docs/Plans/`](./docs/Plans/)                                     | Active official technical execution roadmaps (English)                                   | [`ELIXENT_EXECUTION_PLAN.md`](./docs/Plans/ELIXENT_EXECUTION_PLAN.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| [`docs/reference/`](./docs/reference/)                             | Living API contracts & test runner specifications                                        | [`sync-api.md`](./docs/reference/sync-api.md), [`test-database-isolation.md`](./docs/reference/test-database-isolation.md), [`ui-streaming-readiness.md`](./docs/reference/ui-streaming-readiness.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| [`docs/records/`](./docs/records/)                                 | Engineering records, incident post-mortems, completed plans & closures                   | [`test-database-safety.md`](./docs/records/incidents/test-database-safety.md), [`unified-security-and-engineering-audit.md`](./docs/records/audits/unified-security-and-engineering-audit.md), [`Completed Plans`](./docs/records/plans/comprehensive-technical-remediation-plan-lugx-v1.md), [`Phase Closures`](./docs/records/closures/), [`Archive`](./docs/records/archive/)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| [`docs/specs/`](./docs/specs/)                                     | Living technical specifications & blueprints                                             | [`offline-sync-blueprint.md`](./docs/specs/offline-sync-blueprint.md), [`ai-key-rotation-and-resilience.md`](./docs/specs/ai-key-rotation-and-resilience.md), [`ui-streaming-requirements.md`](./docs/specs/ui-streaming-requirements.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| [`docs/guides/`](./docs/guides/)                                   | Developer & operational how-tos (`billing/`, `editor/`, `ai/`)                           | [`stripe-integration.md`](./docs/guides/billing/stripe-integration.md), [`stripe-setup.md`](./docs/guides/billing/stripe-setup.md), [`ai-models-config.md`](./docs/guides/ai/ai-models-config.md), [`editor-ui-enhancements.md`](./docs/guides/editor/editor-ui-enhancements.md), [`search-replace-feature.md`](./docs/guides/editor/search-replace-feature.md), [`data-export-guide.md`](./docs/guides/editor/data-export-guide.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| [`docs/records/archive/lugx-v1/`](./docs/records/archive/lugx-v1/) | Historical LUGX v1 baseline archive & living architecture baseline                       | [`01_architecture_vision_and_adrs.md`](./docs/architecture/01_architecture_vision_and_adrs.md), [`DESIGN_VS_REALITY.md`](./docs/records/archive/lugx-v1/foundation/DESIGN_VS_REALITY.md), [`CHANGELOG-LUGX-v1.md`](./docs/records/archive/lugx-v1/CHANGELOG-LUGX-v1.md), [`LUGX platform subscription plans.md`](<./docs/records/archive/lugx-v1/foundation/LUGX platform subscription plans.md>)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Root Registers                                                     | Release history & debt tracking                                                          | [`CHANGELOG.md`](./docs/CHANGELOG.md), [`TECHNICAL_DEBT_REGISTER.md`](./docs/TECHNICAL_DEBT_REGISTER.md), [`DOCUMENTATION_GUIDELINES.md`](./docs/DOCUMENTATION_GUIDELINES.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 ---
 

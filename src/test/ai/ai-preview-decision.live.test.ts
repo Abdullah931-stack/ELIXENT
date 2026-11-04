@@ -290,12 +290,14 @@ describe("LIVE: AI preview explicit decision model on isolated branch", () => {
         });
 
         // Server truth: single version bump + content persisted atomically.
-        const [fileRow] = await testDb
-            .select()
-            .from(schema.files)
-            .where(eq(schema.files.id, fixture.fileId));
-        expect(fileRow.version).toBe(2);
-        expect(fileRow.content).toContain("Better text");
+        await waitFor(async () => {
+            const [fileRow] = await testDb
+                .select()
+                .from(schema.files)
+                .where(eq(schema.files.id, fixture.fileId));
+            expect(fileRow.version).toBe(2);
+            expect(fileRow.content).toContain("Better text");
+        });
 
         const [reservation] = await testDb
             .select()

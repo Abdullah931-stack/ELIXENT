@@ -357,6 +357,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
     const activeGhostHunksRef = useRef<GhostHunk[]>([]);
     const ghostSessionStartedRef = useRef<boolean>(false);
     const acceptedHunkCountRef = useRef<number>(0);
+    const lastAllHunksAcceptedPromiseRef = useRef<Promise<unknown> | null>(null);
 
     const acceptGhostHunkRef = useRef<((hunkId: string) => string | null) | null>(null);
     const rejectGhostHunkRef = useRef<((hunkId: string) => void) | null>(null);
@@ -850,7 +851,12 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         activeGhostHunksRef.current = [];
         setActiveGhostHunks([]);
 
-        optsRef.current.onAllHunksAccepted?.(updatedContent);
+        const maybePromise = optsRef.current.onAllHunksAccepted?.(updatedContent);
+        if (maybePromise && typeof (maybePromise as Promise<unknown>).then === 'function') {
+            lastAllHunksAcceptedPromiseRef.current = maybePromise as Promise<unknown>;
+        } else {
+            lastAllHunksAcceptedPromiseRef.current = null;
+        }
         finalizeHunkLifecycleIfEmpty([]);
 
         return updatedContent;
@@ -1491,6 +1497,9 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         startStream: startAgentSession,
         commitPreview: async () => {
             acceptAllGhostHunks();
+            if (lastAllHunksAcceptedPromiseRef.current) {
+                await lastAllHunksAcceptedPromiseRef.current;
+            }
         },
         rejectPreview: rejectAllGhostHunks,
         retryPreview: async () => {

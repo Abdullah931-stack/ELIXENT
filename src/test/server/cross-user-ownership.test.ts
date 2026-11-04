@@ -357,7 +357,9 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
             const response = await agentStreamPOST(request);
             expect(response.status).toBe(400);
             const jsonResponse = await response.json();
-            expect(jsonResponse.code).toBe("VALIDATION_ERROR");
+            expect(jsonResponse.type).toBe("urn:problem-type:bad-request");
+            expect(jsonResponse.title).toBe("Invalid Request Payload");
+            expect(Array.isArray(jsonResponse.invalidParams)).toBe(true);
         });
     });
 
