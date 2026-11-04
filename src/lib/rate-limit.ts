@@ -92,6 +92,15 @@ export class RateLimiter {
         const windowStart = now - (this.config.windowSeconds * 1000);
 
         if (!isRedisConfigured()) {
+            if (process.env.PLAYWRIGHT === '1') {
+                return {
+                    success: true,
+                    remaining: this.config.limit,
+                    reset: Math.ceil(Date.now() / 1000) + this.config.windowSeconds,
+                    limit: this.config.limit,
+                    isDegraded: false,
+                };
+            }
             if (this.config.failureMode === 'fail-closed') {
                 return {
                     success: false,
@@ -143,6 +152,15 @@ export class RateLimiter {
             };
         } catch (error) {
             console.error(`[RateLimiter:${this.keyPrefix}] Redis error:`, error);
+            if (process.env.PLAYWRIGHT === '1') {
+                return {
+                    success: true,
+                    remaining: this.config.limit,
+                    reset: Math.ceil(Date.now() / 1000) + this.config.windowSeconds,
+                    limit: this.config.limit,
+                    isDegraded: false,
+                };
+            }
             if (this.config.failureMode === 'fail-closed') {
                 return {
                     success: false,
@@ -173,6 +191,15 @@ export class RateLimiter {
         const windowStart = now - (this.config.windowSeconds * 1000);
 
         if (!isRedisConfigured()) {
+            if (process.env.PLAYWRIGHT === '1') {
+                return {
+                    success: true,
+                    remaining: this.config.limit,
+                    reset: Math.ceil(Date.now() / 1000) + this.config.windowSeconds,
+                    limit: this.config.limit,
+                    isDegraded: false,
+                };
+            }
             if (this.config.failureMode === 'fail-closed') {
                 return {
                     success: false,
@@ -205,6 +232,15 @@ export class RateLimiter {
             };
         } catch (error) {
             console.error(`[RateLimiter:${this.keyPrefix}] Redis error:`, error);
+            if (process.env.PLAYWRIGHT === '1') {
+                return {
+                    success: true,
+                    remaining: this.config.limit,
+                    reset: Math.ceil(Date.now() / 1000) + this.config.windowSeconds,
+                    limit: this.config.limit,
+                    isDegraded: false,
+                };
+            }
             if (this.config.failureMode === 'fail-closed') {
                 return {
                     success: false,

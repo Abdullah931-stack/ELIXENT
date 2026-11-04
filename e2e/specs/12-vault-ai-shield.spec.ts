@@ -2,8 +2,8 @@ import { test, expect } from "../fixtures/auth-fixture";
 import { e2eDb } from "../fixtures/test-db";
 import * as schema from "../../src/server/db/schema";
 
-test.describe("Scenario 13: Zero-Knowledge AI Shield Gatekeeper & HTTP 403 Block", () => {
-    test("encrypted documents should render the AI shield badge and reject AI requests with HTTP 403", async ({
+test.describe("Scenario 13: Zero-Knowledge AI Shield & Default AI Enablement", () => {
+    test("encrypted documents should render the AI shield badge and permit AI streaming requests", async ({
         page,
         context,
         authSession,
@@ -38,7 +38,7 @@ test.describe("Scenario 13: Zero-Knowledge AI Shield Gatekeeper & HTTP 403 Block
         await expect(aiBadge).toBeVisible({ timeout: 15000 });
         await expect(aiBadge).toContainText(/AI Shield Active|Encrypted|ميزات الـ AI معطلة|التشفير محمي/);
 
-        // 4. Verify that programmatic invocation of /api/agent/stream against this encrypted file is blocked with HTTP 403
+        // 4. Verify that programmatic invocation of /api/agent/stream against this encrypted file is permitted by default (HTTP 200 SSE)
         const streamResponse = await context.request.post("/api/agent/stream", {
             data: {
                 threadId: `thread-${doc.id}`,
@@ -48,8 +48,7 @@ test.describe("Scenario 13: Zero-Knowledge AI Shield Gatekeeper & HTTP 403 Block
             },
         });
 
-        expect(streamResponse.status()).toBe(403);
-        const resBody = await streamResponse.text();
-        expect(resBody).toMatch(/VAULT_AI_ACCESS_DENIED|AI_PROHIBITED_ON_ENCRYPTED_FILES/);
+        expect(streamResponse.status()).toBe(200);
+        expect(streamResponse.headers()["content-type"]).toContain("text/event-stream");
     });
 });

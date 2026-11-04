@@ -2,13 +2,14 @@ import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { eq } from "drizzle-orm";
 import * as schema from "../../src/server/db/schema";
+import { generateETagSync } from "../../src/lib/sync/etag-generator";
 import dotenv from "dotenv";
 import path from "path";
 
 // Ensure test environment is loaded
 dotenv.config({ path: path.resolve(process.cwd(), ".env.test.local") });
-dotenv.config({ path: path.resolve(process.cwd(), ".env.test") });
 dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
+dotenv.config({ path: path.resolve(process.cwd(), ".env.test") });
 dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 
 const testDbUrl = process.env.TEST_DATABASE_URL;
@@ -79,13 +80,28 @@ export async function getDbFile(fileId: string) {
 /**
  * Update file version directly in database (simulates concurrent writes from another client/tab)
  */
-export async function simulateRemoteFileUpdate(fileId: string, newContent: string, newVersion: number) {
+export async function simulateRemoteFileUpdate(
+    fileId: string,
+    newContent: string,
+    newVersion: number,
+    isEncrypted = false,
+    envelope?: string
+) {
+    const now = new Date();
+    const newEtag = generateETagSync({
+        id: fileId,
+        content: newContent,
+        updatedAt: now,
+        isEncrypted,
+        envelope,
+    });
     return e2eDb
         .update(schema.files)
         .set({
             content: newContent,
             version: newVersion,
-            updatedAt: new Date(),
+            etag: newEtag,
+            updatedAt: now,
         })
         .where(eq(schema.files.id, fileId));
 }
