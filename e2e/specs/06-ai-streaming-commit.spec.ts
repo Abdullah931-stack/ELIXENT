@@ -1,3 +1,4 @@
+import type { Route } from "@playwright/test";
 import { test, expect } from "../fixtures/auth-fixture";
 import { e2eDb, getDbFile } from "../fixtures/test-db";
 import * as schema from "../../src/server/db/schema";
@@ -29,7 +30,7 @@ test.describe("Scenario 6: AI Streaming, Dynamic Ghost Preview & Atomic Commit",
 
         // 3. Prepare credit ledger reservation and mock stream endpoint (SSE /api/agent/stream)
         let reqOpId = `op-e2e-stream-${Date.now()}`;
-        const handleMockStream = async (route: any) => {
+        const handleMockStream = async (route: Route) => {
             try {
                 const postData = JSON.parse(route.request().postData() || "{}");
                 if (postData.operationId) {
@@ -83,7 +84,6 @@ test.describe("Scenario 6: AI Streaming, Dynamic Ghost Preview & Atomic Commit",
         };
 
         await page.route("**/api/agent/stream", handleMockStream);
-        await page.route("**/api/ai/stream", handleMockStream);
 
         // 4. Drive AI prompt submission from the UI (Phase 11 Architectural Agent panel)
         const agentToggle = page.getByTestId("ai-toolbar-agent-toggle");

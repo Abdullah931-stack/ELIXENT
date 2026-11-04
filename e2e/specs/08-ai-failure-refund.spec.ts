@@ -1,3 +1,4 @@
+import type { Route } from "@playwright/test";
 import { test, expect } from "../fixtures/auth-fixture";
 import { e2eDb, getDbFile } from "../fixtures/test-db";
 import * as schema from "../../src/server/db/schema";
@@ -19,7 +20,7 @@ test.describe("Scenario 9: System AI Provider Failure (Full Refund Policy)", () 
             .returning();
 
         // 1. Intercept stream endpoints to simulate upstream AI provider crash (500)
-        const handle500Failure = async (route: any) => {
+        const handle500Failure = async (route: Route) => {
             await route.fulfill({
                 status: 500,
                 contentType: "application/json",
@@ -32,7 +33,6 @@ test.describe("Scenario 9: System AI Provider Failure (Full Refund Policy)", () 
         };
 
         await page.route("**/api/agent/stream", handle500Failure);
-        await page.route("**/api/ai/stream", handle500Failure);
 
         // 2. Open editor
         await page.goto(`/workspace/editor/${doc.id}`);

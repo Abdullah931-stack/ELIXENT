@@ -38,17 +38,18 @@ test.describe("Scenario 13: Zero-Knowledge AI Shield Gatekeeper & HTTP 403 Block
         await expect(aiBadge).toBeVisible({ timeout: 15000 });
         await expect(aiBadge).toContainText(/AI Shield Active|Encrypted|ميزات الـ AI معطلة|التشفير محمي/);
 
-        // 4. Verify that programmatic invocation of /api/ai/stream against this encrypted file is blocked with HTTP 403
-        const streamResponse = await context.request.post("/api/ai/stream", {
+        // 4. Verify that programmatic invocation of /api/agent/stream against this encrypted file is blocked with HTTP 403
+        const streamResponse = await context.request.post("/api/agent/stream", {
             data: {
-                fileId: doc.id,
-                text: "Summarize this encrypted text",
-                operation: "summarize",
+                threadId: `thread-${doc.id}`,
+                projectId: `project-${authSession.userId}`,
+                targetFileIds: [doc.id],
+                prompt: "Summarize this document",
             },
         });
 
         expect(streamResponse.status()).toBe(403);
         const resBody = await streamResponse.text();
-        expect(resBody).toContain("AI_PROHIBITED_ON_ENCRYPTED_FILES");
+        expect(resBody).toMatch(/VAULT_AI_ACCESS_DENIED|AI_PROHIBITED_ON_ENCRYPTED_FILES/);
     });
 });

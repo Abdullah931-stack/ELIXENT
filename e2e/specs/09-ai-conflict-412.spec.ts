@@ -1,3 +1,4 @@
+import type { Route } from "@playwright/test";
 import { test, expect } from "../fixtures/auth-fixture";
 import { e2eDb, getDbFile, simulateRemoteFileUpdate } from "../fixtures/test-db";
 import * as schema from "../../src/server/db/schema";
@@ -44,7 +45,7 @@ test.describe("Scenario 10: AI Concurrent Edit Collision (412 Precondition Faile
                 status: "SETTLED",
             });
 
-        const handleConflictStream = async (route: any) => {
+        const handleConflictStream = async (route: Route) => {
             try {
                 const postData = JSON.parse(route.request().postData() || "{}");
                 if (postData.operationId) {
@@ -98,7 +99,6 @@ test.describe("Scenario 10: AI Concurrent Edit Collision (412 Precondition Faile
         };
 
         await page.route("**/api/agent/stream", handleConflictStream);
-        await page.route("**/api/ai/stream", handleConflictStream);
 
         // 3. Trigger AI Agent in UI
         const agentToggle = page.getByTestId("ai-toolbar-agent-toggle");

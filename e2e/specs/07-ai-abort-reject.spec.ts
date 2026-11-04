@@ -1,3 +1,4 @@
+import type { Route } from "@playwright/test";
 import { test, expect } from "../fixtures/auth-fixture";
 import { e2eDb, getDbFile } from "../fixtures/test-db";
 import * as schema from "../../src/server/db/schema";
@@ -23,7 +24,7 @@ test.describe("Scenarios 7 & 8: User AI Abort and Preview Reject (Browser User J
             .returning();
 
         // 1. Intercept stream to simulate slow continuous generation using non-page-bound delay
-        const handleAbortStream = async (route: any) => {
+        const handleAbortStream = async (route: Route) => {
             try {
                 const sseHeader = `event: start\ndata: ${JSON.stringify({ type: "start", sessionId: `sess_${Date.now()}`, threadId: doc.id, operationId: `op-abort-${Date.now()}` })}\n\n`;
                 // Keep stream running with delayed chunks so client remains in active streaming state
@@ -39,7 +40,6 @@ test.describe("Scenarios 7 & 8: User AI Abort and Preview Reject (Browser User J
         };
 
         await page.route("**/api/agent/stream", handleAbortStream);
-        await page.route("**/api/ai/stream", handleAbortStream);
 
         // 2. Open editor in browser
         await page.goto(`/workspace/editor/${doc.id}`);
@@ -90,7 +90,7 @@ test.describe("Scenarios 7 & 8: User AI Abort and Preview Reject (Browser User J
             .returning();
 
         // 1. Mock completed preview stream
-        const handleRejectStream = async (route: any) => {
+        const handleRejectStream = async (route: Route) => {
             try {
                 const sseBody = [
                     `event: start\ndata: ${JSON.stringify({ type: "start", sessionId: `sess_${Date.now()}`, threadId: doc.id, operationId: `op-reject-${Date.now()}` })}\n\n`,
@@ -121,7 +121,6 @@ test.describe("Scenarios 7 & 8: User AI Abort and Preview Reject (Browser User J
         };
 
         await page.route("**/api/agent/stream", handleRejectStream);
-        await page.route("**/api/ai/stream", handleRejectStream);
 
         // 2. Open editor
         await page.goto(`/workspace/editor/${doc.id}`);
