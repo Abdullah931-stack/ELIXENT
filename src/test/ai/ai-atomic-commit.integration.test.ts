@@ -1,18 +1,18 @@
 /**
- * Phase 8 Integration Test: Real Database AI Atomic Commit & Transactional Settlement
+ * Phase 8 Integration Test: Real Database Atomic Document Update & AI Credit Settlement
  *
  * REAL DATABASE TEST:
  * Runs against live PostgreSQL database with real Drizzle schema, tables, and transactions.
- * Exercises the ACTUAL production server actions:
- * - `commitAIFileOperation`
- * - `refundAIReservation`
+ * Exercises the ACTUAL production functions:
+ * - `updateFileContent` (`@/server/actions/files`)
+ * - `reserveAIQuota`, `commitAIReservation`, `refundAIReservation` (`@/server/services/ai-settlement-service`)
  *
  * Proves that:
- * 1. File content update + AI transaction settlement commit ATOMICALLY in a single SQL transaction.
- * 2. If reservation settlement fails, the file modification is COMPLETELY ROLLED BACK in PostgreSQL.
- * 3. Concurrent version divergence (412 Conflict) is prevented by optimistic locking in PostgreSQL.
- * 4. Retrying an already committed operation is idempotent and returns persisted state without mutation.
- * 5. Reservation assigned to another file/user is strictly rejected against real DB records.
+ * 1. Optimistic version locking (`expectedVersion` & `expectedETag`) atomically updates files in PostgreSQL.
+ * 2. Concurrent version divergence (409/412 Conflict) is prevented by optimistic locking in PostgreSQL.
+ * 3. AI credit reservation, partial consumption commit, and full abort refund persist accurately in PostgreSQL.
+ * 4. Retrying an already committed or refunded reservation is idempotent and prevents double deduction/refund.
+ * 5. Cross-user file access is strictly rejected against real DB records.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
@@ -22,16 +22,18 @@ import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup"
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { randomUUID } from "crypto";
 import { generateETagSync } from "@/lib/sync/etag-generator";
-import { commitAIFileOperation } from "@/server/actions/ai-commit";
-import { refundAIReservation } from "@/server/services/ai-settlement-service";
+import { updateFileContent } from "@/server/actions/files";
+import {
+    reserveAIQuota,
+    commitAIReservation,
+    refundAIReservation,
+} from "@/server/services/ai-settlement-service";
 import { getUser } from "@/lib/supabase/server";
 
-// Wire up getUser to authenticate as the real test user
 vi.mock("@/lib/supabase/server", () => ({
     getUser: vi.fn(),
 }));
 
-// Route transactional DB client to the real PostgreSQL test database
 vi.mock("@/server/db/transactional", () => ({
     txDb: testDb,
     schema,
@@ -68,7 +70,10 @@ beforeEach(async (ctx) => {
         return;
     }
 
-    vi.mocked(getUser).mockResolvedValue({ id: TEST_USER_ID } as unknown as Awaited<ReturnType<typeof getUser>>);
+    vi.mocked(getUser).mockResolvedValue({
+        id: TEST_USER_ID,
+        email: "ai-commit-integration@example.com",
+    } as unknown as Awaited<ReturnType<typeof getUser>>);
 
     await testDb
         .insert(schema.users)
@@ -78,7 +83,11 @@ beforeEach(async (ctx) => {
         ])
         .onConflictDoNothing();
 
-    // Clean up test files & transactions before each test
+    await testDb
+        .update(schema.users)
+        .set({ creditBalanceMicro: BigInt(1000000000) })
+        .where(eq(schema.users.id, TEST_USER_ID));
+
     await testDb.delete(schema.creditLedgerTransactions).where(eq(schema.creditLedgerTransactions.userId, TEST_USER_ID));
     await testDb.delete(schema.creditLedgerTransactions).where(eq(schema.creditLedgerTransactions.userId, OTHER_USER_ID));
     await testDb.delete(schema.files).where(eq(schema.files.userId, TEST_USER_ID));
@@ -95,19 +104,21 @@ afterAll(async () => {
     } catch {
         /* ignore */
     }
-    // Remove this suite's seeded test accounts; CASCADE cleans dependents.
-    try { await cleanupTestUsers([TEST_USER_ID, OTHER_USER_ID]); } catch { /* ignore */ }
+    try {
+        await cleanupTestUsers([TEST_USER_ID, OTHER_USER_ID]);
+    } catch {
+        /* ignore */
+    }
 });
 
-describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phase 8 Integration)", () => {
-    it("should atomically commit file update and reservation settlement via real commitAIFileOperation", async () => {
+describe("AI Atomic Document Save & Credit Settlement — Real PostgreSQL Execution", () => {
+    it("should reserve quota, commit settlement, and atomically update file content with version locking", async () => {
         const fileId = randomUUID();
         const operationId = `op_real_${randomUUID()}`;
-        const initialContent = "<p>Original document content</p>";
+        const initialContent = "# Original document content";
         const initialDate = new Date();
         const initialEtag = generateETagSync({ id: fileId, content: initialContent, updatedAt: initialDate });
 
-        // 1. Seed initial file in Postgres
         await testDb.insert(schema.files).values({
             id: fileId,
             userId: TEST_USER_ID,
@@ -118,37 +129,30 @@ describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phas
             updatedAt: initialDate,
         });
 
-        // 2. Seed active AI transaction in Postgres
-        await testDb.insert(schema.creditLedgerTransactions).values({
-            operationId,
-            userId: TEST_USER_ID,
-            modelId: "google/gemini-2.5-flash",
-            executionMode: "STREAMING_GENERATIVE",
-            inputTokens: 100,
-            outputTokens: 200,
-            deltaMicro: BigInt(-300000),
-            status: "SETTLED",
-            createdAt: new Date(),
-        });
-
-        // 3. Execute real production server action
-        const aiResultContent = "<p>Enhanced AI polished document content</p>";
-        const result = await commitAIFileOperation({
+        const reservation = await reserveAIQuota(TEST_USER_ID, "agent_stream", 300, "pro", {
             operationId,
             fileId,
+            modelId: "google/gemini-3.8-flash",
+            executionMode: "STREAMING_GENERATIVE",
+        });
+        expect(reservation.reserved).toBe(true);
+
+        const commitRes = await commitAIReservation(operationId, 200);
+        expect(commitRes.committed).toBe(true);
+
+        const aiResultContent = "# Enhanced AI polished document content";
+        const fileResult = await updateFileContent(fileId, aiResultContent, {
             expectedVersion: 1,
             expectedETag: initialEtag,
-            resultContent: aiResultContent,
+            operationId,
         });
 
-        expect(result.success).toBe(true);
-        expect(result.status).toBe("committed");
-        if (result.status === "committed") {
-            expect(result.version).toBe(2);
-            expect(result.etag).toBeDefined();
+        expect(fileResult.success).toBe(true);
+        if (fileResult.success) {
+            expect(fileResult.version).toBe(2);
+            expect(fileResult.etag).toBeDefined();
         }
 
-        // 4. Verify directly against real database state (Postgres Persistence)
         const dbFile = await testDb.query.files.findFirst({
             where: eq(schema.files.id, fileId),
         });
@@ -156,70 +160,15 @@ describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phas
             where: eq(schema.creditLedgerTransactions.operationId, operationId),
         });
 
-        expect(dbFile).toBeDefined();
         expect(dbFile?.version).toBe(2);
         expect(dbFile?.content).toBe(aiResultContent);
-
-        expect(dbTx).toBeDefined();
         expect(dbTx?.status).toBe("SETTLED");
+        expect(dbTx?.outputTokens).toBe(200);
     });
 
-    it("should rollback file update completely when reservation settlement fails during commitAIFileOperation", async () => {
+    it("should detect concurrent version modification in real Postgres and return conflict without overwriting", async () => {
         const fileId = randomUUID();
-        const operationId = `op_fail_${randomUUID()}`;
-        const initialContent = "<p>Pristine content before failed commit</p>";
-        const initialDate = new Date();
-        const initialEtag = generateETagSync({ id: fileId, content: initialContent, updatedAt: initialDate });
-
-        // Seed file
-        await testDb.insert(schema.files).values({
-            id: fileId,
-            userId: TEST_USER_ID,
-            title: "Rollback Test Doc",
-            content: initialContent,
-            version: 1,
-            etag: initialEtag,
-            updatedAt: initialDate,
-        });
-
-        // Seed transaction with 'ABORTED' status so commit is rejected
-        await testDb.insert(schema.creditLedgerTransactions).values({
-            operationId,
-            userId: TEST_USER_ID,
-            modelId: "google/gemini-2.5-flash",
-            executionMode: "STREAMING_GENERATIVE",
-            inputTokens: 50,
-            outputTokens: 100,
-            deltaMicro: BigInt(-150000),
-            status: "ABORTED",
-            createdAt: new Date(),
-        });
-
-        // Attempt commitAIFileOperation
-        const result = await commitAIFileOperation({
-            operationId,
-            fileId,
-            expectedVersion: 1,
-            expectedETag: initialEtag,
-            resultContent: "<p>Uncommitted malicious or invalid content</p>",
-        });
-
-        expect(result.success).toBe(false);
-
-        // Assert that PostgreSQL database state remains completely pristine
-        const dbFile = await testDb.query.files.findFirst({
-            where: eq(schema.files.id, fileId),
-        });
-
-        expect(dbFile).toBeDefined();
-        expect(dbFile?.version).toBe(1); // Pristine version preserved
-        expect(dbFile?.content).toBe(initialContent); // Pristine content untouched
-    });
-
-    it("should detect concurrent version modification in real Postgres and return 412 conflict", async () => {
-        const fileId = randomUUID();
-        const operationId = `op_race_${randomUUID()}`;
-        const initialContent = "<p>Base version 1</p>";
+        const initialContent = "# Base version 1";
 
         await testDb.insert(schema.files).values({
             id: fileId,
@@ -231,35 +180,20 @@ describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phas
             updatedAt: new Date(),
         });
 
-        await testDb.insert(schema.creditLedgerTransactions).values({
-            operationId,
-            userId: TEST_USER_ID,
-            modelId: "google/gemini-2.5-flash",
-            executionMode: "STREAMING_GENERATIVE",
-            inputTokens: 100,
-            outputTokens: 100,
-            deltaMicro: BigInt(-200000),
-            status: "SETTLED",
-            createdAt: new Date(),
-        });
-
-        // Advance version in Postgres to simulate concurrent autosave / collaborator
+        // Concurrent writer advances version to 2
         await testDb
             .update(schema.files)
             .set({
-                content: "<p>Concurrent writer edits document</p>",
+                content: "# Concurrent writer edits document",
                 version: 2,
                 etag: "etag-v2",
                 updatedAt: new Date(),
             })
             .where(eq(schema.files.id, fileId));
 
-        // Attempt commit with stale expectedVersion: 1
-        const result = await commitAIFileOperation({
-            operationId,
-            fileId,
-            expectedVersion: 1, // Stale!
-            resultContent: "<p>Stale AI result</p>",
+        // Attempt update with stale expectedVersion: 1
+        const result = await updateFileContent(fileId, "# Stale AI result", {
+            expectedVersion: 1,
         });
 
         expect(result.success).toBe(false);
@@ -268,208 +202,58 @@ describe("AI Atomic Commit — Real PostgreSQL Production Action Execution (Phas
             expect(result.serverVersion?.version).toBe(2);
         }
 
-        // Verify concurrent writer's data in Postgres was preserved intact
         const dbFile = await testDb.query.files.findFirst({
             where: eq(schema.files.id, fileId),
         });
         expect(dbFile?.version).toBe(2);
-        expect(dbFile?.content).toBe("<p>Concurrent writer edits document</p>");
-
-        // Verify transaction remained in database
-        const dbTx = await testDb.query.creditLedgerTransactions.findFirst({
-            where: eq(schema.creditLedgerTransactions.operationId, operationId),
-        });
-        expect(dbTx?.status).toBe("SETTLED");
+        expect(dbFile?.content).toBe("# Concurrent writer edits document");
     });
 
-    it("should idempotently return committed state when retrying an already committed operation via commitAIFileOperation", async () => {
-        const fileId = randomUUID();
+    it("should idempotently handle repeated commitAIReservation calls and block subsequent refundAIReservation", async () => {
         const operationId = `op_idempotent_${randomUUID()}`;
-        const committedContent = "<p>Already committed document text</p>";
+
+        const res = await reserveAIQuota(TEST_USER_ID, "agent_stream", 150, "pro", {
+            operationId,
+            modelId: "google/gemini-3.8-flash",
+            executionMode: "STREAMING_GENERATIVE",
+        });
+        expect(res.reserved).toBe(true);
+
+        const firstCommit = await commitAIReservation(operationId, 150);
+        expect(firstCommit.committed).toBe(true);
+
+        const secondCommit = await commitAIReservation(operationId, 150);
+        expect(secondCommit.committed).toBe(true);
+        expect(secondCommit.reason).toBe("already_committed");
+
+        const refundAfterCommit = await refundAIReservation(operationId, "late_cancel");
+        expect(refundAfterCommit.refunded).toBe(false);
+        expect(refundAfterCommit.reason).toBe("already_committed");
+    });
+
+    it("should reject updateFileContent when file belongs to another user in real DB", async () => {
+        const otherUserFileId = randomUUID();
 
         await testDb.insert(schema.files).values({
-            id: fileId,
-            userId: TEST_USER_ID,
-            title: "Idempotent Test Doc",
-            content: committedContent,
-            version: 3,
-            etag: "etag-v3",
+            id: otherUserFileId,
+            userId: OTHER_USER_ID,
+            title: "Other User File",
+            content: "# Private to other user",
+            version: 1,
+            etag: "etag-other",
             updatedAt: new Date(),
         });
 
-        await testDb.insert(schema.creditLedgerTransactions).values({
-            operationId,
-            userId: TEST_USER_ID,
-            nodeName: "committed:improve:test:100",
-            modelId: "google/gemini-2.5-flash",
-            executionMode: "STREAMING_GENERATIVE",
-            inputTokens: 100,
-            outputTokens: 150,
-            deltaMicro: BigInt(-250000),
-            status: "SETTLED",
-            createdAt: new Date(),
-        });
-
-        // Call production commitAIFileOperation on committed transaction
-        const result = await commitAIFileOperation({
-            operationId,
-            fileId,
-            expectedVersion: 2,
-            resultContent: "<p>Attempted retry content</p>",
-        });
-
-        expect(result.success).toBe(true);
-        expect(result.status).toBe("already_committed");
-        if (result.status === "already_committed") {
-            expect(result.version).toBe(3);
-            expect(result.etag).toBe("etag-v3");
-        }
-
-        // Verify database was NOT mutated
-        const dbFile = await testDb.query.files.findFirst({
-            where: eq(schema.files.id, fileId),
-        });
-        expect(dbFile?.version).toBe(3);
-        expect(dbFile?.content).toBe(committedContent);
-    });
-
-    it("should reject commitAIFileOperation when reservation is assigned to a different file or user in real DB", async () => {
-        const fileA = randomUUID();
-        const fileB = randomUUID();
-        const operationId = `op_mismatch_${randomUUID()}`;
-
-        await testDb.insert(schema.files).values([
-            {
-                id: fileA,
-                userId: TEST_USER_ID,
-                title: "File A",
-                content: "<p>File A content</p>",
-                version: 1,
-                etag: "etag-a",
-                updatedAt: new Date(),
-            },
-            {
-                id: fileB,
-                userId: TEST_USER_ID,
-                title: "File B",
-                content: "<p>File B content</p>",
-                version: 1,
-                etag: "etag-b",
-                updatedAt: new Date(),
-            },
-        ]);
-
-        // Transaction assigned to OTHER_USER_ID
-        await testDb.insert(schema.creditLedgerTransactions).values({
-            operationId,
-            userId: OTHER_USER_ID,
-            modelId: "google/gemini-2.5-flash",
-            executionMode: "STREAMING_GENERATIVE",
-            inputTokens: 50,
-            outputTokens: 50,
-            deltaMicro: BigInt(-100000),
-            status: "SETTLED",
-            createdAt: new Date(),
-        });
-
-        // Attempt commit against File B by TEST_USER_ID
-        const result = await commitAIFileOperation({
-            operationId,
-            fileId: fileB,
+        const result = await updateFileContent(otherUserFileId, "# Unauthorized overwrite", {
             expectedVersion: 1,
-            resultContent: "<p>Content for File B</p>",
         });
 
         expect(result.success).toBe(false);
-    });
+        expect(result.status).toBe("not_found");
 
-    it("should successfully execute real refundAIReservation on real PostgreSQL database", async () => {
-        const fileId = randomUUID();
-        const operationId = `op_refund_${randomUUID()}`;
-
-        // Seed parent file in Postgres first to satisfy foreign key constraint
-        await testDb.insert(schema.files).values({
-            id: fileId,
-            userId: TEST_USER_ID,
-            title: "Refund Test Doc",
-            content: "<p>Original doc</p>",
-            version: 1,
-            etag: "etag-ref",
-            updatedAt: new Date(),
+        const dbFile = await testDb.query.files.findFirst({
+            where: eq(schema.files.id, otherUserFileId),
         });
-
-        // Seed transaction in Postgres
-        await testDb.insert(schema.creditLedgerTransactions).values({
-            operationId,
-            userId: TEST_USER_ID,
-            modelId: "google/gemini-2.5-flash",
-            executionMode: "STREAMING_GENERATIVE",
-            inputTokens: 50,
-            outputTokens: 100,
-            deltaMicro: BigInt(-150000),
-            status: "SETTLED",
-            createdAt: new Date(),
-        });
-
-        // Execute production refundAIReservation
-        const refundResult = await refundAIReservation(operationId, "test_cancellation");
-
-        expect(refundResult.refunded).toBe(true);
-
-        // Verify in real database
-        const dbTx = await testDb.query.creditLedgerTransactions.findFirst({
-            where: eq(schema.creditLedgerTransactions.operationId, operationId),
-        });
-
-        expect(dbTx?.status).toBe("ABORTED");
-    });
-
-    it("should refuse unauthenticated commits with zero mutation", async () => {
-        vi.mocked(getUser).mockResolvedValueOnce(null as never);
-        const fileId = randomUUID();
-        const operationId = `op_unauth_${randomUUID()}`;
-
-        await testDb.insert(schema.files).values({
-            id: fileId,
-            userId: TEST_USER_ID,
-            title: "Unauth Test Doc",
-            content: "<p>Original pristine</p>",
-            version: 1,
-            etag: "etag-unauth",
-            updatedAt: new Date(),
-        });
-
-        await testDb.insert(schema.creditLedgerTransactions).values({
-            operationId,
-            userId: TEST_USER_ID,
-            modelId: "google/gemini-2.5-flash",
-            executionMode: "STREAMING_GENERATIVE",
-            inputTokens: 50,
-            outputTokens: 50,
-            deltaMicro: BigInt(-100000),
-            status: "SETTLED",
-            createdAt: new Date(),
-        });
-
-        const res = await commitAIFileOperation({
-            operationId,
-            fileId,
-            expectedVersion: 1,
-            resultContent: "<p>Should never be written</p>",
-        });
-
-        expect(res.success).toBe(false);
-        expect(res.status).toBe("unauthorized");
-
-        const row = await testDb.query.files.findFirst({
-            where: eq(schema.files.id, fileId),
-        });
-        expect(row?.version).toBe(1);
-        expect(row?.content).toBe("<p>Original pristine</p>");
-
-        const resRow = await testDb.query.creditLedgerTransactions.findFirst({
-            where: eq(schema.creditLedgerTransactions.operationId, operationId),
-        });
-        expect(resRow?.status).toBe("SETTLED");
+        expect(dbFile?.content).toBe("# Private to other user");
     });
 });

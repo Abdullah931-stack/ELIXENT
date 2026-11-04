@@ -1,75 +1,47 @@
 /**
- * Phase 10 Test Suite: AI Stream fileId Mandate & Encrypted Content Governance (LUGX-085)
+ * Phase 10 Test Suite: Agent Stream targetFileIds Mandate & Encrypted Content Governance (LUGX-085)
  *
  * Verifies:
- * 1. POST /api/ai/stream strictly requires non-empty fileId, rejecting missing fileId with HTTP 400 MISSING_FILE_ID.
- * 2. POST /api/ai/stream rejects malformed/empty fileId with HTTP 400.
- * 3. POST /api/ai/stream rejects non-existent or foreign user file with HTTP 404.
- * 4. POST /api/ai/stream on encrypted file fails closed with HTTP 403 AI_PROHIBITED_ON_ENCRYPTED_FILES if allowAIOnEncryptedFiles is false.
- * 5. POST /api/ai/stream on encrypted file succeeds when user explicitly opted in (allowAIOnEncryptedFiles = true).
- * 6. POST /api/ai/stream on plaintext file succeeds and reserves quota with clean fileId.
+ * 1. POST /api/agent/stream strictly requires non-empty targetFileIds, rejecting missing or empty targetFileIds with HTTP 400.
+ * 2. POST /api/agent/stream rejects malformed/empty strings inside targetFileIds with HTTP 400.
+ * 3. CloudPostgresWorkspaceProvider rejects non-existent or foreign user file in targetFileIds with WorkspaceFileAccessDeniedError (404).
+ * 4. CloudPostgresWorkspaceProvider on encrypted file fails closed with VaultAIAccessDeniedError (403 VAULT_AI_ACCESS_DENIED) if allowAIOnEncryptedFiles is false.
+ * 5. CloudPostgresWorkspaceProvider on encrypted file fails closed with EncryptedPayloadMissingError (400) if decrypted entry is missing from ephemeralVaultPayloads.
+ * 6. CloudPostgresWorkspaceProvider on encrypted file succeeds and redacts sections to vault_ref:// pointers when allowAIOnEncryptedFiles = true and ephemeralVaultPayloads contains the decrypted text.
  */
 
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { POST as aiStreamRoute } from '@/app/api/ai/stream/route';
+import { POST as agentStreamRoute } from '@/app/api/agent/stream/route';
+import { CloudPostgresWorkspaceProvider } from '@/core/workspace/cloud-provider';
+import {
+    WorkspaceFileAccessDeniedError,
+    VaultAIAccessDeniedError,
+    EncryptedPayloadMissingError,
+} from '@/core/workspace/provider';
+import { runWithEphemeralVaultScope } from '@/lib/vault/ephemeral-memory-map';
 
-const mockGetUser = vi.hoisted(() => vi.fn());
-const mockDb = vi.hoisted(() => ({
-    query: {
-        files: { findFirst: vi.fn() },
-        userVaultProfiles: { findFirst: vi.fn() },
-        aiReservations: { findFirst: vi.fn() },
-    },
+const {
+    mockRequireAuthenticatedUser,
+    mockGraphStream,
+    mockGovernorSettle,
+} = vi.hoisted(() => ({
+    mockRequireAuthenticatedUser: vi.fn(),
+    mockGraphStream: vi.fn(),
+    mockGovernorSettle: vi.fn(),
 }));
 
-const mockSettlement = vi.hoisted(() => ({
-    getUserTier: vi.fn().mockResolvedValue('pro'),
-    reserveAIQuota: vi.fn().mockResolvedValue({ reserved: true }),
-    refundAIReservation: vi.fn().mockResolvedValue({ success: true }),
-    commitAIReservation: vi.fn().mockResolvedValue({ success: true }),
-    computeRequestHash: vi.fn().mockReturnValue('mock_hash'),
-}));
+vi.mock('next/server', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('next/server')>();
+    return {
+        ...actual,
+        after: vi.fn(),
+    };
+});
 
-vi.mock('@/lib/supabase/server', () => ({
-    getUser: mockGetUser,
-}));
-
-vi.mock('@/server/db', () => ({
-    db: mockDb,
-    schema: {
-        files: {
-            id: 'id',
-            userId: 'user_id',
-            version: 'version',
-            etag: 'etag',
-            deletedAt: 'deleted_at',
-            isEncrypted: 'is_encrypted',
-            encryptionMetadata: 'encryption_metadata',
-            content: 'content',
-            title: 'title',
-        },
-        userVaultProfiles: {
-            userId: 'user_id',
-            allowAIOnEncryptedFiles: 'allow_ai_on_encrypted_files',
-            updatedAt: 'updated_at',
-        },
-    },
-}));
-
-vi.mock('@/server/services/ai-settlement-service', () => mockSettlement);
-
-vi.mock('@/lib/ai/client', () => ({
-    streamWithAI: vi.fn().mockResolvedValue(
-        new ReadableStream({
-            start(controller) {
-                controller.enqueue(new TextEncoder().encode('chunk'));
-                controller.close();
-            },
-        })
-    ),
-    processWithAI: vi.fn().mockResolvedValue('ok'),
+vi.mock('@/server/auth/session', () => ({
+    requireAuthenticatedUser: mockRequireAuthenticatedUser,
 }));
 
 vi.mock('@/lib/rate-limit', () => ({
@@ -85,179 +57,243 @@ vi.mock('@/lib/rate-limit', () => ({
     rateLimitExceededResponse: vi.fn(),
 }));
 
-describe('Phase 10: AI Stream fileId Mandate & Zero-Knowledge Barrier (LUGX-085)', () => {
+vi.mock('@/core/agent/graph', () => ({
+    elixentAgentGraph: {
+        stream: mockGraphStream,
+    },
+}));
+
+vi.mock('@/lib/metering/stream-governor', () => ({
+    StreamGovernor: class MockStreamGovernor {
+        onTokenChunk = vi.fn().mockResolvedValue(true);
+        settle = mockGovernorSettle.mockResolvedValue({ status: 'SETTLED' });
+    },
+}));
+
+vi.mock('@/server/services/ai-settlement-service', () => ({
+    flushPendingSettlementsToPostgres: vi.fn().mockResolvedValue({ flushedCount: 0, netDeltaMicro: BigInt(0) }),
+}));
+
+describe('Phase 10: Agent Stream targetFileIds Mandate & Zero-Knowledge Barrier (LUGX-085)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mockGetUser.mockResolvedValue({ id: 'user_123' });
+        mockRequireAuthenticatedUser.mockResolvedValue({ id: 'user_123' });
+        mockGraphStream.mockResolvedValue(
+            (async function* () {
+                yield { document_writer_node: { text: 'ok' } };
+            })()
+        );
     });
 
     afterEach(() => {
         vi.restoreAllMocks();
     });
 
-    it('rejects requests missing fileId entirely with HTTP 400 and MISSING_FILE_ID', async () => {
-        const req = new NextRequest('http://localhost/api/ai/stream', {
+    it('rejects requests missing targetFileIds entirely with HTTP 400', async () => {
+        const req = new NextRequest('http://localhost/api/agent/stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                text: 'Summarize document text',
-                operation: 'summarize',
+                threadId: 'thread_1',
+                projectId: 'proj_1',
+                prompt: 'Summarize document text',
             }),
         });
 
-        const res = await aiStreamRoute(req);
+        const res = await agentStreamRoute(req);
         expect(res.status).toBe(400);
-        const text = await res.text();
-        expect(text).toContain('MISSING_FILE_ID');
-        expect(mockSettlement.reserveAIQuota).not.toHaveBeenCalled();
+        const body = await res.json();
+        expect(body.title).toBe('Invalid Request Payload');
+        expect(mockGraphStream).not.toHaveBeenCalled();
     });
 
-    it('rejects requests where fileId is null with HTTP 400 and MISSING_FILE_ID', async () => {
-        const req = new NextRequest('http://localhost/api/ai/stream', {
+    it('rejects requests where targetFileIds is null with HTTP 400', async () => {
+        const req = new NextRequest('http://localhost/api/agent/stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                text: 'Summarize document text',
-                operation: 'summarize',
-                fileId: null,
+                threadId: 'thread_1',
+                projectId: 'proj_1',
+                targetFileIds: null,
+                prompt: 'Summarize document text',
             }),
         });
 
-        const res = await aiStreamRoute(req);
+        const res = await agentStreamRoute(req);
         expect(res.status).toBe(400);
-        const text = await res.text();
-        expect(text).toContain('MISSING_FILE_ID');
-        expect(mockSettlement.reserveAIQuota).not.toHaveBeenCalled();
+        expect(mockGraphStream).not.toHaveBeenCalled();
     });
 
-    it('rejects requests where fileId is empty whitespace or non-string with HTTP 400', async () => {
-        const req = new NextRequest('http://localhost/api/ai/stream', {
+    it('rejects requests where targetFileIds contains empty whitespace string with HTTP 400', async () => {
+        const req = new NextRequest('http://localhost/api/agent/stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                text: 'Summarize document text',
-                operation: 'summarize',
-                fileId: '   ',
+                threadId: 'thread_1',
+                projectId: 'proj_1',
+                targetFileIds: ['   '],
+                prompt: 'Summarize document text',
             }),
         });
 
-        const res = await aiStreamRoute(req);
+        const res = await agentStreamRoute(req);
         expect(res.status).toBe(400);
-        const text = await res.text();
-        expect(text).toContain('MISSING_FILE_ID');
-        expect(mockSettlement.reserveAIQuota).not.toHaveBeenCalled();
+        expect(mockGraphStream).not.toHaveBeenCalled();
     });
 
-    it('returns HTTP 404 when fileId does not exist or does not belong to user', async () => {
-        mockDb.query.files.findFirst.mockResolvedValueOnce(null);
-
-        const req = new NextRequest('http://localhost/api/ai/stream', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                text: 'Summarize document text',
-                operation: 'summarize',
-                fileId: 'non_existent_file',
+    it('throws WorkspaceFileAccessDeniedError (404) when targetFileId does not exist or belongs to another user', async () => {
+        const mockDb = {
+            select: vi.fn().mockReturnValue({
+                from: () => ({
+                    where: () => Promise.resolve([]),
+                }),
             }),
-        });
+        };
 
-        const res = await aiStreamRoute(req);
-        expect(res.status).toBe(404);
-        const text = await res.text();
-        expect(text).toBe('File not found');
-        expect(mockSettlement.reserveAIQuota).not.toHaveBeenCalled();
-    });
-
-    it('rejects encrypted file with HTTP 403 when allowAIOnEncryptedFiles is false', async () => {
-        mockDb.query.files.findFirst.mockResolvedValueOnce({
-            id: 'file_encrypted',
+        const provider = new CloudPostgresWorkspaceProvider({
             userId: 'user_123',
-            isEncrypted: true,
-        });
-        mockDb.query.userVaultProfiles.findFirst.mockResolvedValueOnce({
-            userId: 'user_123',
-            allowAIOnEncryptedFiles: false,
+            db: mockDb,
         });
 
-        const req = new NextRequest('http://localhost/api/ai/stream', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                text: 'Secret vault content',
-                operation: 'improve',
-                fileId: 'file_encrypted',
-            }),
-        });
-
-        const res = await aiStreamRoute(req);
-        expect(res.status).toBe(403);
-        const text = await res.text();
-        expect(text).toBe('AI_PROHIBITED_ON_ENCRYPTED_FILES');
-        expect(mockSettlement.reserveAIQuota).not.toHaveBeenCalled();
-    });
-
-    it('permits encrypted file when allowAIOnEncryptedFiles is explicitly true', async () => {
-        mockDb.query.files.findFirst.mockResolvedValueOnce({
-            id: 'file_encrypted',
-            userId: 'user_123',
-            isEncrypted: true,
-        });
-        mockDb.query.userVaultProfiles.findFirst.mockResolvedValueOnce({
-            userId: 'user_123',
-            allowAIOnEncryptedFiles: true,
-        });
-
-        const req = new NextRequest('http://localhost/api/ai/stream', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                text: 'Explicitly permitted secret vault content',
-                operation: 'improve',
-                fileId: 'file_encrypted',
-            }),
-        });
-
-        const res = await aiStreamRoute(req);
-        expect(res.status).toBe(200);
-        expect(mockSettlement.reserveAIQuota).toHaveBeenCalledWith(
-            'user_123',
-            'improve',
-            expect.any(Number),
-            'pro',
-            expect.objectContaining({
-                fileId: 'file_encrypted',
-            })
+        await expect(provider.listHeadingsTree(['non_existent_file'])).rejects.toThrow(
+            WorkspaceFileAccessDeniedError
         );
     });
 
-    it('permits standard unencrypted file without checking vault profile', async () => {
-        mockDb.query.files.findFirst.mockResolvedValueOnce({
-            id: 'file_normal',
+    it('rejects encrypted target file with VaultAIAccessDeniedError (403 VAULT_AI_ACCESS_DENIED) when allowAIOnEncryptedFiles is false', async () => {
+        const mockDb = {
+            select: vi.fn()
+                .mockImplementationOnce(() => ({
+                    from: () => ({
+                        where: () =>
+                            Promise.resolve([
+                                {
+                                    id: 'file_encrypted',
+                                    userId: 'user_123',
+                                    title: 'Vault Doc',
+                                    isEncrypted: true,
+                                    content: 'ciphertext_blob',
+                                    deletedAt: null,
+                                },
+                            ]),
+                    }),
+                }))
+                .mockImplementationOnce(() => ({
+                    from: () => ({
+                        where: () => ({
+                            limit: () =>
+                                Promise.resolve([
+                                    {
+                                        userId: 'user_123',
+                                        allowAIOnEncryptedFiles: false,
+                                    },
+                                ]),
+                        }),
+                    }),
+                })),
+        };
+
+        const provider = new CloudPostgresWorkspaceProvider({
             userId: 'user_123',
-            isEncrypted: false,
+            ephemeralVaultPayloads: {
+                file_encrypted: '# Secret Heading\nSecret body',
+            },
+            db: mockDb,
         });
 
-        const req = new NextRequest('http://localhost/api/ai/stream', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                text: 'Standard public document content',
-                operation: 'correct',
-                fileId: 'file_normal',
-            }),
-        });
-
-        const res = await aiStreamRoute(req);
-        expect(res.status).toBe(200);
-        expect(mockDb.query.userVaultProfiles.findFirst).not.toHaveBeenCalled();
-        expect(mockSettlement.reserveAIQuota).toHaveBeenCalledWith(
-            'user_123',
-            'correct',
-            expect.any(Number),
-            'pro',
-            expect.objectContaining({
-                fileId: 'file_normal',
-            })
+        await expect(provider.listHeadingsTree(['file_encrypted'])).rejects.toThrow(
+            VaultAIAccessDeniedError
         );
+    });
+
+    it('rejects encrypted target file with EncryptedPayloadMissingError when ephemeralVaultPayloads lacks the file entry', async () => {
+        const mockDb = {
+            select: vi.fn()
+                .mockImplementationOnce(() => ({
+                    from: () => ({
+                        where: () =>
+                            Promise.resolve([
+                                {
+                                    id: 'file_encrypted',
+                                    userId: 'user_123',
+                                    title: 'Vault Doc',
+                                    isEncrypted: true,
+                                    content: 'ciphertext_blob',
+                                    deletedAt: null,
+                                },
+                            ]),
+                    }),
+                }))
+                .mockImplementationOnce(() => ({
+                    from: () => ({
+                        where: () => ({
+                            limit: () =>
+                                Promise.resolve([
+                                    {
+                                        userId: 'user_123',
+                                        allowAIOnEncryptedFiles: true,
+                                    },
+                                ]),
+                        }),
+                    }),
+                })),
+        };
+
+        const provider = new CloudPostgresWorkspaceProvider({
+            userId: 'user_123',
+            ephemeralVaultPayloads: {},
+            db: mockDb,
+        });
+
+        await expect(provider.listHeadingsTree(['file_encrypted'])).rejects.toThrow(
+            EncryptedPayloadMissingError
+        );
+    });
+
+    it('permits encrypted file when allowAIOnEncryptedFiles is true and ephemeralVaultPayloads provides decrypted content', async () => {
+        const mockDb = {
+            select: vi.fn()
+                .mockImplementation(() => ({
+                    from: (table: unknown) => ({
+                        where: () => {
+                            if ((table as { userId?: unknown }) && 'allowAIOnEncryptedFiles' in (table as object)) {
+                                return {
+                                    limit: () =>
+                                        Promise.resolve([
+                                            {
+                                                userId: 'user_123',
+                                                allowAIOnEncryptedFiles: true,
+                                            },
+                                        ]),
+                                };
+                            }
+                            return Promise.resolve([
+                                {
+                                    id: 'file_encrypted',
+                                    userId: 'user_123',
+                                    title: 'Vault Doc',
+                                    isEncrypted: true,
+                                    content: 'ciphertext_blob',
+                                    deletedAt: null,
+                                },
+                            ]);
+                        },
+                    }),
+                })),
+        };
+
+        const provider = new CloudPostgresWorkspaceProvider({
+            userId: 'user_123',
+            ephemeralVaultPayloads: {
+                file_encrypted: '# Secret Architecture\nZero-knowledge details.',
+            },
+            db: mockDb,
+        });
+
+        await runWithEphemeralVaultScope(async () => {
+            const section = await provider.readSectionByHeading('file_encrypted', 'secret-architecture');
+            expect(section.isVaultRef).toBe(true);
+            expect(section.contentOrVaultRef).toBe('vault_ref://file_encrypted#secret-architecture');
+        });
     });
 });

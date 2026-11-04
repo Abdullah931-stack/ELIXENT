@@ -26,12 +26,6 @@ import { createMarkdownExtensions } from '@/components/editor/markdown/markdown-
 import type { StreamHandlerOptions } from '@/lib/ai/stream-handler';
 import { useAIStream } from '@/hooks/use-ai-stream';
 
-const mockCommitAIFileOperation = vi.fn();
-
-vi.mock('@/server/actions/ai-commit', () => ({
-    commitAIFileOperation: (...args: unknown[]) => mockCommitAIFileOperation(...args),
-}));
-
 const mockConsumeAgentStream = vi.fn();
 vi.mock('@/lib/ai/stream-handler', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/lib/ai/stream-handler')>();
@@ -143,7 +137,6 @@ describe('AI Preview Explicit Decision & Multi-Hunk Ghost Model (preview_ready)'
         await startDefaultStream(result);
         await waitFor(() => expect(result.current.status).toBe('preview_ready'));
 
-        expect(mockCommitAIFileOperation).not.toHaveBeenCalled();
         expect(editor.getValue()).toBe(snapshotBefore);
         expect(result.current.previewText).toBe('Better text');
         expect(result.current.activeGhostHunks).toHaveLength(1);
@@ -160,7 +153,6 @@ describe('AI Preview Explicit Decision & Multi-Hunk Ghost Model (preview_ready)'
             result.current.rejectPreview();
         });
 
-        expect(mockCommitAIFileOperation).not.toHaveBeenCalled();
         expect(editor.getValue()).toBe(snapshotBefore);
         expect(result.current.previewText).toBe('');
         expect(result.current.activeGhostHunks).toHaveLength(0);
@@ -179,7 +171,6 @@ describe('AI Preview Explicit Decision & Multi-Hunk Ghost Model (preview_ready)'
 
         expect(onAllHunksAccepted).toHaveBeenCalledTimes(1);
         expect(onAllHunksAccepted).toHaveBeenCalledWith('Better text');
-        expect(mockCommitAIFileOperation).not.toHaveBeenCalled();
 
         expect(editor.getValue()).toContain('Better text');
         expect(result.current.status).toBe('completed');

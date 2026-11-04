@@ -15,7 +15,6 @@ import crypto from "node:crypto";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
-import { AIOperation } from "@/lib/ai/prompts";
 import { reserveAndUpdateUsage, refundAIReservation } from "@/server/services/ai-settlement-service";
 
 const TEST_USER_ID = "12121212-1212-1212-1212-121212121212"; // unique per suite — NOT shared with softdelete tests (parallel workers)
@@ -57,7 +56,7 @@ afterAll(async () => {
 
 async function reserve(
     userId: string,
-    operation: AIOperation,
+    operation: string,
     wordCount: number,
     operationId: string = `op_${crypto.randomUUID()}`
 ): Promise<{ reserved: boolean; operationId: string }> {

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { streamWithAI, processWithAI } from "@/lib/ai/client";
+import { z } from "zod";
+import { executeStreamingGeneration, executeStructuredGeneration } from "@/lib/ai/client";
 import { getRotationStatus } from "@/lib/ai/key-rotation";
 import dotenv from "dotenv";
 
@@ -7,40 +8,37 @@ import dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 
 describe("AI Live Integration & Key Rotation", () => {
-    it("should successfully stream translation chunks using live keys", async () => {
-        const stream = await streamWithAI(
-            "translate",
-            "Artificial intelligence in LUGX is resilient and scalable.",
-            "free"
-        );
+    it("should successfully stream generation chunks using live keys", async () => {
+        const streamResult = await executeStreamingGeneration({
+            modelId: "gemini-2.5-flash",
+            prompt: "Translate to Arabic: Artificial intelligence in LUGX is resilient and scalable.",
+        });
 
-        expect(stream).toBeInstanceOf(ReadableStream);
-
-        const reader = stream.getReader();
-        const decoder = new TextDecoder("utf-8");
         let fullOutput = "";
         let chunks = 0;
 
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
+        for await (const chunk of streamResult.textStream) {
             chunks++;
-            fullOutput += decoder.decode(value);
+            fullOutput += chunk;
         }
 
         expect(chunks).toBeGreaterThan(0);
         expect(fullOutput.trim().length).toBeGreaterThan(0);
     });
 
-    it("should successfully process text with improve operation", async () => {
-        const result = await processWithAI(
-            "improve",
-            "This application have very good code architecture.",
-            "free"
-        );
+    it("should successfully execute structured generation using live keys", async () => {
+        const schema = z.object({
+            correctedText: z.string(),
+        });
 
-        expect(typeof result).toBe("string");
-        expect(result.trim().length).toBeGreaterThan(0);
+        const result = await executeStructuredGeneration({
+            modelId: "gemini-2.5-flash",
+            schema,
+            prompt: "Improve grammar: This application have very good code architecture.",
+        });
+
+        expect(typeof result.object.correctedText).toBe("string");
+        expect(result.object.correctedText.trim().length).toBeGreaterThan(0);
     });
 
     it("should inspect live rotation status in Upstash Redis", async () => {

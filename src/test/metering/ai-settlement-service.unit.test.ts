@@ -5,6 +5,7 @@ import {
   reserveAIQuota,
   commitAIReservation,
   refundAIReservation,
+  getAIReservationStatus,
   computeRequestHash,
 } from "@/server/services/ai-settlement-service";
 import { REDIS_KEYS } from "@/lib/metering/constants";
@@ -449,11 +450,18 @@ describe("AI Settlement Service & Flush Engine (ai-settlement-service.ts)", () =
 
   describe("Regression Verification of Existing Settlement Functions", () => {
     describe("reserveAIQuota", () => {
-      it("should reject reservation when tier limit is exceeded or disabled", async () => {
-        // Free tier does not allow toPrompt
-        const res = await reserveAIQuota(userId, "toPrompt", 100, "free");
+      it("should reject reservation when explicit deltaMicro exceeds user credit balance", async () => {
+        usersTable.set(userId, {
+          id: userId,
+          creditBalanceMicro: BigInt(10_000),
+          tier: "free",
+        });
+
+        const res = await reserveAIQuota(userId, "agent_stream", 10, "free", {
+          deltaMicro: BigInt(25_000),
+        });
         expect(res.reserved).toBe(false);
-        expect(res.reason).toContain("ToPrompt is only available");
+        expect(res.reason).toContain("Insufficient credit balance");
       });
 
       it("should reject reservation when user has insufficient credit balance", async () => {
@@ -463,20 +471,20 @@ describe("AI Settlement Service & Flush Engine (ai-settlement-service.ts)", () =
           tier: "free",
         });
 
-        const res = await reserveAIQuota(userId, "correct", 200, "free");
+        const res = await reserveAIQuota(userId, "agent_stream", 200, "free");
         expect(res.reserved).toBe(false);
         expect(res.reason).toContain("Insufficient credit balance");
       });
 
       it("should detect replay attack when operationId is reused with different request payload", async () => {
         const opId = "op_replay_test";
-        const initialHash = computeRequestHash(userId, "correct", "f_1", "Original text");
-        const alteredHash = computeRequestHash(userId, "correct", "f_1", "Tampered text");
+        const initialHash = computeRequestHash(userId, "agent_stream", "f_1", "Original text");
+        const alteredHash = computeRequestHash(userId, "agent_stream", "f_1", "Tampered text");
 
         ledgerTable.set(opId, {
           operationId: opId,
           userId,
-          nodeName: `reserved:correct:${initialHash}:50`,
+          nodeName: `reserved:agent_stream:${initialHash}:50`,
           modelId: "gemini-2.5-flash",
           executionMode: "STREAMING_GENERATIVE",
           inputTokens: 50,
@@ -488,7 +496,7 @@ describe("AI Settlement Service & Flush Engine (ai-settlement-service.ts)", () =
           createdAt: new Date(),
         });
 
-        const res = await reserveAIQuota(userId, "correct", 50, "free", {
+        const res = await reserveAIQuota(userId, "agent_stream", 50, "free", {
           operationId: opId,
           requestHash: alteredHash,
         });
@@ -502,7 +510,7 @@ describe("AI Settlement Service & Flush Engine (ai-settlement-service.ts)", () =
         const opId = "op_success_reserve";
         const wordCount = 100;
 
-        const res = await reserveAIQuota(userId, "correct", wordCount, "free", {
+        const res = await reserveAIQuota(userId, "agent_stream", wordCount, "free", {
           operationId: opId,
         });
 
@@ -531,7 +539,7 @@ describe("AI Settlement Service & Flush Engine (ai-settlement-service.ts)", () =
         ledgerTable.set(opId, {
           operationId: opId,
           userId,
-          nodeName: "committed:correct:hash123:100",
+          nodeName: "committed:agent_stream:hash123:100",
           modelId: "gemini-2.5-flash",
           executionMode: "STREAMING_GENERATIVE",
           inputTokens: 100,
@@ -556,7 +564,7 @@ describe("AI Settlement Service & Flush Engine (ai-settlement-service.ts)", () =
         ledgerTable.set(opId, {
           operationId: opId,
           userId,
-          nodeName: `reserved:correct:hash123:${reservedUnits}`,
+          nodeName: `reserved:agent_stream:hash123:${reservedUnits}`,
           modelId: "gemini-2.5-flash",
           executionMode: "STREAMING_GENERATIVE",
           inputTokens: reservedUnits,
@@ -593,7 +601,7 @@ describe("AI Settlement Service & Flush Engine (ai-settlement-service.ts)", () =
         ledgerTable.set(opId, {
           operationId: opId,
           userId,
-          nodeName: "committed:correct:hash:100",
+          nodeName: "committed:agent_stream:hash:100",
           modelId: "gemini-2.5-flash",
           executionMode: "STREAMING_GENERATIVE",
           inputTokens: 100,
@@ -615,7 +623,7 @@ describe("AI Settlement Service & Flush Engine (ai-settlement-service.ts)", () =
         ledgerTable.set(opId, {
           operationId: opId,
           userId,
-          nodeName: "reserved:correct:hash:150",
+          nodeName: "reserved:agent_stream:hash:150",
           modelId: "gemini-2.5-flash",
           executionMode: "STREAMING_GENERATIVE",
           inputTokens: 150,
@@ -637,6 +645,113 @@ describe("AI Settlement Service & Flush Engine (ai-settlement-service.ts)", () =
         // User refunded 150,000 micro-credits
         const user = usersTable.get(userId);
         expect(user?.creditBalanceMicro).toBe(BigInt(5_150_000));
+      });
+
+      it("should reject duplicate refund or expired reservation refund with deterministic reason", async () => {
+        const refundedOpId = "op_already_refunded";
+        ledgerTable.set(refundedOpId, {
+          operationId: refundedOpId,
+          userId,
+          nodeName: "refunded:agent_stream:hash:100",
+          modelId: "gemini-2.5-flash",
+          executionMode: "STREAMING_GENERATIVE",
+          inputTokens: 100,
+          cachedInputTokens: 0,
+          outputTokens: 0,
+          reasoningTokens: 0,
+          deltaMicro: BigInt(-100000),
+          status: "ABORTED",
+          createdAt: new Date(),
+        });
+
+        const resRefunded = await refundAIReservation(refundedOpId);
+        expect(resRefunded).toEqual({ refunded: false, reason: "already_refunded" });
+
+        const expiredOpId = "op_already_expired";
+        ledgerTable.set(expiredOpId, {
+          operationId: expiredOpId,
+          userId,
+          nodeName: "expired:agent_stream:hash:100",
+          modelId: "gemini-2.5-flash",
+          executionMode: "STREAMING_GENERATIVE",
+          inputTokens: 100,
+          cachedInputTokens: 0,
+          outputTokens: 0,
+          reasoningTokens: 0,
+          deltaMicro: BigInt(-100000),
+          status: "SETTLED",
+          createdAt: new Date(),
+        });
+
+        const resExpired = await refundAIReservation(expiredOpId);
+        expect(resExpired).toEqual({ refunded: false, reason: "already_expired" });
+
+        const commitAfterRefund = await commitAIReservation(refundedOpId);
+        expect(commitAfterRefund).toEqual({ committed: false, reason: "already_refunded" });
+      });
+    });
+
+    describe("getAIReservationStatus & Cross-Tenant Isolation", () => {
+      it("should return not_found for unknown operationId or mismatched userId", async () => {
+        const opId = "op_tenant_isolated";
+        ledgerTable.set(opId, {
+          operationId: opId,
+          userId,
+          nodeName: "committed:agent_stream:hash:200",
+          modelId: "gemini-2.5-flash",
+          executionMode: "STREAMING_GENERATIVE",
+          inputTokens: 200,
+          cachedInputTokens: 0,
+          outputTokens: 150,
+          reasoningTokens: 0,
+          deltaMicro: BigInt(-150000),
+          status: "SETTLED",
+          createdAt: new Date("2026-11-04T00:00:00.000Z"),
+        });
+
+        expect(await getAIReservationStatus("op_nonexistent", userId)).toEqual({
+          found: false,
+          reason: "not_found",
+        });
+
+        expect(await getAIReservationStatus(opId, "foreign_user_999")).toEqual({
+          found: false,
+          reason: "not_found",
+        });
+
+        const ownerStatus = await getAIReservationStatus(opId, userId);
+        expect(ownerStatus.found).toBe(true);
+        if (ownerStatus.found) {
+          expect(ownerStatus.status).toBe("committed");
+          expect(ownerStatus.reservedUnits).toBe(200);
+          expect(ownerStatus.committedUnits).toBe(150);
+          expect(ownerStatus.refundedUnits).toBe(50);
+        }
+      });
+
+      it("should reject reserveAIQuota when operationId belongs to a different user", async () => {
+        const opId = "op_foreign_replay";
+        ledgerTable.set(opId, {
+          operationId: opId,
+          userId: "other_user_id",
+          nodeName: "reserved:agent_stream:hash:100",
+          modelId: "gemini-2.5-flash",
+          executionMode: "STREAMING_GENERATIVE",
+          inputTokens: 100,
+          cachedInputTokens: 0,
+          outputTokens: 0,
+          reasoningTokens: 0,
+          deltaMicro: BigInt(-100000),
+          status: "SETTLED",
+          createdAt: new Date(),
+        });
+
+        const replayRes = await reserveAIQuota(userId, "agent_stream", 100, "free", {
+          operationId: opId,
+        });
+        expect(replayRes.reserved).toBe(false);
+        expect(replayRes.isReplayConflict).toBe(true);
+        expect(replayRes.reason).toContain("belongs to another account");
       });
     });
   });

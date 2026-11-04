@@ -1,17 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { commitAIFileOperation } from '@/server/actions/ai-commit';
+import { updateFileContent, toggleFileEncryption } from '@/server/actions/files';
+import {
+    commitAIReservation,
+    refundAIReservation,
+} from '@/server/services/ai-settlement-service';
 import { db } from '@/server/db';
-import { txDb } from '@/server/db/transactional';
 import { getUser } from '@/lib/supabase/server';
 
 vi.mock('@/lib/supabase/server', () => ({
     getUser: vi.fn(),
-}));
-
-vi.mock('@/server/db/transactional', () => ({
-    txDb: {
-        transaction: vi.fn(),
-    },
 }));
 
 vi.mock('@/server/db', () => ({
@@ -23,19 +20,20 @@ vi.mock('@/server/db', () => ({
             files: {
                 findFirst: vi.fn(),
             },
+            users: {
+                findFirst: vi.fn(),
+            },
         },
         update: vi.fn(),
     },
     schema: {
         creditLedgerTransactions: {
-            id: 'id',
             operationId: 'operation_id',
             userId: 'user_id',
-            fileId: 'file_id',
             status: 'status',
-            reservedUnits: 'reserved_units',
-            committedUnits: 'committed_units',
-            refundedUnits: 'refunded_units',
+            nodeName: 'node_name',
+            outputTokens: 'output_tokens',
+            deltaMicro: 'delta_micro',
         },
         files: {
             id: 'id',
@@ -43,163 +41,65 @@ vi.mock('@/server/db', () => ({
             version: 'version',
             etag: 'etag',
             deletedAt: 'deleted_at',
+            isEncrypted: 'is_encrypted',
+            encryptionMetadata: 'encryption_metadata',
+        },
+        users: {
+            id: 'id',
+            creditBalanceMicro: 'credit_balance_micro',
         },
     },
 }));
 
-describe('Server Atomic Commit & Optimistic Version Guard (Gate G2 / Phase 8)', () => {
+describe('Server Atomic Document Save & Optimistic Version Guard (Phase 8 / Elixent)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
     });
 
-    it('should reject commit when user is not authenticated', async () => {
+    it('rejects document update when user is not authenticated', async () => {
         vi.mocked(getUser).mockResolvedValueOnce(null);
 
-        const res = await commitAIFileOperation({
-            operationId: 'op-unauth',
-            fileId: '00000000-0000-0000-0000-000000000001',
-            expectedVersion: 1,
-            resultContent: '<p>Updated content</p>',
-        });
+        const res = await updateFileContent(
+            '00000000-0000-0000-0000-000000000001',
+            '# Updated content',
+            { expectedVersion: 1 }
+        );
 
         expect(res.success).toBe(false);
         expect(res.status).toBe('unauthorized');
     });
 
-    it('should return error when commit parameters are missing or invalid', async () => {
-        vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
+    it('returns not_found when file does not exist or belongs to another user', async () => {
+        vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1', email: 'u1@example.com' } as any);
+        vi.mocked(db.query.files.findFirst).mockResolvedValueOnce(undefined as any);
 
-        const res = await commitAIFileOperation({
-            operationId: '',
-            fileId: 'file-1',
-            expectedVersion: 1,
-            resultContent: '<p>Test</p>',
-        });
-
-        expect(res.success).toBe(false);
-        expect(res.status).toBe('error');
-    });
-
-    it('should return reservation_not_found when operationId is invalid', async () => {
-        vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
-        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce(undefined as any);
-
-        const res = await commitAIFileOperation({
-            operationId: 'non-existent-op-id',
-            fileId: '00000000-0000-0000-0000-000000000002',
-            expectedVersion: 1,
-            resultContent: '<p>Updated content</p>',
-        });
+        const res = await updateFileContent(
+            '00000000-0000-0000-0000-000000000002',
+            '# Updated content',
+            { expectedVersion: 1 }
+        );
 
         expect(res.success).toBe(false);
-        expect(res.status).toBe('reservation_not_found');
+        expect(res.status).toBe('not_found');
     });
 
-    it('should reject commit if reservation belongs to a different fileId', async () => {
-        vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
-        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
-            id: 'res-diff',
-            operationId: 'op-diff-file',
-            userId: 'user-1',
-            fileId: 'other-file-id',
-            threadId: 'other-file-id',
-            status: 'reserved',
-        } as any);
-
-        const res = await commitAIFileOperation({
-            operationId: 'op-diff-file',
-            fileId: 'target-file-id',
-            expectedVersion: 1,
-            resultContent: '<p>Test</p>',
-        });
-
-        expect(res.success).toBe(false);
-        expect(res.status).toBe('error');
-        if ('error' in res) {
-            expect(res.error).toContain('different file');
-        }
-    });
-
-    it('should return already_committed with current file state if reservation is already committed (Idempotent Retry)', async () => {
-        vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
-        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
-            id: 'res-1',
-            operationId: 'op-committed',
-            userId: 'user-1',
-            fileId: 'file-1',
-            threadId: 'file-1',
-            status: 'committed',
-            nodeName: 'committed:general',
-        } as any);
-
+    it('returns conflict when file version does not match expectedVersion', async () => {
+        vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1', email: 'u1@example.com' } as any);
         vi.mocked(db.query.files.findFirst).mockResolvedValueOnce({
             id: 'file-1',
             userId: 'user-1',
             version: 3,
             etag: 'etag-v3',
-            updatedAt: new Date('2026-08-21T12:00:00Z'),
-        } as any);
-
-        const res = await commitAIFileOperation({
-            operationId: 'op-committed',
-            fileId: 'file-1',
-            expectedVersion: 2,
-            resultContent: '<p>Test</p>',
-        });
-
-        expect(res.success).toBe(true);
-        expect(res.status).toBe('already_committed');
-        if (res.status === 'already_committed') {
-            expect(res.version).toBe(3);
-            expect(res.etag).toBe('etag-v3');
-        }
-    });
-
-    it('should return reservation_expired if reservation status is expired or refunded', async () => {
-        vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
-        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
-            id: 'res-2',
-            operationId: 'op-expired',
-            userId: 'user-1',
-            status: 'ABORTED',
-            nodeName: 'expired:general',
-        } as any);
-
-        const res = await commitAIFileOperation({
-            operationId: 'op-expired',
-            fileId: 'file-1',
-            expectedVersion: 1,
-            resultContent: '<p>Test</p>',
-        });
-
-        expect(res.success).toBe(false);
-        expect(res.status).toBe('reservation_expired');
-    });
-
-    it('should return 412 conflict when file version does not match expectedVersion', async () => {
-        vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
-        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
-            id: 'res-3',
-            operationId: 'op-conflict',
-            userId: 'user-1',
-            fileId: 'file-1',
-            status: 'reserved',
-        } as any);
-
-        // Server file version is 3, but client expected 2
-        vi.mocked(db.query.files.findFirst).mockResolvedValueOnce({
-            id: 'file-1',
-            userId: 'user-1',
-            version: 3,
-            etag: 'etag-v3',
+            content: '# Server V3',
+            isFolder: false,
+            isEncrypted: false,
+            encryptionMetadata: null,
+            deletedAt: null,
             updatedAt: new Date(),
         } as any);
 
-        const res = await commitAIFileOperation({
-            operationId: 'op-conflict',
-            fileId: 'file-1',
+        const res = await updateFileContent('file-1', '# Stale client write', {
             expectedVersion: 2,
-            resultContent: '<p>New text</p>',
         });
 
         expect(res.success).toBe(false);
@@ -210,31 +110,24 @@ describe('Server Atomic Commit & Optimistic Version Guard (Gate G2 / Phase 8)', 
         }
     });
 
-    it('should return 412 conflict when expectedETag does not match server ETag', async () => {
-        vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
-        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
-            id: 'res-etag',
-            operationId: 'op-etag-conflict',
-            userId: 'user-1',
-            fileId: 'file-1',
-            status: 'reserved',
-        } as any);
-
-        // Server has matching version (2) but different ETag
+    it('returns conflict when expectedETag does not match server ETag', async () => {
+        vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1', email: 'u1@example.com' } as any);
         vi.mocked(db.query.files.findFirst).mockResolvedValueOnce({
             id: 'file-1',
             userId: 'user-1',
             version: 2,
             etag: 'server-etag-xyz',
+            content: '# Server V2',
+            isFolder: false,
+            isEncrypted: false,
+            encryptionMetadata: null,
+            deletedAt: null,
             updatedAt: new Date(),
         } as any);
 
-        const res = await commitAIFileOperation({
-            operationId: 'op-etag-conflict',
-            fileId: 'file-1',
+        const res = await updateFileContent('file-1', '# Client write', {
             expectedVersion: 2,
             expectedETag: 'client-expected-etag-abc',
-            resultContent: '<p>New text</p>',
         });
 
         expect(res.success).toBe(false);
@@ -244,150 +137,206 @@ describe('Server Atomic Commit & Optimistic Version Guard (Gate G2 / Phase 8)', 
         }
     });
 
-    it('should self-heal and succeed when expectedVersion differs but originalContent matches server content', async () => {
-        vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
-        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
-            id: 'res-heal',
-            operationId: 'op-heal',
-            userId: 'user-1',
-            fileId: 'file-1',
-            status: 'reserved',
-            reservedUnits: 10,
-        } as any);
-
-        const baseline = 'Exact unchanged baseline markdown content';
+    it('atomically increments version and generates new ETag when expectedVersion matches', async () => {
+        vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1', email: 'u1@example.com' } as any);
         vi.mocked(db.query.files.findFirst).mockResolvedValueOnce({
             id: 'file-1',
             userId: 'user-1',
-            version: 3,
-            etag: 'etag-v3',
-            content: baseline,
+            version: 2,
+            etag: 'etag-v2',
+            content: '# Baseline',
+            isFolder: false,
+            isEncrypted: false,
+            encryptionMetadata: null,
+            deletedAt: null,
             updatedAt: new Date(),
         } as any);
 
-        const txMock = {
-            update: vi.fn((table: any) => ({
-                set: vi.fn(() => ({
-                    where: vi.fn(() => ({
-                        returning: vi.fn().mockResolvedValue([
-                            table === 'files'
-                                ? { id: 'file-1', version: 4, etag: 'new-etag' }
-                                : { id: 'res-heal', status: 'committed' },
-                        ]),
-                    })),
+        vi.mocked(db.update).mockReturnValueOnce({
+            set: vi.fn(() => ({
+                where: vi.fn(() => ({
+                    returning: vi.fn().mockResolvedValueOnce([
+                        {
+                            id: 'file-1',
+                            userId: 'user-1',
+                            version: 3,
+                            etag: 'etag-v3',
+                            content: '# Updated with accepted ghost hunks',
+                            updatedAt: new Date(),
+                        },
+                    ]),
                 })),
             })),
-        };
+        } as any);
 
-        vi.mocked(txDb.transaction).mockImplementationOnce(async (callback: any) => {
-            return callback(txMock);
-        });
-
-        const res = await commitAIFileOperation({
-            operationId: 'op-heal',
-            fileId: 'file-1',
-            expectedVersion: 2, // Client had stale version 2
-            originalContent: baseline, // Baseline content matches server content exactly
-            resultContent: 'Updated text with AI changes',
-        });
+        const res = await updateFileContent(
+            'file-1',
+            '# Updated with accepted ghost hunks',
+            { expectedVersion: 2, expectedETag: 'etag-v2', operationId: 'op-save-1' }
+        );
 
         expect(res.success).toBe(true);
-        expect(res.status).toBe('committed');
-        if (res.status === 'committed') {
-            expect(res.version).toBe(4); // Incremented from current server version 3
+        if (res.success) {
+            expect(res.version).toBe(3);
+            expect(res.etag).toBe('etag-v3');
+            expect(res.operationId).toBe('op-save-1');
         }
     });
 
-    it('should reject commitAIFileOperation if file is encrypted and no encryptionMetadata is provided', async () => {
-        vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
-
-        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
-            id: 'res-enc-1',
-            operationId: 'op-enc-plain',
-            userId: 'user-1',
-            fileId: 'file-enc',
-            status: 'reserved',
-            reservedUnits: 100,
-        } as any);
-
+    it('rejects plaintext updateFileContent on an encrypted file', async () => {
+        vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1', email: 'u1@example.com' } as any);
         vi.mocked(db.query.files.findFirst).mockResolvedValueOnce({
             id: 'file-enc',
             userId: 'user-1',
             version: 1,
             etag: 'etag-v1',
+            isFolder: false,
             isEncrypted: true,
+            deletedAt: null,
             updatedAt: new Date(),
         } as any);
 
-        const res = await commitAIFileOperation({
-            operationId: 'op-enc-plain',
-            fileId: 'file-enc',
+        const res = await updateFileContent(
+            'file-enc',
+            'Plaintext attempt on encrypted file',
+            { expectedVersion: 1 }
+        );
+
+        expect(res.success).toBe(false);
+        expect(res.status).toBe('error');
+        if (!res.success) {
+            expect(res.error).toContain('Cannot directly update encrypted file with plaintext');
+        }
+    });
+
+    it('rejects toggleFileEncryption when isEncrypted is true without valid IV metadata', async () => {
+        vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1', email: 'u1@example.com' } as any);
+        vi.mocked(db.query.files.findFirst).mockResolvedValueOnce({
+            id: 'file-enc',
+            userId: 'user-1',
+            version: 1,
+            etag: 'etag-v1',
+            isFolder: false,
+            isEncrypted: true,
+            encryptionMetadata: null,
+            deletedAt: null,
+            updatedAt: new Date(),
+        } as any);
+
+        const res = await toggleFileEncryption('file-enc', true, 'ciphertext-base64', null, {
             expectedVersion: 1,
-            resultContent: 'Plaintext attempt on encrypted file',
         });
 
         expect(res.success).toBe(false);
         expect(res.status).toBe('error');
-        if ('error' in res) {
-            expect(res.error).toContain('Cannot commit unencrypted content to an encrypted file');
+        if (!res.success) {
+            expect(res.error).toContain('Encrypted files require valid encryptionMetadata with an IV');
         }
     });
 
-    it('should successfully commit encrypted content and persist encryptionMetadata for encrypted files', async () => {
-        vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1' } as any);
-
-        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
-            id: 'res-enc-2',
-            operationId: 'op-enc-valid',
-            userId: 'user-1',
-            fileId: 'file-enc',
-            status: 'reserved',
-            reservedUnits: 100,
-        } as any);
+    it('successfully commits encrypted content via toggleFileEncryption with valid encryptionMetadata', async () => {
+        vi.mocked(getUser).mockResolvedValueOnce({ id: 'user-1', email: 'u1@example.com' } as any);
+        const validMeta = {
+            iv: 'aXYtMTIzNDU2Nzg5MA==',
+            salt: 'c2FsdC0xMjM0NTY3ODkw',
+            version: 1,
+            algorithm: 'AES-GCM-256',
+            keyId: 'master-v1',
+            kdfIterations: 600000,
+        };
 
         vi.mocked(db.query.files.findFirst).mockResolvedValueOnce({
             id: 'file-enc',
             userId: 'user-1',
             version: 1,
             etag: 'etag-v1',
+            isFolder: false,
             isEncrypted: true,
+            encryptionMetadata: validMeta,
+            deletedAt: null,
             updatedAt: new Date(),
         } as any);
 
-        const mockEncryptedMeta = {
-            version: 1,
-            algorithm: 'AES-GCM-256',
-            keyId: 'master-v1',
-            salt: '',
-            iv: 'valid-iv-base64',
-            kdfIterations: 600000,
-        };
-
-        const txMock = {
-            update: vi.fn(() => ({
-                set: vi.fn(() => ({
-                    where: vi.fn(() => ({
-                        returning: vi.fn().mockResolvedValue([
-                            { id: 'file-enc', version: 2, etag: 'etag-v2', status: 'committed' },
-                        ]),
-                    })),
+        vi.mocked(db.update).mockReturnValueOnce({
+            set: vi.fn(() => ({
+                where: vi.fn(() => ({
+                    returning: vi.fn().mockResolvedValueOnce([
+                        {
+                            id: 'file-enc',
+                            userId: 'user-1',
+                            version: 2,
+                            etag: 'etag-enc-v2',
+                            content: 'new-ciphertext-base64',
+                            isEncrypted: true,
+                            encryptionMetadata: validMeta,
+                            updatedAt: new Date(),
+                        },
+                    ]),
                 })),
             })),
-        };
+        } as any);
 
-        vi.mocked(txDb.transaction).mockImplementationOnce(async (callback: any) => {
-            return callback(txMock);
-        });
-
-        const res = await commitAIFileOperation({
-            operationId: 'op-enc-valid',
-            fileId: 'file-enc',
-            expectedVersion: 1,
-            resultContent: 'ciphertext-base64-payload==',
-            encryptionMetadata: mockEncryptedMeta,
-        });
+        const res = await toggleFileEncryption(
+            'file-enc',
+            true,
+            'new-ciphertext-base64',
+            validMeta,
+            { expectedVersion: 1 }
+        );
 
         expect(res.success).toBe(true);
-        expect(res.status).toBe('committed');
+        if (res.success) {
+            expect(res.version).toBe(2);
+            expect(res.etag).toBe('etag-enc-v2');
+        }
+    });
+
+    describe('Server-Side AI Credit Reservation Lifecycle (ai-settlement-service)', () => {
+        it('returns not_found when committing a non-existent operationId', async () => {
+            vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce(undefined as any);
+
+            const res = await commitAIReservation('non-existent-op-id');
+            expect(res.committed).toBe(false);
+            expect(res.reason).toBe('not_found');
+        });
+
+        it('returns already_committed idempotently when reservation is already committed', async () => {
+            vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
+                operationId: 'op-committed',
+                userId: 'user-1',
+                status: 'SETTLED',
+                nodeName: 'committed:agent_stream:hash:100',
+            } as any);
+
+            const res = await commitAIReservation('op-committed');
+            expect(res.committed).toBe(true);
+            expect(res.reason).toBe('already_committed');
+        });
+
+        it('rejects commitAIReservation if reservation was already aborted or expired', async () => {
+            vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
+                operationId: 'op-expired',
+                userId: 'user-1',
+                status: 'ABORTED',
+                nodeName: 'expired:agent_stream:hash:100',
+            } as any);
+
+            const res = await commitAIReservation('op-expired');
+            expect(res.committed).toBe(false);
+            expect(res.reason).toBe('already_refunded');
+        });
+
+        it('rejects refundAIReservation if reservation was already committed', async () => {
+            vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
+                operationId: 'op-committed',
+                userId: 'user-1',
+                status: 'SETTLED',
+                nodeName: 'committed:agent_stream:hash:100',
+            } as any);
+
+            const res = await refundAIReservation('op-committed');
+            expect(res.refunded).toBe(false);
+            expect(res.reason).toBe('already_committed');
+        });
     });
 });

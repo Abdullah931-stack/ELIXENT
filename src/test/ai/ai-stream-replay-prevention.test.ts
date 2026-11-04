@@ -1,41 +1,60 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { computeRequestHash, reserveAIQuota } from "@/server/services/ai-settlement-service";
 import { NextRequest } from "next/server";
-import { POST as aiStreamRoute } from "@/app/api/ai/stream/route";
+import { POST as agentStreamRoute } from "@/app/api/agent/stream/route";
 
-const mockGetUser = vi.hoisted(() => vi.fn());
-const mockDb = vi.hoisted(() => ({
-    query: {
-        users: { findFirst: vi.fn() },
-        files: { findFirst: vi.fn() },
-        creditLedgerTransactions: { findFirst: vi.fn() },
-        userVaultProfiles: { findFirst: vi.fn() },
-    },
-    insert: vi.fn(() => ({
-        values: vi.fn(() => ({
-            onConflictDoNothing: vi.fn(() => Promise.resolve()),
-            returning: vi.fn(() => Promise.resolve([{ operationId: "res-new" }])),
-        })),
-    })),
-    update: vi.fn(() => ({
-        set: vi.fn(() => ({
-            where: vi.fn(() => ({
-                returning: vi.fn(() => Promise.resolve([{ operationId: "tx-1" }])),
+const {
+    mockRequireAuthenticatedUser,
+    mockGraphStream,
+    mockGovernorOnTokenChunk,
+    mockGovernorSettle,
+    mockDb,
+} = vi.hoisted(() => ({
+    mockRequireAuthenticatedUser: vi.fn(),
+    mockGraphStream: vi.fn(),
+    mockGovernorOnTokenChunk: vi.fn(),
+    mockGovernorSettle: vi.fn(),
+    mockDb: {
+        query: {
+            users: { findFirst: vi.fn() },
+            files: { findFirst: vi.fn() },
+            creditLedgerTransactions: { findFirst: vi.fn() },
+            userVaultProfiles: { findFirst: vi.fn() },
+        },
+        insert: vi.fn(() => ({
+            values: vi.fn(() => ({
+                onConflictDoNothing: vi.fn(() => Promise.resolve()),
+                returning: vi.fn(() => Promise.resolve([{ operationId: "res-new" }])),
             })),
         })),
-    })),
+        update: vi.fn(() => ({
+            set: vi.fn(() => ({
+                where: vi.fn(() => ({
+                    returning: vi.fn(() => Promise.resolve([{ operationId: "tx-1" }])),
+                })),
+            })),
+        })),
+    },
 }));
 
-vi.mock("@/lib/supabase/server", () => ({
-    getUser: mockGetUser,
+vi.mock("next/server", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("next/server")>();
+    return {
+        ...actual,
+        after: vi.fn(),
+    };
+});
+
+vi.mock("@/server/auth/session", () => ({
+    requireAuthenticatedUser: mockRequireAuthenticatedUser,
 }));
 
 vi.mock("@/server/db", () => ({
     db: mockDb,
     schema: {
-        users: { id: "id" },
+        users: { id: "id", creditBalanceMicro: "credit_balance_micro" },
         files: { id: "id", userId: "user_id", isEncrypted: "is_encrypted", deletedAt: "deleted_at" },
-        creditLedgerTransactions: { operationId: "operation_id", userId: "user_id", status: "status" },
+        creditLedgerTransactions: { operationId: "operation_id", userId: "user_id", status: "status", nodeName: "node_name" },
         userVaultProfiles: { userId: "user_id" },
     },
 }));
@@ -52,56 +71,56 @@ vi.mock("@/lib/rate-limit", () => ({
     rateLimitExceededResponse: vi.fn(),
 }));
 
-vi.mock("@/lib/ai/client", () => ({
-    streamWithAI: vi.fn().mockResolvedValue(
-        new ReadableStream({
-            start(controller) {
-                controller.enqueue(new TextEncoder().encode("Hello"));
-                controller.close();
-            },
-        })
-    ),
-    processWithAI: vi.fn().mockResolvedValue("Hello"),
+vi.mock("@/core/agent/graph", () => ({
+    elixentAgentGraph: {
+        stream: mockGraphStream,
+    },
+}));
+
+vi.mock("@/lib/metering/stream-governor", () => ({
+    StreamGovernor: class MockStreamGovernor {
+        onTokenChunk = mockGovernorOnTokenChunk;
+        settle = mockGovernorSettle;
+    },
 }));
 
 describe("Phase 11: Replay Attack Defense & Request Fingerprint Validation", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mockRequireAuthenticatedUser.mockResolvedValue({ id: "user_test_replay" });
+        mockGovernorOnTokenChunk.mockResolvedValue(true);
+        mockGovernorSettle.mockResolvedValue({ status: "SETTLED" });
     });
 
     it("computes deterministic SHA-256 fingerprint from (userId, operation, fileId, text)", () => {
-        const hash1 = computeRequestHash("u1", "correct", "f1", "Hello World");
-        const hash2 = computeRequestHash("u1", "correct", "f1", "Hello World");
+        const hash1 = computeRequestHash("u1", "agent_stream", "f1", "Hello World");
+        const hash2 = computeRequestHash("u1", "agent_stream", "f1", "Hello World");
         expect(hash1).toBe(hash2);
         expect(hash1).toHaveLength(64);
 
-        // Divergent prompt produces distinct hash
-        const hashDivergent = computeRequestHash("u1", "correct", "f1", "Hello Divergent");
+        const hashDivergent = computeRequestHash("u1", "agent_stream", "f1", "Hello Divergent");
         expect(hash1).not.toBe(hashDivergent);
 
-        // Divergent user produces distinct hash
-        const hashUser = computeRequestHash("u2", "correct", "f1", "Hello World");
+        const hashUser = computeRequestHash("u2", "agent_stream", "f1", "Hello World");
         expect(hash1).not.toBe(hashUser);
 
-        // Divergent operation produces distinct hash
-        const hashOp = computeRequestHash("u1", "improve", "f1", "Hello World");
+        const hashOp = computeRequestHash("u1", "document_writer", "f1", "Hello World");
         expect(hash1).not.toBe(hashOp);
     });
 
     it("rejects reservation when operationId is reused with a divergent requestHash", async () => {
         const operationId = "op-replay-1";
-        const legitimateHash = computeRequestHash("u1", "correct", "f1", "Original Text");
-        const maliciousHash = computeRequestHash("u1", "correct", "f1", "Tampered Text");
+        const legitimateHash = computeRequestHash("u1", "agent_stream", "f1", "Original Text");
+        const maliciousHash = computeRequestHash("u1", "agent_stream", "f1", "Tampered Text");
 
-        // Existing transaction has legitimateHash
         mockDb.query.creditLedgerTransactions.findFirst.mockResolvedValueOnce({
             operationId,
             userId: "u1",
-            requestHash: legitimateHash,
+            nodeName: `reserved:agent_stream:${legitimateHash}:10`,
             status: "SETTLED",
         });
 
-        const result = await reserveAIQuota("u1", "correct", 10, "free", {
+        const result = await reserveAIQuota("u1", "agent_stream", 10, "free", {
             operationId,
             fileId: "f1",
             requestHash: maliciousHash,
@@ -112,36 +131,68 @@ describe("Phase 11: Replay Attack Defense & Request Fingerprint Validation", () 
         expect(result.reason).toContain("Replay attack detected");
     });
 
-    it("returns HTTP 409 Conflict when client submits conflicting operationId in stream route", async () => {
-        mockGetUser.mockResolvedValueOnce({ id: "user_test_replay" });
-        mockDb.query.files.findFirst.mockResolvedValueOnce({
-            id: "f_test",
-            userId: "user_test_replay",
-            isEncrypted: false,
-        });
+    it("rejects reservation when operationId belongs to a different user", async () => {
+        const operationId = "op-cross-user-replay";
+        const requestHash = computeRequestHash("u2", "agent_stream", "f1", "Text");
 
-        // Simulate existing transaction with different requestHash
         mockDb.query.creditLedgerTransactions.findFirst.mockResolvedValueOnce({
-            operationId: "op_fixed_123",
-            userId: "user_test_replay",
-            requestHash: "different_hash_from_past_request",
+            operationId,
+            userId: "u1",
+            nodeName: `reserved:agent_stream:${requestHash}:10`,
             status: "SETTLED",
         });
 
-        const req = new NextRequest("http://localhost/api/ai/stream", {
+        const result = await reserveAIQuota("u2", "agent_stream", 10, "free", {
+            operationId,
+            fileId: "f1",
+            requestHash,
+        });
+
+        expect(result.reserved).toBe(false);
+        expect(result.isReplayConflict).toBe(true);
+        expect(result.reason).toContain("belongs to another account");
+    });
+
+    it("mints fresh server-side operationId per POST /api/agent/stream invocation and prevents client operationId spoofing", async () => {
+        mockGraphStream.mockImplementation(async () =>
+            (async function* () {
+                yield { document_writer_node: { text: "chunk" } };
+            })()
+        );
+
+        const req1 = new NextRequest("http://localhost/api/agent/stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                operationId: "op_fixed_123",
-                fileId: "f_test",
-                operation: "correct",
-                text: "Attacker payload trying to reuse operationId",
+                threadId: "thread_replay_1",
+                projectId: "proj_1",
+                targetFileIds: ["f_test"],
+                prompt: "First request",
+            }),
+        });
+        const req2 = new NextRequest("http://localhost/api/agent/stream", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                threadId: "thread_replay_1",
+                projectId: "proj_1",
+                targetFileIds: ["f_test"],
+                prompt: "Second request",
             }),
         });
 
-        const res = await aiStreamRoute(req);
-        expect(res.status).toBe(409);
-        const resText = await res.text();
-        expect(resText).toContain("Replay attack detected");
+        const res1 = await agentStreamRoute(req1);
+        const res2 = await agentStreamRoute(req2);
+        expect(res1.status).toBe(200);
+        expect(res2.status).toBe(200);
+
+        const text1 = await res1.text();
+        const text2 = await res2.text();
+
+        const opMatch1 = text1.match(/"operationId":"(op_[^"]+)"/);
+        const opMatch2 = text2.match(/"operationId":"(op_[^"]+)"/);
+        expect(opMatch1?.[1]).toBeDefined();
+        expect(opMatch2?.[1]).toBeDefined();
+        expect(opMatch1?.[1]).not.toBe(opMatch2?.[1]);
     });
 });

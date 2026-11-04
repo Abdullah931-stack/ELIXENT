@@ -1,7 +1,7 @@
 /**
  * LIVE integration tests — AI quota reservation lifecycle (Phase 5 invariants).
  *
- * Runs the REAL production code paths from `@/server/actions/ai-ops` against
+ * Runs the REAL production code paths from `@/server/services/ai-settlement-service` against
  * the isolated Neon test branch. No mocks. This is the live-evidence twin of
  * the fully-mocked contract suite `ai-quota-idempotency.test.ts`.
  *

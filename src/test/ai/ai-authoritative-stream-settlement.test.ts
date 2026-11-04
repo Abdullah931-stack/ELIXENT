@@ -1,261 +1,240 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
-const mockGetUser = vi.hoisted(() => vi.fn());
-const mockCommitAIReservation = vi.hoisted(() => vi.fn());
-const mockRefundAIReservation = vi.hoisted(() => vi.fn());
-const mockReserveAIQuota = vi.hoisted(() => vi.fn());
-const mockStreamWithAI = vi.hoisted(() => vi.fn());
-
-const mockDb = vi.hoisted(() => ({
-    query: {
-        users: { findFirst: vi.fn() },
-        files: { findFirst: vi.fn() },
-        usage: { findFirst: vi.fn() },
-        aiReservations: { findFirst: vi.fn() },
-        userVaultProfiles: { findFirst: vi.fn() },
-    },
-    insert: vi.fn(() => ({
-        values: vi.fn(() => ({
-            onConflictDoNothing: vi.fn(() => Promise.resolve()),
-            returning: vi.fn(() => Promise.resolve([{ id: "res-new" }])),
-        })),
-    })),
-    update: vi.fn(() => ({
-        set: vi.fn(() => ({
-            where: vi.fn(() => ({
-                returning: vi.fn(() => Promise.resolve([{ id: "usage-1" }])),
-            })),
-        })),
-    })),
+const {
+    mockAfterCallbacks,
+    mockRequireAuthenticatedUser,
+    mockGraphStream,
+    mockGovernorOnTokenChunk,
+    mockGovernorSettle,
+    mockFlushPendingSettlements,
+    mockZeroOutVaultMemory,
+} = vi.hoisted(() => ({
+    mockAfterCallbacks: [] as Array<() => Promise<unknown>>,
+    mockRequireAuthenticatedUser: vi.fn(),
+    mockGraphStream: vi.fn(),
+    mockGovernorOnTokenChunk: vi.fn(),
+    mockGovernorSettle: vi.fn(),
+    mockFlushPendingSettlements: vi.fn(),
+    mockZeroOutVaultMemory: vi.fn(),
 }));
 
-vi.mock("@/lib/supabase/server", () => ({
-    getUser: mockGetUser,
-}));
+vi.mock("next/server", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("next/server")>();
+    return {
+        ...actual,
+        after: (cb: () => Promise<unknown>) => {
+            mockAfterCallbacks.push(cb);
+        },
+    };
+});
 
-vi.mock("@/server/db", () => ({
-    db: mockDb,
-    schema: {
-        users: { id: "id" },
-        files: { id: "id", userId: "user_id", isEncrypted: "is_encrypted", deletedAt: "deleted_at" },
-        usage: { id: "id", userId: "user_id", date: "date" },
-        aiReservations: { id: "id", operationId: "operation_id", userId: "user_id", status: "status" },
-        userVaultProfiles: { userId: "user_id" },
-    },
-}));
-
-vi.mock("@/server/db/transactional", () => ({
-    txDb: null,
+vi.mock("@/server/auth/session", () => ({
+    requireAuthenticatedUser: mockRequireAuthenticatedUser,
 }));
 
 vi.mock("@/lib/rate-limit", () => ({
     aiStreamRateLimiter: {
-        limit: vi.fn().mockResolvedValue({ success: true, remaining: 10, reset: 60 }),
+        limit: vi.fn().mockResolvedValue({ success: true, remaining: 29, reset: 60, limit: 30 }),
     },
     addRateLimitHeaders: vi.fn(),
     rateLimitExceededResponse: vi.fn(),
 }));
 
-vi.mock("@/server/services/ai-settlement-service", () => ({
-    getUserTier: vi.fn().mockResolvedValue("free"),
-    reserveAIQuota: mockReserveAIQuota,
-    commitAIReservation: mockCommitAIReservation,
-    refundAIReservation: mockRefundAIReservation,
-    computeRequestHash: vi.fn().mockReturnValue("hash_123"),
-}));
-
-vi.mock("@/lib/ai/client", () => ({
-    streamWithAI: mockStreamWithAI,
-    processWithAI: vi.fn(),
-}));
-
-vi.mock("@/config/features.config", () => ({
-    FEATURES: {
-        AI_STREAMING_ENABLED: true,
-        RESERVATION_TTL_MS: 300_000,
-        PREVIEW_BUFFER_MAX_CHARS: 500_000,
+vi.mock("@/core/agent/graph", () => ({
+    elixentAgentGraph: {
+        stream: mockGraphStream,
     },
 }));
 
-import { POST as aiStreamRoute } from "@/app/api/ai/stream/route";
+vi.mock("@/lib/metering/stream-governor", () => ({
+    StreamGovernor: class MockStreamGovernor {
+        onTokenChunk = mockGovernorOnTokenChunk;
+        settle = mockGovernorSettle;
+    },
+}));
 
-describe("Phase 11: Authoritative Server-Side Stream Settlement", () => {
+vi.mock("@/server/services/ai-settlement-service", () => ({
+    flushPendingSettlementsToPostgres: mockFlushPendingSettlements,
+}));
+
+vi.mock("@/lib/vault/ephemeral-memory-map", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@/lib/vault/ephemeral-memory-map")>();
+    return {
+        ...actual,
+        zeroOutEphemeralVaultMemory: (...args: unknown[]) => {
+            mockZeroOutVaultMemory(...args);
+            return actual.zeroOutEphemeralVaultMemory();
+        },
+    };
+});
+
+import { POST as agentStreamRoute } from "@/app/api/agent/stream/route";
+
+describe("Phase 11: Authoritative Server-Side Agent Stream Settlement (/api/agent/stream)", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-
-        mockGetUser.mockResolvedValue({ id: "user_test_1" });
-        mockDb.query.users.findFirst.mockResolvedValue({ id: "user_test_1", tier: "free" });
-        mockDb.query.files.findFirst.mockResolvedValue({
-            id: "file_test_1",
-            userId: "user_test_1",
-            isEncrypted: false,
-        });
-
-        mockReserveAIQuota.mockResolvedValue({
-            reserved: true,
-            reservationId: "res_abc_123",
-            wordCount: 15,
-        });
-        mockCommitAIReservation.mockResolvedValue({ committed: true });
-        mockRefundAIReservation.mockResolvedValue({ refunded: true });
+        mockAfterCallbacks.length = 0;
+        mockRequireAuthenticatedUser.mockResolvedValue({ id: "user_test_1" });
+        mockGovernorOnTokenChunk.mockResolvedValue(true);
+        mockGovernorSettle.mockResolvedValue({ status: "SETTLED" });
+        mockFlushPendingSettlements.mockResolvedValue({ flushedCount: 1, netDeltaMicro: BigInt(-1000) });
     });
 
-    async function drainStream(res: Response): Promise<string[]> {
+    async function drainSSEFrames(res: Response): Promise<Array<{ event: string; data: Record<string, unknown> }>> {
         const reader = res.body!.getReader();
         const decoder = new TextDecoder();
-        const frames: string[] = [];
-        let buffer = "";
+        let raw = "";
 
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || "";
-            for (const line of lines) {
-                if (line.trim()) frames.push(line.trim());
-            }
+            raw += decoder.decode(value, { stream: true });
         }
-        if (buffer.trim()) frames.push(buffer.trim());
-        return frames;
+        raw += decoder.decode();
+
+        const blocks = raw.split("\n\n").map((b) => b.trim()).filter(Boolean);
+        return blocks.map((block) => {
+            const lines = block.split("\n");
+            const eventLine = lines.find((l) => l.startsWith("event:")) ?? "event: message";
+            const dataLine = lines.find((l) => l.startsWith("data:")) ?? "data: {}";
+            return {
+                event: eventLine.slice("event:".length).trim(),
+                data: JSON.parse(dataLine.slice("data:".length).trim()) as Record<string, unknown>,
+            };
+        });
     }
 
-    it("commits reservation server-side BEFORE the done frame on successful stream completion", async () => {
-        const encoder = new TextEncoder();
-        const fakeAiStream = new ReadableStream<Uint8Array>({
-            start(controller) {
-                controller.enqueue(encoder.encode("Hello "));
-                controller.enqueue(encoder.encode("world!"));
-                controller.close();
-            },
-        });
-        mockStreamWithAI.mockResolvedValue(fakeAiStream);
-
-        const req = new NextRequest("http://localhost/api/ai/stream", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                operationId: "op_success_1",
-                fileId: "file_test_1",
-                operation: "correct",
-                text: "Hello world test",
-            }),
-        });
-
-        const res = await aiStreamRoute(req);
-        expect(res.status).toBe(200);
-
-        const frames = await drainStream(res);
-        expect(mockCommitAIReservation).toHaveBeenCalledWith("op_success_1");
-        expect(mockRefundAIReservation).not.toHaveBeenCalled();
-
-        // Ensure start, chunk, and done frames were emitted
-        const parsed = frames.map(f => JSON.parse(f));
-        expect(parsed[0].type).toBe("start");
-        expect(parsed[parsed.length - 1].type).toBe("done");
-    });
-
-    it("refunds reservation when upstream AI fails pre-TTFT (before any tokens are produced)", async () => {
-        const fakeAiStream = new ReadableStream<Uint8Array>({
-            start(controller) {
-                controller.error(new Error("Upstream Gemini 500 error"));
-            },
-        });
-        mockStreamWithAI.mockResolvedValue(fakeAiStream);
-
-        const req = new NextRequest("http://localhost/api/ai/stream", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                operationId: "op_pre_ttft_fail",
-                fileId: "file_test_1",
-                operation: "improve",
-                text: "Text to improve",
-            }),
-        });
-
-        const res = await aiStreamRoute(req);
-        expect(res.status).toBe(200);
-
-        const frames = await drainStream(res);
-        expect(mockRefundAIReservation).toHaveBeenCalledWith("op_pre_ttft_fail", "mid_stream_failure_pre_ttft");
-        expect(mockCommitAIReservation).not.toHaveBeenCalled();
-
-        const parsed = frames.map(f => JSON.parse(f));
-        const errorFrame = parsed.find(f => f.type === "error");
-        expect(errorFrame).toBeDefined();
-        expect(errorFrame.code).toBe("STREAM_INTERRUPTED");
-    });
-
-    it("commits reservation when upstream AI fails post-TTFT (after tokens were delivered to client)", async () => {
-        const encoder = new TextEncoder();
-        let pullCount = 0;
-        const fakeAiStream = new ReadableStream<Uint8Array>({
-            pull(controller) {
-                if (pullCount === 0) {
-                    pullCount++;
-                    controller.enqueue(encoder.encode("Partial tokens received"));
-                } else {
-                    controller.error(new Error("Connection reset by peer"));
-                }
-            },
-        });
-        mockStreamWithAI.mockResolvedValue(fakeAiStream);
-
-        const req = new NextRequest("http://localhost/api/ai/stream", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                operationId: "op_post_ttft_fail",
-                fileId: "file_test_1",
-                operation: "improve",
-                text: "Text to improve",
-            }),
-        });
-
-        const res = await aiStreamRoute(req);
-        expect(res.status).toBe(200);
-
-        const frames = await drainStream(res);
-        // Because TTFT was achieved (first chunk emitted), quota must be committed
-        expect(mockCommitAIReservation).toHaveBeenCalledWith("op_post_ttft_fail");
-        expect(mockRefundAIReservation).not.toHaveBeenCalled();
-
-        const parsed = frames.map(f => JSON.parse(f));
-        expect(parsed.some(f => f.type === "chunk")).toBe(true);
-        expect(parsed.some(f => f.type === "error")).toBe(true);
-    });
-
-    it("executes autonomous refund when client cancels pre-TTFT via stream.cancel()", async () => {
-        const fakeAiStream = new ReadableStream<Uint8Array>({
-            start() {
-                // Hang indefinitely without emitting any chunk
-            },
-        });
-        mockStreamWithAI.mockResolvedValue(fakeAiStream);
-
-        const req = new NextRequest("http://localhost/api/ai/stream", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                operationId: "op_cancel_pre_ttft",
-                fileId: "file_test_1",
-                operation: "translate",
-                text: "Text to translate",
-            }),
-        });
-
-        const res = await aiStreamRoute(req);
-        expect(res.status).toBe(200);
-
-        // Cancel the response body stream immediately (client disconnects pre-TTFT)
-        await res.body!.cancel();
-
-        expect(mockRefundAIReservation).toHaveBeenCalledWith(
-            "op_cancel_pre_ttft",
-            "disconnect_pre_generation_stream_cancelled"
+    it("settles StreamGovernor as SETTLED on normal completion and schedules PostgreSQL background flush via after()", async () => {
+        mockGraphStream.mockResolvedValueOnce(
+            (async function* () {
+                yield { document_writer_node: { status: "writing", text: "Hello " } };
+                yield { document_writer_node: { status: "done", text: "world!" } };
+            })()
         );
-        expect(mockCommitAIReservation).not.toHaveBeenCalled();
+
+        const req = new NextRequest("http://localhost/api/agent/stream", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                threadId: "thread_success_1",
+                projectId: "proj_1",
+                targetFileIds: ["file_test_1"],
+                prompt: "Write a clean introduction section",
+            }),
+        });
+
+        const res = await agentStreamRoute(req);
+        expect(res.status).toBe(200);
+
+        const frames = await drainSSEFrames(res);
+        expect(frames[0].event).toBe("start");
+        expect(frames.some((f) => f.event === "update")).toBe(true);
+        expect(frames[frames.length - 1].event).toBe("done");
+
+        expect(mockGovernorOnTokenChunk).toHaveBeenCalledTimes(2);
+        expect(mockGovernorSettle).toHaveBeenCalledWith("SETTLED");
+        expect(mockZeroOutVaultMemory).toHaveBeenCalled();
+
+        expect(mockAfterCallbacks).toHaveLength(1);
+        await mockAfterCallbacks[0]();
+        expect(mockFlushPendingSettlements).toHaveBeenCalledWith("user_test_1");
+    });
+
+    it("settles StreamGovernor as ABORTED and emits error frame when upstream graph throws", async () => {
+        mockGraphStream.mockResolvedValueOnce(
+            (async function* () {
+                yield { search_agent_node: { status: "searching" } };
+                throw new Error("Upstream model runtime failure");
+            })()
+        );
+
+        const req = new NextRequest("http://localhost/api/agent/stream", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                threadId: "thread_fail_1",
+                projectId: "proj_1",
+                targetFileIds: ["file_test_1"],
+                prompt: "Analyze document",
+            }),
+        });
+
+        const res = await agentStreamRoute(req);
+        expect(res.status).toBe(200);
+
+        const frames = await drainSSEFrames(res);
+        const errorFrame = frames.find((f) => f.event === "error");
+        expect(errorFrame).toBeDefined();
+        expect(errorFrame?.data.code).toBe("STREAM_EXECUTION_ERROR");
+
+        expect(mockGovernorSettle).toHaveBeenCalledWith("ABORTED");
+        expect(mockZeroOutVaultMemory).toHaveBeenCalled();
+    });
+
+    it("aborts stream and settles StreamGovernor as ABORTED when credit runway is exhausted mid-stream", async () => {
+        mockGovernorOnTokenChunk
+            .mockResolvedValueOnce(true)
+            .mockResolvedValueOnce(false);
+
+        mockGraphStream.mockResolvedValueOnce(
+            (async function* () {
+                yield { document_writer_node: { chunk: 1 } };
+                yield { document_writer_node: { chunk: 2 } };
+                yield { document_writer_node: { chunk: 3 } };
+            })()
+        );
+
+        const req = new NextRequest("http://localhost/api/agent/stream", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                threadId: "thread_quota_exhausted",
+                projectId: "proj_1",
+                targetFileIds: ["file_test_1"],
+                prompt: "Generate long specification",
+            }),
+        });
+
+        const res = await agentStreamRoute(req);
+        expect(res.status).toBe(200);
+
+        const frames = await drainSSEFrames(res);
+        const errorFrame = frames.find((f) => f.event === "error");
+        expect(errorFrame).toBeDefined();
+        expect(errorFrame?.data.code).toBe("QUOTA_EXCEEDED");
+        expect(frames.some((f) => f.event === "done")).toBe(false);
+
+        expect(mockGovernorSettle).toHaveBeenCalledWith("ABORTED");
+    });
+
+    it("settles StreamGovernor as ABORTED and zeroes vault memory when client cancels the response stream", async () => {
+        mockGraphStream.mockImplementationOnce(async () => {
+            return (async function* () {
+                await new Promise(() => {
+                    // Hang until client cancels stream
+                });
+                yield {};
+            })();
+        });
+
+        const req = new NextRequest("http://localhost/api/agent/stream", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                threadId: "thread_cancel_1",
+                projectId: "proj_1",
+                targetFileIds: ["file_test_1"],
+                prompt: "Translate section",
+            }),
+        });
+
+        const res = await agentStreamRoute(req);
+        expect(res.status).toBe(200);
+
+        await res.body!.cancel("Client disconnected");
+
+        expect(mockGovernorSettle).toHaveBeenCalledWith("ABORTED");
+        expect(mockZeroOutVaultMemory).toHaveBeenCalled();
     });
 });

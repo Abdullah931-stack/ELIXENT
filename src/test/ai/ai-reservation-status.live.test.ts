@@ -14,8 +14,8 @@ import { describe, it, expect, afterAll, beforeEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import * as schema from "@/server/db/schema";
-import { getAIReservationStatus } from "@/server/actions/ai-ops";
 import {
+    getAIReservationStatus,
     reserveAndUpdateUsage,
     commitAIReservation,
 } from "@/server/services/ai-settlement-service";
@@ -64,7 +64,7 @@ describe("LIVE: getAIReservationStatus on isolated branch (Phase 11)", () => {
         });
         expect(reserved.reserved).toBe(true);
 
-        const status = await getAIReservationStatus(operationId);
+        const status = await getAIReservationStatus(operationId, USER_ID);
         expect(status.found).toBe(true);
         if (!status.found) throw new Error("expected found=true");
         expect(status.status).toBe("reserved");
@@ -86,7 +86,7 @@ describe("LIVE: getAIReservationStatus on isolated branch (Phase 11)", () => {
         const commit = await commitAIReservation(operationId);
         expect(commit.committed).toBe(true);
 
-        const status = await getAIReservationStatus(operationId);
+        const status = await getAIReservationStatus(operationId, USER_ID);
         expect(status.found).toBe(true);
         if (!status.found) throw new Error("expected found=true");
         expect(status.status).toBe("committed");
@@ -103,12 +103,12 @@ describe("LIVE: getAIReservationStatus on isolated branch (Phase 11)", () => {
 
         vi.mocked(getUser).mockResolvedValueOnce({ id: OTHER_USER_ID } as never);
 
-        const status = await getAIReservationStatus(operationId);
+        const status = await getAIReservationStatus(operationId, OTHER_USER_ID);
         expect(status).toEqual({ found: false, reason: "not_found" });
     });
 
     it("returns not_found for an unknown operationId", async () => {
-        const status = await getAIReservationStatus("live-res-status-does-not-exist-" + randomUUID());
+        const status = await getAIReservationStatus("live-res-status-does-not-exist-" + randomUUID(), USER_ID);
         expect(status).toEqual({ found: false, reason: "not_found" });
     });
 });

@@ -15,15 +15,6 @@ import { renderHook, act } from "@testing-library/react";
 import type { EditorAdapter } from "@/components/editor/markdown/types";
 import type { StreamHandlerOptions } from "@/lib/ai/stream-handler";
 
-const mockCommitAIReservation = vi.fn().mockResolvedValue({ committed: true });
-const mockRefundAIReservation = vi.fn().mockResolvedValue({ refunded: true });
-
-vi.mock("@/server/actions/ai-ops", () => ({
-    commitAIReservation: (...args: unknown[]) => mockCommitAIReservation(...args),
-    refundAIReservation: (...args: unknown[]) => mockRefundAIReservation(...args),
-    getAIReservationStatus: vi.fn(),
-}));
-
 const mockConsumeAgentStream = vi.fn();
 vi.mock("@/lib/ai/stream-handler", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/lib/ai/stream-handler")>();
@@ -82,21 +73,9 @@ function createMockAdapter(initial = ""): EditorAdapter {
 describe("TD-05 & Wave 11.1: Zero-Latency stopStream() & Disconnect Settlement", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mockCommitAIReservation.mockResolvedValue({ committed: true });
-        mockRefundAIReservation.mockResolvedValue({ refunded: true });
     });
 
     it("executes stopStream immediately (0ms blocking wait) and updates status to aborted", async () => {
-        let commitResolved = false;
-        mockCommitAIReservation.mockImplementationOnce(() => {
-            return new Promise((resolve) => {
-                setTimeout(() => {
-                    commitResolved = true;
-                    resolve({ committed: true });
-                }, 500);
-            });
-        });
-
         mockConsumeAgentStream.mockImplementation(async (options: StreamHandlerOptions) => {
             options.onStart?.({
                 type: "start",
@@ -147,13 +126,10 @@ describe("TD-05 & Wave 11.1: Zero-Latency stopStream() & Disconnect Settlement",
 
         expect(elapsedMs).toBeLessThan(50);
         expect(result.current.status).toBe("aborted");
-        expect(commitResolved).toBe(false);
-
         expect(editor.clearStreamingGhost).toHaveBeenCalled();
-        expect(mockRefundAIReservation).not.toHaveBeenCalled();
     });
 
-    it("never refunds on user stopStream even if server disconnect races", async () => {
+    it("transitions cleanly to aborted on user stopStream without awaiting network teardown", async () => {
         mockConsumeAgentStream.mockImplementation(async (options: StreamHandlerOptions) => {
             options.onStart?.({
                 type: "start",
@@ -198,7 +174,6 @@ describe("TD-05 & Wave 11.1: Zero-Latency stopStream() & Disconnect Settlement",
             result.current.stopStream();
         });
 
-        expect(mockRefundAIReservation).not.toHaveBeenCalled();
         expect(result.current.status).toBe("aborted");
     });
 });

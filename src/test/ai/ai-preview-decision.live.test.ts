@@ -80,7 +80,7 @@ async function seedUserAndFile(): Promise<Fixture> {
 }
 
 /**
- * Mirrors the production /api/ai/stream route: the reservation is created
+ * Mirrors the production /api/agent/stream route: the reservation is created
  * SERVER-side for the hook-generated operationId once the stream starts.
  */
 async function seedServerReservation(operationId: string, fileId: string) {

@@ -12,7 +12,6 @@ import {
     isSessionTokenValid,
     isStaleSessionEvent,
 } from '@/lib/ai/stream-session';
-import { EphemeralPreviewBuffer } from '@/lib/ai/preview-buffer';
 
 describe('AIStreamSession State Machine, Monotonic Token & Integrity Guards (Phase 11 / Wave 11.1)', () => {
     beforeEach(() => {
@@ -266,37 +265,6 @@ describe('AIStreamSession State Machine, Monotonic Token & Integrity Guards (Pha
             const check = assertSessionIntegrity(session, 1, 2);
             expect(check.valid).toBe(false);
             expect(check.reason).toContain('version mismatch');
-        });
-    });
-
-    describe('EphemeralPreviewBuffer Memory Ceiling & Operations', () => {
-        it('appends and accumulates text chunks per session', () => {
-            const buffer = new EphemeralPreviewBuffer(1000);
-            buffer.open('sess-1');
-
-            const res1 = buffer.append('sess-1', 'Hello ');
-            expect(res1.text).toBe('Hello ');
-            expect(res1.truncated).toBe(false);
-
-            const res2 = buffer.append('sess-1', 'World!');
-            expect(res2.text).toBe('Hello World!');
-            expect(buffer.getLength('sess-1')).toBe(12);
-
-            buffer.close('sess-1');
-            expect(buffer.has('sess-1')).toBe(false);
-            expect(buffer.getText('sess-1')).toBe('');
-        });
-
-        it('truncates incoming text when exceeding memory ceiling', () => {
-            const smallBuffer = new EphemeralPreviewBuffer(10);
-            smallBuffer.open('sess-2');
-
-            const res = smallBuffer.append('sess-2', '1234567890EXTRA');
-            expect(res.text).toBe('1234567890');
-            expect(res.truncated).toBe(true);
-            expect(smallBuffer.getLength('sess-2')).toBe(10);
-
-            smallBuffer.close('sess-2');
         });
     });
 });
