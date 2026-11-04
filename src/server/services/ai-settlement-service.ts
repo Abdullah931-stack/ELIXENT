@@ -4,8 +4,7 @@ import { db } from "@/server/db";
 import { txDb } from "@/server/db/transactional";
 import * as schema from "@/server/db/schema";
 import crypto from "node:crypto";
-import { AIOperation } from "@/lib/ai/prompts";
-import { TIER_LIMITS, TierName, isToPromptEnabled } from "@/config/tiers.config";
+import { TierName } from "@/config/tiers.config";
 import { eq, and, sql } from "drizzle-orm";
 import { isRedisConfigured, redis } from "@/lib/redis";
 import { REDIS_KEYS } from "@/lib/metering/constants";
@@ -96,40 +95,6 @@ export async function getTodayUsage(userId: string) {
     };
 }
 
-function getLimitsForOperation(
-    operation: AIOperation,
-    tier: TierName,
-    wordCount: number
-): { maxWords: number; period: string; allowed: boolean; reason?: string } {
-    const limits = TIER_LIMITS[tier];
-
-    if (operation === "toPrompt") {
-        const allowed = isToPromptEnabled(tier);
-        return {
-            maxWords: 0,
-            period: "daily",
-            allowed,
-            reason: allowed ? undefined : "ToPrompt is only available for Pro and Ultra plans",
-        };
-    }
-
-    if (operation === "summarize") {
-        const allowed = wordCount <= limits.summarize.maxWordsPerRequest;
-        return {
-            maxWords: limits.summarize.maxWordsPerRequest,
-            period: "daily",
-            allowed,
-            reason: allowed ? undefined : `Text exceeds maximum ${limits.summarize.maxWordsPerRequest} words for summarization`,
-        };
-    }
-
-    return {
-        maxWords: limits.correctImproveTranslate.words,
-        period: limits.correctImproveTranslate.period,
-        allowed: true,
-    };
-}
-
 export interface ReserveAIQuotaOptions {
     operationId?: string;
     fileId?: string;
@@ -154,20 +119,15 @@ export interface ReserveAIQuotaResult {
  */
 export async function reserveAIQuota(
     userId: string,
-    operation: AIOperation,
-    wordCount: number,
-    tier: TierName,
+    operation: string = "general",
+    wordCount: number = 1,
+    _tier: TierName = "free",
     options?: ReserveAIQuotaOptions
 ): Promise<ReserveAIQuotaResult> {
     const operationId = options?.operationId || crypto.randomUUID();
     const fileId = options?.fileId || "f_default";
     const requestHash = options?.requestHash || computeRequestHash(userId, operation, fileId, "");
     const today = getToday();
-    const limitsInfo = getLimitsForOperation(operation, tier, wordCount);
-
-    if (!limitsInfo.allowed) {
-        return { reserved: false, reason: limitsInfo.reason };
-    }
 
     const delta = options?.deltaMicro ?? (BigInt(Math.max(1, wordCount)) * BigInt(1000));
     const targetDb = getActiveDb();
@@ -444,8 +404,8 @@ export async function refundAIReservation(
  */
 export async function refundUsage(
     userId: string,
-    operation: AIOperation,
-    wordCount: number
+    _operation: string = "general",
+    wordCount: number = 1
 ): Promise<void> {
     const delta = BigInt(Math.max(1, wordCount)) * BigInt(1000);
     await db
@@ -601,8 +561,8 @@ export async function getAIReservationStatus(
  */
 export async function reserveAndUpdateUsage(
     userId: string,
-    operation: AIOperation,
-    wordCount: number,
+    operation: string = "general",
+    wordCount: number = 1,
     tierOrOptions?: TierName | ReserveAIQuotaOptions,
     maybeOptions?: ReserveAIQuotaOptions
 ): Promise<ReserveAIQuotaResult> {
