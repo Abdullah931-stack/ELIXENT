@@ -348,7 +348,7 @@ counter backed by Upstash Redis, keyed per user:
 | `fileApiRateLimiter` | `GET` / `PUT` / `DELETE /api/files/:id` | **200 requests** | **15 minutes** | Fail-Open (Redis outage allows requests) |
 | `generalRateLimiter` | General application endpoints | **300 requests** | **15 minutes** | Fail-Open (Redis outage allows requests) |
 | `authRateLimiter` | Authentication endpoints & Server Actions | **20 requests** | **15 minutes** | Fail-Closed (Redis outage returns HTTP 503 / returns rate limit error) |
-| `aiStreamRateLimiter` | `POST /api/ai/stream` | **30 requests** | **60 seconds** | Fail-Closed (Redis outage returns HTTP 503 Service Unavailable) |
+| `aiStreamRateLimiter` | `POST /api/agent/stream` | **30 requests** | **60 seconds** | Fail-Closed (Redis outage returns HTTP 503 Service Unavailable) |
 
 > [!NOTE]
 > `authRateLimiter` actively protects Next.js Server Actions `signInWithGoogle` (keyed by client IP address derived from headers) and `syncUserToDatabase` (keyed by authenticated `user.id`), in addition to standard HTTP authentication endpoints, preventing brute-force abuse and credential-stuffing attacks with fail-closed semantics.

@@ -1,5 +1,8 @@
 # Architectural Specification: Resilient UI Streaming & Atomic Undo in LUGX Editor
 
+> [!NOTE]
+> **Phase 12 Supersession Notice (`v0.12.0`):** In Phase 12, the legacy single-range modules (`src/app/api/ai/stream/route.ts`, `src/server/actions/ai-ops.ts`, `src/server/actions/ai-commit.ts`, `src/lib/ai/preview-buffer.ts`, and `src/components/editor/ai-toolbar.tsx` 5-operation buttons) were permanently superseded by the **Elixent Multi-Hunk Ghost Engine** (`src/components/editor/codemirror/extensions/streaming-ghost.ts`), `src/app/api/agent/stream/route.ts`, `src/server/services/ai-settlement-service.ts`, and incremental editor sync via `useEditorAutosave` (`src/hooks/editor/use-editor-autosave.ts`). See [03_workspace_ast_editor_and_vault_integration.md](../architecture/03_workspace_ast_editor_and_vault_integration.md) for the active multi-hunk specification.
+
 ## 1. Executive Summary & Objective
 
 This specification details the architectural design and execution strategy for re-enabling **Real-Time UI Streaming** for AI-assisted editing in the LUGX platform while enforcing **zero data loss**, **uncompromised auto-save isolation**, **granular range selection support**, and **single-action atomic rollback (Single Ctrl+Z undo)**.

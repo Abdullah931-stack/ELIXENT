@@ -4,6 +4,25 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.12.0] - 2026-11-04 (Phase 12: Final Purge of Legacy 5-Operation Modules, Test Suite Migration & Living Documentation Sync)
+
+### Permanent Purge of Legacy 5-Operation Modules (`src/app/api/ai/stream/route.ts`, `src/lib/ai/*`, `src/server/actions/*`)
+
+- **Permanent Deletion of 7 Legacy Modules:** Permanently deleted the seven unreferenced legacy 5-operation modules (`src/app/api/ai/stream/route.ts`, `src/lib/ai/pending-operation-store.ts`, `src/lib/ai/preview-buffer.ts`, `src/lib/ai/prompts.ts`, `src/lib/ai/quota-settlement-reducer.ts`, `src/server/actions/ai-commit.ts`, and `src/server/actions/ai-ops.ts`), completing the transition to `/api/agent/stream` and `src/server/services/ai-settlement-service.ts`.
+- **Lean Dynamic Model Registry & Tier Limits Cleanup (`src/config/models.config.json`, `src/config/tiers.config.ts`, `src/lib/ai/client.ts`, `src/types/ai-contracts.ts`):**
+  - Removed legacy 5-operation keys (`correct`, `improve`, `summarize`, `translate`, `toPrompt`) from `src/config/models.config.json`, retaining exclusively the Lean Dynamic Model Registry (`models` indexed by `modelId` with `executionMode`, `V`, `creditsPer1kInput`, `creditsPer1kCacheRead`, `creditsPer1kOutput`, and `calibrationPriors`).
+  - Removed temporary 5-operation word-quota fields (`correctImproveTranslate`, `summarize`, `toPrompt`, `isToPromptEnabled`) from `TierLimits` and `TIER_LIMITS` in `src/config/tiers.config.ts`, retaining exclusively `creditAllocationMicro`, `creditsDisplay`, and `price`.
+  - Cleaned `src/lib/ai/client.ts` to retain exclusively the Vercel AI SDK v7 gateway functions (`getGoogleModel`, `executeStructuredGeneration`, `executeToolAgentGeneration`, `executeStreamingGeneration`).
+  - Consolidated server-only micro-credit reservation, commit, refund, status inspection, stale reservation sweeping, and Redis-to-PostgreSQL settlement flushing inside `src/server/services/ai-settlement-service.ts`.
+  - Updated `src/types/ai-contracts.ts` (`AIRequestContract`, `AIReservationContract`, `AICommitReservationContract`, `AIRefundReservationContract`, `AIQuotaStatusContract`) to represent micro-credits and `/api/agent/stream` execution modes.
+
+### Integration, Live & E2E Test Suite Migration & Living Documentation Sync
+
+- **Full Test Suite Migration (`src/test/**`, `e2e/specs/**`):** Migrated 28 unit, integration, and live test files and 5 Playwright E2E specs (`06-ai-streaming-commit.spec.ts`, `07-ai-abort-reject.spec.ts`, `08-ai-failure-refund.spec.ts`, `09-ai-conflict-412.spec.ts`, `12-vault-ai-shield.spec.ts`) from the deleted 5-operation modules to `/api/agent/stream`, `src/server/services/ai-settlement-service.ts`, `MultiHunkGhostState`, and `elixentAgentGraph`.
+- **Living Documentation & SSOT Metrics Synchronization:** Updated `docs/METRICS.json` (`112` unit suites / `1892` passing tests, `21` live suites / `108` passing tests, `14` E2E specs / `15` journeys) and synchronized all monitored living documentation files (`README.md`, `docs/README.md`, `docs/guides/ai/ai-models-config.md`, `docs/guides/billing/stripe-setup.md`, `docs/reference/ui-streaming-readiness.md`, `docs/reference/sync-api.md`, `docs/architecture/security/security-and-rate-limiting.md`, `docs/architecture/sync/editor-sync-orchestration.md`, `docs/architecture/ai/*`, and `docs/Plans/ELIXENT_EXECUTION_PLAN.md`). Recorded Phase 12 closure dossier in [phase-12-final-legacy-purge-test-suite-migration-and-living-docs-sync.md](./records/closures/elixent-execution/phase-12-final-legacy-purge-test-suite-migration-and-living-docs-sync.md).
+
+---
+
 ## [0.11.0] - 2026-11-03 (Phase 11: Agent Chat Panel, HITL Question Cards, Credit Balance Views & Incremental Editor Sync)
 
 ### Architectural Agent Chat Panel & HITL Clarification Cards (`src/components/agent/*`)

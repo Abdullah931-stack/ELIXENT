@@ -1,5 +1,8 @@
 # AI Key Rotation, Model Fallback & Resilient Streaming Architecture in LUGX
 
+> [!NOTE]
+> **Phase 12 Supersession Notice (`v0.12.0`):** In Phase 12, the legacy 5-operation configuration in `src/config/models.config.json` (`correct`, `improve`, `summarize`, `toPrompt`, `translate`) and the legacy streaming route `src/app/api/ai/stream/route.ts` were permanently purged and superseded by the **Lean Dynamic Model Registry** ([`docs/guides/ai/ai-models-config.md`](../guides/ai/ai-models-config.md)), the Vercel AI SDK v7 gateway in `src/lib/ai/client.ts`, and `src/app/api/agent/stream/route.ts`. The 24-hour key rotation engine and distributed 3-state circuit breaker in `src/lib/ai/key-rotation.ts` remain active and underpin all Elixent agent calls.
+
 ## 1. Executive Summary
 
 This document describes the architectural design, failover mechanics, 24-hour fixed quota lifecycle, Redis-backed key state management (`healthy`, `exhausted`, `cooldown`, `disabled`), 3-state Distributed Circuit Breaker (`CLOSED`, `OPEN`, `HALF-OPEN`) with 5-minute atomic probing, and real-time streaming resilience for Google Gemini AI in LUGX.

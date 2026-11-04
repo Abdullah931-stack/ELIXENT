@@ -551,14 +551,7 @@ Invariants:
 4. **Green save dot = server truth.** `markServerPersisted(serverUpdatedAt)` fires on
    `bootstrap_server`, `apply`, and genuine `adopt_metadata`; eager-cold adoption leaves
    the dot red while user text remains dirty.
-5. **Hard-reload recovery.** A sessionStorage registry
-   (`src/lib/ai/pending-operation-store.ts`) tracks pending AI operations (ids + phase
-   only). On next mount, orphaned records are settled against
-   `getAIReservationStatus(operationId)` (`src/server/actions/ai-ops.ts`, session-derived
-   and ownership-filtered): completed previews consume quota idempotently, lost
-   generations refund as `reload_recovery`; the abandoned preview is NEVER applied to
-   the document nor treated as committed. See
-   [`reference/phase-11-editor-orchestration-closure.md`](../../records/closures/phase-11-to-15-core-infrastructure/phase-11-editor-orchestration-closure.md).
+5. **Hard-reload & Orphaned Reservation Recovery.** Server-side quota reservation status inspection and stale reservation expiration (`getAIReservationStatus(operationId)` and `expireStaleReservations()`) are consolidated inside `src/server/services/ai-settlement-service.ts` (`server-only`, session-derived and ownership-filtered), superseding the legacy `src/lib/ai/pending-operation-store.ts` and `src/server/actions/ai-ops.ts` modules (permanently deleted in Phase 12). Abandoned previews are never applied to the document nor treated as committed. See [`reference/phase-11-editor-orchestration-closure.md`](../../records/closures/phase-11-to-15-core-infrastructure/phase-11-editor-orchestration-closure.md).
 6. **UI layer integration (`page.tsx`).** During `hydrating` on an empty document, an animated
    backdrop overlay (`Loader2`) informs the user of active synchronization. When `fatal`,
    a dedicated error recovery card is presented with a direct action to return to `/workspace`.
@@ -656,7 +649,7 @@ To prevent race conditions where a pending debounced auto-save executes in the b
 
 1. **Auto-Save Debounce Cancellation (`startAIOperation`):** Starting an AI operation immediately invokes `autosave.cancelAutosave()`, clearing any queued timers before capturing the initial version.
 2. **Live Version Resolution at Commit Time:** `useAIStream` accepts `getLatestVersion` and `getLatestETag` getters connecting directly to `fileVersionRef` and `fileEtagRef`, resolving the most up-to-date local orchestrator version at the moment of commit rather than relying on a stale start snapshot.
-3. **Self-Session Healing in Server Commit:** If `commitAIFileOperation` detects that the database version advanced due to an in-flight background save, but `currentFile.content` is identical to `originalContent`, the server automatically self-heals by adopting the current version without disrupting the user.
+3. **Incremental Debounced Save Coalescing (Superseding `commitAIFileOperation`):** In Phases 11–12, the legacy `commitAIFileOperation` (`src/server/actions/ai-commit.ts`) was permanently removed; accepted ghost hunks update local IndexedDB immediately (`localRevision += 1`) and coalesce into a debounced `PUT /api/files/[id]` via `useEditorAutosave` carrying the latest `expectedVersion` and `If-Match` ETag.
 
 ---
 
@@ -815,8 +808,8 @@ When a user accepts an individual ghost hunk (or clicks "Accept All"):
 4. If multiple hunks are accepted in rapid succession, all local mutations coalesce into a **single sequential server PUT** carrying the latest `expectedVersion` and `serverEtag`.
 5. This eliminates the race condition where concurrent save requests with identical version numbers collided on the server, permanently preventing self-inflicted `412 Precondition Failed` errors.
 
-### 3. Complete Purge of Legacy 5-Operation UI Triggers
-All direct imports of `ai-ops.ts`, `ai-commit.ts`, `pending-operation-store.ts`, and `/api/ai/stream` have been permanently removed from `src/app`, `src/components`, and `src/hooks`. The editor toolbar (`AIToolbar`) now features the agent panel toggle and multi-hunk action bar, while the editor page mounts `AgentChatPanel` for end-to-end architectural collaboration.
+### 3. Complete Purge of Legacy 5-Operation Modules (Phases 11 & 12)
+In Phase 11 (`v0.11.0`), all direct imports of `ai-ops.ts`, `ai-commit.ts`, `pending-operation-store.ts`, and `/api/ai/stream` were removed from `src/app`, `src/components`, and `src/hooks`. In Phase 12 (`v0.12.0`), all 7 legacy 5-operation modules (`src/app/api/ai/stream/route.ts`, `src/lib/ai/pending-operation-store.ts`, `src/lib/ai/preview-buffer.ts`, `src/lib/ai/prompts.ts`, `src/lib/ai/quota-settlement-reducer.ts`, `src/server/actions/ai-commit.ts`, and `src/server/actions/ai-ops.ts`) were permanently deleted from the repository, and all unit, live, and E2E test suites were migrated to `/api/agent/stream`, `src/server/services/ai-settlement-service.ts`, and `MultiHunkGhostState`.
 
 ---
 
@@ -855,7 +848,7 @@ All direct imports of `ai-ops.ts`, `ai-commit.ts`, `pending-operation-store.ts`,
   - **Vault Subsystem Total:** 10/10 test files, 178/178 tests passing (100% success rate).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 112 unit suites (1899 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 112 unit suites (1892 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
   - **TypeScript Typecheck:** `npx tsc --noEmit` exits with code 0 (zero errors).

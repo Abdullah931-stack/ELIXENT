@@ -19,7 +19,7 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-112%20Suites%20·%201899%2F1899%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 1899 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-112%20Suites%20·%201892%2F1892%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 1892 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-21%20Suites%20·%20108%2F108%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 108 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
@@ -162,7 +162,7 @@ lugx/
 │       └── cron.yml               # Scheduled maintenance workflow (Daily 03:00 UTC & Quota sweepers)
 ├── docs/                          # Comprehensive technical documentation & governance
 │   ├── README.md                  # Master structural map and documentation index
-│   ├── CHANGELOG.md               # Versioned engineering changelog (v1.0.0 through v1.32.1)
+│   ├── CHANGELOG.md               # Versioned engineering changelog (Elixent v0.1.0 to v0.12.0; archived LUGX v1.0.0–v1.46.3)
 │   ├── TECHNICAL_DEBT_REGISTER.md # Living register of accepted debts and resolution history
 │   ├── DOCUMENTATION_GUIDELINES.md# Rules for authoring, linking, and updating documentation
 │   ├── Plans/                     # Active technical execution plans (ELIXENT_EXECUTION_PLAN.md)
@@ -194,7 +194,7 @@ lugx/
 │   ├── config/                    # Static configuration (models.config.json, tiers.config.ts)
 │   ├── hooks/                     # Custom React hooks (useSync, useEditorOrchestrator, useAIStream, useVault)
 │   ├── lib/
-│   │   ├── ai/                    # Gemini client, NDJSON stream handler, key rotation, prompts
+│   │   ├── ai/                    # Vercel AI SDK v7 gateway client, stream handler, and key rotation
 │   │   ├── db/                    # Drizzle schema, Smart Hybrid Client, and transactional runner
 │   │   │   └── migrations/        # Versioned Drizzle SQL migrations (0001–0010)
 │   │   ├── exporters/             # Pure Markdown and Plain Text file export strategies
@@ -205,7 +205,7 @@ lugx/
 │   │   ├── utils/                 # Utility modules (correlation.ts for X-Correlation-ID tracing)
 │   │   ├── vault/                 # Vault schemas, key derivation, and local cache helpers
 │   │   └── workers/               # Isolated Crypto Web Worker (PBKDF2 600K & AES-GCM)
-│   ├── server/actions/            # Authenticated Next.js Server Actions (file-ops, ai-ops, ai-commit, vault-actions)
+│   ├── server/                    # Authenticated Server Actions (file-ops, vault-actions) & services (ai-settlement-service, billing-service)
 │   ├── test/                      # Centralized test suite partitioned into 9 domain subdirectories
 │   │   ├── ai/                    # Gemini AI client, NDJSON streaming, and quota settlement tests
 │   │   ├── sync/                  # Offline-first sync, conflict resolution, and IndexedDB tests
@@ -306,7 +306,7 @@ npm run start
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 112 | 1899 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 112 | 1892 | 100% ✅ |
 | **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 108 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
@@ -321,7 +321,7 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).              |
 
 ```bash
-# Execute unit/contract test suites (112 test files, 1899 tests)
+# Execute unit/contract test suites (112 test files, 1892 tests)
 npm run test
 
 # Execute live database integration test suites on isolated Neon branch (21 test files, 108 tests)
@@ -422,7 +422,7 @@ flowchart TD
     style J fill:#FFF9C4,stroke:#FBC02D,stroke-width:1.5px
 ```
 
-- **Micro-Credit Dual-Phase Settlement (`src/server/actions/ai-ops.ts` & `src/server/services/ai-settlement-service.ts`):**
+- **Micro-Credit Dual-Phase Settlement (`src/server/services/ai-settlement-service.ts` & `src/lib/metering/redis-wallet.ts`):**
   - Credits are reserved prior to generation by creating an active lease in `credit_ledger_transactions` with a 5-minute TTL and debiting `users.credit_balance_micro`.
   - Eliminates TOCTOU race conditions across distributed serverless functions.
   - Downstream system stream failures, timeouts, or pre-TTFT client aborts immediately trigger atomic, zero-bounded refunds (`GREATEST(column - n, 0)`). User-initiated aborts (`stopStream`) execute instantaneously (< 50ms) without blocking network calls, dismantling ghost decorations immediately while the server autonomously commits post-TTFT consumption per the Dual-Side Inversion Protocol (TD-05 & Explicit Settlement Policy §4-D).
@@ -433,7 +433,7 @@ flowchart TD
 - **Distributed Circuit Breaker & Key Pool (`src/lib/ai/key-rotation.ts`):**
   - 3-state circuit breaker (`CLOSED`, `OPEN`, `HALF-OPEN`) tracking failures in Upstash Redis.
   - Multi-key rotation pool with automated 4-tier model cascade: `gemini-3.8-flash` (primary) → `gemini-3.6-flash` (fallback) → `gemini-3.5-flash-lite` (secondary) → `gemini-3.1-flash-lite` (tertiary).
-- **Dual-Layer Quota Guard & Information Shielding (`src/lib/rate-limit.ts` & `src/app/api/ai/stream/route.ts`):**
+- **Dual-Layer Quota Guard & Information Shielding (`src/lib/rate-limit.ts` & `src/app/api/agent/stream/route.ts`):**
   - Strict 30 requests / 60 seconds rate limiting via `aiStreamRateLimiter` failing closed upon Redis outages with `Retry-After >= 1`.
   - Information disclosure protection: Unhandled upstream model errors are shielded behind safe, standardized HTTP 500 envelopes containing the request's tracking `correlationId`, preventing internal provider stack leakage.
 
@@ -506,7 +506,7 @@ flowchart TD
   - Cloud conflicts on encrypted files while the vault is locked enter a safe `CONFLICT_LOCKED` state without blocking unencrypted file synchronization.
   - Once unlocked, a 3-way Diff3 merge executes with structural syntax integrity checks (`syntax-validator.ts`) before re-encrypting with a fresh CSPRNG IV.
 - **Dual-Layer AI Safety Gatekeepers:**
-  - Strict UI badge suppression and server-side HTTP 403 rejection on `/api/ai/stream` for encrypted files prevent accidental plaintext leaks to external model providers.
+  - Strict UI badge suppression and server-side HTTP 403 rejection on `/api/agent/stream` for encrypted files prevent accidental plaintext leaks to external model providers.
 
 ### 8. Client-Side Document Ingestion, Spatial Table Extractor & Arabic Normalization Pipeline
 
@@ -576,7 +576,7 @@ flowchart TD
 
 - **Distributed Correlation Tracing (`src/lib/utils/correlation.ts`):**
   - Generates RFC 4122 UUID v4 correlation identifiers when absent, extracts incoming `X-Correlation-ID` headers, and sanitizes characters against CRLF injection (`[^\w-]`).
-  - Threaded through Next.js Server Actions via `operationId` in `FileOpResult` and propagated across downstream Route Handlers (`/api/files/sync`, `/api/ai/stream`).
+  - Threaded through Next.js Server Actions via `operationId` in `FileOpResult` and propagated across downstream Route Handlers (`/api/files/sync`, `/api/agent/stream`).
   - Included in error responses to enable instant end-to-end incident debugging across client logs, server logs, and Redis monitors.
 - **Dual-Mode Rate Limiting Engine (`src/lib/rate-limit.ts`):**
   - **Public & Synchronization APIs:** Operates in **Fail-Open** mode (`onRateLimitError: 'allow'`). If Upstash Redis experiences network latency or downtime, document reads and offline-sync operations proceed uninterrupted.
@@ -766,6 +766,7 @@ To connect the autonomous agent core with the human editor, Elixent Phase 11 int
 - **Human-in-the-Loop Clarification Gate (`src/components/agent/hitl-question-card.tsx`):** Renders diagnostic question batches emitted by Stage 6 interrupts (`pure_interrupt_node`) with real-time `ClarificationResponseSchema` validation before stateless graph resumption via `POST /api/agent/stream`.
 - **Incremental Sync Contract & 412 Elimination (`src/hooks/use-editor-orchestrator.ts` & `src/hooks/use-ai-stream.ts`):** Replaces legacy client-side `commitAIFileOperation` with an immediate local IndexedDB write (`localRevision += 1`) and debounced server autosave via `useEditorAutosave` (800ms–1000ms), coalescing rapid ghost hunk acceptances into a single server save and eliminating self-inflicted 412 conflicts.
 - **Real-Time Credit Balance Presentation (`src/app/dashboard/page.tsx` & `src/app/account/page.tsx`):** Replaced legacy word-count quota displays with server-authoritative micro-credit balance tracking via `getUserCreditBalance(user.id)` and tier visual progress indicators.
+- **Final Purge of Legacy 5-Operation Modules & Full Test Migration (Phase 12 / `v0.12.0`):** Permanently deleted all 7 legacy 5-operation modules (`api/ai/stream/route.ts`, `pending-operation-store.ts`, `preview-buffer.ts`, `prompts.ts`, `quota-settlement-reducer.ts`, `ai-commit.ts`, `ai-ops.ts`), cleaned `models.config.json`, `tiers.config.ts`, `ai/client.ts`, and `ai-contracts.ts`, and migrated all unit, live, and E2E test suites to `/api/agent/stream`, `ai-settlement-service.ts`, and `MultiHunkGhostState`.
 
 ---
 
@@ -782,7 +783,7 @@ To connect the autonomous agent core with the human editor, Elixent Phase 11 int
 | **Financial Webhook Security**  | Cryptographic HMAC signature verification (`stripe.webhooks.constructEvent`) | Mitigates replay attacks and validates webhook payload authenticity before DB mutation.       |
 | **Database Injection Safety**   | Drizzle ORM parameterized SQL queries                                        | Eliminates SQL injection across all dynamic query and transaction paths.                      |
 | **Zero-Knowledge Encryption**   | AES-GCM-256 · PBKDF2 600K Web Worker · WebAuthn PRF · BIP-39                 | End-to-end Zero-Knowledge storage, domain AAD (`vault:file:${userId}:${fileId}`), RAM zeroing. |
-| **Fail-Closed AI Protection**   | Upstash Redis fail-closed rate limiting on `/api/ai/stream` (30 req / 60s)    | Prevents unauthorized LLM credit consumption and protects infrastructure during Redis outages.|
+| **Fail-Closed AI Protection**   | Upstash Redis fail-closed rate limiting on `/api/agent/stream` (30 req / 60s) | Prevents unauthorized LLM credit consumption and protects infrastructure during Redis outages.|
 | **Secure Document Ingestion**   | Web Worker client-side extraction · 10MB text limit · Null-byte stripping   | Zero binary server processing, eliminates server-side PDF attack surface, protects DB. |
 
 ---

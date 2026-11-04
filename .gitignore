@@ -52,3 +52,6 @@ next-env.d.ts
 /test-results/
 /playwright-report/
 /blob-report/
+
+# graphify knowledge graph
+/graphify-out/

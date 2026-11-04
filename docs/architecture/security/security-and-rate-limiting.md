@@ -36,18 +36,18 @@ All redirect parameters entering the authentication pipeline are strictly valida
 
 ### 1.2. Cross-User Resource Isolation & Anti-Enumeration (404 vs 403)
 
-To prevent resource enumeration (probing for valid UUIDs via 403 vs 404 responses), all lookups across `src/server/auth/session.ts` (`requireOwnedFile`), `file-ops.ts`, `import-file.ts`, and `stream/route.ts` return unified `404 Not Found` responses when foreign/unauthorized resources are accessed. Furthermore, `requireOwnedFile` performs upfront UUID regex syntax verification, preventing PostgreSQL `22P02` syntax errors from revealing invalid UUID queries.
+To prevent resource enumeration (probing for valid UUIDs via 403 vs 404 responses), all lookups across `src/server/auth/session.ts` (`requireOwnedFile`), `file-ops.ts`, `import-file.ts`, and `src/app/api/agent/stream/route.ts` return unified `404 Not Found` responses when foreign/unauthorized resources are accessed. Furthermore, `requireOwnedFile` performs upfront UUID regex syntax verification, preventing PostgreSQL `22P02` syntax errors from revealing invalid UUID queries.
 
 ### 1.3 Zero-Knowledge Encrypted Content Governance & AI Route Hardening (LUGX-085, LUGX-004, LUGX-017)
 
 To prevent unintentional data leakage or uninspected transmission of client-side encrypted vault files, the platform enforces strict server-side and UI governance barriers:
 
-1. **Mandatory `fileId` on AI Streaming (`/api/ai/stream` / LUGX-085):**
-   - Every AI request must specify a valid, non-empty `fileId` string.
+1. **Mandatory `fileId` on AI Streaming (`/api/agent/stream` / LUGX-085):**
+   - Every AI request must specify a valid, non-empty `fileId` string (`agentStreamRequestSchema`).
    - If `fileId` is missing or invalid, the route immediately fails closed with HTTP `400 Bad Request` and error code `MISSING_FILE_ID`.
    - The route verifies document existence and user ownership against PostgreSQL (`schema.files`).
    - If `targetFile.isEncrypted = true`, the route checks `userVaultProfiles.allowAIOnEncryptedFiles`. If not explicitly enabled by the user, the stream is rejected with HTTP `403 Forbidden` (`AI_PROHIBITED_ON_ENCRYPTED_FILES`) with zero quota consumed and zero prompt data transmitted to Gemini.
-   - Quota reservation (`reserveAndUpdateUsage`) is strictly coupled to the validated non-null `fileId`.
+   - Quota reservation (`reserveAndUpdateUsage` in `src/server/services/ai-settlement-service.ts` and `executeAtomicReservation` in `src/lib/metering/redis-wallet.ts`) is strictly coupled to the validated non-null `fileId`.
 
 2. **Governed Document Export & Plaintext Warning Modal (`ExportWarningModal` / `export-service.ts` / LUGX-004, LUGX-017):**
    - When exporting documents from the editor (`handleExport`), encrypted files trigger an interactive security modal (`ExportWarningModal`) before any unencrypted payload can be written to disk.
@@ -81,7 +81,7 @@ Exported limiter instances and their consumers:
 | `syncApiRateLimiter` | `sync` | `fail-open` | `GET /api/files/sync` |
 | `fileApiRateLimiter` | `file` | `fail-open` | `GET` / `PUT` / `DELETE /api/files/[id]` |
 | `authRateLimiter` | `auth` | `fail-closed` | authentication endpoints |
-| `aiStreamRateLimiter` | `ai-stream` | `fail-closed` | `POST /api/ai/stream` |
+| `aiStreamRateLimiter` | `ai-stream` | `fail-closed` | `POST /api/agent/stream` |
 
 ### 2.1 Dual-Mode Failure Architecture (Fail-Open vs. Fail-Closed)
 
@@ -249,7 +249,7 @@ sequenceDiagram
 ### 4.9 Zero-Knowledge Operation & AI Streaming Guards
 
 - **Client-Side Re-Encrypted Copy Engine (`copyFile` / AUD-02)**: Copying an encrypted file decrypts in volatile RAM, generates a new UUID and fresh random IV, and re-encrypts with the target AAD (`vault:file:${userId}:${newFileId}`). Server-side `copyFile` strictly rejects copying encrypted files without valid client-side re-encryption.
-- **Zero-Knowledge AI Streaming Commit Guard (`commitAIFileOperation`)**: When committing AI generation to an encrypted file, the client encrypts the text locally before sending. The server action strictly rejects commits to encrypted files if unencrypted content is supplied without encryption metadata.
+- **Zero-Knowledge Incremental Sync Guard (`useEditorAutosave` / `PUT /api/files/[id]`)**: When accepting AI hunk replacements on an encrypted file, the client encrypts the updated document locally via `SyncCryptoGateway` before pushing via `PUT /api/files/[id]`. The server strictly rejects writes to encrypted files if unencrypted content is supplied without valid `encryptionMetadata`. (The legacy `commitAIFileOperation` in `src/server/actions/ai-commit.ts` was permanently removed in Phase 12.)
 - **Conflict 412 Double-Encryption Prevention (AUD-03)**: Detects pre-authenticated ciphertext (`gcm:v1:...`) during server-version conflict resolution to eliminate double-encryption corruption loops.
 
 ### 4.10 Zero-Knowledge Log Hygiene & Diagnostic Trace Preservation (`src/lib/sync/log-sanitizer.ts`)
@@ -299,8 +299,8 @@ Automated expiration of leaked or orphaned in-flight AI quota reservations:
 | Property | Value |
 | :--- | :--- |
 | Stale threshold | 5 minutes (`STALE_THRESHOLD_MS = 5 * 60 * 1000`) past reservation timestamp |
-| Target status | Records with status `'reserved'` in `ai_usage_history` |
-| Transition | Updated atomically to status `'expired'` via `expireStaleReservations` |
+| Target status | Records with status `'RESERVED'` in `credit_ledger_transactions` |
+| Transition | Updated atomically to status `'EXPIRED_RELEASED'` (with credit refund to `users.credit_balance_micro`) via `expireStaleReservations` in `src/server/services/ai-settlement-service.ts` |
 | Authorization | Shared secret: `Authorization: Bearer $CRON_SECRET`; verified via constant-time `crypto.timingSafeEqual` comparison (LUGX-136), failing closed with 401 when unset, mismatched, or malformed |
 | Concurrency Lock | Protected by `acquireCronLock("expire-reservations", 300)` with safe HTTP 200 `{ skipped: true }` overlap skipping |
 | Method Parity | Full support for both `GET` and `POST` methods (`export const POST = GET;`) |

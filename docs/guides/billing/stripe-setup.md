@@ -13,7 +13,7 @@ This guide will help you complete the Stripe integration setup for LUGX / Elixen
 2. **Create Pro Plan Product**:
    - Click "+ Add product"
    - Name: `LUGX Pro`
-   - Description: `Pro subscription plan for Elixent - 1,000 credits/month (1,000,000,000 µcredits), 20,000 words/day, 5 summaries/day, 10 prompts/day`
+   - Description: `Pro subscription plan for Elixent - 1,000 credits/month (1,000,000,000 µcredits)`
    - Pricing model: `Recurring`
    - Price: `$12.00`
    - Billing period: `Monthly`
@@ -23,7 +23,7 @@ This guide will help you complete the Stripe integration setup for LUGX / Elixen
 3. **Create Ultra Plan Product**:
    - Click "+ Add product"
    - Name: `LUGX Ultra`
-   - Description: `Ultra subscription plan for Elixent - 3,500 credits/month (3,500,000,000 µcredits), 250,000 words/day, 50 summaries/day, 500 prompts/day`
+   - Description: `Ultra subscription plan for Elixent - 3,500 credits/month (3,500,000,000 µcredits)`
    - Pricing model: `Recurring`
    - Price: `$120.00`
    - Billing period: `Monthly`
