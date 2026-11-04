@@ -27,6 +27,7 @@ import {
   type SyncOperationContract,
 } from '@/types/sync-contracts';
 import {
+  aiExecutionModeSchema,
   aiRequestSchema,
   aiReservationSchema,
   aiCommitReservationSchema,
@@ -332,18 +333,47 @@ describe('Phase 5: Sync Contracts & Versioning Invariants', () => {
 describe('Phase 5: AI Service Contracts & Fingerprinting', () => {
   const sample64HexHash = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
-  it('validates AI stream request requiring operationId and requestHash', () => {
+  it('validates AIExecutionMode enum values and rejects unsupported modes', () => {
+    expect(aiExecutionModeSchema.parse('SINGLE_PASS_DECISION')).toBe('SINGLE_PASS_DECISION');
+    expect(aiExecutionModeSchema.parse('DISCRETE_THINKING')).toBe('DISCRETE_THINKING');
+    expect(aiExecutionModeSchema.parse('STREAMING_GENERATIVE')).toBe('STREAMING_GENERATIVE');
+    expect(aiExecutionModeSchema.parse('CREDIT_TOPUP')).toBe('CREDIT_TOPUP');
+    expect(() => aiExecutionModeSchema.parse('LEGACY_5_OP_MODE')).toThrow(ZodError);
+  });
+
+  it('validates AI stream request with Elixent /api/agent/stream context fields', () => {
+    const fileUuid = '123e4567-e89b-12d3-a456-426614174000';
     const aiReq: AIRequestContract = {
       operationId: 'ai-op-987',
       requestHash: sample64HexHash,
+      threadId: 'thread-uuid-1',
+      projectId: 'project-uuid-1',
+      fileId: fileUuid,
+      targetFileIds: [fileUuid],
+      ephemeralVaultPayloads: {
+        [fileUuid]: '# Decrypted Vault Markdown',
+      },
+      liveDocumentSnapshots: {
+        [fileUuid]: '# Live Editor Buffer',
+      },
+      resumePayload: {
+        decision: 'approve',
+      },
       prompt: 'Summarize the document.',
-      clientTimestamp: Date.now(),
+      systemPrompt: 'You are the Elixent Agent.',
+      model: 'google/gemini-3.8-flash',
       stream: true,
+      clientTimestamp: Date.now(),
     };
 
     const validated = aiRequestSchema.parse(aiReq);
     expect(validated.operationId).toBe('ai-op-987');
     expect(validated.requestHash).toHaveLength(64);
+    expect(validated.threadId).toBe('thread-uuid-1');
+    expect(validated.projectId).toBe('project-uuid-1');
+    expect(validated.targetFileIds).toEqual([fileUuid]);
+    expect(validated.ephemeralVaultPayloads?.[fileUuid]).toBe('# Decrypted Vault Markdown');
+    expect(validated.liveDocumentSnapshots?.[fileUuid]).toBe('# Live Editor Buffer');
   });
 
   it('rejects AI request with invalid requestHash length', () => {
@@ -357,7 +387,7 @@ describe('Phase 5: AI Service Contracts & Fingerprinting', () => {
     expect(() => aiRequestSchema.parse(invalidReq)).toThrow(ZodError);
   });
 
-  it('validates AI quota reservation, commit, and refund contracts', () => {
+  it('validates AI quota reservation, commit, and refund contracts with Micro-Credit fields', () => {
     const reservation = {
       reservationId: 'res-123',
       operationId: 'op-123',
@@ -365,11 +395,20 @@ describe('Phase 5: AI Service Contracts & Fingerprinting', () => {
       requestHash: sample64HexHash,
       estimatedTokens: 1000,
       creditsReserved: 10,
+      creditsReservedMicro: 10000,
+      reservedInputMicro: 2000,
+      reservedOutputMicro: 8000,
+      threadId: 'thread-uuid-1',
+      stepKey: 'node_writer_step_1',
+      modelId: 'google/gemini-3.8-flash',
+      executionMode: 'STREAMING_GENERATIVE' as const,
       expiresAt: Date.now() + 60000,
     };
 
     const parsedReservation = aiReservationSchema.parse(reservation);
     expect(parsedReservation.creditsReserved).toBe(10);
+    expect(parsedReservation.creditsReservedMicro).toBe(10000);
+    expect(parsedReservation.executionMode).toBe('STREAMING_GENERATIVE');
 
     const commitment = {
       reservationId: 'res-123',
@@ -377,26 +416,37 @@ describe('Phase 5: AI Service Contracts & Fingerprinting', () => {
       requestHash: sample64HexHash,
       actualTokensUsed: 850,
       creditsDeducted: 8,
+      creditsDeductedMicro: 8500,
+      inputTokens: 200,
+      cachedInputTokens: 50,
+      outputTokens: 500,
+      reasoningTokens: 100,
     };
 
     const parsedCommit = aiCommitReservationSchema.parse(commitment);
     expect(parsedCommit.actualTokensUsed).toBe(850);
+    expect(parsedCommit.creditsDeductedMicro).toBe(8500);
+    expect(parsedCommit.reasoningTokens).toBe(100);
 
     const refund = {
       reservationId: 'res-123',
       operationId: 'op-123',
       requestHash: sample64HexHash,
       reason: 'User cancelled stream before completion',
+      refundedMicro: 1500,
     };
 
     const parsedRefund = aiRefundReservationSchema.parse(refund);
     expect(parsedRefund.reason).toContain('cancelled');
+    expect(parsedRefund.refundedMicro).toBe(1500);
   });
 
-  it('validates AI user quota status response contract', () => {
+  it('validates AI user quota status response contract with Micro-Credit balance', () => {
     const quota = {
       allowed: true,
       remainingQuota: 5000,
+      creditBalanceMicro: 5000000,
+      creditsDisplay: 5000,
       tier: 'pro',
       resetAt: Date.now() + 86400000,
     };
@@ -404,5 +454,125 @@ describe('Phase 5: AI Service Contracts & Fingerprinting', () => {
     const parsedQuota = aiQuotaStatusSchema.parse(quota);
     expect(parsedQuota.allowed).toBe(true);
     expect(parsedQuota.remainingQuota).toBe(5000);
+    expect(parsedQuota.creditBalanceMicro).toBe(5000000);
+    expect(parsedQuota.creditsDisplay).toBe(5000);
+  });
+
+  it.each([
+    {
+      name: 'legacy operation field rejected by strict schema',
+      payload: {
+        operationId: 'ai-op-987',
+        requestHash: sample64HexHash,
+        prompt: 'Summarize',
+        clientTimestamp: Date.now(),
+        operation: 'summarize',
+      },
+    },
+    {
+      name: 'legacy temperature field rejected by strict schema',
+      payload: {
+        operationId: 'ai-op-987',
+        requestHash: sample64HexHash,
+        prompt: 'Summarize',
+        clientTimestamp: Date.now(),
+        temperature: 0.7,
+      },
+    },
+    {
+      name: 'empty operationId rejected',
+      payload: {
+        operationId: '',
+        requestHash: sample64HexHash,
+        prompt: 'Summarize',
+        clientTimestamp: Date.now(),
+      },
+    },
+    {
+      name: 'empty prompt rejected',
+      payload: {
+        operationId: 'ai-op-987',
+        requestHash: sample64HexHash,
+        prompt: '',
+        clientTimestamp: Date.now(),
+      },
+    },
+    {
+      name: 'non-UUID fileId rejected',
+      payload: {
+        operationId: 'ai-op-987',
+        requestHash: sample64HexHash,
+        prompt: 'Summarize',
+        fileId: 'not-a-uuid',
+        clientTimestamp: Date.now(),
+      },
+    },
+    {
+      name: 'empty string inside targetFileIds rejected',
+      payload: {
+        operationId: 'ai-op-987',
+        requestHash: sample64HexHash,
+        prompt: 'Summarize',
+        targetFileIds: [''],
+        clientTimestamp: Date.now(),
+      },
+    },
+    {
+      name: 'non-positive clientTimestamp rejected',
+      payload: {
+        operationId: 'ai-op-987',
+        requestHash: sample64HexHash,
+        prompt: 'Summarize',
+        clientTimestamp: 0,
+      },
+    },
+  ])('rejects invalid AIRequestContract edge case: $name', ({ payload }) => {
+    expect(() => aiRequestSchema.parse(payload)).toThrow(ZodError);
+  });
+
+  it('rejects negative micro-credit values and unknown properties across reservation, commit, refund, and quota schemas', () => {
+    expect(() =>
+      aiReservationSchema.parse({
+        reservationId: 'res-1',
+        operationId: 'op-1',
+        userId: 'usr-1',
+        requestHash: sample64HexHash,
+        estimatedTokens: 100,
+        creditsReserved: 1,
+        creditsReservedMicro: -1,
+        expiresAt: Date.now() + 1000,
+      })
+    ).toThrow(ZodError);
+
+    expect(() =>
+      aiCommitReservationSchema.parse({
+        reservationId: 'res-1',
+        operationId: 'op-1',
+        requestHash: sample64HexHash,
+        actualTokensUsed: 100,
+        creditsDeducted: 1,
+        reasoningTokens: -5,
+      })
+    ).toThrow(ZodError);
+
+    expect(() =>
+      aiRefundReservationSchema.parse({
+        reservationId: 'res-1',
+        operationId: 'op-1',
+        requestHash: sample64HexHash,
+        reason: '',
+        refundedMicro: 100,
+      })
+    ).toThrow(ZodError);
+
+    expect(() =>
+      aiQuotaStatusSchema.parse({
+        allowed: false,
+        remainingQuota: 0,
+        creditBalanceMicro: -100,
+        tier: 'free',
+        resetAt: Date.now() + 1000,
+      })
+    ).toThrow(ZodError);
   });
 });

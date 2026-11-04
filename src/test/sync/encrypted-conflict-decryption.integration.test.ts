@@ -26,17 +26,6 @@ vi.mock("@/server/actions/file-ops", () => ({
     deleteFile: vi.fn(),
 }));
 
-vi.mock("@/server/actions/ai-commit", () => ({
-    commitAIFileOperation: vi.fn(),
-    refundAIReservation: vi.fn().mockResolvedValue({ success: true }),
-}));
-
-vi.mock("@/server/actions/ai-ops", () => ({
-    commitAIReservation: vi.fn().mockResolvedValue({ committed: true }),
-    refundAIReservation: vi.fn().mockResolvedValue({ refunded: true }),
-    getAIReservationStatus: vi.fn(),
-}));
-
 vi.mock("@/server/actions/vault-actions", () => ({
     getUserVaultProfile: vi.fn().mockResolvedValue({
         hasVaultProfile: true,

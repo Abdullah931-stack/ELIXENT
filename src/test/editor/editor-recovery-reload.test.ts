@@ -17,12 +17,6 @@ import type { EditorAdapter } from "@/components/editor/markdown/types";
 import type { StreamHandlerOptions } from "@/lib/ai/stream-handler";
 import { useAIStream } from "@/hooks/use-ai-stream";
 
-const mockCommitAIFileOperation = vi.fn();
-
-vi.mock("@/server/actions/ai-commit", () => ({
-    commitAIFileOperation: (...args: unknown[]) => mockCommitAIFileOperation(...args),
-}));
-
 const mockConsumeAgentStream = vi.fn();
 vi.mock("@/lib/ai/stream-handler", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/lib/ai/stream-handler")>();
@@ -123,7 +117,6 @@ describe("Phase 11: Reload Recovery & Server-Authoritative Settlement (Wave 11.1
         expect(result.current.activeGhostHunks).toHaveLength(0);
         expect(result.current.status).toBe("idle");
         expect(editor.getValue()).toBe(initialContent);
-        expect(mockCommitAIFileOperation).not.toHaveBeenCalled();
     });
 
     it("SPA flow: active stream aborts its AbortSignal on unmount without invoking client financial RPCs", async () => {
@@ -148,7 +141,6 @@ describe("Phase 11: Reload Recovery & Server-Authoritative Settlement (Wave 11.1
         unmount();
         expect(captured.signal?.aborted).toBe(true);
         expect(editor.getValue()).toBe(initialContent);
-        expect(mockCommitAIFileOperation).not.toHaveBeenCalled();
     });
 
     it("SPA flow: session in preview_ready cleans up on unmount without mutating document or committing", async () => {
@@ -179,6 +171,5 @@ describe("Phase 11: Reload Recovery & Server-Authoritative Settlement (Wave 11.1
 
         unmount();
         expect(editor.getValue()).toBe(initialContent);
-        expect(mockCommitAIFileOperation).not.toHaveBeenCalled();
     });
 });

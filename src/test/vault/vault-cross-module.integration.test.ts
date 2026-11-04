@@ -28,9 +28,8 @@ import {
     revokeAllTrustedDevices,
 } from "@/server/actions/vault-actions";
 import { toggleFileEncryption, copyFile } from "@/server/actions/file-ops";
-import { commitAIFileOperation } from "@/server/actions/ai-commit";
-import { db, schema } from "@/server/db";
-import { txDb } from "@/server/db/transactional";
+import { updateFileContent } from "@/server/actions/files";
+import { db } from "@/server/db";
 import { getUser } from "@/lib/supabase/server";
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -41,11 +40,28 @@ vi.mock("next/cache", () => ({
     revalidatePath: vi.fn(),
 }));
 
-vi.mock("@/server/db/transactional", () => ({
-    txDb: {
-        transaction: vi.fn(),
-    },
-}));
+vi.mock("@/server/actions/files", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@/server/actions/files")>();
+    return {
+        ...actual,
+        updateFileContent: vi.fn(async (
+            fileId: string,
+            content: string,
+            options?: import("@/server/actions/files").UpdateFileOptions & { encryptionMetadata?: any }
+        ) => {
+            if (options && "encryptionMetadata" in options) {
+                return actual.toggleFileEncryption(
+                    fileId,
+                    true,
+                    content,
+                    options.encryptionMetadata ?? null,
+                    options
+                );
+            }
+            return actual.updateFileContent(fileId, content, options);
+        }),
+    };
+});
 
 vi.mock("@/server/db", () => {
     return {
@@ -372,46 +388,45 @@ describe("Cross-Module Integration Suite (Vault Ecosystem)", () => {
             userId: testUserId,
             title: "Encrypted AI Draft",
             isEncrypted: true,
+            isFolder: false,
             version: 5,
             etag: "etag-v5",
             deletedAt: null,
+            updatedAt: new Date(),
         };
-
-        const reservationRecord = {
-            id: "res-ai-123",
-            operationId: "op-ai-456",
-            userId: testUserId,
-            fileId: testFileId,
-            threadId: testFileId,
-            nodeName: "reserved:general",
-            status: "reserved",
-            reservedUnits: 10,
-        };
-
-        // Mock user vault profile with AI opt-in enabled for Flow 3
-        vi.mocked(db.query.userVaultProfiles.findFirst).mockResolvedValue({
-            userId: testUserId,
-            allowAIOnEncryptedFiles: true,
-        } as any);
 
         // 1. Invariant: Committing plaintext to an encrypted file without metadata must be rejected
-        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce(reservationRecord as any);
         vi.mocked(db.query.files.findFirst).mockResolvedValueOnce(encryptedFileRecord as any);
 
-        const unencryptedCommitAttempt = await commitAIFileOperation({
-            operationId: "op-ai-456",
-            fileId: testFileId,
-            resultContent: "# Plaintext AI markdown text",
-            expectedVersion: 5,
-            expectedETag: "etag-v5",
-        });
+        const unencryptedCommitAttempt = await updateFileContent(
+            testFileId,
+            "# Plaintext AI markdown text",
+            {
+                expectedVersion: 5,
+                expectedETag: "etag-v5",
+            }
+        );
 
         expect(unencryptedCommitAttempt.success).toBe(false);
-        if (!unencryptedCommitAttempt.success && "error" in unencryptedCommitAttempt) {
-            expect(unencryptedCommitAttempt.error).toContain("Cannot commit unencrypted content to an encrypted file");
-        }
+        expect(unencryptedCommitAttempt.error).toContain("Cannot directly update encrypted file with plaintext");
 
-        // 2. Client performs client-side encryption of the AI generated text
+        // 1b. Invariant: Encrypted update missing IV in encryptionMetadata must be rejected
+        vi.mocked(db.query.files.findFirst).mockResolvedValueOnce(encryptedFileRecord as any);
+
+        const missingIvAttempt = await (updateFileContent as any)(
+            testFileId,
+            "gcm:v1:ciphertext-without-iv",
+            {
+                expectedVersion: 5,
+                expectedETag: "etag-v5",
+                encryptionMetadata: null,
+            }
+        );
+
+        expect(missingIvAttempt.success).toBe(false);
+        expect(missingIvAttempt.error).toContain("Encrypted files require valid encryptionMetadata with an IV");
+
+        // 2. Client performs client-side encryption of the AI generated text with fresh IV
         const aiMarkdown = "## AI Generated Content\n\nDeep cryptographic analysis.";
         const aad = `vault:file:${testUserId}:${testFileId}`;
         const encResult = await encryptEnvelope(aiMarkdown, masterKey, "master-v1", "", aad);
@@ -426,8 +441,23 @@ describe("Cross-Module Integration Suite (Vault Ecosystem)", () => {
             kdfIterations: 600000,
         };
 
-        // 3. Commit with encrypted payload inside database transaction
-        vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce(reservationRecord as any);
+        // 3. Optimistic locking guard: stale expectedVersion is rejected with conflict
+        vi.mocked(db.query.files.findFirst).mockResolvedValueOnce(encryptedFileRecord as any);
+
+        const staleLockAttempt = await (updateFileContent as any)(
+            testFileId,
+            encryptedPayload,
+            {
+                expectedVersion: 4,
+                expectedETag: "etag-v4",
+                encryptionMetadata,
+            }
+        );
+
+        expect(staleLockAttempt.success).toBe(false);
+        expect(staleLockAttempt.status).toBe("conflict");
+
+        // 4. Persist encrypted payload with matching expectedVersion and fresh IV
         vi.mocked(db.query.files.findFirst).mockResolvedValueOnce(encryptedFileRecord as any);
 
         const committedFileRow = {
@@ -438,40 +468,27 @@ describe("Cross-Module Integration Suite (Vault Ecosystem)", () => {
             etag: "etag-v6",
         };
 
-        const txMock = {
-            update: vi.fn((table: any) => ({
-                set: vi.fn(() => ({
-                    where: vi.fn(() => ({
-                        returning: vi.fn().mockResolvedValue([
-                            table === schema.files
-                                ? committedFileRow
-                                : { id: reservationRecord.id, status: "committed" },
-                        ]),
-                    })),
-                })),
-            })),
-        };
+        const mockUpdateReturning = vi.fn().mockResolvedValueOnce([committedFileRow]);
+        const mockUpdateWhere = vi.fn().mockReturnValue({ returning: mockUpdateReturning });
+        const mockUpdateSet = vi.fn().mockReturnValue({ where: mockUpdateWhere });
+        vi.mocked(db.update).mockReturnValue({ set: mockUpdateSet } as any);
 
-        vi.mocked(txDb.transaction).mockImplementationOnce(async (callback: any) => {
-            return await callback(txMock);
-        });
-
-        const successfulCommit = await commitAIFileOperation({
-            operationId: "op-ai-456",
-            fileId: testFileId,
-            resultContent: encryptedPayload,
-            encryptionMetadata,
-            expectedVersion: 5,
-            expectedETag: "etag-v5",
-        });
+        const successfulCommit = await (updateFileContent as any)(
+            testFileId,
+            encryptedPayload,
+            {
+                expectedVersion: 5,
+                expectedETag: "etag-v5",
+                encryptionMetadata,
+            }
+        );
 
         expect(successfulCommit.success).toBe(true);
-        expect(successfulCommit.status).toBe("committed");
-        if (successfulCommit.success && successfulCommit.status === "committed") {
-            expect(successfulCommit.version).toBe(6);
-        }
+        expect(successfulCommit.version).toBe(6);
+        expect(successfulCommit.data?.content).toBe(encryptedPayload);
+        expect(successfulCommit.data?.encryptionMetadata?.iv).toBe(encResult.iv);
 
-        // 4. Verify decodability of committed AI output
+        // 5. Verify decodability of committed AI output
         const roundTripAI = await decryptEnvelope(
             {
                 version: 1,

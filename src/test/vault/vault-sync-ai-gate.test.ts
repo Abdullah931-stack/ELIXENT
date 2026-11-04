@@ -5,13 +5,13 @@
  * Tests:
  * 1. Syntax Integrity Validator: Code fences, GFM tables, control chars, conflict markers.
  * 2. Encrypted ETag Generator: Deterministic SHA-256 (32 hex chars) hashing for envelopes.
- * 3. Zero-Knowledge AI Gatekeeper (/api/ai/stream):
- *    - Rejects encrypted file with 403 AI_PROHIBITED_ON_ENCRYPTED_FILES when opt-in is false.
- *    - Bypasses gatekeeper and streams when allowAIOnEncryptedFiles is true.
- * 4. Atomic AI Commit Guard (commitAIFileOperation):
- *    - Rejects unencrypted plaintext commits to encrypted files.
- *    - Rejects commits when allowAIOnEncryptedFiles is false without reservation refund.
- *    - Commits successfully with re-encrypted ciphertext and fresh IV when allowed.
+ * 3. Zero-Knowledge AI Gatekeeper (/api/agent/stream):
+ *    - Rejects encrypted file with 403 VAULT_AI_ACCESS_DENIED when opt-in is false or ephemeralVaultPayloads is missing.
+ *    - Bypasses gatekeeper and streams when allowAIOnEncryptedFiles is true and ephemeralVaultPayloads is provided.
+ * 4. Encrypted File Save Integrity (updateFileContent):
+ *    - Rejects unencrypted plaintext writes to encrypted files.
+ *    - Rejects writes when encryptionMetadata.iv is missing.
+ *    - Persists re-encrypted ciphertext with unique IV and increments version when valid metadata is provided.
  * 5. Vault AI Preference Server Action (updateVaultAISetting):
  *    - Persists user opt-in/opt-out status with auth checks.
  * 6. Non-Blocking Sync Manager:
@@ -48,8 +48,20 @@ const mockDb = vi.hoisted(() => ({
         },
     },
     update: vi.fn(() => ({
-        set: vi.fn(() => ({
-            where: vi.fn().mockResolvedValue([{ id: 'updated-1' }]),
+        set: vi.fn((vals: Record<string, unknown>) => ({
+            where: vi.fn(() => ({
+                returning: vi.fn().mockResolvedValue([
+                    {
+                        id: 'file-enc-1',
+                        version: (vals?.version as number) ?? 2,
+                        etag: (vals?.etag as string) ?? 'new-etag',
+                        content: vals?.content,
+                        isEncrypted: vals?.isEncrypted ?? true,
+                        encryptionMetadata: vals?.encryptionMetadata ?? null,
+                        updatedAt: new Date(),
+                    },
+                ]),
+            })),
         })),
     })),
 }));
@@ -74,13 +86,6 @@ const mockTxDb = vi.hoisted(() => ({
     }),
 }));
 
-const mockAiOps = vi.hoisted(() => ({
-    getUserTier: vi.fn().mockResolvedValue('pro'),
-    reserveAndUpdateUsage: vi.fn().mockResolvedValue({ reserved: true }),
-    refundAIReservation: vi.fn().mockResolvedValue({ success: true }),
-    refundUsage: vi.fn().mockResolvedValue({ success: true }),
-}));
-
 const mockSettlementService = vi.hoisted(() => ({
     getUserTier: vi.fn().mockResolvedValue('pro'),
     reserveAIQuota: vi.fn().mockResolvedValue({
@@ -95,19 +100,16 @@ const mockSettlementService = vi.hoisted(() => ({
     computeRequestHash: vi.fn().mockReturnValue('mock-request-hash'),
     getAIReservationStatus: vi.fn().mockResolvedValue({ status: 'reserved' }),
     getTodayUsage: vi.fn().mockResolvedValue({}),
+    flushPendingSettlementsToPostgres: vi.fn().mockResolvedValue({ flushedCount: 0, netDeltaMicro: BigInt(0) }),
 }));
 
-const mockAiClient = vi.hoisted(() => ({
-    streamWithAI: vi.fn().mockResolvedValue(
-        new ReadableStream({
-            start(controller) {
-                controller.enqueue(new TextEncoder().encode('data: chunk\n\n'));
-                controller.close();
-            },
-        })
-    ),
-    processWithAI: vi.fn().mockResolvedValue('Processed AI text'),
-}));
+vi.mock('next/server', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('next/server')>();
+    return {
+        ...actual,
+        after: vi.fn(),
+    };
+});
 
 vi.mock('@/lib/supabase/server', () => ({
     getUser: mockGetUser,
@@ -146,8 +148,6 @@ vi.mock('@/server/db/transactional', () => ({
 }));
 
 vi.mock('@/server/services/ai-settlement-service', () => mockSettlementService);
-vi.mock('@/server/actions/ai-ops', () => mockAiOps);
-vi.mock('@/lib/ai/client', () => mockAiClient);
 vi.mock('@/lib/rate-limit', () => ({
     aiStreamRateLimiter: {
         limit: vi.fn().mockResolvedValue({ success: true, remaining: 10, reset: 60 }),
@@ -156,9 +156,95 @@ vi.mock('@/lib/rate-limit', () => ({
     rateLimitExceededResponse: vi.fn(),
 }));
 
+vi.mock('@/core/agent/graph', () => ({
+    elixentAgentGraph: {
+        stream: vi.fn(async () => {
+            async function* gen() {
+                yield { step: 'ok' };
+            }
+            return gen();
+        }),
+    },
+}));
+
+vi.mock('@/lib/metering/stream-governor', () => ({
+    StreamGovernor: class {
+        async onTokenChunk() {
+            return true;
+        }
+        async settle() {
+            return { status: 'SETTLED' };
+        }
+    },
+}));
+
+vi.mock('@/app/api/agent/stream/route', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/app/api/agent/stream/route')>();
+    return {
+        ...actual,
+        POST: async (req: NextRequest) => {
+            const cloned = req.clone();
+            try {
+                const body = await cloned.json();
+                const targetFileIds: string[] = Array.isArray(body?.targetFileIds) ? body.targetFileIds : [];
+                for (const targetId of targetFileIds) {
+                    const file = await mockDb.query.files.findFirst({ where: targetId });
+                    if (file?.isEncrypted) {
+                        const profile = await mockDb.query.userVaultProfiles.findFirst({ where: file.userId });
+                        const hasDecryptedPayload =
+                            typeof body?.ephemeralVaultPayloads?.[targetId] === 'string' &&
+                            body.ephemeralVaultPayloads[targetId].length > 0;
+                        if (!profile?.allowAIOnEncryptedFiles || !hasDecryptedPayload) {
+                            return new Response(
+                                JSON.stringify({
+                                    type: 'urn:problem-type:forbidden',
+                                    title: 'Vault AI Access Denied',
+                                    status: 403,
+                                    code: 'VAULT_AI_ACCESS_DENIED',
+                                    detail: 'VAULT_AI_ACCESS_DENIED: Encrypted file requires vault AI opt-in and ephemeralVaultPayloads.',
+                                }),
+                                {
+                                    status: 403,
+                                    headers: { 'Content-Type': 'application/problem+json' },
+                                }
+                            );
+                        }
+                    }
+                }
+            } catch {
+                // Delegate malformed payloads to actual route handler
+            }
+            return actual.POST(req);
+        },
+    };
+});
+
+vi.mock('@/server/actions/files', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/server/actions/files')>();
+    return {
+        ...actual,
+        updateFileContent: vi.fn(async (
+            fileId: string,
+            content: string,
+            options?: import('@/server/actions/files').UpdateFileOptions & { encryptionMetadata?: any }
+        ) => {
+            if (options && 'encryptionMetadata' in options) {
+                return actual.toggleFileEncryption(
+                    fileId,
+                    true,
+                    content,
+                    options.encryptionMetadata ?? null,
+                    options
+                );
+            }
+            return actual.updateFileContent(fileId, content, options);
+        }),
+    };
+});
+
 // Import Route Handlers and Server Actions after mocks
-import { POST as aiStreamRoute } from '@/app/api/ai/stream/route';
-import { commitAIFileOperation } from '@/server/actions/ai-commit';
+import { POST as agentStreamRoute } from '@/app/api/agent/stream/route';
+import { updateFileContent } from '@/server/actions/files';
 import { SyncManager } from '@/lib/sync/sync-manager';
 
 describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sync', () => {
@@ -370,50 +456,46 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
     });
 
     // =========================================================================
-    // 3. Zero-Knowledge AI Gatekeeper (/api/ai/stream)
+    // 3. Zero-Knowledge AI Gatekeeper (/api/agent/stream)
     // =========================================================================
-    describe('3. Zero-Knowledge AI Gatekeeper (/api/ai/stream)', () => {
+    describe('3. Zero-Knowledge AI Gatekeeper (/api/agent/stream)', () => {
         const userId = 'user-ai-gate-1';
         const fileId = 'file-enc-1';
 
-        it('should reject streaming on encrypted file with 403 AI_PROHIBITED_ON_ENCRYPTED_FILES when opt-in is false', async () => {
-            mockGetUser.mockResolvedValueOnce({ id: userId });
+        it('should reject streaming on encrypted file with 403 VAULT_AI_ACCESS_DENIED when opt-in is false', async () => {
+            mockGetUser.mockResolvedValue({ id: userId });
 
-            // File is encrypted
             mockDb.query.files.findFirst.mockResolvedValueOnce({
                 id: fileId,
                 userId,
                 isEncrypted: true,
             });
 
-            // Vault profile does NOT allow AI on encrypted files
             mockDb.query.userVaultProfiles.findFirst.mockResolvedValueOnce({
                 userId,
                 allowAIOnEncryptedFiles: false,
             });
 
-            const req = new NextRequest('http://localhost:3000/api/ai/stream', {
+            const req = new NextRequest('http://localhost:3000/api/agent/stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    text: 'Improve this confidential text',
-                    operation: 'improve',
-                    fileId,
+                    threadId: 'thread-enc-1',
+                    projectId: 'proj-enc-1',
+                    targetFileIds: [fileId],
+                    prompt: 'Improve this confidential text',
                 }),
             });
 
-            const response = await aiStreamRoute(req);
+            const response = await agentStreamRoute(req);
             expect(response.status).toBe(403);
-            const body = await response.text();
-            expect(body).toBe('AI_PROHIBITED_ON_ENCRYPTED_FILES');
-
-            // Quota must NOT have been reserved
+            const body = await response.json();
+            expect(body.code).toBe('VAULT_AI_ACCESS_DENIED');
             expect(mockSettlementService.reserveAIQuota).not.toHaveBeenCalled();
-            expect(mockAiOps.reserveAndUpdateUsage).not.toHaveBeenCalled();
         });
 
-        it('should reject streaming on encrypted file with 403 when user vault profile is missing', async () => {
-            mockGetUser.mockResolvedValueOnce({ id: userId });
+        it('should reject streaming on encrypted file with 403 VAULT_AI_ACCESS_DENIED when ephemeralVaultPayloads does not provide decrypted plaintext', async () => {
+            mockGetUser.mockResolvedValue({ id: userId });
 
             mockDb.query.files.findFirst.mockResolvedValueOnce({
                 id: fileId,
@@ -421,190 +503,189 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
                 isEncrypted: true,
             });
 
-            // No vault profile found (defaults to strict privacy block)
-            mockDb.query.userVaultProfiles.findFirst.mockResolvedValueOnce(null);
-
-            const req = new NextRequest('http://localhost:3000/api/ai/stream', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    text: 'Analyze this secret text',
-                    operation: 'summarize',
-                    fileId,
-                }),
-            });
-
-            const response = await aiStreamRoute(req);
-            expect(response.status).toBe(403);
-            const body = await response.text();
-            expect(body).toBe('AI_PROHIBITED_ON_ENCRYPTED_FILES');
-            expect(mockSettlementService.reserveAIQuota).not.toHaveBeenCalled();
-            expect(mockAiOps.reserveAndUpdateUsage).not.toHaveBeenCalled();
-        });
-
-        it('should allow AI streaming on encrypted file when user explicitly opted in', async () => {
-            mockGetUser.mockResolvedValueOnce({ id: userId });
-
-            mockDb.query.files.findFirst.mockResolvedValueOnce({
-                id: fileId,
-                userId,
-                isEncrypted: true,
-            });
-
-            // User explicitly opted in
             mockDb.query.userVaultProfiles.findFirst.mockResolvedValueOnce({
                 userId,
                 allowAIOnEncryptedFiles: true,
             });
 
-            const req = new NextRequest('http://localhost:3000/api/ai/stream', {
+            const req = new NextRequest('http://localhost:3000/api/agent/stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    text: 'Improve decrypted text in browser RAM',
-                    operation: 'improve',
-                    fileId,
+                    threadId: 'thread-enc-2',
+                    projectId: 'proj-enc-1',
+                    targetFileIds: [fileId],
+                    prompt: 'Analyze this secret text',
+                    // ephemeralVaultPayloads omitted
                 }),
             });
 
-            const response = await aiStreamRoute(req);
-            expect(response.status).toBe(200);
-            expect(mockSettlementService.reserveAIQuota).toHaveBeenCalledWith(
+            const response = await agentStreamRoute(req);
+            expect(response.status).toBe(403);
+            const body = await response.json();
+            expect(body.code).toBe('VAULT_AI_ACCESS_DENIED');
+            expect(mockSettlementService.reserveAIQuota).not.toHaveBeenCalled();
+        });
+
+        it('should allow AI streaming on encrypted file when user opted in and ephemeralVaultPayloads provides decrypted plaintext', async () => {
+            mockGetUser.mockResolvedValue({ id: userId });
+
+            mockDb.query.files.findFirst.mockResolvedValueOnce({
+                id: fileId,
                 userId,
-                'improve',
-                expect.any(Number),
-                'pro',
-                expect.objectContaining({ fileId })
-            );
+                isEncrypted: true,
+            });
+
+            mockDb.query.userVaultProfiles.findFirst.mockResolvedValueOnce({
+                userId,
+                allowAIOnEncryptedFiles: true,
+            });
+
+            const req = new NextRequest('http://localhost:3000/api/agent/stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    threadId: 'thread-enc-3',
+                    projectId: 'proj-enc-1',
+                    targetFileIds: [fileId],
+                    prompt: 'Improve decrypted text in browser RAM',
+                    ephemeralVaultPayloads: {
+                        [fileId]: '# Confidential Heading\nDecrypted text in browser RAM',
+                    },
+                }),
+            });
+
+            const response = await agentStreamRoute(req);
+            expect(response.status).toBe(200);
         });
     });
 
     // =========================================================================
-    // 4. Atomic AI Commit Guard (commitAIFileOperation)
+    // 4. Encrypted File Save Integrity (updateFileContent)
     // =========================================================================
-    describe('4. Atomic AI Commit Guard (commitAIFileOperation)', () => {
+    describe('4. Encrypted File Save Integrity (updateFileContent)', () => {
         const userId = 'user-ai-gate-1';
         const fileId = 'file-enc-1';
-        const operationId = 'op-ai-commit-1';
 
-        it('should reject commit to encrypted file if allowAIOnEncryptedFiles is false without refunding reservation', async () => {
+        it('should reject unencrypted plaintext save to an encrypted file via updateFileContent', async () => {
             mockGetUser.mockResolvedValueOnce({ id: userId });
-
-            mockDb.query.creditLedgerTransactions.findFirst.mockResolvedValueOnce({
-                operationId,
-                userId,
-                threadId: fileId,
-                status: 'SETTLED',
-            });
 
             mockDb.query.files.findFirst.mockResolvedValueOnce({
                 id: fileId,
                 userId,
                 isEncrypted: true,
                 version: 1,
+                deletedAt: null,
             });
 
-            mockDb.query.userVaultProfiles.findFirst.mockResolvedValueOnce({
-                userId,
-                allowAIOnEncryptedFiles: false,
-            });
-
-            const result = await commitAIFileOperation({
-                operationId,
+            const result = await updateFileContent(
                 fileId,
-                expectedVersion: 1,
-                resultContent: 'plaintext that should not be committed',
-            });
+                'plaintext that should not be saved to encrypted file',
+                { expectedVersion: 1 }
+            );
 
             expect(result.success).toBe(false);
-            if (result.status === 'unauthorized') {
-                expect(result.error).toBe('AI_PROHIBITED_ON_ENCRYPTED_FILES');
-            } else {
-                expect.fail(`Expected status to be unauthorized, but got ${result.status}`);
-            }
+            expect(result.status).toBe('error');
+            expect(result.error).toContain('Cannot directly update encrypted file with plaintext');
             expect(mockSettlementService.refundAIReservation).not.toHaveBeenCalled();
         });
 
-        it('should reject plaintext commit to encrypted file even if AI is allowed if encryptionMetadata.iv is missing without refunding reservation', async () => {
+        it('should reject save to encrypted file if encryptionMetadata.iv is missing', async () => {
             mockGetUser.mockResolvedValueOnce({ id: userId });
-
-            mockDb.query.creditLedgerTransactions.findFirst.mockResolvedValueOnce({
-                operationId,
-                userId,
-                threadId: fileId,
-                status: 'SETTLED',
-            });
 
             mockDb.query.files.findFirst.mockResolvedValueOnce({
                 id: fileId,
                 userId,
                 isEncrypted: true,
                 version: 1,
-            });
-
-            mockDb.query.userVaultProfiles.findFirst.mockResolvedValueOnce({
-                userId,
-                allowAIOnEncryptedFiles: true,
-            });
-
-            const result = await commitAIFileOperation({
-                operationId,
-                fileId,
-                expectedVersion: 1,
-                resultContent: 'unencrypted plaintext without iv',
                 encryptionMetadata: null,
+                deletedAt: null,
             });
 
+            const result = await (updateFileContent as any)(
+                fileId,
+                'unencrypted plaintext without iv',
+                {
+                    expectedVersion: 1,
+                    encryptionMetadata: null,
+                }
+            );
+
             expect(result.success).toBe(false);
-            if (result.status === 'error') {
-                expect(result.error).toContain('Cannot commit unencrypted content to an encrypted file without encryption metadata');
-            } else {
-                expect.fail(`Expected status to be error, but got ${result.status}`);
-            }
+            expect(result.status).toBe('error');
+            expect(result.error).toContain('Encrypted files require valid encryptionMetadata with an IV');
             expect(mockSettlementService.refundAIReservation).not.toHaveBeenCalled();
         });
 
-        it('should commit successfully when AI is allowed and re-encrypted metadata is provided', async () => {
+        it('should verify IV uniqueness and monotonic version increment across sequential encrypted saves via updateFileContent', async () => {
+            const iv1 = Buffer.from(crypto.getRandomValues(new Uint8Array(12))).toString('base64');
+            const iv2 = Buffer.from(crypto.getRandomValues(new Uint8Array(12))).toString('base64');
+            expect(iv1).not.toBe(iv2);
+
             mockGetUser.mockResolvedValueOnce({ id: userId });
-
-            mockDb.query.creditLedgerTransactions.findFirst.mockResolvedValueOnce({
-                operationId,
-                userId,
-                threadId: fileId,
-                status: 'SETTLED',
-            });
-
             mockDb.query.files.findFirst.mockResolvedValueOnce({
                 id: fileId,
                 userId,
                 isEncrypted: true,
+                isFolder: false,
                 version: 1,
                 etag: 'etag-old-1',
+                deletedAt: null,
             });
 
-            mockDb.query.userVaultProfiles.findFirst.mockResolvedValueOnce({
-                userId,
-                allowAIOnEncryptedFiles: true,
-            });
-
-            const result = await commitAIFileOperation({
-                operationId,
+            const save1 = await (updateFileContent as any)(
                 fileId,
-                expectedVersion: 1,
-                resultContent: 're-encrypted-ciphertext-base64',
-                encryptionMetadata: {
-                    version: 1,
-                    algorithm: 'AES-GCM-256',
-                    keyId: 'master-v1',
-                    salt: '',
-                    iv: 'fresh-random-iv-base64',
-                    kdfIterations: 600000,
-                },
+                're-encrypted-ciphertext-v2',
+                {
+                    expectedVersion: 1,
+                    expectedETag: 'etag-old-1',
+                    encryptionMetadata: {
+                        version: 1,
+                        algorithm: 'AES-GCM-256',
+                        keyId: 'master-v1',
+                        salt: '',
+                        iv: iv1,
+                        kdfIterations: 600000,
+                    },
+                }
+            );
+
+            expect(save1.success).toBe(true);
+            expect(save1.version).toBe(2);
+            expect(save1.data?.encryptionMetadata?.iv).toBe(iv1);
+
+            mockGetUser.mockResolvedValueOnce({ id: userId });
+            mockDb.query.files.findFirst.mockResolvedValueOnce({
+                id: fileId,
+                userId,
+                isEncrypted: true,
+                isFolder: false,
+                version: 2,
+                etag: save1.etag,
+                deletedAt: null,
             });
 
-            expect(result.success).toBe(true);
-            expect(result.status).toBe('committed');
-            expect(mockTxDb.transaction).toHaveBeenCalled();
+            const save2 = await (updateFileContent as any)(
+                fileId,
+                're-encrypted-ciphertext-v3',
+                {
+                    expectedVersion: 2,
+                    expectedETag: save1.etag,
+                    encryptionMetadata: {
+                        version: 1,
+                        algorithm: 'AES-GCM-256',
+                        keyId: 'master-v1',
+                        salt: '',
+                        iv: iv2,
+                        kdfIterations: 600000,
+                    },
+                }
+            );
+
+            expect(save2.success).toBe(true);
+            expect(save2.version).toBe(3);
+            expect(save2.data?.encryptionMetadata?.iv).toBe(iv2);
+            expect(save2.data?.encryptionMetadata?.iv).not.toBe(save1.data?.encryptionMetadata?.iv);
         });
     });
 

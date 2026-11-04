@@ -5,7 +5,7 @@
  * Real boundaries:
  * 1. REAL database tables (`user_vault_profiles`, `files`, `credit_ledger_transactions`, `users`).
  * 2. REAL deterministic AAD binding `vault:file:${userId}:${fileId}` persistence.
- * 3. REAL Zero-Knowledge AI gatekeeper in `/api/ai/stream` returning HTTP 403.
+ * 3. REAL Zero-Knowledge AI gatekeeper in `CloudPostgresWorkspaceProvider` returning HTTP 403 (`VAULT_AI_ACCESS_DENIED`).
  * 4. REAL optimistic concurrency on ciphertext mutations.
  * 5. REAL cross-tenant isolation and 404 anti-enumeration.
  *
@@ -13,7 +13,6 @@
  */
 
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
-import { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import * as schema from "@/server/db/schema";
@@ -26,7 +25,9 @@ import {
     getFile,
     toggleFileEncryption,
 } from "@/server/actions/file-ops";
-import { POST as aiStreamPOST } from "@/app/api/ai/stream/route";
+import { CloudPostgresWorkspaceProvider } from "@/core/workspace/cloud-provider";
+import { VaultAIAccessDeniedError, WorkspaceFileAccessDeniedError } from "@/core/workspace/provider";
+import { runWithEphemeralVaultScope } from "@/lib/vault/ephemeral-memory-map";
 
 const USER_A_ID = "32323232-3232-3232-3232-323232323232";
 const USER_B_ID = "33333333-3333-3333-3333-333333333333";
@@ -125,21 +126,14 @@ describe("LIVE: Encrypted Vault & Zero-Knowledge Security on isolated branch", (
         expect(dbFile.isEncrypted).toBe(true);
         expect(dbFile.content).toBe(ciphertextPayload);
 
-        // 3. Invoke /api/ai/stream on this encrypted file -> must be blocked with 403
-        const streamReq = new NextRequest("http://localhost:3000/api/ai/stream", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                fileId,
-                text: "Suggest improvements for this text",
-                operation: "improve",
-            }),
+        // 3. Invoke CloudPostgresWorkspaceProvider on this encrypted file -> must be blocked with 403 VAULT_AI_ACCESS_DENIED
+        const workspaceProvider = new CloudPostgresWorkspaceProvider({
+            userId: USER_A_ID,
+            db: testDb,
         });
-
-        const streamRes = await aiStreamPOST(streamReq);
-        expect(streamRes.status).toBe(403);
-        const errorText = await streamRes.text();
-        expect(errorText).toContain("AI_PROHIBITED_ON_ENCRYPTED_FILES");
+        await expect(workspaceProvider.listHeadingsTree([fileId])).rejects.toThrow(
+            VaultAIAccessDeniedError
+        );
 
         // 4. Assert ZERO credit ledger transactions created in DB and ZERO quota consumed
         const transactions = await testDb
@@ -149,7 +143,7 @@ describe("LIVE: Encrypted Vault & Zero-Knowledge Security on isolated branch", (
         expect(transactions.length).toBe(0);
     });
 
-    it("allows AI stream bypass when user explicitly opts in via updateVaultAISetting", async () => {
+    it("allows AI workspace access with ephemeral vault pointer redaction when user explicitly opts in via updateVaultAISetting", async () => {
         // 1. Initialize vault profile
         await createUserVaultProfile({
             encryptedMasterKey: "vault-enc-key-base64",
@@ -174,31 +168,24 @@ describe("LIVE: Encrypted Vault & Zero-Knowledge Security on isolated branch", (
             iv: "iv-1",
         });
 
-        // 4. Invoke /api/ai/stream -> does NOT return 403 AI_PROHIBITED_ON_ENCRYPTED_FILES
-        const abortController = new AbortController();
-        const timeoutTimer = setTimeout(() => abortController.abort(), 5_000);
-
-        const streamReq = new NextRequest("http://localhost:3000/api/ai/stream", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            signal: abortController.signal,
-            body: JSON.stringify({
-                fileId,
-                text: "Sample short text to improve",
-                operation: "improve",
-            }),
+        // 4. Invoke CloudPostgresWorkspaceProvider with ephemeral decrypted payload -> succeeds and returns vault_ref:// pointer
+        const workspaceProvider = new CloudPostgresWorkspaceProvider({
+            userId: USER_A_ID,
+            ephemeralVaultPayloads: {
+                [fileId]: "# Opted-In Heading\nSample short text to improve",
+            },
+            db: testDb,
         });
 
-        const streamRes = await aiStreamPOST(streamReq);
-        clearTimeout(timeoutTimer);
+        await runWithEphemeralVaultScope(async () => {
+            const headingsTree = await workspaceProvider.listHeadingsTree([fileId]);
+            expect(headingsTree[fileId]).toHaveLength(1);
+            expect(headingsTree[fileId][0].headingSlug).toBe("opted-in-heading");
 
-        // It bypassed the 403 gate! (May proceed to quota check / stream, status != 403)
-        expect(streamRes.status).not.toBe(403);
-
-        // Clean up stream to release background provider sockets immediately
-        if (streamRes.body) {
-            await streamRes.body.cancel();
-        }
+            const section = await workspaceProvider.readSectionByHeading(fileId, "opted-in-heading");
+            expect(section.isVaultRef).toBe(true);
+            expect(section.contentOrVaultRef).toBe(`vault_ref://${fileId}#opted-in-heading`);
+        });
     }, 15_000);
 
     it("enforces optimistic concurrency control on encrypted file updates", async () => {
@@ -260,18 +247,13 @@ describe("LIVE: Encrypted Vault & Zero-Knowledge Security on isolated branch", (
         expect(toggleRes.success).toBe(false);
         expect(toggleRes.status).toBe("not_found");
 
-        // 3. User B POST /api/ai/stream targeting User A's file -> 404 Not Found
-        const streamReq = new NextRequest("http://localhost:3000/api/ai/stream", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                fileId,
-                text: "Attacker payload",
-                operation: "correct",
-            }),
+        // 3. User B workspace provider targeting User A's file -> 404 Not Found
+        const foreignWorkspaceProvider = new CloudPostgresWorkspaceProvider({
+            userId: USER_B_ID,
+            db: testDb,
         });
-
-        const streamRes = await aiStreamPOST(streamReq);
-        expect(streamRes.status).toBe(404);
+        await expect(foreignWorkspaceProvider.listHeadingsTree([fileId])).rejects.toThrow(
+            WorkspaceFileAccessDeniedError
+        );
     });
 });

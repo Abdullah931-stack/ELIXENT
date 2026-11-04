@@ -27,17 +27,6 @@ vi.mock("@/server/actions/file-ops", () => ({
     deleteFile: vi.fn(),
 }));
 
-vi.mock("@/server/actions/ai-commit", () => ({
-    commitAIFileOperation: vi.fn(),
-    refundAIReservation: vi.fn().mockResolvedValue({ success: true }),
-}));
-
-vi.mock("@/server/actions/ai-ops", () => ({
-    commitAIReservation: vi.fn().mockResolvedValue({ committed: true }),
-    refundAIReservation: vi.fn().mockResolvedValue({ refunded: true }),
-    getAIReservationStatus: vi.fn(),
-}));
-
 // Manual-callback Agent SSE consumer mock
 import type { StreamHandlerOptions } from "@/lib/ai/stream-handler";
 const mockConsumeAgentStream = vi.fn();

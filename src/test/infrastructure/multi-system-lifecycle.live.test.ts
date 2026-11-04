@@ -24,11 +24,12 @@ import { importFile } from "@/server/actions/import-file";
 import {
     getFile,
     toggleFileEncryption,
+    updateFileContent,
 } from "@/server/actions/file-ops";
-import { reserveAndUpdateUsage } from "@/server/services/ai-settlement-service";
-import { commitAIFileOperation } from "@/server/actions/ai-commit";
+import { reserveAndUpdateUsage, commitAIReservation } from "@/server/services/ai-settlement-service";
 import { createUserVaultProfile } from "@/server/actions/vault-actions";
-import { POST as aiStreamPOST } from "@/app/api/ai/stream/route";
+import { CloudPostgresWorkspaceProvider } from "@/core/workspace/cloud-provider";
+import { VaultAIAccessDeniedError, WorkspaceFileAccessDeniedError } from "@/core/workspace/provider";
 import { POST as stripeWebhookPOST } from "@/app/api/stripe/webhook/route";
 import { stripe } from "@/lib/stripe";
 
@@ -185,17 +186,15 @@ describe("LIVE: Cross-System Multi-System End-to-End Lifecycle on isolated branc
 | :--- | :--- |
 | Phase 18 | مكتملة وموثقة |
 `;
-        const commitRes = await commitAIFileOperation({
-            fileId,
-            operationId,
+        const commitSettlementRes = await commitAIReservation(operationId, wordCount);
+        expect(commitSettlementRes.committed).toBe(true);
+
+        const commitRes = await updateFileContent(fileId, aiImprovedContent, {
             expectedVersion: 1,
-            resultContent: aiImprovedContent,
+            operationId,
         });
         expect(commitRes.success).toBe(true);
-        expect(commitRes.status).toBe("committed");
-        if (commitRes.status === "committed") {
-            expect(commitRes.version).toBe(2);
-        }
+        expect(commitRes.data?.version).toBe(2);
 
         // Check persisted DB state after atomic commit
         const [fileV2] = await testDb.select().from(schema.files).where(eq(schema.files.id, fileId));
@@ -207,7 +206,7 @@ describe("LIVE: Cross-System Multi-System End-to-End Lifecycle on isolated branc
             .from(schema.creditLedgerTransactions)
             .where(eq(schema.creditLedgerTransactions.operationId, operationId));
         if (resRowCommitted) {
-            expect(resRowCommitted.status).toBeDefined();
+            expect(resRowCommitted.status).toBe("SETTLED");
         }
 
         // =========================================================================
@@ -247,19 +246,13 @@ describe("LIVE: Cross-System Multi-System End-to-End Lifecycle on isolated branc
         // =========================================================================
         // STAGE 5: Zero-Knowledge AI Gatekeeper HTTP 403 Shield
         // =========================================================================
-        const streamReq = new NextRequest("http://localhost:3000/api/ai/stream", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                fileId,
-                text: "Attempt to process ciphertext with AI",
-                operation: "improve",
-            }),
+        const ownerWorkspaceProvider = new CloudPostgresWorkspaceProvider({
+            userId: USER_ID,
+            db: testDb,
         });
-        const streamRes = await aiStreamPOST(streamReq);
-        expect(streamRes.status).toBe(403);
-        const errText = await streamRes.text();
-        expect(errText).toContain("AI_PROHIBITED_ON_ENCRYPTED_FILES");
+        await expect(ownerWorkspaceProvider.listHeadingsTree([fileId])).rejects.toThrow(
+            VaultAIAccessDeniedError
+        );
 
         // Assert zero mutation to encrypted file
         const [fileV3Unchanged] = await testDb.select().from(schema.files).where(eq(schema.files.id, fileId));
@@ -343,17 +336,13 @@ describe("LIVE: Cross-System Multi-System End-to-End Lifecycle on isolated branc
         expect(foreignToggleRes.success).toBe(false);
         expect(foreignToggleRes.status).toBe("not_found");
 
-        // 3. Foreign AI stream returns 404 Not Found
-        const foreignStreamReq = new NextRequest("http://localhost:3000/api/ai/stream", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                fileId,
-                text: "Unauthorized attempt",
-                operation: "correct",
-            }),
+        // 3. Foreign workspace provider file access returns 404 Not Found
+        const foreignWorkspaceProvider = new CloudPostgresWorkspaceProvider({
+            userId: FOREIGN_USER_ID,
+            db: testDb,
         });
-        const foreignStreamRes = await aiStreamPOST(foreignStreamReq);
-        expect(foreignStreamRes.status).toBe(404);
+        await expect(foreignWorkspaceProvider.listHeadingsTree([fileId])).rejects.toThrow(
+            WorkspaceFileAccessDeniedError
+        );
     });
 });

@@ -27,10 +27,11 @@ import {
     getUserFiles,
 } from "@/server/actions/file-ops";
 import { importFile } from "@/server/actions/import-file";
-import { commitAIFileOperation } from "@/server/actions/ai-commit";
-import { getAIReservationStatus } from "@/server/actions/ai-ops";
+import { getAIReservationStatus } from "@/server/services/ai-settlement-service";
 import { syncUserToDatabase } from "@/server/actions/auth-actions";
-import { POST as aiStreamPOST } from "@/app/api/ai/stream/route";
+import { POST as agentStreamPOST } from "@/app/api/agent/stream/route";
+import { CloudPostgresWorkspaceProvider } from "@/core/workspace/cloud-provider";
+import { WorkspaceFileAccessDeniedError } from "@/core/workspace/provider";
 import { NextRequest } from "next/server";
 
 const USER_A_ID = "13131313-1313-1313-1313-131313131313";
@@ -272,7 +273,7 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
             });
 
             currentSessionUser = { id: USER_A_ID, email: "user-a-phase12@example.com" };
-            const statusResult = await getAIReservationStatus(opId);
+            const statusResult = await getAIReservationStatus(opId, USER_A_ID);
 
             expect(statusResult.found).toBe(false);
             if (!statusResult.found) {
@@ -280,7 +281,7 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
             }
         });
 
-        it("[DB] commitAIFileOperation: returns reservation_not_found when committing foreign reservation", async () => {
+        it("[DB] updateFileContent with operationId: returns not_found when committing into foreign file with foreign reservation", async () => {
             const opId = `op_b_${randomUUID()}`;
             const fileId = randomUUID();
 
@@ -305,64 +306,58 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
             });
 
             currentSessionUser = { id: USER_A_ID, email: "user-a-phase12@example.com" };
-            const commitResult = await commitAIFileOperation({
-                operationId: opId,
-                fileId,
+            const commitResult = await updateFileContent(fileId, "Attacker payload", {
                 expectedVersion: 1,
-                resultContent: "Attacker payload",
+                operationId: opId,
             });
 
             expect(commitResult.success).toBe(false);
-            expect(commitResult.status).toBe("reservation_not_found");
+            expect(commitResult.status).toBe("not_found");
+
+            const foreignReservationStatus = await getAIReservationStatus(opId, USER_A_ID);
+            expect(foreignReservationStatus).toEqual({ found: false, reason: "not_found" });
         });
 
-        it("[DB] POST /api/ai/stream: rejects stream initiation with 404 if fileId belongs to another user", async () => {
+        it("[DB] CloudPostgresWorkspaceProvider: rejects workspace file access with 404 if fileId belongs to another user", async () => {
             const userBFileId = randomUUID();
             await testDb.insert(schema.files).values({
                 id: userBFileId,
                 userId: USER_B_ID,
                 title: "User B Private File",
                 isFolder: false,
-                content: "Secret content",
+                content: "# Secret Heading\nSecret content",
                 createdAt: new Date(),
                 updatedAt: new Date(),
             });
 
-            currentSessionUser = { id: USER_A_ID, email: "user-a-phase12@example.com" };
-
-            const request = new NextRequest("http://localhost/api/ai/stream", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    text: "Please summarize this document",
-                    operation: "summarize",
-                    fileId: userBFileId,
-                }),
+            const provider = new CloudPostgresWorkspaceProvider({
+                userId: USER_A_ID,
+                db: testDb,
             });
 
-            const response = await aiStreamPOST(request);
-            expect(response.status).toBe(404);
-            const textResponse = await response.text();
-            expect(textResponse).toContain("File not found");
+            await expect(provider.listHeadingsTree([userBFileId])).rejects.toThrow(
+                WorkspaceFileAccessDeniedError
+            );
         });
 
-        it("POST /api/ai/stream: rejects stream initiation with 400 if fileId is malformed or not a string", async () => {
+        it("POST /api/agent/stream: rejects stream initiation with 400 if targetFileIds contains non-string entries", async () => {
             currentSessionUser = { id: USER_A_ID, email: "user-a-phase12@example.com" };
 
-            const request = new NextRequest("http://localhost/api/ai/stream", {
+            const request = new NextRequest("http://localhost/api/agent/stream", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    text: "Please summarize this document",
-                    operation: "summarize",
-                    fileId: 12345, // invalid type
+                    threadId: "thread-cross-user",
+                    projectId: "proj-cross-user",
+                    prompt: "Please summarize this document",
+                    targetFileIds: [12345], // invalid type
                 }),
             });
 
-            const response = await aiStreamPOST(request);
+            const response = await agentStreamPOST(request);
             expect(response.status).toBe(400);
-            const textResponse = await response.text();
-            expect(textResponse).toContain("Invalid request: fileId must be a non-empty string");
+            const jsonResponse = await response.json();
+            expect(jsonResponse.code).toBe("VALIDATION_ERROR");
         });
     });
 
@@ -418,11 +413,18 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
             expect(getFilesRes.success).toBe(false);
             expect(getFilesRes.status).toBe("unauthorized");
 
-            const statusRes = await getAIReservationStatus("any_op");
-            expect(statusRes.found).toBe(false);
-            if (!statusRes.found) {
-                expect(statusRes.reason).toBe("unauthorized");
-            }
+            const unauthStreamReq = new NextRequest("http://localhost/api/agent/stream", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    threadId: "thread-unauth",
+                    projectId: "proj-unauth",
+                    prompt: "Test unauthenticated",
+                    targetFileIds: ["file-1"],
+                }),
+            });
+            const unauthStreamRes = await agentStreamPOST(unauthStreamReq);
+            expect(unauthStreamRes.status).toBe(401);
         });
     });
 });
