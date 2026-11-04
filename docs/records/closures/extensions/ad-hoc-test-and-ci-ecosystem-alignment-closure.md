@@ -60,11 +60,11 @@ flowchart TD
 ### A. AI Domain Server Action Modernization & SQL Mock Purge
 - **Files Modified:** [`src/test/ai/ai-ops.integrity.test.ts`](../../../../src/test/ai/ai-ops.integrity.test.ts), [`src/test/ai/ai-ops.refund.test.ts`](../../../../src/test/ai/ai-ops.refund.test.ts).
 - **Core Action:** Completely removed duplicate mock SQL helper functions (`mockGetTodayUsage`, `mockReserveUsage`, `mockRefundUsage`) that duplicated server business logic. Tests now import and invoke real production server actions (`getTodayUsage`, `reserveAndUpdateUsage`, `refundAIReservation`, `commitAIReservation`) directly against the isolated test database branch via lazy dynamic client binding.
-- **Production Boundary:** Added `export` to `getTodayUsage` in [`src/server/actions/ai-ops.ts`](../../../../src/server/actions/ai-ops.ts) and removed Vitest `.mock` reflection in `getActiveDb()`.
+- **Production Boundary:** Added `export` to `getTodayUsage` in `src/server/actions/ai-ops.ts` and removed Vitest `.mock` reflection in `getActiveDb()`.
 
 ### B. Mathematical Conservation & Pure State Reducer Verification
 - **Files Modified:** [`src/test/ai/ai-quota-idempotency.test.ts`](../../../../src/test/ai/ai-quota-idempotency.test.ts).
-- **Core Action:** Refactored fragile, timer-dependent tests into 100% deterministic unit tests of [`src/lib/ai/quota-settlement-reducer.ts`](../../../../src/lib/ai/quota-settlement-reducer.ts). Verified conservation laws ($U_{final} + R_{active} \equiv \text{constant}$), complete transition matrices across 4 lifecycle states, and conflict resolution guards in $<20\text{ms}$.
+- **Core Action:** Refactored fragile, timer-dependent tests into 100% deterministic unit tests of `src/lib/ai/quota-settlement-reducer.ts`. Verified conservation laws ($U_{final} + R_{active} \equiv \text{constant}$), complete transition matrices across 4 lifecycle states, and conflict resolution guards in $<20\text{ms}$.
 
 ### C. Test Suite Consolidation & Deduplication
 - **Duplicate Merges & Deletions:**
