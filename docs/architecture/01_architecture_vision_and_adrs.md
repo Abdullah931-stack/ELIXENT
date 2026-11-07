@@ -5,7 +5,7 @@
 | **Document ID** | `ELIXENT-ARCH-01` |
 | **Classification** | `LIVING SPEC & ADR REGISTRY` (per `docs/DOCUMENTATION_GUIDELINES.md` §5) |
 | **Version & Status** | `v3.1 — Accepted` |
-| **SSOT Scope** | Defines the transformation vision from `LUGX v1.46.3` to `Elixent`, the overall system container architecture (`C4 Container View`), and the numbered Architectural Decision Record registry (`ADR-001` through `ADR-005`) including trade-offs and future migration triggers (`Migration Triggers`). |
+| **SSOT Scope** | Defines the transformation vision from `LUGX v1.46.3` to `Elixent`, the overall system container architecture (`C4 Container View`), and the numbered Architectural Decision Record registry (`ADR-001` through `ADR-005`, amended by standalone `ADR-006` and `ADR-007`) including trade-offs and future migration triggers (`Migration Triggers`). |
 | **Suite Index** | • [02_agent_orchestration_and_decision_engine](./02_agent_orchestration_and_decision_engine.md)<br>• [03_workspace_ast_editor_and_vault_integration](./03_workspace_ast_editor_and_vault_integration.md)<br>• [04_credit_metering_and_settlement_architecture](./04_credit_metering_and_settlement_architecture.md)<br>• [05_data_contracts_and_lugx_migration_plan](./05_data_contracts_and_lugx_migration_plan.md) |
 
 ## 1. Overview & Strategic Context
@@ -171,3 +171,8 @@ In compliance with the architectural decision and trade-off documentation rules 
   - _Relying on `PostgresSaver` alone to store project decisions:_ Traps architectural decisions inside a single conversation thread (`thread_id`) and forces the user to re-answer the same clarifying questions in every new session.
   - _Scrubbing state only before graph completion:_ Unsafe because `LangGraph` automatically persists a checkpoint after **every single node (`Super-step`)**, not merely at the end of the graph execution.
 - **Migration Trigger:** In the `Electron Desktop` runtime, replace `PostgresSaver` with a local `SqliteSaver` encrypted via `SQLCipher` on the user's machine, while keeping the `AgentGraphState` interface and `project_decision_ledger` contract $100\%$ identical.
+
+### 3.6. Standalone Framework Migration ADRs (Amending ADR-001 through ADR-005)
+
+- **`ADR-006`:** [Replacing Next.js 16 (App Router) with Unified Web-Standard Architecture (Vite 6 SPA + TanStack Router + Hono RPC)](./adr_006_unified_vite_tanstack_hono_rpc_architecture.md) — Amends §1.1 and §2 container architecture to decouple the presentation and server layers into a Vite 6 SPA with TanStack Router and a Web-standard Hono RPC backend.
+- **`ADR-007`:** [Enforcing Dual-Plane Contract Separation (ICloudControlPlane vs. IWorkspaceProvider) and Request-Scoped AsyncLocalStorage Context Isolation](./adr_007_dual_plane_separation_and_als_request_context.md) — Establishes request-scoped `AsyncLocalStorage` context isolation (`src/server/context/request-context.ts`) and separates Cloud Control Plane contracts from runtime-injected Workspace Plane providers.

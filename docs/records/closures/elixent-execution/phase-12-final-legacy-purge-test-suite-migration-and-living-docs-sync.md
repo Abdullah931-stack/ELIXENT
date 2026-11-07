@@ -6,7 +6,7 @@
 | **Version** | `v0.12.0` |
 | **Status** | `CLOSED / VERIFIED` |
 | **Closure Date** | 2026-11-04 |
-| **Governing Plan** | [`docs/Plans/ELIXENT_EXECUTION_PLAN.md`](../../../Plans/ELIXENT_EXECUTION_PLAN.md) |
+| **Governing Plan** | [`docs/records/plans/elixent-agentic-architecture-execution-plan.md`](../../plans/elixent-agentic-architecture-execution-plan.md) |
 | **SSOT Architecture Specs** | [`01_architecture_vision_and_adrs.md`](../../../architecture/01_architecture_vision_and_adrs.md) · [`02_agent_orchestration_and_decision_engine.md`](../../../architecture/02_agent_orchestration_and_decision_engine.md) · [`03_workspace_ast_editor_and_vault_integration.md`](../../../architecture/03_workspace_ast_editor_and_vault_integration.md) · [`04_credit_metering_and_settlement_architecture.md`](../../../architecture/04_credit_metering_and_settlement_architecture.md) · [`05_data_contracts_and_lugx_migration_plan.md`](../../../architecture/05_data_contracts_and_lugx_migration_plan.md) |
 
 ---

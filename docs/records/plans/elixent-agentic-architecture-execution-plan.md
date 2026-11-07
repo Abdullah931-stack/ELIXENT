@@ -6,7 +6,7 @@
 | **Classification**          | `ACTIVE TRACKED EXECUTION PLAN` (per `docs/DOCUMENTATION_GUIDELINES.md` §2 & §3)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | **Version & Status**        | `v3.3 — Approved for Atomic Execution in 12 Phases (12 Commit-Sized SRP Phases + Sub-Agent Waves)`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | **Baseline Repository**     | `LUGX v1.46.3` (`1,077 Unit/Contract Tests` + `117 Live Integration Tests` — with full commitment to `Zero Regression Tolerance`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| **SSOT Architecture Suite** | • [01_architecture_vision_and_adrs](../architecture/01_architecture_vision_and_adrs.md) (`ELIXENT-ARCH-01 v3.1`)<br>• [02_agent_orchestration_and_decision_engine](../architecture/02_agent_orchestration_and_decision_engine.md) (`ELIXENT-ARCH-02 v3.1`)<br>• [03_workspace_ast_editor_and_vault_integration](../architecture/03_workspace_ast_editor_and_vault_integration.md) (`ELIXENT-ARCH-03 v3.2`)<br>• [04_credit_metering_and_settlement_architecture](../architecture/04_credit_metering_and_settlement_architecture.md) (`ELIXENT-ARCH-04 v3.0`)<br>• [05_data_contracts_and_lugx_migration_plan](../architecture/05_data_contracts_and_lugx_migration_plan.md) (`ELIXENT-ARCH-05 v3.2`) |
+| **SSOT Architecture Suite** | • [01_architecture_vision_and_adrs](../../architecture/01_architecture_vision_and_adrs.md) (`ELIXENT-ARCH-01 v3.1`)<br>• [02_agent_orchestration_and_decision_engine](../../architecture/02_agent_orchestration_and_decision_engine.md) (`ELIXENT-ARCH-02 v3.1`)<br>• [03_workspace_ast_editor_and_vault_integration](../../architecture/03_workspace_ast_editor_and_vault_integration.md) (`ELIXENT-ARCH-03 v3.2`)<br>• [04_credit_metering_and_settlement_architecture](../../architecture/04_credit_metering_and_settlement_architecture.md) (`ELIXENT-ARCH-04 v3.0`)<br>• [05_data_contracts_and_lugx_migration_plan](../../architecture/05_data_contracts_and_lugx_migration_plan.md) (`ELIXENT-ARCH-05 v3.2`) |
 
 ## 1. Executive Purpose & Execution Protocol
 
@@ -185,7 +185,7 @@ flowchart TB
 > **Phase Identifier:** `Phase 1 — Core Cryptographic, Sync & Server Actions Hardening`  
 > **Status:** `CLOSED / EXECUTED` (Commit Gate 1 Satisfied & Verified)  
 > **Single Responsibility Principle (`SRP`):** Close the seven vulnerabilities discovered in the current `LUGX v1.46.3` core and prune dead functions in encryption and conflict resolution without touching database schemas or installing new packages, ensuring the first commit is a clean, completely isolated core hardening baseline.  
-> **Closure Record:** [`docs/records/closures/elixent-execution/phase-01-core-hardening.md`](../records/closures/elixent-execution/phase-01-core-hardening.md)  
+> **Closure Record:** [`docs/records/closures/elixent-execution/phase-01-core-hardening.md`](../closures/elixent-execution/phase-01-core-hardening.md)  
 > **Pre-Phase 1 Baseline State:** Raw `LUGX v1.46.3` repository as currently checked out on the main branch.
 
 #### Phase 1 Sub-Agent Topology
@@ -303,10 +303,10 @@ flowchart LR
   ```
 - **Gate Verdict:** `CLOSED / EXECUTED` — 52 test suites (739 tests) passing 100%, TypeScript check clean (0 errors), `Commit Gate 1` fully satisfied.
 
-### [Phase 2: NPM Dependencies, `getPgPool()` Export & Non-Breaking Database Schema Migration (`0013`)]
+### [Phase 2: NPM Dependencies, `getPgPool()` Export & Non-Breaking Database Schema Migration (`0013`)] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 2 — NPM Dependencies, Pool Export & Non-Breaking Database Schema Migration`  
-> **Status:** `CLOSED / EXECUTED` ✅ ([Closure Dossier](../records/closures/elixent-execution/phase-02-dependencies-pool-and-schema-migration.md))  
+> **Status:** `CLOSED / EXECUTED` ✅ ([Closure Dossier](../closures/elixent-execution/phase-02-dependencies-pool-and-schema-migration.md))  
 > **Gate Verdict:** `CLOSED / EXECUTED` — 90 unit suites (1081 tests), 21 live suites (118 tests) passing 100%, ESLint clean (0 errors, 0 warnings), TypeScript check clean (0 errors), Commit Gate 2 fully satisfied.  
 > **Single Responsibility Principle (`SRP`):** Install the new orchestration and AI packages, retain the `activePool` reference and export `getPgPool()` from `transactional.ts`, create the new Drizzle schemas (`users.creditBalanceMicro`, `creditLedgerTransactions`, `projectDecisionLedger`) and migration `0013_migrate_to_credit_ledger.sql` (including `PostgresSaver` tables and dropping `usage` and `ai_reservations`), and update callers and test utilities in the same step to prevent any build breakage.  
 > **Post-Phase 1 Baseline State:** All seven core fixes from `Phase 1` are applied and committed, while database schemas remain at migration `0012`.
@@ -549,15 +549,15 @@ flowchart LR
   npx vitest run src/test/auth
   ```
 - **Gate Verdict:** CLOSED / EXECUTED — 90 unit suites (1081 tests), 21 live suites (118 tests) passing 100%, ESLint clean (0 errors, 0 warnings), TypeScript check clean (0 errors), Commit Gate 2 fully satisfied.
-- **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-02-dependencies-pool-and-schema-migration.md`](../records/closures/elixent-execution/phase-02-dependencies-pool-and-schema-migration.md)
+- **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-02-dependencies-pool-and-schema-migration.md`](../closures/elixent-execution/phase-02-dependencies-pool-and-schema-migration.md)
 
 ### [Phase 3: Lean Dynamic Model Registry, Micro-Credit Derivation Math & Atomic `Redis Lua` Scripts] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 3 — Lean Model Registry, Micro-Credit Derivation Math & Atomic Redis Lua Scripts`  
-> **Status:** `CLOSED / EXECUTED` ✅ ([Closure Dossier](../records/closures/elixent-execution/phase-03-lean-model-registry-derivation-and-lua.md))  
+> **Status:** `CLOSED / EXECUTED` ✅ ([Closure Dossier](../closures/elixent-execution/phase-03-lean-model-registry-derivation-and-lua.md))  
 > **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 46/46 unit tests passing (100%), MTR-01 through MTR-04 verified, Commit Gate 3 fully satisfied.  
 > **Single Responsibility Principle (`SRP`):** Transform `models.config.json` into a lean dynamic model registry, build the pure mathematical and tokenization modules (`constants.ts`, `derivation.ts`, `tokenizer.ts`) and the three atomic Upstash Redis Lua scripts (`lua-scripts.ts`), and unit-test them in isolation from streaming services and PostgreSQL.  
-> **Closure Record:** [`docs/records/closures/elixent-execution/phase-03-lean-model-registry-derivation-and-lua.md`](../records/closures/elixent-execution/phase-03-lean-model-registry-derivation-and-lua.md)  
+> **Closure Record:** [`docs/records/closures/elixent-execution/phase-03-lean-model-registry-derivation-and-lua.md`](../closures/elixent-execution/phase-03-lean-model-registry-derivation-and-lua.md)  
 > **Post-Phase 2 Baseline State:** Packages (`js-tiktoken`, `@langchain/langgraph`, `ai`) are installed, and `credit_ledger_transactions` and `users.credit_balance_micro` schemas are active in the database.
 
 #### Phase 3 Sub-Agent Topology
@@ -621,15 +621,15 @@ flowchart LR
   npx vitest run src/test/metering/derivation-and-lua.unit.test.ts src/test/ai/ai-client.test.ts
   ```
 - **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 46/46 unit tests passing (100%), MTR-01 through MTR-04 verified, Commit Gate 3 fully satisfied.
-- **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-03-lean-model-registry-derivation-and-lua.md`](../records/closures/elixent-execution/phase-03-lean-model-registry-derivation-and-lua.md)
+- **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-03-lean-model-registry-derivation-and-lua.md`](../closures/elixent-execution/phase-03-lean-model-registry-derivation-and-lua.md)
 
 ### [Phase 4: `Flush-First` Cold Start Protocol, Settlement Service, `StreamGovernor` & Stripe/Cron Adaptation] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 4 — Flush-First Cold Start, Settlement Service, StreamGovernor & Billing/Cron Adaptation`  
-> **Status:** `CLOSED / EXECUTED` ✅ ([Closure Dossier](../records/closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md))  
+> **Status:** `CLOSED / EXECUTED` ✅ ([Closure Dossier](../closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md))  
 > **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 98 unit suites (1221 tests) passing 100%, 21 live suites (119 tests) passing 100%, MTR-01 through MTR-06 verified, Commit Gate 4 fully satisfied.  
 > **Single Responsibility Principle (`SRP`):** Complete the financial governance subsystem by building the `Flush-First Cold Start` protocol, the PostgreSQL draining service (`ai-settlement-service.ts`), the pre-node metering wrapper (`withMeteredNodeGate`), the real-time stream governor (`StreamGovernor`), and updating Stripe subscription tiers and the periodic Cron job.  
-> **Closure Record:** [`docs/records/closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md`](../records/closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md)  
+> **Closure Record:** [`docs/records/closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md`](../closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md)  
 > **Post-Phase 3 Baseline State:** The `credit_ledger_transactions` table and `users.credit_balance_micro` column exist in the repository (from Phase 2), alongside the lean model registry, derivation formulas, and the three Lua scripts (from Phase 3).
 
 #### Phase 4 Sub-Agent Topology
@@ -710,15 +710,15 @@ flowchart LR
   npx vitest run src/test/metering/credit-metering-suite.test.ts src/test/infrastructure/cron-expire-reservations.test.ts src/test/api/stripe-webhook.test.ts
   ```
 - **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 98 unit suites (1221 tests) passing 100%, 21 live suites (119 tests) passing 100%, MTR-01 through MTR-06 verified, Commit Gate 4 fully satisfied.
-- **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md`](../records/closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md)
+- **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md`](../closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md)
 
 ### [Phase 5: Fence-Aware AST Heading Slicer, Section-Scoped Diff3 & Hybrid `BM25` Search Engine] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 5 — Fence-Aware AST Heading Slicer, Section-Scoped Diff3 & Hybrid BM25 Search Engine`  
-> **Status:** `CLOSED / EXECUTED` ✅ ([Closure Dossier](../records/closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md))  
+> **Status:** `CLOSED / EXECUTED` ✅ ([Closure Dossier](../closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md))  
 > **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 3 workspace suites (107 tests) passing 100%, 98 repository unit suites (1341 tests) passing 100%, Commit Gate 5 fully satisfied.  
 > **Single Responsibility Principle (`SRP`):** Build the pure structural text parsing, lexical search, and section-scoped 3-way merge engines (`heading-slicer.ts`, `diff3MergeSection`, `lexical-bm25.ts`) and verify them in isolation from the database and vault.  
-> **Closure Record:** [`docs/records/closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md`](../records/closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md)  
+> **Closure Record:** [`docs/records/closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md`](../closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md)  
 > **Post-Phase 4 Baseline State:** Phases 1–4 are completed and committed (core hardened, new database tables active, and the `src/lib/metering/*` metering and settlement subsystem fully operational).
 
 #### Phase 5 Sub-Agent Topology
@@ -778,15 +778,15 @@ flowchart LR
   npx vitest run src/test/workspace/ast-heading-slicer.test.ts src/test/workspace/ast-slicer-and-diff3.test.ts src/test/workspace/lexical-bm25.test.ts
   ```
 - **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 3 workspace suites (107 tests) passing 100%, 98 repository unit suites (1341 tests) passing 100%, Commit Gate 5 fully satisfied.
-- **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md`](../records/closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md)
+- **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md`](../closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md)
 
 ### [Phase 6: Zero-Knowledge Vault Boundary (`EphemeralVaultMemoryMap`), Encrypted Checkpoints & `CloudPostgresWorkspaceProvider`] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 6 — Zero-Knowledge Vault Boundary, Encrypted Checkpoints & Cloud Workspace Provider`  
-> **Status:** `CLOSED / EXECUTED` ✅ ([Closure Dossier](../records/closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md))  
+> **Status:** `CLOSED / EXECUTED` ✅ ([Closure Dossier](../closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md))  
 > **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 3 Phase 6 suites (90 tests) passing 100%, 101 repository unit suites (1431 tests) passing 100%, Commit Gate 6 fully satisfied.  
 > **Single Responsibility Principle (`SRP`):** Build the zero-knowledge vault isolation layer (`EphemeralVaultMemoryMap`, `vault_ref://` pointers, and `Buffer.fill(0)` zeroing), the encrypted checkpoint serializer (`EncryptedCheckpointSerializer`), and the unified `IWorkspaceProvider` implementation (`CloudPostgresWorkspaceProvider`).  
-> **Closure Record:** [`docs/records/closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md`](../records/closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md)  
+> **Closure Record:** [`docs/records/closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md`](../closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md)  
 > **Post-Phase 5 Baseline State:** Heading slicer `heading-slicer.ts`, `diff3MergeSection`, and `lexical-bm25.ts` are ready and tested from Phase 5.
 
 #### Phase 6 Sub-Agent Topology
@@ -843,15 +843,15 @@ flowchart LR
   npx vitest run src/test/vault/ephemeral-memory-map.test.ts src/test/agent/checkpoint-serializer.test.ts src/test/workspace/cloud-provider-and-vault.test.ts
   ```
 - **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 3 Phase 6 suites (90 tests) passing 100%, 101 repository unit suites (1431 tests) passing 100%, Commit Gate 6 fully satisfied.
-- **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md`](../records/closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md)
+- **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md`](../closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md)
 
 ### [Phase 7: Comprehensive `PREDEFINED_CONCEPT_TAGS` Taxonomy, Unified `/v1/decisions` Client, `Conformal APS` Classifier & `AI SDK v6` Bridge] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 7 — Comprehensive Concept Taxonomy, Unified Decisions Client, Conformal APS Classifier & AI SDK v6 Bridge`  
-> **Status:** `CLOSED / EXECUTED` ✅ ([Closure Dossier](../records/closures/elixent-execution/phase-07-concept-taxonomy-unified-decisions-and-conformal-aps.md))  
+> **Status:** `CLOSED / EXECUTED` ✅ ([Closure Dossier](../closures/elixent-execution/phase-07-concept-taxonomy-unified-decisions-and-conformal-aps.md))  
 > **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 3 Phase 7 suites (84 tests) passing 100%, 104 repository unit suites (1557 tests) passing 100%, Commit Gate 7 fully satisfied.  
 > **Single Responsibility Principle (`SRP`):** Complete the dedicated phase for defining the universal, paradigm-agnostic concept taxonomy across 9 engineering domains (`DEFAULT_CONCEPT_TAGS` / `PREDEFINED_CONCEPT_TAGS`), project-scoped mutable tag registry (`applyProjectTagMutations`, `resolveProjectConceptTags`), dynamic Zod schema factories, building the unified decisions client (`POST /v1/decisions`) and Adaptive Prediction Sets (`Conformal APS Classifier`), and upgrading the generative model client to run on `Vercel AI SDK v7`.  
-> **Closure Record:** [`docs/records/closures/elixent-execution/phase-07-concept-taxonomy-unified-decisions-and-conformal-aps.md`](../records/closures/elixent-execution/phase-07-concept-taxonomy-unified-decisions-and-conformal-aps.md)  
+> **Closure Record:** [`docs/records/closures/elixent-execution/phase-07-concept-taxonomy-unified-decisions-and-conformal-aps.md`](../closures/elixent-execution/phase-07-concept-taxonomy-unified-decisions-and-conformal-aps.md)  
 > **Post-Phase 6 Baseline State:** Phases 1–6 are completed and committed (including `models.config.json` with `calibrationPriors` from Phase 3, and the workspace and vault boundary from Phase 6).
 
 #### Phase 7 Sub-Agent Topology
@@ -925,14 +925,14 @@ flowchart LR
   npx vitest run src/test/agent/taxonomy-and-schemas.test.ts src/test/jev/conformal-classifier.test.ts src/test/ai/ai-sdk-v7-gateway.test.ts
   ```
 - **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 3 Phase 7 suites (84 tests: 55 conformal classifier, 21 AI SDK v7 gateway, 8 taxonomy & schemas) passing 100%, 104 repository unit suites (1557 tests) passing 100%, Commit Gate 7 fully satisfied.
-- **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-07-concept-taxonomy-unified-decisions-and-conformal-aps.md`](../records/closures/elixent-execution/phase-07-concept-taxonomy-unified-decisions-and-conformal-aps.md)
+- **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-07-concept-taxonomy-unified-decisions-and-conformal-aps.md`](../closures/elixent-execution/phase-07-concept-taxonomy-unified-decisions-and-conformal-aps.md)
 
 ### [Phase 8: Justification-Driven `ATMS DAG`, Deterministic Candidate Retriever & Relational Linker] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 8 — Justification-Driven ATMS DAG, Candidate Retriever & Contagious Cascade BFS`  
-> **Status:** `CLOSED / EXECUTED` ✅ ([Closure Dossier](../records/closures/elixent-execution/phase-08-justification-driven-atms-dag-candidate-retriever-and-relational-linker.md))  
+> **Status:** `CLOSED / EXECUTED` ✅ ([Closure Dossier](../closures/elixent-execution/phase-08-justification-driven-atms-dag-candidate-retriever-and-relational-linker.md))  
 > **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 1 Phase 8 suite (63 tests) passing 100%, 105 repository unit suites (1620 tests) passing 100%, Commit Gate 8 fully satisfied.  
-> **Closure Record:** [`docs/records/closures/elixent-execution/phase-08-justification-driven-atms-dag-candidate-retriever-and-relational-linker.md`](../records/closures/elixent-execution/phase-08-justification-driven-atms-dag-candidate-retriever-and-relational-linker.md)  
+> **Closure Record:** [`docs/records/closures/elixent-execution/phase-08-justification-driven-atms-dag-candidate-retriever-and-relational-linker.md`](../closures/elixent-execution/phase-08-justification-driven-atms-dag-candidate-retriever-and-relational-linker.md)  
 > **Single Responsibility Principle (`SRP`):** Build the causal truth maintenance subsystem (`src/core/agent/atms/*`) including `ATMSDecisionNode` structures and their synchronization with `project_decision_ledger`, the deterministic local candidate retriever (`retrieveCandidatePriorDecisions`), the relational linker, and the upward/downward contagious cascade BFS algorithm (`resolveATMSCascadeBFS`).  
 > **Post-Phase 7 Baseline State:** The `project_decision_ledger` table is active (from Phase 2), the `BM25` engine is ready (from Phase 5), the universal concept taxonomy (`DEFAULT_CONCEPT_TAGS`), project-scoped tag registry, dynamic schema factories, the `/v1/decisions` client (`evaluateRelationalLinksBatch`), `Conformal APS`, and `AI SDK v7` gateway are ready (from Phase 7).
 
@@ -991,9 +991,9 @@ flowchart LR
 
 - Run `npx vitest run src/test/agent/atms-dag-and-cascade.test.ts` to verify independence of sibling sub-decisions under the same heading (`INDEPENDENT`), upward promotion (`DEPENDS_ON`), and parallel downward cascade (`REOPENS_OR_OVERRIDES`) before running `git commit`.
 - **Gate Verdict:** `CLOSED / EXECUTED` — TypeScript clean (0 errors), 1 Phase 8 suite (63 tests) passing 100%, 105 repository unit suites (1620 tests) passing 100%, Commit Gate 8 fully satisfied.
-- **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-08-justification-driven-atms-dag-candidate-retriever-and-relational-linker.md`](../records/closures/elixent-execution/phase-08-justification-driven-atms-dag-candidate-retriever-and-relational-linker.md)
+- **Closure Report Dossier:** [`docs/records/closures/elixent-execution/phase-08-justification-driven-atms-dag-candidate-retriever-and-relational-linker.md`](../closures/elixent-execution/phase-08-justification-driven-atms-dag-candidate-retriever-and-relational-linker.md)
 
-### [Phase 9: `AgentGraphState` Channels, Pure Reducers, 7-Stage Nodes & Compiled `LangGraph` StateGraph]
+### [Phase 9: `AgentGraphState` Channels, Pure Reducers, 7-Stage Nodes & Compiled `LangGraph` StateGraph] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 9 — AgentGraphState, Pure Reducers, 7-Stage Nodes & Compiled LangGraph StateGraph`  
 > **Single Responsibility Principle (`SRP`):** Build the canonical state channels (`state.ts`) and pure reducers (`reducers.ts`), implement the 14 nodes across all 7 stages, and compile the complete state machine in `src/core/agent/graph.ts` backed by `PostgresSaver(getPgPool())`, `EncryptedCheckpointSerializer`, and `withMeteredNodeGate`.  
@@ -1070,9 +1070,9 @@ flowchart LR
 
 - Run `npx vitest run src/test/agent/langgraph-orchestration.test.ts` and `npx tsc --noEmit` and confirm $100\%$ pass rate before running `git commit`.
 - **Gate Verdict:** CLOSED / EXECUTED — TypeScript clean (0 errors), 3 Phase 9 suites (122 tests) passing 100%, 108 repository unit suites (1742 tests) passing 100%, Commit Gate 9 fully satisfied.
-- **Closure Report Dossier:** [docs/records/closures/elixent-execution/phase-09-agent-graph-state-channels-pure-reducers-7-stage-nodes-and-compiled-langgraph-stategraph.md](../records/closures/elixent-execution/phase-09-agent-graph-state-channels-pure-reducers-7-stage-nodes-and-compiled-langgraph-stategraph.md)
+- **Closure Report Dossier:** [docs/records/closures/elixent-execution/phase-09-agent-graph-state-channels-pure-reducers-7-stage-nodes-and-compiled-langgraph-stategraph.md](../closures/elixent-execution/phase-09-agent-graph-state-channels-pure-reducers-7-stage-nodes-and-compiled-langgraph-stategraph.md)
 
-### [Phase 10: `CodeMirror 6` Upgrade to `Multi-Hunk Ghost` & Unified `/api/agent/stream` Route]
+### [Phase 10: `CodeMirror 6` Upgrade to `Multi-Hunk Ghost` & Unified `/api/agent/stream` Route] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 10 — CodeMirror 6 Multi-Hunk Ghost Upgrade & Unified Agent SSE Stream Route`  
 > **Single Responsibility Principle (`SRP`):** Upgrade CodeMirror 6 editor extensions to support multi-hunk ghost previews (`MultiHunkGhostState` with coordinate remapping via `tr.changes.mapPos` and per-hunk atomic undo), and build the unified server streaming route `/api/agent/stream/route.ts`.  
@@ -1122,9 +1122,9 @@ flowchart LR
 
 - Run `npx vitest run src/test/editor/multi-hunk-ghost.test.ts src/test/agent/agent-stream-route.test.ts` and `npx tsc --noEmit` and confirm $100\%$ pass rate before running `git commit`.
 - **Gate Verdict:** CLOSED / EXECUTED — TypeScript clean (0 errors), 2 Phase 10 suites (73 tests) passing 100%, 110 repository unit suites (1815 tests) passing 100%, Commit Gate 10 fully satisfied.
-- **Closure Report Dossier:** [docs/records/closures/elixent-execution/phase-10-codemirror-6-multi-hunk-ghost-upgrade-and-unified-agent-sse-stream-route.md](../records/closures/elixent-execution/phase-10-codemirror-6-multi-hunk-ghost-upgrade-and-unified-agent-sse-stream-route.md)
+- **Closure Report Dossier:** [docs/records/closures/elixent-execution/phase-10-codemirror-6-multi-hunk-ghost-upgrade-and-unified-agent-sse-stream-route.md](../closures/elixent-execution/phase-10-codemirror-6-multi-hunk-ghost-upgrade-and-unified-agent-sse-stream-route.md)
 
-### [Phase 11: Agent Chat Panel, `HITL` Question Cards, Credit Balance Views & Incremental Editor Sync]
+### [Phase 11: Agent Chat Panel, `HITL` Question Cards, Credit Balance Views & Incremental Editor Sync] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 11 — Agent Chat Panel, HITL Form UI, Credit Balance Views & Incremental Hunk Sync Orchestration`  
 > **Single Responsibility Principle (`SRP`):** Build the interactive UI components for the architectural agent (`chat-panel.tsx`, `hitl-question-card.tsx`), update the editor toolbar and credit balance display pages (`dashboard`, `account`, `editor page`), and upgrade `use-ai-stream.ts` and `use-editor-orchestrator.ts` to connect to `/api/agent/stream` and perform debounced incremental synchronization via `useEditorAutosave`.  
@@ -1193,7 +1193,7 @@ flowchart LR
 ### [Phase 12: Final Purge of Legacy 5-Operation Modules, Test Suite Migration & Living Documentation Sync] — ✅ CLOSED / EXECUTED
 
 > **Status:** `CLOSED / EXECUTED` (Final Closure Gate 12 Satisfied & Verified)  
-> **Closure Record:** [`docs/records/closures/elixent-execution/phase-12-final-legacy-purge-test-suite-migration-and-living-docs-sync.md`](../records/closures/elixent-execution/phase-12-final-legacy-purge-test-suite-migration-and-living-docs-sync.md)  
+> **Closure Record:** [`docs/records/closures/elixent-execution/phase-12-final-legacy-purge-test-suite-migration-and-living-docs-sync.md`](../closures/elixent-execution/phase-12-final-legacy-purge-test-suite-migration-and-living-docs-sync.md)  
 
 > **Phase Identifier:** `Phase 12 — Final Legacy Purge, Integration Test Suite Migration & Living Documentation Sync`  
 > **Single Responsibility Principle (`SRP`):** Permanently delete the legacy 5-operation files that have zero remaining callers after Phase 11, migrate legacy integration tests to verify the new Elixent architecture, and synchronize `docs/foundation/DESIGN_VS_REALITY.md` and monitored documentation metrics.  

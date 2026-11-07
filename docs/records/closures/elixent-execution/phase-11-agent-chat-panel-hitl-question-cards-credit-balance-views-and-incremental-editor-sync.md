@@ -226,5 +226,5 @@ node scripts/check-markdown-links.mjs (100% valid links, 0 broken links across 1
 - Credit Metering & Settlement Spec: [`docs/architecture/04_credit_metering_and_settlement_architecture.md`](../../../architecture/04_credit_metering_and_settlement_architecture.md)
 - Editor Sync Orchestration Spec: [`docs/architecture/sync/editor-sync-orchestration.md`](../../../architecture/sync/editor-sync-orchestration.md)
 - UI Streaming Living Contract: [`docs/reference/ui-streaming-readiness.md`](../../../reference/ui-streaming-readiness.md)
-- Execution Plan Roadmap: [`docs/Plans/ELIXENT_EXECUTION_PLAN.md`](../../../Plans/ELIXENT_EXECUTION_PLAN.md)
+- Execution Plan Roadmap: [`docs/records/plans/elixent-agentic-architecture-execution-plan.md`](../../plans/elixent-agentic-architecture-execution-plan.md)
 - Previous Phase Closure: [`docs/records/closures/elixent-execution/phase-10-codemirror-6-multi-hunk-ghost-upgrade-and-unified-agent-sse-stream-route.md`](./phase-10-codemirror-6-multi-hunk-ghost-upgrade-and-unified-agent-sse-stream-route.md)

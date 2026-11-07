@@ -4,6 +4,50 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.13.0] - 2026-11-07 (Phase 1: Archive Prior Plan, Install Target Packages & Build Request-Scoped Session Middleware)
+
+### Prior Execution Plan Archival & Active Migration Plan Inception
+
+- **Prior Plan Archival:** Moved completed 12-phase plan from `docs/Plans/ELIXENT_EXECUTION_PLAN.md` to [`docs/records/plans/elixent-agentic-architecture-execution-plan.md`](./records/plans/elixent-agentic-architecture-execution-plan.md), marked completed phases, and updated 21 internal relative links.
+- **Migration Plan Inception:** Adopted the 6-phase framework migration plan at [`docs/Plans/ELIXENT_FRAMEWORK_MIGRATION_PLAN.md`](./Plans/ELIXENT_FRAMEWORK_MIGRATION_PLAN.md) governing the decoupling of the platform from Next.js 16 into a Vite 6 SPA, TanStack Router, and Web-standard Hono RPC architecture.
+- **Cross-Document Link Synchronization:** Aligned links in `README.md`, `docs/README.md`, and past closure records (`phase-10`, `phase-11`, `phase-12`), with zero broken markdown links across 123 repository documents.
+
+### Target Framework Dependencies Installation
+
+- **Core Dependencies:** Installed `hono` (`^4.13.17`), `@hono/node-server` (`^2.1.6`), `@hono/zod-validator` (`^0.9.1`), and `@tanstack/react-router` (`^1.170.46`).
+- **Dev Dependencies:** Installed `vite` (`^6.4.5`), `@vitejs/plugin-react` (`^5.2.0`), and `tsx` (`^4.23.15`).
+- **Transitional Retention:** Retained `next` (`^16.3.8`) temporarily across Phases 1–5 to maintain 100% green test execution until the Phase 6 purge.
+
+### Request-Scoped AsyncLocalStorage Context & Decoupled Supabase Resolvers (`src/server/context/*`, `src/lib/supabase/*`)
+
+- **AsyncLocalStorage Context (`src/server/context/request-context.ts`):** Created `ServerRequestContext` store binding `ServerCookieStore` and standard `Headers` per request via `runWithServerRequestContext` and `getActiveRequestContext`.
+- **Three-Tier Context Resolution:** Built `resolveCookiesAndHeaders()` that checks active `AsyncLocalStorage` context first, falls back gracefully to `next/headers` during transitional testing, and provides an ephemeral in-memory store outside request lifecycles.
+- **Deterministic Background Scheduler:** Created `scheduleAfterResponse(task)` ensuring non-blocking post-response execution without dropping background token settlement flushes.
+- **Decoupled Server Supabase Client (`src/lib/supabase/server.ts`):** Removed static `import { cookies } from "next/headers"`, adopting `resolveCookiesAndHeaders()`.
+- **Isomorphic Environment Resolution (`src/lib/supabase/client.ts` & `src/config/features.config.ts`):** Guarded `process.env` access and unified resolution across `process.env` and `import.meta.env` for Vite and Node.js test runtimes.
+
+### Web-Standard Hono Session Middleware (`src/server/middleware/session-middleware.ts`)
+
+- **Standard Hono Middleware & Session Proxy:** Created `sessionMiddleware` for Hono and standalone `handleSessionProxy` porting all routing security invariants from `src/proxy.ts`.
+- **Preserved Security Invariants:** Maintained OAuth callback code redirection (`/?code=...` / `/login?code=...` -> `/auth/callback`), Fast-Path cookie gating (`TD-12`), `AbortSignal.timeout(2500)` watchdog, protected page navigation gating, and standard `Set-Cookie` response serialization.
+- **Response Compatibility Helper:** Provided non-enumerable `cookies` helper property on standard `Response` objects to support Next.js test assertion contracts seamlessly.
+
+### Verification & SSOT Metrics Baseline
+
+- **Dedicated Phase 1 Test Suites:** Added 5 new suites delivering 100 passing tests (100% green):
+  - `src/test/server/request-context.test.ts` (26 tests)
+  - `src/test/server/session-middleware.test.ts` (45 tests)
+  - `src/test/server/supabase-server.test.ts` (14 tests)
+  - `src/test/config/features.config.test.ts` (11 tests)
+  - `src/test/auth/supabase-client.test.ts` (4 tests)
+- **Synchronized SSOT Metrics:** Validated via `scripts/sync-doc-metrics.mjs`:
+  - Unit & Contract: 117 suites, 1,992 passing tests (100% green).
+  - Live Multi-System Integration: 21 suites, 108 passing tests (100% green).
+  - Browser E2E Journeys: 14 specs, 15 user journeys (100% green).
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/framework-migration/phase-01-archive-prior-plan-target-packages-and-session-middleware.md`](./records/closures/framework-migration/phase-01-archive-prior-plan-target-packages-and-session-middleware.md).
+
+---
+
 ## [0.12.0] - 2026-11-04 (Phase 12: Final Purge of Legacy 5-Operation Modules, Test Suite Migration & Living Documentation Sync)
 
 ### Permanent Purge of Legacy 5-Operation Modules (`src/app/api/ai/stream/route.ts`, `src/lib/ai/*`, `src/server/actions/*`)

@@ -7,21 +7,21 @@ the current source files referenced inline.
 
 ---
 
-## 1. Request Authentication (`src/proxy.ts`)
+## 1. Request Authentication (`src/server/middleware/session-middleware.ts` & `src/proxy.ts`)
 
-The Next.js 16 Edge proxy runs on every route except static assets (see its
-`config.matcher`). Behavior:
+Request-level session authentication and routing protection are handled by the Web-standard Hono middleware (`sessionMiddleware` and `handleSessionProxy` in `src/server/middleware/session-middleware.ts`), backed by request-scoped context (`src/server/context/request-context.ts`), maintaining transitional compatibility with the Next.js edge proxy (`src/proxy.ts`). Both execute across all non-static routes matching `config.matcher`. Behavior:
 
 | Concern | Implementation |
 | :--- | :--- |
+| Request-Scoped Context Isolation | Binds incoming request cookies and `Headers` into `AsyncLocalStorage<ServerRequestContext>` via `runWithServerRequestContext`, allowing downstream database and auth services (`resolveCookiesAndHeaders`) to access request state deterministically without signature pollution |
 | Protected pages | `/workspace`, `/account`, `/dashboard` require a Supabase session (`supabase.auth.getUser()`); unauthenticated page navigations redirect to `/login?redirectTo=…` (preserving search params / deep links) |
 | Fast-Path Routing (TD-12) | Public routes (`/` homepage, static assets) and `/login` requests without auth cookies completely bypass `supabase.auth.getUser()`, eliminating unnecessary network round-trips and socket contention |
 | Watchdog Timeout (TD-12) | `supabase.auth.getUser()` is encapsulated inside a 2500ms timeout watchdog (`AbortSignal.timeout(2500)`). If Supabase auth stalls or hangs, the call safely aborts to `null` user, preventing Chromium socket pool saturation (`CLOSE_WAIT` exhaustion) |
-| Cookie Preservation (TD-12) | Redirect responses (307) and API 401 JSON responses preserve all `Set-Cookie` headers via `copyCookiesAndRedirect`, ensuring cookie deletion and session rotation directives reach the browser |
+| Cookie Preservation (TD-12) | Redirect responses (307) and API 401 JSON responses preserve all `Set-Cookie` headers (serialized via `applyCookiesToResponse`), ensuring cookie deletion and session rotation directives reach the browser |
 | Server Actions & API routes | Under protected paths, an unauthenticated request receives a **JSON `401 Unauthorized`** instead of an HTML redirect (an HTML redirect breaks the Server Action client runtime) |
 | Logged-in access control | Authenticated users hitting `/login` are redirected to `/dashboard` |
 | OAuth code interception (LUGX-140) | Any request carrying an OAuth `code` query param strictly targeting root (`/`) or login (`/login`) is redirected to `/auth/callback`, preventing parameter interception on arbitrary application sub-paths |
-| Session refresh & Sign-Out | The proxy refreshes the Supabase session cookie on matched requests. When signing out (`signOut()` in `src/server/actions/auth-actions.ts`), `revalidatePath("/", "layout")` purges client router cache and all `sb-*` auth cookies are proactively cleared |
+| Session refresh & Sign-Out | The middleware refreshes the Supabase session cookie on matched requests. When signing out (`signOut()` in `src/server/actions/auth-actions.ts`), `revalidatePath("/", "layout")` purges client router cache and all `sb-*` auth cookies are proactively cleared |
 
 ### 1.1. Open Redirect & Host Header Injection Hardening (`src/lib/auth/safe-redirect.ts`)
 
