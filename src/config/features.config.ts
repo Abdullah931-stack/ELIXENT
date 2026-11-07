@@ -11,7 +11,13 @@ export const FEATURES = {
      * UI AI Streaming with ephemeral preview and atomic commit.
      * Default: false (falls back to safe buffered accumulator path).
      */
-    AI_STREAMING_ENABLED: process.env.NEXT_PUBLIC_AI_STREAMING_ENABLED === "true",
+    AI_STREAMING_ENABLED:
+        ((typeof process !== "undefined" &&
+            (process.env?.VITE_AI_STREAMING_ENABLED || process.env?.NEXT_PUBLIC_AI_STREAMING_ENABLED)) ||
+            (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
+                ?.VITE_AI_STREAMING_ENABLED ||
+            (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
+                ?.NEXT_PUBLIC_AI_STREAMING_ENABLED) === "true",
 
     /**
      * Maximum duration in milliseconds for an in-flight reservation before expiry.

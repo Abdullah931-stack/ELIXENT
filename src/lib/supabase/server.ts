@@ -1,12 +1,12 @@
 import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
+import { resolveCookiesAndHeaders } from "@/server/context/request-context";
 
 export async function createClient() {
-    const cookieStore = await cookies();
+    const { cookies: cookieStore } = await resolveCookiesAndHeaders();
 
     return createServerClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co",
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "placeholder-anon-key",
+        process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co",
+        process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "placeholder-anon-key",
         {
             cookies: {
                 getAll() {
