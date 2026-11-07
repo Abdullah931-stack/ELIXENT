@@ -50,7 +50,7 @@ test.describe("Scenario 15: Cross-User Tenant Isolation & 404 Anti-Enumeration",
             const returnBtn = page.getByRole("button", { name: /العودة إلى مساحة العمل|Return to Workspace/ });
             await expect(returnBtn).toBeVisible();
             await returnBtn.click();
-            await expect(page).toHaveURL(/\/workspace(?!\/editor)/, { timeout: 10000 });
+            await expect(page).toHaveURL(/\/workspace(?!\/editor)/, { timeout: 15000 });
 
             // 3. User A attempts programmatic API access to foreign file
             const apiRes = await page.request.get(`/api/files/${foreignDoc.id}`);

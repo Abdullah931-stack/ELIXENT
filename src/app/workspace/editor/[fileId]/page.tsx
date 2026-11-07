@@ -84,6 +84,18 @@ export default function EditorPage() {
     // Stabilized navigation callback
     const handleNavigate = useCallback((path: string) => router.push(path), [router]);
 
+    // Resilient return-to-workspace handler guaranteeing navigation across client/fatal states
+    const handleReturnToWorkspace = useCallback(() => {
+        router.push("/workspace");
+        if (typeof window !== "undefined") {
+            setTimeout(() => {
+                if (window.location.pathname.startsWith("/workspace/editor")) {
+                    window.location.assign("/workspace");
+                }
+            }, 400);
+        }
+    }, [router]);
+
     // Centralized Editor Orchestrator
     const {
         title,
@@ -414,7 +426,7 @@ export default function EditorPage() {
                                         <span>Unlock Vault</span>
                                     </button>
                                     <button
-                                        onClick={() => router.push("/workspace")}
+                                        onClick={handleReturnToWorkspace}
                                         className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors cursor-pointer"
                                     >
                                         Return to Workspace
@@ -431,7 +443,7 @@ export default function EditorPage() {
                                 The requested document does not exist on the server and no local cached copy was found.
                             </p>
                             <button
-                                onClick={() => router.push("/workspace")}
+                                onClick={handleReturnToWorkspace}
                                 className="mt-2 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-medium transition-colors cursor-pointer"
                             >
                                 Return to Workspace

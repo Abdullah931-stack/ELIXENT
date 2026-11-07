@@ -987,9 +987,6 @@ export function useEditorOrchestrator({
                     if (!localNow && !isDirtyRef.current) {
                         loadFailureRef.current = true;
                     }
-                    if (!localNow && onNavigate) {
-                        onNavigate("/workspace");
-                    }
                 } else {
                     const data = result.data;
                     const remoteIsEncrypted = !!data.isEncrypted;
