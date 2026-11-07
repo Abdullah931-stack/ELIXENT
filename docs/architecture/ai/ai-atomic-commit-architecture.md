@@ -1,7 +1,7 @@
 # AI Atomic Commit & Transactional Settlement Architecture
 
 > [!NOTE]
-> **Elixent Phase 11 & Phase 12 Migration Note (`v0.11.0` – `v0.12.0`):** In Phase 11 (`v0.11.0`) and Phase 12 (`v0.12.0`), the legacy server action `src/server/actions/ai-commit.ts` (`commitAIFileOperation`) was deprecated and permanently deleted from the repository. Document persistence after accepting AI hunk replacements now flows exclusively through incremental editor autosave (`useEditorAutosave` in `src/hooks/editor/use-editor-autosave.ts` -> `PUT /api/files/[id]`) with atomic CodeMirror transactions (`acceptHunk`, `acceptAllHunks` in `src/components/editor/codemirror/extensions/streaming-ghost.ts`), while micro-credit reservation and settlement execute server-side in `src/server/services/ai-settlement-service.ts` and `src/app/api/agent/stream/route.ts`.
+> **Elixent Phase 11 & Phase 12 Migration Note (`v0.11.0` – `v0.12.0`):** In Phase 11 (`v0.11.0`) and Phase 12 (`v0.12.0`), the legacy server action `src/server/actions/ai-commit.ts` (`commitAIFileOperation`) was deprecated and permanently deleted from the repository. Document persistence after accepting AI hunk replacements now flows exclusively through incremental editor autosave (`useEditorAutosave` in `src/hooks/editor/use-editor-autosave.ts` -> `PUT /api/files/[id]`) with atomic CodeMirror transactions (`acceptHunk`, `acceptAllHunks` in `src/components/editor/codemirror/extensions/streaming-ghost.ts`), while micro-credit reservation and settlement execute server-side in `src/server/services/ai-settlement-service.ts` and `src/server/routes/agent.routes.ts` (mounted at `/api/agent/stream`).
 
 ## 1. Overview & Technical Objective
 

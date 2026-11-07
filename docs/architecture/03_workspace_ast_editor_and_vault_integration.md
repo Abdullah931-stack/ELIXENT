@@ -305,14 +305,14 @@ To preserve the end-to-end encryption (`Zero-Knowledge`) guarantees implemented 
    ```
    Validated via pure discriminated parsing helper `parseAgentStreamPayload(input)`.
 
-2. **Server-Authoritative SSE Stream Route (`src/app/api/agent/stream/route.ts`):**
+2. **Server-Authoritative SSE Stream Route (`src/server/routes/agent.routes.ts`, mounted via `src/server/app.ts`):**
    - **Route Segment Configuration:** `export const dynamic = "force-dynamic"; export const maxDuration = 300;`.
    - **Authentication Guard:** Strictly validates active session via `requireAuthenticatedUser()`, returning RFC 7807 `401 Unauthorized` problem details on failure before parsing the body.
    - **Fail-Closed Rate Limiting:** Enforces `aiStreamRateLimiter.limit(user.id)`, returning RFC 7807 `429 Too Many Requests` problem details on rate limit breach or Redis unavailability.
    - **Contract Validation:** Rejects malformed JSON with `400 Bad Request` and maps Zod schema issues into RFC 7807 `invalidParams`.
    - **Ephemeral Vault Scope:** Executes `elixentAgentGraph` within `runWithEphemeralVaultScope`, populating `EphemeralVaultMemoryMap` by heading slugs via AST slicer (`loadEphemeralVaultPayloads`).
    - **Dynamic Credit Metering:** Governed by `StreamGovernor` (`INITIAL_RESERVATION_TOKENS = 1200`, model `google/gemini-3.8-flash`), monitoring token runway and triggering fail-closed abort (`GOVERNOR_QUOTA_EXHAUSTED`) on quota depletion.
-   - **Background Settlement Flush:** Defers asynchronous ledger persistence to PostgreSQL via Next.js `after(async () => { await flushPendingSettlementsToPostgres(user.id); })`.
+   - **Background Settlement Flush:** Defers asynchronous ledger persistence to PostgreSQL via `scheduleAfterResponse(async () => { await flushPendingSettlementsToPostgres(user.id); })` from `@/server/context/request-context`.
    - **Deterministic Memory Zeroing:** Unconditionally invokes `zeroOutEphemeralVaultMemory()` (`Buffer.fill(0)`) in `finally` and `cancel` handlers.
    - **Server-Sent Events Framing:** Emits framed events `start`, `update`, `interrupt`, `error`, and `done` over `text/event-stream; charset=utf-8` with `X-Accel-Buffering: no`.
 

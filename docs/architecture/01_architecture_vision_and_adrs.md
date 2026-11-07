@@ -36,7 +36,7 @@ flowchart TB
     end
 
     subgraph ADAPTER_GOV ["2. Transport & Financial Governance Layer"]
-        SSE_ADAPTER["Unified Event Stream Adapter (SSE / UI Stream Protocol v3)<br/>src/app/api/agent/stream/route.ts (maxDuration = 300s)"]
+        SSE_ADAPTER["Unified Event Stream Adapter (SSE / UI Stream Protocol v3)<br/>src/server/routes/agent.routes.ts (maxDuration = 300s)"]
         GOV["Real-Time Stream Governor (StreamGovernor)<br/>Runway Extension + 500ms Local Hold + AbortController"]
         SETTLE_ENGINE["Dual-Track Settlement Engine (Fail-Closed Settlement)<br/>Upstash Redis Lua + Next.js after() + Flush-First Cold Start"]
     end

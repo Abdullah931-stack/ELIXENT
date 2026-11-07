@@ -4,6 +4,42 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.14.0] - 2026-11-07 (Phase 2: Migrate All 8 API Routes & OAuth Callback to Web-Standard Hono Routers)
+
+### Modular Web-Standard Hono Route Migration (`src/server/routes/*`)
+
+- **Agent SSE Stream Router (`src/server/routes/agent.routes.ts`):** Extracted `POST /api/agent/stream` into `agentRoutes` mounted at `/stream`. Replaced `NextResponse` and Next.js `after()` with standard `Response` and `scheduleAfterResponse()` from `@/server/context/request-context`. Preserved full SSE framing (`start`, `update`, `interrupt`, `error`, `done`), LangGraph execution, ephemeral vault memory hydration, and fail-closed dynamic credit metering via `StreamGovernor`.
+- **Files & Sync API Router (`src/server/routes/files-api.routes.ts`):** Extracted `GET /sync`, `GET /:id`, `PUT /:id`, and `DELETE /:id` into `filesApiRoutes`. Migrated parameter resolution, ETag conditional matching (`If-None-Match`, `If-Match`), optimistic concurrency locks (HTTP 412 / 428), soft-delete cascading, and RFC 7807 problem details to standard `Request`/`Response` APIs.
+- **Stripe Monetization & Webhooks Router (`src/server/routes/stripe.routes.ts`):** Extracted `POST /create-checkout` and `POST /webhook` into `stripeRoutes`. Preserved multi-tier webhook idempotency (L1 in-memory -> L1.5 Redis dedup/lock -> L2 PostgreSQL ledger), signature verification with timestamp tolerance, and atomic ACID subscription transitions.
+- **Cron Maintenance Router (`src/server/routes/cron.routes.ts`):** Extracted `GET|POST /expire-reservations` and `GET|POST /purge-deleted` into `cronRoutes`. Preserved constant-time `Bearer ${CRON_SECRET}` verification (`timingSafeEqual`), distributed Redis lock guards (`acquireCronLock`), batch draining, and bounded CTE soft-delete purges.
+- **OAuth Callback Router (`src/server/routes/auth-callback.routes.ts`):** Extracted `GET /auth/callback` into `authCallbackRoutes`. Implemented standalone request-context bridging (`runWithServerRequestContext`), Supabase authorization code exchange, PostgreSQL user synchronization, and secure redirect emission with cookie preservation.
+- **E2E Authentication Test Router (`src/server/routes/e2e-auth.routes.ts`):** Extracted `POST` and `DELETE` on `/api/test/e2e-auth` into `e2eAuthRoutes`. Maintained environment gates (`isAllowedEnvironment`), Supabase admin creation/sign-in, SSR cookie serialization, and isolated test database synchronization.
+
+### Central Hono Application Assembly (`src/server/app.ts`)
+
+- **Root Application & Middleware:** Assembled the root Hono application instance `app = new Hono()`, registered global `sessionMiddleware` for all paths, and mounted all sub-routers: `/api/agent`, `/api/files`, `/api/stripe`, `/api/cron`, `/api/test/e2e-auth`, and `/auth/callback`.
+- **Type-Safe RPC Foundation:** Exported `export type AppType = typeof app` establishing the foundational type contract for typed RPC clients in Phase 3.
+
+### Thin Next.js Delegation Bridges (`src/app/api/**`, `src/app/auth/callback/**`)
+
+- **Transitional Delegation Forwarders:** Converted all nine legacy App Router route files into minimal, type-safe forwarders delegating directly to the underlying Hono handlers.
+- **Zero Breaking Changes:** Maintained 100% operational compatibility for all existing test suites and external callers without code duplication.
+
+### Verification & SSOT Metrics Baseline
+
+- **Dedicated Phase 2 Server Router Test Suites:** Added 4 new suites delivering 120 passing tests (100% green):
+  - `src/test/server/agent-routes.test.ts` (14 tests)
+  - `src/test/server/app-dispatcher.test.ts` (19 tests)
+  - `src/test/server/files-api-routes.test.ts` (36 tests)
+  - `src/test/server/stripe-cron-auth-routes.test.ts` (51 tests)
+- **Synchronized SSOT Metrics:** Validated via `scripts/sync-doc-metrics.mjs`:
+  - Unit & Contract: 121 suites, 2,112 passing tests (100% green).
+  - Live Multi-System Integration: 21 suites, 108 passing tests (100% green).
+  - Browser E2E Journeys: 14 specs, 15 user journeys (100% green).
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/framework-migration/phase-02-migrate-all-8-api-routes-and-oauth-callback-to-web-standard-hono-routers.md`](./records/closures/framework-migration/phase-02-migrate-all-8-api-routes-and-oauth-callback-to-web-standard-hono-routers.md).
+
+---
+
 ## [0.13.0] - 2026-11-07 (Phase 1: Archive Prior Plan, Install Target Packages & Build Request-Scoped Session Middleware)
 
 ### Prior Execution Plan Archival & Active Migration Plan Inception

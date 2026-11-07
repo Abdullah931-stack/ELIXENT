@@ -222,10 +222,11 @@ flowchart LR
 - **Gate Verdict:** CLOSED / EXECUTED — TypeScript clean (0 errors), 5 dedicated Phase 1 test suites (100 tests) passing 100%, 117 repository unit suites (1,992 tests) passing 100%, Commit Gate 1 fully satisfied.
 - **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-01-archive-prior-plan-target-packages-and-session-middleware.md`](../records/closures/framework-migration/phase-01-archive-prior-plan-target-packages-and-session-middleware.md)
 
-### [Phase 2: Migrate All 8 API Routes & OAuth Callback to Web-Standard Hono Routers]
+### [Phase 2: Migrate All 8 API Routes & OAuth Callback to Web-Standard Hono Routers] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 2 — Migrate All 8 API Routes & OAuth Callback to Web-Standard Hono Routers`  
-> **Status:** `PLANNED`  
+> **Status:** `CLOSED / EXECUTED` (Commit Gate 2 Satisfied & Verified)  
+> **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-02-migrate-all-8-api-routes-and-oauth-callback-to-web-standard-hono-routers.md`](../records/closures/framework-migration/phase-02-migrate-all-8-api-routes-and-oauth-callback-to-web-standard-hono-routers.md)  
 > **Single Responsibility Principle (`SRP`):** Extract the exact implementation of all 8 REST/SSE API routes (`src/app/api/**`) and `/auth/callback` into modular, Web-standard Hono route modules under `src/server/routes/*.routes.ts`, assemble the central Hono application in `src/server/app.ts`, and re-export thin `GET`/`POST`/`PUT`/`DELETE` wrappers from `src/app/**` delegating to the Hono handlers so all existing route tests stay $100\%$ green.  
 > **Post-Phase 1 Baseline State:** `Hono` is installed, `request-context.ts` (including `scheduleAfterResponse`) and `session-middleware.ts` are active, and `src/lib/supabase/server.ts` is decoupled from static `next/headers` imports.
 
@@ -311,6 +312,8 @@ flowchart LR
   npx tsc --noEmit
   npx vitest run src/test/agent/agent-stream-route.test.ts src/test/ai/ai-authoritative-stream-settlement.test.ts src/test/api/stripe-webhook.test.ts src/test/infrastructure/cron-expire-reservations.test.ts src/test/infrastructure/cron-overlap.test.ts src/test/auth/auth-redirect.test.ts
   ```
+- **Gate Verdict:** CLOSED / EXECUTED — TypeScript clean (0 errors), 4 new server router suites (120 tests) passing 100%, 121 repository unit suites (2,112 tests) passing 100%, Commit Gate 2 fully satisfied.
+- **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-02-migrate-all-8-api-routes-and-oauth-callback-to-web-standard-hono-routers.md`](../records/closures/framework-migration/phase-02-migrate-all-8-api-routes-and-oauth-callback-to-web-standard-hono-routers.md)
 
 ### [Phase 3: Decouple Server Actions from Next.js Runtime & Mount Typed Hono RPC (`hc<AppType>`)]
 

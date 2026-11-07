@@ -29,7 +29,7 @@ Authorization: Bearer <token>
 | `limit` | number | ✗ | Max items (default: 50, max: 100) |
 
 #### Response (200 OK)
-Response shape from `src/app/api/files/sync/route.ts`:
+Response shape from `src/server/routes/files-api.routes.ts` (mounted at `/api/files/sync`):
 ```json
 {
   "files": [
@@ -262,7 +262,7 @@ When restoring a folder resource via `restoreFile`, the operation invokes `getDe
 
 ## Error Responses
 
-Error bodies are structured JSON produced by the handlers; all error responses include a standardized `correlationId` property for distributed tracing. Shapes below are taken directly from the route sources (`src/app/api/files/[id]/route.ts`, `src/app/api/files/sync/route.ts`, `src/lib/rate-limit.ts`):
+Error bodies are structured JSON produced by the handlers; all error responses include a standardized `correlationId` property for distributed tracing. Shapes below are taken directly from the route sources (`src/server/routes/files-api.routes.ts`, `src/lib/rate-limit.ts`):
 
 | Status | Actual response body | Trigger |
 |--------|----------------------|---------|

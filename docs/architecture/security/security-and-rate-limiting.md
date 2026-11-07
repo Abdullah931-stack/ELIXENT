@@ -36,7 +36,7 @@ All redirect parameters entering the authentication pipeline are strictly valida
 
 ### 1.2. Cross-User Resource Isolation & Anti-Enumeration (404 vs 403)
 
-To prevent resource enumeration (probing for valid UUIDs via 403 vs 404 responses), all lookups across `src/server/auth/session.ts` (`requireOwnedFile`), `file-ops.ts`, `import-file.ts`, and `src/app/api/agent/stream/route.ts` return unified `404 Not Found` responses when foreign/unauthorized resources are accessed. Furthermore, `requireOwnedFile` performs upfront UUID regex syntax verification, preventing PostgreSQL `22P02` syntax errors from revealing invalid UUID queries.
+To prevent resource enumeration (probing for valid UUIDs via 403 vs 404 responses), all lookups across `src/server/auth/session.ts` (`requireOwnedFile`), `file-ops.ts`, `import-file.ts`, and `src/server/routes/agent.routes.ts` return unified `404 Not Found` responses when foreign/unauthorized resources are accessed. Furthermore, `requireOwnedFile` performs upfront UUID regex syntax verification, preventing PostgreSQL `22P02` syntax errors from revealing invalid UUID queries.
 
 ### 1.3 Zero-Knowledge Encrypted Content Governance & AI Route Hardening (LUGX-085, LUGX-004, LUGX-017)
 
@@ -102,7 +102,7 @@ The platform enforces explicit, deterministic failure policies per service tier:
 4. **Database-Enforced ACID User Quotas & Credit Ledger:**
    - User consumption and credit balances are tracked and enforced in PostgreSQL via `users.credit_balance_micro` (with a non-negative check constraint `users_credit_balance_non_negative`) and `credit_ledger_transactions` (migration `0013_migrate_to_credit_ledger.sql`), replacing the legacy `usage` and `ai_reservations` tables.
 5. **Hybrid Fail-Open Distributed Lock (Stripe Webhook Concurrency / Phase 21):**
-   - Implemented in `src/app/api/stripe/webhook/route.ts` via in-flight Redis lock `stripe:lock:${eventId}` (`nx: true, ex: 30`) bounded by a 1500ms watchdog (`withTimeout`).
+   - Implemented in `src/server/routes/stripe.routes.ts` (mounted at `/api/stripe/webhook`) via in-flight Redis lock `stripe:lock:${eventId}` (`nx: true, ex: 30`) bounded by a 1500ms watchdog (`withTimeout`).
    - If Redis is unreachable or times out, the lock fails open to PostgreSQL ACID transactions (`executeSubscriptionTransition`) and database-level idempotency (`subscription_events`).
    - Authoritative specification: [`docs/guides/billing/stripe-integration.md`](../../guides/billing/stripe-integration.md).
 
@@ -274,7 +274,7 @@ Scheduled maintenance routes execute background pruning and quota reclamation. T
 - **Safe Overlap Skipping:** When a lock cannot be acquired because a previous execution is still running, handlers immediately return HTTP 200 `{ success: true, skipped: true, reason: "Overlapping execution prevented by distributed lock", timestamp: ... }`. Schedulers do not fail or retry aggressively.
 - **Automatic & Manual Release:** The lock exposes a `.release()` method called in route `finally` blocks, while the TTL automatically expires the lock if a process crashes ungracefully.
 
-### 5.2 Soft-Delete Tombstone Purge (`src/app/api/cron/purge-deleted/route.ts`)
+### 5.2 Soft-Delete Tombstone Purge (`src/server/routes/cron.routes.ts` / `/api/cron/purge-deleted`)
 
 Permanent purge of soft-delete tombstones past retention:
 
@@ -292,7 +292,7 @@ The application itself never hard-deletes user content outside this route — al
 user-facing deletions are tombstones
 ([`records/incidents/test-database-safety.md`](../../records/incidents/test-database-safety.md)).
 
-### 5.3 Stale Quota Reservation Expiration (`src/app/api/cron/expire-reservations/route.ts` / TD-02)
+### 5.3 Stale Quota Reservation Expiration (`src/server/routes/cron.routes.ts` / `/api/cron/expire-reservations` / TD-02)
 
 Automated expiration of leaked or orphaned in-flight AI quota reservations:
 

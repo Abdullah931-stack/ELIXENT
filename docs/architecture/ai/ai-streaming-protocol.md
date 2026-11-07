@@ -1,12 +1,12 @@
 # AI NDJSON Streaming Protocol & Session State Machine Architecture
 
 > [!NOTE]
-> **Elixent Phase 12 Architecture Migration Note (`v0.12.0`):** In Phase 12, the legacy 5-operation streaming route (`src/app/api/ai/stream/route.ts`) and single-range preview buffer (`src/lib/ai/preview-buffer.ts`) were permanently deleted. All AI streaming and agentic orchestration now execute through the **Elixent Agentic Engine** (`src/app/api/agent/stream/route.ts`), the **Multi-Hunk Ghost Engine** (`src/components/editor/codemirror/extensions/streaming-ghost.ts`), and `src/server/services/ai-settlement-service.ts`. For the active multi-hunk and agentic streaming specifications, see [02_agent_orchestration_and_decision_engine.md](../02_agent_orchestration_and_decision_engine.md) and [03_workspace_ast_editor_and_vault_integration.md](../03_workspace_ast_editor_and_vault_integration.md).
+> **Elixent Phase 12 Architecture Migration Note (`v0.12.0`):** In Phase 12, the legacy 5-operation streaming route (`src/app/api/ai/stream/route.ts`) and single-range preview buffer (`src/lib/ai/preview-buffer.ts`) were permanently deleted. All AI streaming and agentic orchestration now execute through the **Elixent Agentic Engine** (`src/server/routes/agent.routes.ts`, mounted at `/api/agent/stream`), the **Multi-Hunk Ghost Engine** (`src/components/editor/codemirror/extensions/streaming-ghost.ts`), and `src/server/services/ai-settlement-service.ts`. For the active multi-hunk and agentic streaming specifications, see [02_agent_orchestration_and_decision_engine.md](../02_agent_orchestration_and_decision_engine.md) and [03_workspace_ast_editor_and_vault_integration.md](../03_workspace_ast_editor_and_vault_integration.md).
 
 ## 1. Overview & Architectural Objectives
 
 This specification details the end-to-end NDJSON (Newline-Delimited JSON) Streaming Protocol, finite state machine (FSM), and adversarial hardening layer connecting:
-- **Server Stream Handler**: `src/app/api/agent/stream/route.ts` (superseding the deleted `src/app/api/ai/stream/route.ts`)
+- **Server Stream Handler**: `src/server/routes/agent.routes.ts` (mounted at `/api/agent/stream`, superseding the deleted `src/app/api/ai/stream/route.ts`)
 - **Client Protocol Parser**: `src/lib/ai/stream-handler.ts`
 - **Session State Machine & Integrity**: `src/lib/ai/stream-session.ts`
 - **Multi-Hunk Preview & Editor Extension**: `src/components/editor/codemirror/extensions/streaming-ghost.ts` (`MultiHunkGhostState`, superseding the deleted `src/lib/ai/preview-buffer.ts`)

@@ -196,7 +196,7 @@ When a request arrives for a user whose wallet key `lugx:wallet:${userId}` is ab
 
 ### 5.3. Webhook Dual-Write Protocol for Stripe Top-Up Events (`Webhook Dual-Write Protocol`)
 
-When a payment or subscription renewal event is received in `src/app/api/stripe/webhook/route.ts`:
+When a payment or subscription renewal event is received in `src/server/routes/stripe.routes.ts` (mounted at `/api/stripe/webhook`):
 
 1. `users.credit_balance_micro` is updated and the event is recorded in `subscription_events` and `credit_ledger_transactions` inside a PostgreSQL transaction first.
 2. A Redis Lua script (`stripe_dual_write.lua`) is invoked to increment `lugx:wallet:${userId}` by the top-up amount via `INCRBY` **only if the key currently exists in memory (`EXISTS == 1`)**; otherwise, it is left to be hydrated via the `Flush-First Cold Start` protocol on the next user request.
@@ -230,8 +230,8 @@ In Phase 11, user-facing quota displays were migrated from legacy word-count met
   - `src/server/services/ai-settlement-service.ts` — `flushPendingSettlementsToPostgres`, `getUserCreditBalance`
   - `src/config/tiers.config.ts` — `creditAllocationMicro` and `creditsDisplay` per tier
   - `src/server/services/billing-service.ts` — `recordCreditTopup`, `executeRedisDualWrite`
-  - `src/app/api/stripe/webhook/route.ts` — Authoritative Stripe webhook handler with dual-write protocol
-  - `src/app/api/cron/expire-reservations/route.ts` — Batch-draining cron job with 30s grace window
+  - `src/server/routes/stripe.routes.ts` — Authoritative Stripe webhook handler with dual-write protocol (mounted at `/api/stripe/webhook`)
+  - `src/server/routes/cron.routes.ts` — Batch-draining cron job with 30s grace window (mounted at `/api/cron/expire-reservations`)
 - **Acceptance & Verification Suites:**
   - `src/test/metering/derivation-and-lua.unit.test.ts` — Token derivation and Redis Lua script unit tests (18 tests)
   - `src/test/metering/cold-start.unit.test.ts` — Flush-First cold start unit tests (13 tests)
