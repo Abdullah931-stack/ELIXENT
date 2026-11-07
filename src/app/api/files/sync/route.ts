@@ -1,10 +1,7 @@
 import type { NextRequest } from "next/server";
-import {
-  handleFilesSyncGet,
-  dynamic,
-} from "@/server/routes/files-api.routes";
+import { handleFilesSyncGet } from "@/server/routes/files-api.routes";
 
-export { dynamic };
+export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest | Request): Promise<Response> {
   return handleFilesSyncGet(request);

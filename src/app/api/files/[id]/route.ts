@@ -3,10 +3,9 @@ import {
   handleFileByIdGet,
   handleFileByIdPut,
   handleFileByIdDelete,
-  dynamic,
 } from "@/server/routes/files-api.routes";
 
-export { dynamic };
+export const dynamic = "force-dynamic";
 
 export interface RouteParams {
   params: Promise<{ id: string }>;
