@@ -19,6 +19,8 @@
 
 # production
 /build
+/dist
+/.vite
 
 # misc
 .DS_Store
@@ -46,7 +48,7 @@ next-env.d.ts
 .agents
 
 # internal plans
-.Plans
+docs/.Plans/
 
 # Playwright Test Outputs
 /test-results/
