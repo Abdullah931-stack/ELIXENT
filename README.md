@@ -19,7 +19,7 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-130%20Suites%20·%202304%2F2304%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 2304 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-134%20Suites%20·%202351%2F2351%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 2351 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-21%20Suites%20·%20108%2F108%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 108 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
@@ -137,7 +137,7 @@ _For the full comparative trade-off matrix, complexity analysis, and quantitativ
 
 | Domain                        | Technology / Specification                                   | Purpose / Implementation Highlights                                                                          |
 | ----------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| **Runtime & Framework**       | Next.js 16 (App Router) · React 19 · Node.js 22 LTS          | Turbopack compilation, Server Components, and Edge Proxies                                                   |
+| **Runtime & Framework**       | Vite 6 SPA · TanStack Router · Hono Node.js Server · Next.js 16 (transitional) · React 19 · Node.js 22 LTS | Unified Hono backend server, typed TanStack client routing, Vite 6 build pipeline                             |
 | **Language & Typings**        | TypeScript 5 (Strict Mode)                                   | Full type-safety across client hooks, server actions, and DB schemas                                         |
 | **Styling & Design System**   | Tailwind CSS 4 · Radix UI Primitives · Lucide Icons          | Dark Glassmorphism, tailored typography, and accessible UI controls                                          |
 | **Markdown Editor & Bidi**    | Standalone CodeMirror 6 (`MarkdownEditor` & `EditorAdapter`) | Live AST preview decorations, line-level Bidi isolation, LTR code block lock                                 |
@@ -162,7 +162,7 @@ lugx/
 │       └── cron.yml               # Scheduled maintenance workflow (Daily 03:00 UTC & Quota sweepers)
 ├── docs/                          # Comprehensive technical documentation & governance
 │   ├── README.md                  # Master structural map and documentation index
-│   ├── CHANGELOG.md               # Versioned engineering changelog (Elixent v0.1.0 to v0.12.0; archived LUGX v1.0.0–v1.46.3)
+│   ├── CHANGELOG.md               # Versioned engineering changelog (Elixent v0.1.0 to v0.17.0; archived LUGX v1.0.0–v1.46.3)
 │   ├── TECHNICAL_DEBT_REGISTER.md # Living register of accepted debts and resolution history
 │   ├── DOCUMENTATION_GUIDELINES.md# Rules for authoring, linking, and updating documentation
 │   ├── Plans/                     # Active technical execution plans (ELIXENT_FRAMEWORK_MIGRATION_PLAN.md)
@@ -174,7 +174,7 @@ lugx/
 │   └── .Plans/                    # Internal candidate planning incubator (Arabic, untracked)
 ├── public/                        # Static brand assets (lugx-icon.svg, icon.svg)
 ├── src/
-│   ├── app/                       # Next.js App Router (flat routing hierarchy)
+│   ├── app/                       # Next.js App Router (transitional during dual-stack migration)
 │   │   ├── api/                   # REST API endpoints (sync, AI stream, Stripe webhook, cron)
 │   │   │   ├── cron/              # purge-deleted (soft-deletes) & expire-reservations (AI quota leases)
 │   │   │   └── ...
@@ -185,7 +185,13 @@ lugx/
 │   │   ├── workspace/editor/      # Dedicated Markdown editor interface
 │   │   ├── layout.tsx             # Root layout with bilingual typography and theme providers
 │   │   └── globals.css            # Design tokens, Dark Glassmorphism, and Tailwind utilities
-│   ├── client/                    # Transport-injectable typed Hono RPC client (rpc-client.ts, hc<AppType>)
+│   ├── client/                    # Vite 6 SPA presentation layer & typed TanStack router
+│   │   ├── routes/                # 5 canonical route views (home, login, dashboard, editor, account) + workspace layout
+│   │   ├── main.tsx               # Client DOM entrypoint (StrictMode mount, QueryClient, TanStack RouterProvider)
+│   │   ├── navigation.ts          # Unified navigation adapter (SPA router vs window.location fallback)
+│   │   ├── router.tsx             # Type-safe TanStack route tree & query client provider
+│   │   ├── rpc-client.ts          # Transport-injectable typed Hono RPC client (hc<AppType>)
+│   │   └── styles/globals.css     # Client design tokens, Dark Glassmorphism, and Tailwind utilities
 │   ├── components/                # Modular React UI components
 │   │   ├── editor/                # Toolbar, direction menu, search-replace, streaming ghost widget
 │   │   │   └── markdown/          # Standalone CodeMirror 6 editor, adapter, and Bidi plugins
@@ -206,19 +212,22 @@ lugx/
 │   │   ├── utils/                 # Utility modules (correlation.ts for X-Correlation-ID tracing)
 │   │   ├── vault/                 # Vault schemas, key derivation, and local cache helpers
 │   │   └── workers/               # Isolated Crypto Web Worker (PBKDF2 600K & AES-GCM)
-│   ├── server/                    # Web-Standard Hono app (app.ts), routers (routes/*.routes.ts), decoupled actions & services
-│   ├── test/                      # Centralized test suite partitioned into 9 domain subdirectories
+│   ├── server/                    # Web-Standard Hono app (app.ts), routers, actions, services & node entrypoint (index.ts)
+│   ├── test/                      # Centralized test suite partitioned into domain subdirectories
 │   │   ├── ai/                    # Gemini AI client, NDJSON streaming, and quota settlement tests
+│   │   ├── client/                # TanStack router tree, navigation adapter, and view parity tests
 │   │   ├── sync/                  # Offline-first sync, conflict resolution, and IndexedDB tests
 │   │   ├── vault/                 # Zero-Knowledge vault crypto, WebAuthn PRF, and recovery tests
 │   │   ├── parsers/               # PDF worker bridge, spatial table extractor, and Arabic normalizer tests
 │   │   ├── editor/                # Standalone CodeMirror 6 editor, toolbar, and autosave tests
-│   │   ├── server/                # Next.js Server Actions and file operations tests
+│   │   ├── server/                # Node server entrypoint, Server Actions and file operations tests
 │   │   ├── auth/                  # Authentication, session guard, correlation, and proxy tests
 │   │   ├── infrastructure/        # Rate limiting, cron jobs, log sanitizer, and DB health tests
 │   │   ├── api/                   # REST route handlers and Stripe webhook live tests
 │   │   └── ...                    # Root harness (test-db.ts, test-db-guard.ts, db.setup.ts, load-test-env.ts)
 │   └── proxy.ts                   # Next.js 16 Edge proxy for session validation and deep-link routing
+├── index.html                     # Vite 6 SPA HTML entrypoint
+├── vite.config.ts                 # Vite 6 build configuration & proxy mapping
 ├── vitest.config.mts              # Default unit/contract test runner (isolated, fast feedback)
 ├── vitest.constants.mts           # Single source of truth for LIVE test suite registration
 ├── vitest.live.config.mts         # LIVE integration test runner (isolated Neon test branch)
@@ -307,7 +316,7 @@ npm run start
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 130 | 2304 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 134 | 2351 | 100% ✅ |
 | **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 108 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
@@ -322,7 +331,7 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).               |
 
 ```bash
-# Execute unit/contract test suites (130 test files, 2304 tests)
+# Execute unit/contract test suites (134 test files, 2351 tests)
 npm run test
 
 # Execute live database integration test suites on isolated Neon branch (21 test files, 108 tests)

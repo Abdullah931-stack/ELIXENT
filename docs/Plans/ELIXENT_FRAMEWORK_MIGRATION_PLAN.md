@@ -506,10 +506,11 @@ flowchart LR
 - **Gate Verdict:** CLOSED / EXECUTED — TypeScript clean (0 errors), 5 new UI/RPC test suites (65 tests) passing 100%, 130 repository unit suites (2,304 tests) passing 100%, Commit Gate 4 fully satisfied.
 - **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-04-wire-client-hooks-and-ui-to-hono-rpc-and-strip-directives.md`](../records/closures/framework-migration/phase-04-wire-client-hooks-and-ui-to-hono-rpc-and-strip-directives.md)
 
-### [Phase 5: Build `Vite 6 SPA` + `TanStack Router` Presentation Layer & Unified Hono Server Entrypoint]
+### [Phase 5: Build `Vite 6 SPA` + `TanStack Router` Presentation Layer & Unified Hono Server Entrypoint] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 5 — Build Vite 6 SPA + TanStack Router Presentation Layer & Unified Hono Server Entrypoint`  
-> **Status:** `PLANNED (Next Active Phase)`  
+> **Status:** `CLOSED / EXECUTED (Commit Gate 5 Satisfied & Verified)`  
+> **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-05-vite-spa-tanstack-router-and-unified-hono-server.md`](../records/closures/framework-migration/phase-05-vite-spa-tanstack-router-and-unified-hono-server.md)  
 > **Single Responsibility Principle (`SRP`):** Construct the root `index.html`, `vite.config.ts`, the Node.js Hono server entrypoint (`src/server/index.ts`), the `TanStack Router` tree (`src/client/router.tsx` & `src/client/main.tsx`), and migrate all 5 application views (`home`, `login`, `dashboard`, `account`, `workspace`, and `workspace/editor/$fileId`) into `src/client/routes/**` while updating `wave-11-2-ui-and-pages.test.tsx`.  
 > **Post-Phase 4 Baseline State:** All server routes (`src/server/routes/*`), RPC endpoints (`src/client/rpc-client.ts`), hooks (`src/hooks/*`), and UI components (`src/components/*`) are completely free of `next/*` dependencies.
 
@@ -597,11 +598,13 @@ flowchart LR
   npx tsc --noEmit
   npx vitest run src/test/agent/wave-11-2-ui-and-pages.test.tsx src/test/agent/wave-11-1-ui-and-sync.test.tsx
   ```
+- **Gate Verdict:** CLOSED / EXECUTED — TypeScript clean (0 errors), 4 new SPA/Router test suites (47 tests) passing 100%, 134 repository unit suites (2,351 tests) passing 100%, Commit Gate 5 fully satisfied.
+- **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-05-vite-spa-tanstack-router-and-unified-hono-server.md`](../records/closures/framework-migration/phase-05-vite-spa-tanstack-router-and-unified-hono-server.md)
 
 ### [Phase 6: Final Next.js Purge, Test Suite Alignment to Standard `Request` & Full CI/E2E Closure]
 
 > **Phase Identifier:** `Phase 6 — Final Next.js Purge, Test Suite Alignment to Standard Request & Full CI/E2E Closure`  
-> **Status:** `PLANNED`  
+> **Status:** `PLANNED (Next Active Phase)`  
 > **Single Responsibility Principle (`SRP`):** Permanently delete `src/app/**`, `src/proxy.ts`, `src/server/empty.ts`, and `next.config.ts`; remove `import "server-only"` from `ai-settlement-service.ts` and `billing-service.ts`; uninstall `next` and `eslint-config-next`; update the 22 test files that imported `NextRequest` or `src/app/api/**` to use standard Web `Request` and `src/server/routes/**`; remove the `'server-only'` alias from `vitest*.config.mts`; and align `playwright.config.ts`, `tsconfig.json`, `eslint.config.mjs`, `.github/workflows/ci.yml`, `AGENTS.md`, and `docs/METRICS.json`.  
 > **Post-Phase 5 Baseline State:** All routes (`src/server/routes/**`), RPC endpoints (`src/client/rpc-client.ts`), and SPA views (`src/client/routes/**`) are complete and verified under `Vite 6 + TanStack Router + Hono`.
 

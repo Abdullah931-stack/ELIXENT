@@ -4,6 +4,55 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.17.0] - 2026-11-08 (Phase 5: Build Vite 6 SPA + TanStack Router Presentation Layer & Unified Hono Server Entrypoint)
+
+### Single-Page Application (SPA) Build & Modern Bundler Entrypoint (`index.html`, `vite.config.ts`, `src/client/main.tsx`)
+
+- **Root HTML Shell (`index.html`):** Configured `<html lang="en" class="dark" data-scroll-behavior="smooth">` with Google Fonts preconnections (`Geist`, `Geist Mono`, and `IBM Plex Sans Arabic`), SVG favicon link, and `<div id="root"></div>` mounting `/src/client/main.tsx`.
+- **Vite 6 Configuration (`vite.config.ts`):** Configured `@vitejs/plugin-react`, `@` path alias, `envPrefix` (`VITE_`, `NEXT_PUBLIC_`), explicit compile-time `define` bindings for public environment variables, and `dist/client` build output.
+- **Vite Dev Server Hono Middleware (`elixentHonoDevServerPlugin`):** Embedded Hono application handling inside the Vite development server. Translates Node requests to standard Web `Request`/`Response`, routes `/api/*` and `/auth/callback` to `app.fetch()`, preserves multi-value `Set-Cookie` headers, pipes streaming response bodies (SSE) with flush support, and enforces session proxy checks (`handleSessionProxy`) on HTML routes to issue 307 redirects before serving `index.html`.
+- **Client Server Stubbing (`clientServerStubPlugin`):** Enforces module boundary safety by resolving any server action or service imports to `src/server/empty.ts` during client builds.
+
+### Unified Node.js Server Entrypoint (`src/server/index.ts`)
+
+- **Standalone HTTP Server:** Implemented a unified Node.js server using `@hono/node-server` (`serve({ fetch: app.fetch, port })`).
+- **Runtime `server-only` Resolution Hook:** Intercepts `Module._resolveFilename` in Node runtimes to safely resolve `server-only` to `src/server/empty.ts`.
+- **Static Asset & SPA Route Fallback:** Mounted `@hono/node-server/serve-static` for `dist/client` and `public/`, and implemented a wildcard route handler (`app.get("*", ...)`) serving `dist/client/index.html` with session validation and diagnostic 404 messaging.
+
+### TanStack Router Route Tree & Navigation Adapters (`src/client/router.tsx`, `src/client/navigation.ts`)
+
+- **TanStack Router Route Tree (`src/client/router.tsx`):** Constructed the complete application route hierarchy with `defaultPreload: "intent"`:
+  - `/` -> `HomeRouteView`
+  - `/login` -> `LoginRouteView`
+  - `/dashboard` -> `DashboardRouteView`
+  - `/account` -> `AccountRouteView`
+  - `/workspace` -> `WorkspaceLayoutRouteView` (with `<Outlet />`)
+    - `/` (index) -> `WorkspaceRouteView`
+    - `editor/$fileId` -> `EditorRouteView`
+- **Universal Navigation Adapters (`src/client/navigation.ts`):** Exported `useAppParams()` with regex fallback for isolated unit testing, `useAppNavigate()` with TanStack Router and history fallbacks, and imperative `navigateTo(path)` supporting external URL assignment and internal SPA `pushState` + `PopStateEvent` dispatch.
+
+### Migrated Application Route Views (`src/client/routes/**`, `src/client/styles/globals.css`)
+
+- **Route Views Migration:** Migrated all 5 core views (`home-page.tsx`, `login-page.tsx`, `dashboard-page.tsx`, `account-page.tsx`, `workspace-layout.tsx`, `workspace-page.tsx`, `editor-page.tsx`) to `src/client/routes/**` with 100% behavioral parity.
+- **Dual-Mode View Contract:** Enabled both client-side SPA rendering via synchronous React wrappers (`RouteView`) and async server/test data-fetching invocation.
+- **Global Stylesheet (`src/client/styles/globals.css`):** Migrated Tailwind CSS v4 directives, custom properties, and dark theme palette.
+
+### Verification & SSOT Metrics Baseline
+
+- **Dedicated Phase 5 Test Suites:** Added 4 new suites delivering 47 passing tests (100% green):
+  - `src/test/client/navigation.test.ts` (14 tests)
+  - `src/test/client/route-views-parity.test.tsx` (20 tests)
+  - `src/test/client/router-tree.test.tsx` (9 tests)
+  - `src/test/server/node-server-entrypoint.test.ts` (4 tests)
+- **Aligned Test Suite:** Updated `src/test/agent/wave-11-2-ui-and-pages.test.tsx` (47 tests) to import views from `@/client/routes/*` and mock `@/client/navigation`.
+- **Synchronized SSOT Metrics:** Validated via `scripts/sync-doc-metrics.mjs`:
+  - Unit & Contract: 134 suites, 2,351 passing tests (100% green).
+  - Live Multi-System Integration: 21 suites, 108 passing tests (100% green).
+  - Browser E2E Journeys: 14 specs, 15 user journeys (100% green).
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/framework-migration/phase-05-vite-spa-tanstack-router-and-unified-hono-server.md`](./records/closures/framework-migration/phase-05-vite-spa-tanstack-router-and-unified-hono-server.md).
+
+---
+
 ## [0.16.0] - 2026-11-08 (Phase 4: Wire Client Hooks & UI Components to Hono RPC Client & Strip Next.js Directives)
 
 ### Client Hooks & Orchestration Rewiring (`src/hooks/*`)
