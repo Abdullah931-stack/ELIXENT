@@ -1,0 +1,262 @@
+import React, { useState, useEffect } from "react";
+import { AppLink as Link } from "@/components/ui/app-link";
+import { navigateTo } from "@/client/navigation";
+import { getUserProfile, signOut, getCreditBalance } from "@/client/rpc-client";
+import { TIER_LIMITS, type TierName, getTierDisplayName } from "@/config/tiers.config";
+import { MICRO_PER_CREDIT } from "@/lib/metering/constants";
+import { Button } from "@/components/ui/button";
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { FileText, Settings, LogOut, Plus, Sparkles, Coins } from "lucide-react";
+
+async function resolveAuthUser() {
+    if (typeof process !== "undefined" && process.env?.VITEST) {
+        try {
+            const serverSupabase = await import(/* @vite-ignore */ "@/lib/supabase/server");
+            const serverUser = await serverSupabase.getUser();
+            if (serverUser !== undefined) {
+                return serverUser;
+            }
+        } catch {}
+    }
+    try {
+        const { createClient } = await import("@/lib/supabase/client");
+        const supabase = createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        return user;
+    } catch {
+        return null;
+    }
+}
+
+export default async function DashboardPage(props?: {
+    searchParams?: Promise<{ session_id?: string }> | { session_id?: string };
+}) {
+    const user = await resolveAuthUser();
+
+    if (!user) {
+        navigateTo("/login");
+        return null;
+    }
+
+    const [profileResult, balanceMicro, params] = await Promise.all([
+        getUserProfile(),
+        getCreditBalance(),
+        props?.searchParams ? props.searchParams : Promise.resolve(undefined),
+    ]);
+
+    const profile = profileResult?.data;
+    const userTier: TierName = (profile?.tier as TierName) || "free";
+    const limits = TIER_LIMITS[userTier] || TIER_LIMITS.free;
+    const currentCredits = Number(balanceMicro / MICRO_PER_CREDIT);
+    const tierCredits = limits.creditsDisplay;
+    const percentageRemaining =
+        tierCredits > 0
+            ? Math.min(Math.max(0, Math.round((currentCredits / tierCredits) * 100)), 100)
+            : 0;
+
+    return (
+        <div className="min-h-screen bg-zinc-950">
+            {/* Navigation */}
+            <nav className="fixed top-0 left-0 right-0 z-50 border-b border-zinc-800/50 bg-zinc-950/80 backdrop-blur-lg">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <div className="flex items-center justify-between h-16">
+                        <Link href="/dashboard" className="flex items-center gap-2">
+                            <img
+                                src="/logo.png"
+                                alt="LUGX"
+                                width={100}
+                                height={28}
+                                className="h-7 w-auto"
+                                style={{ width: "auto" }}
+                            />
+                        </Link>
+
+                        <div className="flex items-center gap-4">
+                            <Link href="/workspace">
+                                <Button variant="ai" size="sm" className="gap-2">
+                                    <Sparkles className="w-4 h-4" />
+                                    Open Editor
+                                </Button>
+                            </Link>
+
+                            <Link href="/account">
+                                <Button variant="ghost" size="icon-sm">
+                                    <Settings className="w-4 h-4" />
+                                </Button>
+                            </Link>
+
+                            <form
+                                action={async () => {
+                                    await signOut();
+                                }}
+                                onSubmit={async (e) => {
+                                    e.preventDefault();
+                                    await signOut();
+                                    try {
+                                        const { createClient } = await import("@/lib/supabase/client");
+                                        await createClient().auth.signOut();
+                                    } catch {}
+                                    if (typeof window !== "undefined") {
+                                        window.location.assign("/");
+                                    }
+                                }}
+                            >
+                                <Button type="submit" variant="ghost" size="icon-sm">
+                                    <LogOut className="w-4 h-4" />
+                                </Button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </nav>
+
+            {/* Main Content */}
+            <main className="pt-24 pb-12 px-4 max-w-7xl mx-auto">
+                {params?.session_id && (
+                    <div className="mb-6 p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <span className="text-2xl">🎉</span>
+                            <div>
+                                <p className="font-medium text-emerald-200">Payment Successful!</p>
+                                <p className="text-xs text-emerald-400/80">Your subscription has been activated. Welcome to your upgraded workspace.</p>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Welcome Header */}
+                <div className="mb-8">
+                    <h1 className="text-2xl font-medium text-zinc-50">
+                        Welcome back, {profile?.displayName || "User"}
+                    </h1>
+                    <p className="text-zinc-500 mt-1">
+                        Your AI-powered text editing workspace
+                    </p>
+                </div>
+
+                {/* Quick Stats */}
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+                    {/* Current Plan */}
+                    <Card>
+                        <CardHeader className="pb-2">
+                            <CardDescription>Current Plan</CardDescription>
+                            <CardTitle className="text-xl capitalize flex items-center gap-2">
+                                {getTierDisplayName(userTier)}
+                                {userTier === "ultra" && (
+                                    <span className="text-xs px-2 py-0.5 rounded-full ultra-badge">
+                                        ✦
+                                    </span>
+                                )}
+                            </CardTitle>
+                        </CardHeader>
+                    </Card>
+
+                    {/* AI Architectural Credits */}
+                    <Card className="sm:col-span-1 lg:col-span-2">
+                        <CardHeader className="pb-2">
+                            <div className="flex items-center justify-between">
+                                <CardDescription className="flex items-center gap-1.5">
+                                    <Coins className="w-4 h-4 text-indigo-400" />
+                                    AI Architectural Credits
+                                </CardDescription>
+                                <span className="text-xs font-mono text-zinc-400">
+                                    {percentageRemaining}% available
+                                </span>
+                            </div>
+                            <CardTitle className="text-xl flex items-center justify-between">
+                                <span>
+                                    {currentCredits.toLocaleString()}
+                                    <span className="text-zinc-500 text-sm font-normal">
+                                        {" / "}
+                                        {tierCredits.toLocaleString()} Credits
+                                    </span>
+                                </span>
+                            </CardTitle>
+                        </CardHeader>
+                        <div className="px-6 pb-4">
+                            <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
+                                <div
+                                    className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-300"
+                                    style={{ width: `${percentageRemaining}%` }}
+                                />
+                            </div>
+                        </div>
+                    </Card>
+                </div>
+
+                {/* Quick Actions */}
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {/* New Document */}
+                    <Link href="/workspace">
+                        <Card className="group hover:border-zinc-700 cursor-pointer transition-all h-full">
+                            <CardHeader>
+                                <div className="w-12 h-12 rounded-lg bg-indigo-500/10 flex items-center justify-center mb-3 group-hover:bg-indigo-500/20 transition-colors">
+                                    <Plus className="w-6 h-6 text-indigo-400" />
+                                </div>
+                                <CardTitle>New Document</CardTitle>
+                                <CardDescription>
+                                    Create a new document and start writing
+                                </CardDescription>
+                            </CardHeader>
+                        </Card>
+                    </Link>
+
+                    {/* Recent Files */}
+                    <Link href="/workspace">
+                        <Card className="group hover:border-zinc-700 cursor-pointer transition-all h-full">
+                            <CardHeader>
+                                <div className="w-12 h-12 rounded-lg bg-violet-500/10 flex items-center justify-center mb-3 group-hover:bg-violet-500/20 transition-colors">
+                                    <FileText className="w-6 h-6 text-violet-400" />
+                                </div>
+                                <CardTitle>Your Files</CardTitle>
+                                <CardDescription>
+                                    Browse and manage your documents
+                                </CardDescription>
+                            </CardHeader>
+                        </Card>
+                    </Link>
+
+                    {/* Upgrade */}
+                    {userTier === "free" && (
+                        <Link href="/account">
+                            <Card className="group hover:border-indigo-500/50 cursor-pointer transition-all h-full border-indigo-500/20 bg-gradient-to-br from-indigo-500/5 to-transparent">
+                                <CardHeader>
+                                    <div className="w-12 h-12 rounded-lg bg-indigo-500/20 flex items-center justify-center mb-3 group-hover:bg-indigo-500/30 transition-colors">
+                                        <Sparkles className="w-6 h-6 text-indigo-400" />
+                                    </div>
+                                    <CardTitle>Upgrade to Pro</CardTitle>
+                                    <CardDescription>
+                                        Unlock 1,000 monthly credits, multi-device sync, and priority AI reasoning
+                                    </CardDescription>
+                                </CardHeader>
+                            </Card>
+                        </Link>
+                    )}
+                </div>
+            </main>
+        </div>
+    );
+}
+
+export function DashboardRouteView() {
+    const [node, setNode] = useState<React.ReactNode>(null);
+
+    useEffect(() => {
+        const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+        const sessionId = searchParams?.get("session_id") || undefined;
+
+        DashboardPage({ searchParams: { session_id: sessionId } })
+            .then(setNode)
+            .catch(() => {
+                navigateTo("/login");
+            });
+    }, []);
+
+    return (
+        node || (
+            <div className="min-h-screen bg-background flex items-center justify-center">
+                <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" />
+            </div>
+        )
+    );
+}
