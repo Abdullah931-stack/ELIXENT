@@ -1,5 +1,3 @@
-import "server-only";
-
 import { db } from "@/server/db";
 import { txDb } from "@/server/db/transactional";
 import * as schema from "@/server/db/schema";

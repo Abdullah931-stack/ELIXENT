@@ -1,5 +1,3 @@
-import "server-only";
-
 /**
  * Authoritative Billing Service (Phase 12)
  *

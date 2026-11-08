@@ -1,6 +1,6 @@
 {
   "name": "elixent",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "private": true,
   "engines": {
     "node": ">=22.0.0",
@@ -9,9 +9,9 @@
   "scripts": {
     "docs:sync": "node scripts/sync-doc-metrics.mjs --update-docs",
     "docs:check": "node scripts/sync-doc-metrics.mjs --check",
-    "dev": "next dev",
-    "build": "next build --webpack",
-    "start": "next start",
+    "dev": "vite --port 3000",
+    "build": "vite build",
+    "start": "npx tsx src/server/index.ts",
     "lint": "eslint",
     "lint:links": "node scripts/check-markdown-links.mjs",
     "audit:ci": "node scripts/ci-audit.mjs",
@@ -59,7 +59,6 @@
     "hono": "^4.13.17",
     "js-tiktoken": "^1.0.21",
     "lucide-react": "^0.563.0",
-    "next": "^16.3.8",
     "pdfjs-dist": "^4.10.38",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -69,6 +68,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4",
     "@testing-library/react": "^16.3.2",
@@ -82,13 +82,13 @@
     "drizzle-kit": "^0.31.10",
     "esbuild": "^0.28.2",
     "eslint": "^9",
-    "eslint-config-next": "^16.3.8",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^29.1.1",
     "pg": "^8.23.0",
     "tailwindcss": "^4",
     "tsx": "^4.23.15",
     "typescript": "^5",
+    "typescript-eslint": "^8.72.1",
     "vite": "^6.4.5",
     "vitest": "^5.0.5"
   },

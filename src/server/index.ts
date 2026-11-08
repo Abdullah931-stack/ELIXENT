@@ -1,25 +1,5 @@
 import path from "node:path";
 import fs from "node:fs";
-import Module from "node:module";
-
-// Hook 'server-only' resolution for Node runtime until Phase 6 permanently strips it
-try {
-  const modAny = Module as unknown as {
-    _resolveFilename?: (request: string, ...args: unknown[]) => string;
-  };
-  const orig = modAny._resolveFilename;
-  if (typeof orig === "function") {
-    modAny._resolveFilename = function (request: string, ...args: unknown[]) {
-      if (request === "server-only") {
-        return path.resolve(process.cwd(), "src/server/empty.ts");
-      }
-      return orig.call(this, request, ...args);
-    };
-  }
-} catch {
-  // Ignore in runtimes where Module._resolveFilename is unavailable
-}
-
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { app } from "./app";
