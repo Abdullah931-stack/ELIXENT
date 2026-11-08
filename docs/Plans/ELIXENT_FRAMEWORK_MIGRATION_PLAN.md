@@ -408,7 +408,7 @@ flowchart LR
 ### [Phase 4: Wire Client Hooks & UI Components to Hono RPC Client & Strip Next.js Directives]
 
 > **Phase Identifier:** `Phase 4 — Wire Client Hooks & UI Components to Hono RPC Client & Strip Next.js Directives`  
-> **Status:** `PLANNED`  
+> **Status:** `CLOSED / VERIFIED`  
 > **Single Responsibility Principle (`SRP`):** Switch all client-side hooks (`src/hooks/*`) and UI components (`src/components/*`) from importing `@/server/actions/*` to importing the typed Hono RPC client (`@/client/rpc-client`), replace `next/link` in `sidebar.tsx` and `file-tree-item.tsx` with a router-compatible `AppLink` component, and strip all `"use client"` directives across `src/components/**`, `src/hooks/**`, and `src/lib/ai/stream-handler.ts`.  
 > **Post-Phase 3 Baseline State:** `src/server/routes/rpc.routes.ts` and `src/client/rpc-client.ts` are active and typed via `hc<AppType>`, while `src/server/actions/*` remain available for server-side and unit-test imports.
 
@@ -503,11 +503,13 @@ flowchart LR
   npx tsc --noEmit
   npx vitest run src/test/editor src/test/files src/test/layout src/test/export src/test/sync src/test/agent/wave-11-1-ui-and-sync.test.tsx
   ```
+- **Gate Verdict:** CLOSED / EXECUTED — TypeScript clean (0 errors), 5 new UI/RPC test suites (65 tests) passing 100%, 130 repository unit suites (2,304 tests) passing 100%, Commit Gate 4 fully satisfied.
+- **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-04-wire-client-hooks-and-ui-to-hono-rpc-and-strip-directives.md`](../records/closures/framework-migration/phase-04-wire-client-hooks-and-ui-to-hono-rpc-and-strip-directives.md)
 
 ### [Phase 5: Build `Vite 6 SPA` + `TanStack Router` Presentation Layer & Unified Hono Server Entrypoint]
 
 > **Phase Identifier:** `Phase 5 — Build Vite 6 SPA + TanStack Router Presentation Layer & Unified Hono Server Entrypoint`  
-> **Status:** `PLANNED`  
+> **Status:** `PLANNED (Next Active Phase)`  
 > **Single Responsibility Principle (`SRP`):** Construct the root `index.html`, `vite.config.ts`, the Node.js Hono server entrypoint (`src/server/index.ts`), the `TanStack Router` tree (`src/client/router.tsx` & `src/client/main.tsx`), and migrate all 5 application views (`home`, `login`, `dashboard`, `account`, `workspace`, and `workspace/editor/$fileId`) into `src/client/routes/**` while updating `wave-11-2-ui-and-pages.test.tsx`.  
 > **Post-Phase 4 Baseline State:** All server routes (`src/server/routes/*`), RPC endpoints (`src/client/rpc-client.ts`), hooks (`src/hooks/*`), and UI components (`src/components/*`) are completely free of `next/*` dependencies.
 

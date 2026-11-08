@@ -60,7 +60,7 @@ docs/
 │   │   ├── extensions/                ← pdf worker extraction, vault import, sub-line diff3 & v1.46.1 offline auto-merge closure
 │   │   ├── core-hardening/            ← core hardening dossiers (Phase 1–18: metrics, links, skipped tests, Redis, contracts, reducers, schema, identity, crypto hierarchy, encrypted content governance, AI settlement, Stripe 1:N, Redis fail-closed & cron overlap, local sync queue CAS, durable IDB conflict quarantine, CI dependency audit gate, thin coordinator sync-manager decomposition, use-editor-conflict extraction)
 │   │   ├── elixent-execution/         ← Elixent 12-phase execution plan closures (Phases 1–12: core hardening, dependencies & schema migration, lean models registry, flush-first settlement, AST slicer & BM25, ZK vault & encrypted checkpoints, concept taxonomy & conformal APS, ATMS DAG & cascade BFS, AgentGraphState channels, pure reducers, 7-stage nodes & compiled LangGraph StateGraph, CodeMirror 6 multi-hunk ghost & unified agent SSE stream route, agent chat panel, HITL cards, credit balance views & incremental editor sync, and final legacy 5-operation purge, test suite migration & living documentation sync dossiers)
-│   │   └── framework-migration/       ← Framework migration plan closures (Phase 1: archive prior plan, packages & session middleware; Phase 2: migrate all 8 API routes & auth callback to Hono; Phase 3: decouple server actions & mount typed Hono RPC)
+│   │   └── framework-migration/       ← Framework migration plan closures (Phase 1: archive prior plan, packages & session middleware; Phase 2: migrate all 8 API routes & auth callback to Hono; Phase 3: decouple server actions & mount typed Hono RPC; Phase 4: wire client hooks & UI to Hono RPC client & strip directives)
 │   ├── plans/                         ← completed historical execution plans (comprehensive-technical-remediation-plan-lugx-v1, technical-execution, hybrid-vault, markdown-editor, M6)
 │   └── archive/                       ← superseded, halted, or abandoned specs & LUGX v1 historical baseline (lugx-v1/foundation/, CHANGELOG-LUGX-v1.md)
 │
@@ -260,7 +260,7 @@ docs/
 ## 4. Verification Commands
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 125 unit suites (2239 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 130 unit suites (2304 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ```bash
@@ -269,7 +269,7 @@ npm run lint:links      # deterministic markdown internal link verification (zer
 npm run test:ci-gate    # deterministic CI gating simulation matrix (30 assertions, zero broken contracts)
 npx tsc --noEmit        # strict TypeScript type-checking (0 errors)
 npm run audit:ci        # dependency security gate: production fail-closed (0 vulnerabilities) + dev allowlist (TD-15)
-npm run test            # pure unit, contract, and vault cryptographic test suites (125 files, 2239 tests via vitest.config.mts)
+npm run test            # pure unit, contract, and vault cryptographic test suites (130 files, 2304 tests via vitest.config.mts)
 npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (21 files, 108 tests via vitest.live.config.mts)
 npm run test:e2e        # browser-driven E2E user journeys (14 specs, 15 scenarios via Playwright / Chromium)
 npm run test:all        # full suite execution (unit + live)

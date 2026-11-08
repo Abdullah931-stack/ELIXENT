@@ -4,6 +4,43 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.16.0] - 2026-11-08 (Phase 4: Wire Client Hooks & UI Components to Hono RPC Client & Strip Next.js Directives)
+
+### Client Hooks & Orchestration Rewiring (`src/hooks/*`)
+
+- **Editor Orchestrator (`use-editor-orchestrator.ts`):** Removed `"use client"`. Switched all direct imports of `@/server/actions/file-ops` (`getFile`, `updateFileContent`, `toggleFileEncryption`, `renameFile`, `deleteFile`) and `@/server/actions/vault-actions` (`getUserVaultProfile`) to `@/client/rpc-client`. Added an `isProgrammaticUpdateRef.current` guard around `handleEditorChange` to suppress dirty flag flapping during remote synchronization and cross-tab broadcasts.
+- **Editor Conflict Reconciler (`use-editor-conflict.ts`):** Removed `"use client"`. Switched file mutation operations (`updateFileContent`, `toggleFileEncryption`, `renameFile`, `deleteFile`) to `@/client/rpc-client`.
+- **Client Synchronization & AI Stream Hooks (`use-sync.ts`, `use-ai-stream.ts`):** Stripped `"use client"` directives while preserving 100% of ghost streaming, autosave timers, and IndexedDB local document persistence.
+
+### Router-Agnostic SPA Navigation & UI Components (`src/components/*`)
+
+- **Accessible SPA Navigation (`src/components/ui/app-link.tsx`):** Implemented the `AppLink` component accepting standard anchor attributes and `replace` prop. Intercepts unmodified primary clicks on relative routes, executes `window.history.pushState` / `replaceState`, and dispatches synthetic `PopStateEvent` for SPA navigation, while rendering native `<a href={...}>` anchors for full Testing Library and Playwright locator support (`a[href="/workspace"]`).
+- **Sidebar & File Tree Navigation:** Replaced `import Link from "next/link"` with `import { AppLink as Link } from "@/components/ui/app-link"` in `src/components/layout/sidebar.tsx` and `src/components/files/file-tree-item.tsx`.
+- **File & Modal Operations:** Rewired file operations in `file-context-menu.tsx`, `folder-picker-modal.tsx`, and `sidebar.tsx` to `@/client/rpc-client`.
+- **Zero-Knowledge Vault Modals:** Rewired `create-vault-modal.tsx`, `trust-device-modal.tsx`, `vault-security-card.tsx`, and `vault-unlock-modal.tsx` to invoke master key creation, recovery phrase envelope updates, device trust revocation, and AI permission toggles via `@/client/rpc-client`.
+
+### Universal Directive Stripping & Transitional RSC Bridges
+
+- **Global `"use client"` Purge:** Stripped `"use client"` / `'use client'` from 22 remaining component, hook, and library files (`chat-panel.tsx`, `hitl-question-card.tsx`, `ai-stream-status.tsx`, `ai-toolbar.tsx`, `direction-menu.tsx`, `export-button.tsx`, `markdown-editor.tsx`, `search-replace.tsx`, `export-warning-modal.tsx`, `ocr-settings-card.tsx`, `pdf-corrupted-font-dialog.tsx`, `pdf-import-mode-dialog.tsx`, `upgrade-button.tsx`, `conflict-dialog.tsx`, `sync-indicator.tsx`, `recovery-phrase-modal.tsx`, `stream-handler.ts`).
+- **Transitional `"use server"` Purge:** Stripped `"use server"` directives from all 6 server action files (`files.ts`, `folders.ts`, `import-file.ts`, `file-ops.ts`, `vault-actions.ts`, `auth-actions.ts`), preventing server package leakage into client bundles now that zero client files import server actions directly.
+- **Transitional Next.js Dev/Build Bridges:** Added `src/app/api/rpc/[[...route]]/route.ts` to route `/api/rpc/*` through Hono `sessionMiddleware` and `rpcRoutes` under Next.js App Router, and added client boundary sections `account-client-sections.tsx` and `workspace-sidebar-client.tsx` to maintain clean Next.js Webpack compilation until Phase 5 SPA migration.
+
+### Verification & SSOT Metrics Baseline
+
+- **Dedicated Phase 4 Test Suites:** Added 5 new suites delivering 65 passing tests (100% green):
+  - `src/test/ui/app-link.test.tsx` (26 tests)
+  - `src/test/files/file-tree-item.test.tsx` (11 tests)
+  - `src/test/files/folder-picker-modal.test.tsx` (10 tests)
+  - `src/test/files/file-context-menu-rpc.test.tsx` (9 tests)
+  - `src/test/client/ui-rpc-integration.test.tsx` (9 tests)
+- **Synchronized SSOT Metrics:** Validated via `scripts/sync-doc-metrics.mjs`:
+  - Unit & Contract: 130 suites, 2,304 passing tests (100% green).
+  - Live Multi-System Integration: 21 suites, 108 passing tests (100% green).
+  - Browser E2E Journeys: 14 specs, 15 user journeys (100% green).
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/framework-migration/phase-04-wire-client-hooks-and-ui-to-hono-rpc-and-strip-directives.md`](./records/closures/framework-migration/phase-04-wire-client-hooks-and-ui-to-hono-rpc-and-strip-directives.md).
+
+---
+
 ## [0.15.0] - 2026-11-07 (Phase 3: Decouple Server Actions from Next.js Runtime & Mount Typed Hono RPC)
 
 ### Server Action Decoupling from Next.js Runtime (`src/server/actions/*`)
