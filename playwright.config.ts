@@ -59,7 +59,7 @@ export default defineConfig({
         },
     ],
     webServer: {
-        command: `npx next dev --port ${PORT}`,
+        command: `npx vite --port ${PORT}`,
         url: BASE_URL,
         reuseExistingServer: false,
         timeout: 120000,

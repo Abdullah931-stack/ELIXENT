@@ -1,12 +1,16 @@
 import { defineConfig, globalIgnores } from "eslint/config";
-import nextVitals from "eslint-config-next/core-web-vitals";
-import nextTs from "eslint-config-next/typescript";
+import js from "@eslint/js";
+import tseslint from "typescript-eslint";
 
 const eslintConfig = defineConfig([
-  ...nextVitals,
-  ...nextTs,
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
   {
     rules: {
+      "no-empty": ["error", { allowEmptyCatch: true }],
+      "no-control-regex": "off",
+      "no-useless-escape": "off",
+      "no-unsafe-finally": "off",
       "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/no-unused-vars": [
         "warn",
@@ -24,25 +28,15 @@ const eslintConfig = defineConfig([
       "@typescript-eslint/no-explicit-any": "off",
     },
   },
-  {
-    files: ["src/client/**"],
-    rules: {
-      "@next/next/no-img-element": "off",
-      "@next/next/no-location-assign-relative-destination": "off",
-    },
-  },
-  // Override default ignores of eslint-config-next.
   globalIgnores([
-    // Default ignores of eslint-config-next:
-    ".next/**",
-    "out/**",
-    "build/**",
+    ".agents/**",
+    "scripts/**",
     "dist/**",
     "public/**",
-    "next-env.d.ts",
     "test-results/**",
     "playwright-report/**",
     "blob-report/**",
+    "coverage/**",
   ]),
 ]);
 

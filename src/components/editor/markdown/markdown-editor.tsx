@@ -160,7 +160,7 @@ export const MarkdownEditor = forwardRef<EditorAdapter, MarkdownEditorProps>(fun
             viewRef.current = null;
             adapterRef.current = null;
         };
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    }, []);
 
     // Synchronize controlled `value`
     useEffect(() => {

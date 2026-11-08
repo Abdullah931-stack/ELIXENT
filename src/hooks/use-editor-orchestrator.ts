@@ -1203,7 +1203,6 @@ export function useEditorOrchestrator({
         return () => {
             cancelled = true;
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [fileId, currentAdapter]);
 
     // Local SessionKeyStore lock/unlock lifecycle listener

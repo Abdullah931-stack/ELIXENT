@@ -200,10 +200,14 @@ function elixentHonoDevServerPlugin(): Plugin {
 }
 
 function clientServerStubPlugin(): Plugin {
+  const virtualModuleId = "\0virtual:server-empty";
   return {
     name: "client-server-stub",
     enforce: "pre",
-    resolveId(id) {
+    resolveId(id, _importer, options) {
+      if (options?.ssr) {
+        return null;
+      }
       if (
         id.includes("/server/actions/") ||
         id.includes("@/server/actions/") ||
@@ -214,7 +218,13 @@ function clientServerStubPlugin(): Plugin {
         id.includes("/lib/supabase/server") ||
         id.includes("@/lib/supabase/server")
       ) {
-        return path.resolve(rootDir, "./src/server/empty.ts");
+        return virtualModuleId;
+      }
+      return null;
+    },
+    load(id) {
+      if (id === virtualModuleId) {
+        return "export default {};";
       }
       return null;
     },
@@ -222,6 +232,14 @@ function clientServerStubPlugin(): Plugin {
 }
 
 export default defineConfig({
+  esbuild: {
+    target: "esnext",
+  },
+  optimizeDeps: {
+    esbuildOptions: {
+      target: "esnext",
+    },
+  },
   plugins: [
     clientServerStubPlugin(),
     react(),
@@ -230,7 +248,6 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(rootDir, "./src"),
-      "server-only": path.resolve(rootDir, "./src/server/empty.ts"),
     },
   },
   envPrefix: ["VITE_", "NEXT_PUBLIC_"],
