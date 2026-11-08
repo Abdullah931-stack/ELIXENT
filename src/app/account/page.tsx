@@ -9,9 +9,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { TIER_LIMITS, type TierName, getTierDisplayName } from "@/config/tiers.config";
 import { MICRO_PER_CREDIT } from "@/lib/metering/constants";
 import { ArrowLeft, User, CreditCard, LogOut, Check, Coins } from "lucide-react";
-import { UpgradeButton } from "@/components/subscription/upgrade-button";
-import { VaultSecurityCard } from "@/components/vault";
-import { OcrSettingsCard } from "@/components/layout/ocr-settings-card";
+import {
+    UpgradeButton,
+    VaultSecurityCard,
+    OcrSettingsCard,
+} from "./account-client-sections";
 
 export default async function AccountPage() {
     const user = await getUser();

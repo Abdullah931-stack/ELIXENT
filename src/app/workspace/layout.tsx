@@ -1,8 +1,7 @@
-import Link from "next/link";
 import Image from "next/image";
 import { redirect } from "next/navigation";
 import { getUser } from "@/lib/supabase/server";
-import { Sidebar } from "@/components/layout/sidebar";
+import { WorkspaceSidebarClient } from "./workspace-sidebar-client";
 import { Button } from "@/components/ui/button";
 import { Settings, Home } from "lucide-react";
 
@@ -20,13 +19,13 @@ export default async function WorkspaceLayout({
     return (
         <div className="h-screen bg-zinc-950 flex overflow-hidden">
             {/* Sidebar */}
-            <Sidebar userId={user.id} />
+            <WorkspaceSidebarClient userId={user.id} />
 
             {/* Main Area */}
             <div className="flex-1 flex flex-col overflow-hidden">
                 {/* Top Bar */}
                 <header className="h-14 border-b border-zinc-800/50 bg-zinc-950 flex items-center justify-between px-4 flex-shrink-0">
-                    <Link href="/dashboard" className="flex items-center gap-2">
+                    <a href="/dashboard" className="flex items-center gap-2">
                         <Image
                             src="/logo.png"
                             alt="LUGX"
@@ -35,19 +34,19 @@ export default async function WorkspaceLayout({
                             className="h-6 w-auto"
                             style={{ width: "auto" }}
                         />
-                    </Link>
+                    </a>
 
                     <div className="flex items-center gap-2">
-                        <Link href="/dashboard">
-                            <Button variant="ghost" size="icon-sm">
+                        <Button asChild variant="ghost" size="icon-sm">
+                            <a href="/dashboard">
                                 <Home className="w-4 h-4" />
-                            </Button>
-                        </Link>
-                        <Link href="/account">
-                            <Button variant="ghost" size="icon-sm">
+                            </a>
+                        </Button>
+                        <Button asChild variant="ghost" size="icon-sm">
+                            <a href="/account">
                                 <Settings className="w-4 h-4" />
-                            </Button>
-                        </Link>
+                            </a>
+                        </Button>
                     </div>
                 </header>
 

@@ -379,7 +379,7 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
     let mockFetch: ReturnType<typeof vi.fn>;
 
     beforeEach(() => {
-      mockFetch = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      mockFetch = vi.fn().mockImplementation(async (input: RequestInfo | URL, _init?: RequestInit) => {
         const urlStr = input.toString();
 
         if (urlStr.includes("/api/rpc/files/create")) {

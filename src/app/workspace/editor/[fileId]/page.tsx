@@ -90,6 +90,7 @@ export default function EditorPage() {
         if (typeof window !== "undefined") {
             setTimeout(() => {
                 if (window.location.pathname.startsWith("/workspace/editor")) {
+                    // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- Intentional hard navigation watchdog if SPA router hangs on fatal state
                     window.location.assign("/workspace");
                 }
             }, 400);
