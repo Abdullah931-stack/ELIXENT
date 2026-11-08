@@ -97,7 +97,7 @@ export default async function DashboardPage(props?: {
                                         await createClient().auth.signOut();
                                     } catch {}
                                     if (typeof window !== "undefined") {
-                                        window.location.assign("/");
+                                        navigateTo("/");
                                     }
                                 }}
                             >

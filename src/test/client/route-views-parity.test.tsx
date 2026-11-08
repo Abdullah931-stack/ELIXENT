@@ -178,13 +178,13 @@ function setMockUser(user: unknown) {
 }
 
 // Import views under test
-import HomePage, { HomeRouteView } from "@/client/routes/home-page";
-import LoginPage, { LoginRouteView } from "@/client/routes/login-page";
-import DashboardPage, { DashboardRouteView } from "@/client/routes/dashboard-page";
-import AccountPage, { AccountRouteView } from "@/client/routes/account-page";
-import WorkspaceLayout, { WorkspaceLayoutRouteView } from "@/client/routes/workspace-layout";
-import WorkspacePage, { WorkspaceRouteView } from "@/client/routes/workspace-page";
-import EditorPage, { EditorRouteView } from "@/client/routes/editor-page";
+import { HomeRouteView } from "@/client/routes/home-page";
+import LoginPage from "@/client/routes/login-page";
+import DashboardPage from "@/client/routes/dashboard-page";
+import AccountPage from "@/client/routes/account-page";
+import WorkspaceLayout from "@/client/routes/workspace-layout";
+import WorkspacePage from "@/client/routes/workspace-page";
+import { EditorRouteView } from "@/client/routes/editor-page";
 
 describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", () => {
   beforeEach(() => {

@@ -24,12 +24,20 @@ const eslintConfig = defineConfig([
       "@typescript-eslint/no-explicit-any": "off",
     },
   },
+  {
+    files: ["src/client/**"],
+    rules: {
+      "@next/next/no-img-element": "off",
+      "@next/next/no-location-assign-relative-destination": "off",
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:
     ".next/**",
     "out/**",
     "build/**",
+    "dist/**",
     "public/**",
     "next-env.d.ts",
     "test-results/**",

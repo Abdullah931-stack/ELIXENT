@@ -25,7 +25,7 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup } from "@testing-library/react";
-import { createMemoryHistory, createRouter, RouterProvider, Outlet } from "@tanstack/react-router";
+import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { router } from "@/client/router";
 import { HomeRouteView } from "@/client/routes/home-page";
 import { LoginRouteView } from "@/client/routes/login-page";

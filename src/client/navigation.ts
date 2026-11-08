@@ -32,6 +32,7 @@ export function useAppParams(): { fileId?: string } {
 export function useAppNavigate(): (path: string) => void {
   let routerNavigate: ((opts: { to: string }) => Promise<unknown>) | null = null;
   try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- intentional defensive fallback when rendered outside RouterProvider
     routerNavigate = useNavigate();
   } catch {
     // Router context is absent
