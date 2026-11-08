@@ -11,23 +11,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockSignInWithOAuth = vi.fn();
-const mockRedirect = vi.fn();
 const mockDbInsert = vi.fn();
 const mockRateLimit = vi.fn();
 const mockRequireAuthenticatedUser = vi.fn();
 
 let mockHeadersMap = new Map<string, string>();
-
-vi.mock("next/navigation", () => ({
-    redirect: (url: string) => {
-        mockRedirect(url);
-        throw new Error(`NEXT_REDIRECT:${url}`);
-    },
-}));
-
-vi.mock("next/cache", () => ({
-    revalidatePath: vi.fn(),
-}));
 
 vi.mock("next/headers", () => ({
     headers: vi.fn(async () => ({
@@ -99,9 +87,8 @@ describe("Auth Actions Rate Limiting", () => {
             const result = await signInWithGoogle("/workspace");
 
             expect(mockRateLimit).toHaveBeenCalledWith("signin:203.0.113.195");
-            expect(result).toEqual({ error: "Rate limit exceeded. Please try again later." });
+            expect(result).toEqual({ success: false, error: "Rate limit exceeded. Please try again later." });
             expect(mockSignInWithOAuth).not.toHaveBeenCalled();
-            expect(mockRedirect).not.toHaveBeenCalled();
         });
 
         it("extracts x-real-ip when x-forwarded-for is missing", async () => {
@@ -116,7 +103,7 @@ describe("Auth Actions Rate Limiting", () => {
             const result = await signInWithGoogle();
 
             expect(mockRateLimit).toHaveBeenCalledWith("signin:198.51.100.42");
-            expect(result).toEqual({ error: "Rate limit exceeded. Please try again later." });
+            expect(result).toEqual({ success: false, error: "Rate limit exceeded. Please try again later." });
         });
 
         it("proceeds to OAuth flow when rate limit check passes", async () => {
@@ -132,10 +119,13 @@ describe("Auth Actions Rate Limiting", () => {
                 error: null,
             });
 
-            await expect(signInWithGoogle("/dashboard")).rejects.toThrow("NEXT_REDIRECT:https://accounts.google.com");
+            const result = await signInWithGoogle("/dashboard");
+            expect(result).toEqual({
+                success: true,
+                redirectUrl: "https://accounts.google.com/o/oauth2/v2/auth?client_id=test",
+            });
             expect(mockRateLimit).toHaveBeenCalledWith("signin:192.0.2.1");
             expect(mockSignInWithOAuth).toHaveBeenCalled();
-            expect(mockRedirect).toHaveBeenCalledWith("https://accounts.google.com/o/oauth2/v2/auth?client_id=test");
         });
     });
 

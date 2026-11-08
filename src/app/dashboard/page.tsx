@@ -68,7 +68,13 @@ export default async function DashboardPage({
                                 </Button>
                             </Link>
 
-                            <form action={signOut}>
+                            <form
+                                action={async () => {
+                                    "use server";
+                                    await signOut();
+                                    redirect("/");
+                                }}
+                            >
                                 <Button type="submit" variant="ghost" size="icon-sm">
                                     <LogOut className="w-4 h-4" />
                                 </Button>

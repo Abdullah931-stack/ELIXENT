@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { db, schema, type FileEncryptionMetadata } from "@/server/db";
 import { requireAuthenticatedUser } from "@/server/auth/session";
 import { eq, and, isNull, isNotNull, inArray } from "drizzle-orm";
@@ -96,12 +95,6 @@ export async function createFile(
                 updatedAt: now,
             })
             .returning();
-
-        try {
-            revalidatePath("/workspace");
-        } catch {
-            // Standalone test context
-        }
 
         return { success: true, data: newFile };
 
@@ -227,12 +220,6 @@ export async function updateFileContent(
             }
 
             return { success: false, status: "not_found", error: "File not found or deleted during update" };
-        }
-
-        try {
-            revalidatePath("/workspace");
-        } catch {
-            // Standalone test context
         }
 
         return {
@@ -376,12 +363,6 @@ export async function toggleFileEncryption(
             return { success: false, status: "conflict", error: "Conflict updating file encryption" };
         }
 
-        try {
-            revalidatePath("/workspace");
-        } catch {
-            // Standalone test context
-        }
-
         return {
             success: true,
             data: updated,
@@ -442,12 +423,6 @@ export async function renameFile(
                 isNull(schema.files.deletedAt)
             ))
             .returning();
-
-        try {
-            revalidatePath("/workspace");
-        } catch {
-            // Standalone test context
-        }
 
         return { success: true, data: updated };
 
@@ -548,12 +523,6 @@ export async function deleteFile(
                         )
                     );
             }
-        }
-
-        try {
-            revalidatePath("/workspace");
-        } catch {
-            // Standalone test context
         }
 
         return { success: true };
@@ -662,12 +631,6 @@ export async function restoreFile(
                         )
                     );
             }
-        }
-
-        try {
-            revalidatePath("/workspace");
-        } catch {
-            // Standalone test context
         }
 
         return { success: true, data: restored };
@@ -852,12 +815,6 @@ export async function copyFile(
                 }
                 await copyFile(child.id, copiedFile.id, sanitizedDepth + 1);
             }
-        }
-
-        try {
-            revalidatePath("/workspace");
-        } catch {
-            // Standalone test context
         }
 
         return { success: true, data: copiedFile };

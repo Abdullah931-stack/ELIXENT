@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { db, schema } from "@/server/db";
 import { requireAuthenticatedUser } from "@/server/auth/session";
 import { eq, and, isNull } from "drizzle-orm";
@@ -186,12 +185,6 @@ export async function moveFile(
 
         if ((updated.rowCount ?? 0) === 0) {
             return { success: false, status: "not_found", error: "File not found or deleted" };
-        }
-
-        try {
-            revalidatePath("/workspace");
-        } catch {
-            // Standalone test environments lack Next.js page context
         }
 
         return { success: true };

@@ -1,8 +1,6 @@
 "use server";
 
-import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
-import { cookies, headers } from "next/headers";
+import { resolveCookiesAndHeaders } from "@/server/context/request-context";
 import { db, schema } from "@/server/db";
 import { createClient } from "@/lib/supabase/server";
 import { requireAuthenticatedUser } from "@/server/auth/session";
@@ -13,18 +11,20 @@ import { authRateLimiter } from "@/lib/rate-limit";
 /**
  * Sign in with Google OAuth
  */
-export async function signInWithGoogle(redirectTo?: string) {
+export async function signInWithGoogle(redirectTo?: string): Promise<
+    { success: true; redirectUrl: string } | { success: false; error: string }
+> {
     let ip = "unknown";
     try {
-        const headerStore = await headers();
-        ip = headerStore.get("x-forwarded-for")?.split(",")[0]?.trim() || headerStore.get("x-real-ip") || "unknown";
+        const { headers: reqHeaders } = await resolveCookiesAndHeaders();
+        ip = reqHeaders.get("x-forwarded-for")?.split(",")[0]?.trim() || reqHeaders.get("x-real-ip") || "unknown";
     } catch {
         // Fallback when executed outside request context (e.g. testing)
     }
 
     const rateLimit = await authRateLimiter.limit(`signin:${ip}`);
     if (!rateLimit.success) {
-        return { error: "Rate limit exceeded. Please try again later." };
+        return { success: false as const, error: "Rate limit exceeded. Please try again later." };
     }
 
     const supabase = await createClient();
@@ -42,26 +42,27 @@ export async function signInWithGoogle(redirectTo?: string) {
     });
 
     if (error) {
-        return { error: error.message };
+        return { success: false as const, error: error.message };
     }
 
     if (data.url) {
-        redirect(data.url);
+        return { success: true as const, redirectUrl: data.url };
     }
+
+    return { success: false as const, error: "Failed to generate OAuth URL" };
 }
 
 /**
  * Sign out
  */
-export async function signOut() {
+export async function signOut(): Promise<{ success: true; redirectUrl: string }>;
+export async function signOut(formData: FormData): Promise<void>;
+export async function signOut(formData?: FormData): Promise<{ success: true; redirectUrl: string } | void> {
     const supabase = await createClient();
     await supabase.auth.signOut();
 
-    // Invalidate stale RSC layouts and router cache
-    revalidatePath("/", "layout");
-
     // Explicitly wipe all Supabase auth session cookies
-    const cookieStore = await cookies();
+    const { cookies: cookieStore } = await resolveCookiesAndHeaders();
     const allCookies = cookieStore.getAll();
     for (const cookie of allCookies) {
         if (cookie.name.startsWith("sb-")) {
@@ -69,7 +70,11 @@ export async function signOut() {
         }
     }
 
-    redirect("/");
+    if (formData !== undefined) {
+        return;
+    }
+
+    return { success: true as const, redirectUrl: "/" };
 }
 
 /**
