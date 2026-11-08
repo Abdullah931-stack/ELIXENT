@@ -12,14 +12,15 @@
 </p>
 
 <p align="center">
-  <a href="https://nextjs.org"><img src="https://img.shields.io/badge/Next.js-16.3.3-black?style=for-the-badge&logo=next.js" alt="Next.js 16" /></a>
+  <a href="https://vite.dev"><img src="https://img.shields.io/badge/Vite-6.4.5-646CFF?style=for-the-badge&logo=vite" alt="Vite 6" /></a>
+  <a href="https://hono.dev"><img src="https://img.shields.io/badge/Hono-4.13-E36002?style=for-the-badge&logo=hono" alt="Hono" /></a>
   <a href="https://react.dev"><img src="https://img.shields.io/badge/React-19.2.3-20232A?style=for-the-badge&logo=react" alt="React 19" /></a>
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/Node.js-22_LTS-339933?style=for-the-badge&logo=node.js" alt="Node.js 22 LTS" /></a>
   <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-5.0-3178C6?style=for-the-badge&logo=typescript" alt="TypeScript 5" /></a>
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-134%20Suites%20·%202351%2F2351%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 2351 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-134%20Suites%20·%202348%2F2348%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 2348 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-21%20Suites%20·%20108%2F108%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 108 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
@@ -137,12 +138,12 @@ _For the full comparative trade-off matrix, complexity analysis, and quantitativ
 
 | Domain                        | Technology / Specification                                   | Purpose / Implementation Highlights                                                                          |
 | ----------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| **Runtime & Framework**       | Vite 6 SPA · TanStack Router · Hono Node.js Server · Next.js 16 (transitional) · React 19 · Node.js 22 LTS | Unified Hono backend server, typed TanStack client routing, Vite 6 build pipeline                             |
+| **Runtime & Framework**       | Vite 6 SPA · TanStack Router · Hono Node.js Server · React 19 · Node.js 22 LTS | Pure Web-standard Hono backend server, typed TanStack client routing, Vite 6 build pipeline                     |
 | **Language & Typings**        | TypeScript 5 (Strict Mode)                                   | Full type-safety across client hooks, server actions, and DB schemas                                         |
 | **Styling & Design System**   | Tailwind CSS 4 · Radix UI Primitives · Lucide Icons          | Dark Glassmorphism, tailored typography, and accessible UI controls                                          |
 | **Markdown Editor & Bidi**    | Standalone CodeMirror 6 (`MarkdownEditor` & `EditorAdapter`) | Live AST preview decorations, line-level Bidi isolation, LTR code block lock                                 |
 | **Database & ORM**            | PostgreSQL (Neon Cloud / Local) · Drizzle ORM                | Smart Hybrid DB Client (`neon-http` / `pg.Pool`), Migrations 0001–0010 (`src/lib/db/migrations/`)            |
-| **Authentication & Proxy**    | Supabase Auth SSR · Next.js 16 Edge Proxy (`src/proxy.ts`)   | Deep-link preservation, session renewal, and protected route gating                                          |
+| **Authentication & Proxy**    | Supabase Auth SSR · Hono Session Middleware (`src/server/middleware/session-middleware.ts`) | Deep-link preservation, session renewal, and protected route gating                                          |
 | **Offline Synchronization**   | Custom Engine · IndexedDB (`textai_db_${userId}`)            | 3-Way Merge, ETag optimistic locks (HTTP 412), Bounded Queue, GC, DLQ                                        |
 | **AI LLM Engine**             | Google Gemini SDK (`@google/generative-ai`)                  | NDJSON streaming, 2-phase quota reservation, 3-state circuit breaker                                         |
 | **Client-Side Cryptography**  | Web Crypto API · Web Workers · BIP-39 · WebAuthn PRF         | PBKDF2-SHA256 600K worker, AES-GCM-256, hardware biometric trust, memory wiping                              |
@@ -174,17 +175,6 @@ lugx/
 │   └── .Plans/                    # Internal candidate planning incubator (Arabic, untracked)
 ├── public/                        # Static brand assets (lugx-icon.svg, icon.svg)
 ├── src/
-│   ├── app/                       # Next.js App Router (transitional during dual-stack migration)
-│   │   ├── api/                   # REST API endpoints (sync, AI stream, Stripe webhook, cron)
-│   │   │   ├── cron/              # purge-deleted (soft-deletes) & expire-reservations (AI quota leases)
-│   │   │   └── ...
-│   │   ├── auth/callback/         # OAuth callback route
-│   │   ├── login/                 # Authentication entry point
-│   │   ├── dashboard/             # Workspace dashboard & file manager
-│   │   ├── account/               # User profile & subscription tier management
-│   │   ├── workspace/editor/      # Dedicated Markdown editor interface
-│   │   ├── layout.tsx             # Root layout with bilingual typography and theme providers
-│   │   └── globals.css            # Design tokens, Dark Glassmorphism, and Tailwind utilities
 │   ├── client/                    # Vite 6 SPA presentation layer & typed TanStack router
 │   │   ├── routes/                # 5 canonical route views (home, login, dashboard, editor, account) + workspace layout
 │   │   ├── main.tsx               # Client DOM entrypoint (StrictMode mount, QueryClient, TanStack RouterProvider)
@@ -213,6 +203,10 @@ lugx/
 │   │   ├── vault/                 # Vault schemas, key derivation, and local cache helpers
 │   │   └── workers/               # Isolated Crypto Web Worker (PBKDF2 600K & AES-GCM)
 │   ├── server/                    # Web-Standard Hono app (app.ts), routers, actions, services & node entrypoint (index.ts)
+│   │   ├── routes/                # Modular Hono route handlers (files, folders, agent, stripe, cron, health)
+│   │   ├── middleware/            # Session validation, correlation ID, rate limiting, and error handling
+│   │   ├── actions/               # Domain-level server actions (file ops, document ingestion, sync)
+│   │   └── services/              # AI settlement, credit metering, and background sweepers
 │   ├── test/                      # Centralized test suite partitioned into domain subdirectories
 │   │   ├── ai/                    # Gemini AI client, NDJSON streaming, and quota settlement tests
 │   │   ├── client/                # TanStack router tree, navigation adapter, and view parity tests
@@ -221,11 +215,11 @@ lugx/
 │   │   ├── parsers/               # PDF worker bridge, spatial table extractor, and Arabic normalizer tests
 │   │   ├── editor/                # Standalone CodeMirror 6 editor, toolbar, and autosave tests
 │   │   ├── server/                # Node server entrypoint, Server Actions and file operations tests
-│   │   ├── auth/                  # Authentication, session guard, correlation, and proxy tests
+│   │   ├── auth/                  # Authentication, session guard, and correlation tests
 │   │   ├── infrastructure/        # Rate limiting, cron jobs, log sanitizer, and DB health tests
 │   │   ├── api/                   # REST route handlers and Stripe webhook live tests
 │   │   └── ...                    # Root harness (test-db.ts, test-db-guard.ts, db.setup.ts, load-test-env.ts)
-│   └── proxy.ts                   # Next.js 16 Edge proxy for session validation and deep-link routing
+│   └── types/                     # Shared TypeScript interfaces and ambient declarations
 ├── index.html                     # Vite 6 SPA HTML entrypoint
 ├── vite.config.ts                 # Vite 6 build configuration & proxy mapping
 ├── vitest.config.mts              # Default unit/contract test runner (isolated, fast feedback)
@@ -316,7 +310,7 @@ npm run start
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 134 | 2351 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 134 | 2348 | 100% ✅ |
 | **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 108 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
@@ -331,7 +325,7 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).               |
 
 ```bash
-# Execute unit/contract test suites (134 test files, 2351 tests)
+# Execute unit/contract test suites (134 test files, 2348 tests)
 npm run test
 
 # Execute live database integration test suites on isolated Neon branch (21 test files, 108 tests)
@@ -443,7 +437,7 @@ flowchart TD
 - **Distributed Circuit Breaker & Key Pool (`src/lib/ai/key-rotation.ts`):**
   - 3-state circuit breaker (`CLOSED`, `OPEN`, `HALF-OPEN`) tracking failures in Upstash Redis.
   - Multi-key rotation pool with automated 4-tier model cascade: `gemini-3.8-flash` (primary) → `gemini-3.6-flash` (fallback) → `gemini-3.5-flash-lite` (secondary) → `gemini-3.1-flash-lite` (tertiary).
-- **Dual-Layer Quota Guard & Information Shielding (`src/lib/rate-limit.ts` & `src/app/api/agent/stream/route.ts`):**
+- **Dual-Layer Quota Guard & Information Shielding (`src/lib/rate-limit.ts` & `src/server/routes/agent.routes.ts`):**
   - Strict 30 requests / 60 seconds rate limiting via `aiStreamRateLimiter` failing closed upon Redis outages with `Retry-After >= 1`.
   - Information disclosure protection: Unhandled upstream model errors are shielded behind safe, standardized HTTP 500 envelopes containing the request's tracking `correlationId`, preventing internal provider stack leakage.
 
@@ -458,7 +452,7 @@ flowchart TD
 
 ### 5. Fail-Closed Stripe Subscription Lifecycle & State Machine
 
-- **Exhaustive 8-State Mapping (`src/app/api/stripe/webhook/route.ts`):** Handles `active`, `trialing`, `past_due`, `canceled`, `unpaid`, `incomplete`, `incomplete_expired`, and `paused`.
+- **Exhaustive 8-State Mapping (`src/server/routes/stripe.routes.ts`):** Handles `active`, `trialing`, `past_due`, `canceled`, `unpaid`, `incomplete`, `incomplete_expired`, and `paused`.
 - **Zero False Entitlements:** Unrecognized webhook payloads fail closed, aborting transaction execution rather than granting unwarranted tier upgrades.
 - **Database-Level Idempotency (`src/lib/db/migrations/0004_stripe_constraints.sql`):** Partial unique index `idx_subscriptions_stripe_id_unique` guarantees that duplicate webhook deliveries cannot create duplicate active subscriptions for a single customer.
 - **Atomic Audit Trail:** Webhook transactions record state transitions in `subscription_events` alongside user tier updates.
@@ -467,8 +461,8 @@ flowchart TD
 
 LUGX features fully automated, cryptographically secured background maintenance routines:
 
-- **Automated Soft-Delete Purge (`src/app/api/cron/purge-deleted/route.ts`):** Permanently purges documents and folders marked as deleted (`deletedAt`) beyond the 30-day retention window.
-- **Automated Expired Quota Reservation Sweeper (`src/app/api/cron/expire-reservations/route.ts`):** Continuously scans and expires orphaned `credit_ledger_transactions` held for longer than 5 minutes (resolving **TD-02**), releasing held credits back to `users.credit_balance_micro` without manual intervention.
+- **Automated Soft-Delete Purge (`src/server/routes/cron.routes.ts`):** Permanently purges documents and folders marked as deleted (`deletedAt`) beyond the 30-day retention window.
+- **Automated Expired Quota Reservation Sweeper (`src/server/routes/cron.routes.ts`):** Continuously scans and expires orphaned `credit_ledger_transactions` held for longer than 5 minutes (resolving **TD-02**), releasing held credits back to `users.credit_balance_micro` without manual intervention.
 - **Secure Dual-Verb Dispatch:** Both endpoints support dual HTTP methods (`GET` for Vercel Cron, `POST` with Bearer token authentication against `CRON_SECRET` for GitHub Actions and external cron monitors) and are dispatched via `.github/workflows/cron.yml`.
 
 ### 7. Zero-Knowledge Cloud Vault & Client-Side Hybrid Encryption Subsystem
@@ -586,7 +580,7 @@ flowchart TD
 
 - **Distributed Correlation Tracing (`src/lib/utils/correlation.ts`):**
   - Generates RFC 4122 UUID v4 correlation identifiers when absent, extracts incoming `X-Correlation-ID` headers, and sanitizes characters against CRLF injection (`[^\w-]`).
-  - Threaded through Next.js Server Actions via `operationId` in `FileOpResult` and propagated across downstream Route Handlers (`/api/files/sync`, `/api/agent/stream`).
+  - Threaded through Hono RPC & Server Actions via `operationId` in `FileOpResult` and propagated across downstream Route Handlers (`/api/files/sync`, `/api/agent/stream`).
   - Included in error responses to enable instant end-to-end incident debugging across client logs, server logs, and Redis monitors.
 - **Dual-Mode Rate Limiting Engine (`src/lib/rate-limit.ts`):**
   - **Public & Synchronization APIs:** Operates in **Fail-Open** mode (`onRateLimitError: 'allow'`). If Upstash Redis experiences network latency or downtime, document reads and offline-sync operations proceed uninterrupted.
@@ -613,7 +607,7 @@ To ensure platform-wide stability across complex asynchronous boundaries, LUGX d
 
 ### 11. Browser-Driven End-to-End (E2E) Testing with Playwright
 
-To validate full platform functionality under real user conditions, LUGX implements an automated browser test harness built on **Playwright v1.63.0** executing in headless Chromium against an isolated Next.js web server (`port: 3001`) and the dedicated Neon PostgreSQL test branch (`TEST_DATABASE_URL`).
+To validate full platform functionality under real user conditions, LUGX implements an automated browser test harness built on **Playwright v1.63.0** executing in headless Chromium against an isolated Vite preview / Hono web server (`port: 3001`) and the dedicated Neon PostgreSQL test branch (`TEST_DATABASE_URL`).
 
 - **Deterministic User Journey Execution:** 14 test specification suites under `e2e/specs/` cover 15 exhaustive user journeys, including SSR cookie authentication, nested folder operations, CodeMirror 6 BiDi typography, offline-first sync with conflict dialogs, client-side PDF extraction, AI streaming and atomic commit, user aborts/rejections (no refund), system AI failures (full refund), 412 collisions, zero-knowledge vault setup and auto-lock, AI shield HTTP 403 gating, Stripe billing ledger updates, and 404 anti-enumeration tenant isolation.
 - **Hermetic Isolation & Teardown Invariant:** Every E2E test runs with timestamped test user credentials (`9999...`), followed by explicit teardown via `cleanupE2EUser()` ensuring zero persistent database pollution and zero cross-test interference.
@@ -775,7 +769,7 @@ To connect the autonomous agent core with the human editor, Elixent Phase 11 int
 - **Architectural Agent Chat Panel (`src/components/agent/chat-panel.tsx`):** Slide-out workspace drawer displaying real-time 7-stage graph execution progress, accordion-based ATMS master decision ledger viewer (`selectionRationale`, `evaluatedAlternatives`), active ghost hunk review controls, and session lifecycle management.
 - **Human-in-the-Loop Clarification Gate (`src/components/agent/hitl-question-card.tsx`):** Renders diagnostic question batches emitted by Stage 6 interrupts (`pure_interrupt_node`) with real-time `ClarificationResponseSchema` validation before stateless graph resumption via `POST /api/agent/stream`.
 - **Incremental Sync Contract & 412 Elimination (`src/hooks/use-editor-orchestrator.ts` & `src/hooks/use-ai-stream.ts`):** Replaces legacy client-side `commitAIFileOperation` with an immediate local IndexedDB write (`localRevision += 1`) and debounced server autosave via `useEditorAutosave` (800ms–1000ms), coalescing rapid ghost hunk acceptances into a single server save and eliminating self-inflicted 412 conflicts.
-- **Real-Time Credit Balance Presentation (`src/app/dashboard/page.tsx` & `src/app/account/page.tsx`):** Replaced legacy word-count quota displays with server-authoritative micro-credit balance tracking via `getUserCreditBalance(user.id)` and tier visual progress indicators.
+- **Real-Time Credit Balance Presentation (`src/client/routes/dashboard-page.tsx` & `src/client/routes/account-page.tsx`):** Replaced legacy word-count quota displays with server-authoritative micro-credit balance tracking via `getUserCreditBalance(user.id)` and tier visual progress indicators.
 - **Final Purge of Legacy 5-Operation Modules & Full Test Migration (Phase 12 / `v0.12.0`):** Permanently deleted all 7 legacy 5-operation modules (`api/ai/stream/route.ts`, `pending-operation-store.ts`, `preview-buffer.ts`, `prompts.ts`, `quota-settlement-reducer.ts`, `ai-commit.ts`, `ai-ops.ts`), cleaned `models.config.json`, `tiers.config.ts`, `ai/client.ts`, and `ai-contracts.ts`, and migrated all unit, live, and E2E test suites to `/api/agent/stream`, `ai-settlement-service.ts`, and `MultiHunkGhostState`.
 
 ---
@@ -785,7 +779,7 @@ To connect the autonomous agent core with the human editor, Elixent Phase 11 int
 | Security Domain                  | Technical Implementation                                                        | Security Property Enforced                                                                                                                                                                                       |
 | -------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | **Content Model Security**       | Pure UTF-8 Markdown strings & AST token decorations                             | Zero HTML storage, zero `dangerouslySetInnerHTML`, total elimination of stored XSS vectors.                                                                                                                      |
-| **Authentication & Proxy**       | Next.js 16 Edge Proxy (`src/proxy.ts`) with Supabase SSR                        | Route protection on `/workspace`, `/dashboard`, `/account` with Fast-Path public route bypass, 2500ms AbortSignal watchdog timeout against Chromium socket exhaustion (TD-12), and deep-link query preservation. |
+| **Authentication & Proxy**       | Hono Session Middleware (`src/server/middleware/session-middleware.ts`) with Supabase SSR | Route protection on `/workspace`, `/dashboard`, `/account` with Fast-Path public route bypass, 2500ms AbortSignal watchdog timeout against Chromium socket exhaustion (TD-12), and deep-link query preservation. |
 | **Brute-Force & Rate Limiting**  | Sliding window rate limiting on Upstash Redis                                   | Per-user and per-endpoint sliding window limits on Auth, Sync, and AI routes.                                                                                                                                    |
 | **Distributed Tracing**          | `X-Correlation-ID` UUID v4 header propagation with CRLF sanitization (`[^\w-]`) | Eliminates HTTP response splitting, header injection, and isolates distributed incidents.                                                                                                                        |
 | **Telemetry & Log Sanitization** | Denylist pattern masking with token-boundary regex (`(^                         | [^a-zA-Z0-9_])`)                                                                                                                                                                                                 | Eliminates false positives while guaranteeing zero plaintext secret, PIN, or seed leakage. |
@@ -817,9 +811,9 @@ Comprehensive architectural designs, specifications, guides, and engineering rec
 
 ## Deployment Blueprints
 
-### Vercel (Recommended)
+### Standalone Node.js & Vite Static Hosting (Recommended)
 
-Deploy directly with Vercel Next.js App Router support. Vercel automatically detects `vercel.json` for cron scheduling and handles edge caching.
+Deploy the server as a standalone Node.js process (`node dist/server/index.js` via `@hono/node-server`) and serve the Vite SPA bundle (`dist/client/`) statically or behind a reverse proxy (e.g., Nginx, Cloudflare, or Vercel SPA hosting).
 
 ### GitHub Actions Scheduled Cron
 

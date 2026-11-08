@@ -12,7 +12,7 @@ pre-save Web Worker envelope encryption, and offline-first dynamic file conversi
 amended in Phase 17 (v1.45.0) with decoupled standalone `useEditorAutosave` hook (`src/hooks/use-editor-autosave.ts`), AI write-lock suspension/resumption gate, and React 19 ref discipline;
 amended in Phase 18 with decoupled standalone `useEditorConflict` hook (`src/hooks/use-editor-conflict.ts`), cross-tab lifecycle synchronization, 412 conflict isolation, and in-flight snapshot concurrent edit protection (Section 4).
 **Authoritative Modules:** `src/hooks/use-editor-orchestrator.ts`, `src/hooks/use-editor-autosave.ts`, `src/hooks/use-editor-conflict.ts`
-**Consuming Page:** `src/app/workspace/editor/[fileId]/page.tsx`
+**Consuming Page:** `src/client/routes/editor-page.tsx`
 
 ---
 
@@ -551,7 +551,7 @@ Invariants:
 4. **Green save dot = server truth.** `markServerPersisted(serverUpdatedAt)` fires on
    `bootstrap_server`, `apply`, and genuine `adopt_metadata`; eager-cold adoption leaves
    the dot red while user text remains dirty.
-5. **Hard-reload & Orphaned Reservation Recovery.** Server-side quota reservation status inspection and stale reservation expiration (`getAIReservationStatus(operationId)` and `expireStaleReservations()`) are consolidated inside `src/server/services/ai-settlement-service.ts` (`server-only`, session-derived and ownership-filtered), superseding the legacy `src/lib/ai/pending-operation-store.ts` and `src/server/actions/ai-ops.ts` modules (permanently deleted in Phase 12). Abandoned previews are never applied to the document nor treated as committed. See [`reference/phase-11-editor-orchestration-closure.md`](../../records/closures/phase-11-to-15-core-infrastructure/phase-11-editor-orchestration-closure.md).
+5. **Hard-reload & Orphaned Reservation Recovery.** Server-side quota reservation status inspection and stale reservation expiration (`getAIReservationStatus(operationId)` and `expireStaleReservations()`) are consolidated inside `src/server/services/ai-settlement-service.ts` (session-derived and ownership-filtered), superseding the legacy `src/lib/ai/pending-operation-store.ts` and `src/server/actions/ai-ops.ts` modules (permanently deleted in Phase 12). Abandoned previews are never applied to the document nor treated as committed. See [`reference/phase-11-editor-orchestration-closure.md`](../../records/closures/phase-11-to-15-core-infrastructure/phase-11-editor-orchestration-closure.md).
 6. **UI layer integration (`page.tsx`).** During `hydrating` on an empty document, an animated
    backdrop overlay (`Loader2`) informs the user of active synchronization. When `fatal`,
    a dedicated error recovery card is presented with a direct action to return to `/workspace`.
@@ -732,7 +732,7 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
 1. **Vault Access Gating & CodeMirror 6 DOM Preservation (`vault_locked`):**
    - When mounting an encrypted file (`isEncrypted === true`), the orchestrator inspects `sessionKeyStore.hasMasterKey()`.
    - If the Master Key is absent from ephemeral RAM, `hydration` transitions to `vault_locked`. The CodeMirror editing surface remains non-editable (`adapter.setEditable(false)`).
-   - In `src/app/workspace/editor/[fileId]/page.tsx`, `<MarkdownEditor />` is retained in the DOM tree (`invisible pointer-events-none`) underneath an absolute modal overlay (`absolute inset-0 z-20 bg-zinc-950 flex items-center justify-center`). This completely preserves CodeMirror 6 `EditorView` state, focus, and adapter references without component unmount thrashing.
+   - In `src/client/routes/editor-page.tsx`, `<MarkdownEditor />` is retained in the DOM tree (`invisible pointer-events-none`) underneath an absolute modal overlay (`absolute inset-0 z-20 bg-zinc-950 flex items-center justify-center`). This completely preserves CodeMirror 6 `EditorView` state, focus, and adapter references without component unmount thrashing.
    - **In-Memory RAM Zeroization on Lock:** Upon vault lock events (`!isUnlocked && isEncrypted`), `useEditorOrchestrator` immediately wipes sensitive plaintext from RAM:
      ```typescript
      runProgrammaticUpdate(() => adapterRef.current?.setValue(""));
@@ -848,7 +848,7 @@ In Phase 11 (`v0.11.0`), all direct imports of `ai-ops.ts`, `ai-commit.ts`, `pen
   - **Vault Subsystem Total:** 10/10 test files, 178/178 tests passing (100% success rate).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 134 unit suites (2351 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 134 unit suites (2348 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
   - **TypeScript Typecheck:** `npx tsc --noEmit` exits with code 0 (zero errors).

@@ -7,9 +7,9 @@ the current source files referenced inline.
 
 ---
 
-## 1. Request Authentication (`src/server/middleware/session-middleware.ts` & `src/proxy.ts`)
+## 1. Request Authentication (`src/server/middleware/session-middleware.ts`)
 
-Request-level session authentication and routing protection are handled by the Web-standard Hono middleware (`sessionMiddleware` and `handleSessionProxy` in `src/server/middleware/session-middleware.ts`), backed by request-scoped context (`src/server/context/request-context.ts`), maintaining transitional compatibility with the Next.js edge proxy (`src/proxy.ts`). Both execute across all non-static routes matching `config.matcher`. Behavior:
+Request-level session authentication and routing protection are handled by the Web-standard Hono middleware (`sessionMiddleware` and `handleSessionProxy` in `src/server/middleware/session-middleware.ts`), backed by request-scoped context (`src/server/context/request-context.ts`). The middleware executes across all non-static routes matching `config.matcher`. Behavior:
 
 | Concern | Implementation |
 | :--- | :--- |
@@ -21,7 +21,7 @@ Request-level session authentication and routing protection are handled by the W
 | Server Actions & API routes | Under protected paths, an unauthenticated request receives a **JSON `401 Unauthorized`** instead of an HTML redirect (an HTML redirect breaks the Server Action client runtime) |
 | Logged-in access control | Authenticated users hitting `/login` are redirected to `/dashboard` |
 | OAuth code interception (LUGX-140) | Any request carrying an OAuth `code` query param strictly targeting root (`/`) or login (`/login`) is redirected to `/auth/callback`, preventing parameter interception on arbitrary application sub-paths |
-| Session refresh & Sign-Out | The middleware refreshes the Supabase session cookie on matched requests. When signing out (`signOut()` in `src/server/actions/auth-actions.ts`), `revalidatePath("/", "layout")` purges client router cache and all `sb-*` auth cookies are proactively cleared |
+| Session refresh & Sign-Out | The middleware refreshes the Supabase session cookie on matched requests. When signing out (`signOut()` in `src/server/actions/auth-actions.ts`), all `sb-*` auth cookies are proactively cleared from `cookieStore` and `{ success: true, redirectUrl: "/" }` is returned |
 
 ### 1.1. Open Redirect & Host Header Injection Hardening (`src/lib/auth/safe-redirect.ts`)
 

@@ -141,10 +141,10 @@ to a live URL; push failures surface immediately).
 ## 5. Evidence of isolation
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 134 unit suites (2351 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 134 unit suites (2348 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
-- **Active Unit & Contract Suite (`npm run test`):** **134 files / 2351 tests — all passed (100% pass rate)**, zero LIVE files included.
+- **Active Unit & Contract Suite (`npm run test`):** **134 files / 2348 tests — all passed (100% pass rate)**, zero LIVE files included.
 - **Active Live Multi-System Suite (`npm run test:live`):** **21 registered suites / 108 tests — all passed (100% pass rate)** on isolated Neon branch (`ep-dry-rain-b1kfmpgk-pooler`).
 - **Guard unit tests (`src/test/infrastructure/test-db.isolation.test.ts`):** **8/8 passed** (main-branch refusal, missing-URL refusal, mismatch refusal, loader leak prevention, shell-value precedence, and `-pooler` endpoint refusal).
 - **Historical Milestone Baseline (Phase 10 Archive):** Initially verified at 37 unit files / 488 tests and 16 live suites; systematically expanded through Phase 18 and Phase 20 hardening rounds to current active levels.
@@ -199,6 +199,6 @@ The repository runs a deterministic multi-stage CI pipeline on GitHub Actions co
 | **2. Pure Unit Contracts**     | `unit-contracts`               | Runs `npm run test` strictly excluding `LIVE_TEST_FILES` (zero database or network dependencies, < 20s runtime).                                                                                                                                                                                           |
 | **3. Schema Integrity**        | `migration-integrity`          | Ephemeral `postgres:16-alpine` service container verifies sequential migration application (`scripts/verify-migrations.mjs`) and Drizzle schema sync (`drizzle-kit push --config drizzle.config.test.ts --force`).                                                                                         |
 | **4. Concurrency & Isolation** | `concurrency-and-db-isolation` | Runs `npm run test:live` against isolated PostgreSQL 16 + Redis 7 service containers with `TEST_DB_FORBIDDEN_HOSTS` configured to reject production hosts, verifying lost-update guards, AI quota idempotency, and Stripe ledger deduplication.                                                            |
-| **5. Production Build**        | `build-verification`           | Full Next.js 16 production build (`npm run build`) with asset compilation and route validation.                                                                                                                                                                                                            |
+| **5. Production Build**        | `build-verification`           | Full Vite 6 SPA production build (`npm run build`) with chunk compilation and asset validation.                                                                                                                                                                                                            |
 | **6. Browser E2E Testing**     | `e2e-browser-testing`          | Playwright E2E test execution in Chromium across 15 automated user journeys with progressive fail-closed release gating, failure artifact reporting (`playwright-report`), and dashboard step summaries (`$GITHUB_STEP_SUMMARY`).                                                                          |
 | **7. Live Smoke (Gated)**      | `live-provider-smoke`          | Gated provider live smoke (`src/test/ai/ai-live-e2e.live.test.ts`) executed on `main` push, release tags, release publish, or manual `workflow_dispatch` with strict fail-closed gating on missing credentials.                                                                                            |

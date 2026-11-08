@@ -18,7 +18,7 @@ This document specifies the architecture and implementation of the **Hybrid Stre
 | **G2** | Atomic hunk acceptance and incremental debounced document sync (`useEditorAutosave` -> `PUT /api/files/[id]`), superseding the deleted `src/server/actions/ai-commit.ts`. | `src/components/editor/codemirror/extensions/streaming-ghost.ts`<br>`src/hooks/editor/use-editor-autosave.ts`<br>`src/server/routes/files-api.routes.ts` | **Implemented & Consolidated (v0.12.0)** |
 | **G3** | Dual-Side Inversion Stop Protocol (TD-05): Instant client abort (< 50ms), reader cleanup, server-side pre-TTFT refund and post-TTFT autonomous commit. | `src/hooks/use-ai-stream.ts`<br>`src/lib/ai/stream-handler.ts`<br>`src/server/routes/agent.routes.ts`<br>`src/test/ai/ai-stream-abort-latency.test.ts` | **Implemented & Hardened (v0.12.0)** |
 | **G4** | Deterministic reservation and settlement lifecycle governed by `ai-settlement-service.ts` and `redis-wallet.ts`, superseding the deleted `src/server/actions/ai-ops.ts`. | `src/server/services/ai-settlement-service.ts`<br>`src/lib/metering/redis-wallet.ts` | **Implemented & Consolidated (v0.12.0)** |
-| **G5** | Auto-save and sync suspension invariants during active streaming, committing, and conflict states. | `src/hooks/use-editor-orchestrator.ts`<br>`src/app/workspace/editor/[fileId]/page.tsx` | **Implemented** |
+| **G5** | Auto-save and sync suspension invariants during active streaming, committing, and conflict states. | `src/hooks/use-editor-orchestrator.ts`<br>`src/client/routes/editor-page.tsx` | **Implemented** |
 | **G6** | Stale session and generation guard (`editorGeneration`) preventing old callbacks from applying to new state. | `src/lib/ai/stream-session.ts`<br>`src/hooks/use-ai-stream.ts` | **Implemented** |
 | **G7** | Production path integration tests calling real settlement services and schema entities. | `src/test/ai/ai-quota-idempotency.test.ts`<br>`src/test/ai/ai-server-atomic-commit.test.ts`<br>`src/test/metering/ai-settlement-service.unit.test.ts` | **Implemented** |
 | **G8** | Multi-byte UTF-8 split boundary tests, NDJSON line framing tests, and 412 conflict tests. | `src/test/ai/ai-stream-parser.test.ts`<br>`src/test/ai/ai-stream-session.test.ts`<br>`src/test/editor/editor-atomic-commit.test.ts` | **Implemented** |
@@ -130,7 +130,7 @@ Emitted if an error occurs during stream transmission:
 ## 6. Failure Recovery & Quota Idempotency
 
 ### 6.1 Server-Authoritative Quota Settlement (`v0.12.0` / Phase 12)
-Client financial authority is revoked: `refundAIReservation`, `commitAIReservation`, `reserveAIQuota`, and `reserveAndUpdateUsage` are strictly internal server functions encapsulated in `src/server/services/ai-settlement-service.ts` (`server-only`) and cannot be invoked by clients. Settlement is driven authoritatively by `/api/agent/stream` and `redis-wallet.ts`:
+Client financial authority is revoked: `refundAIReservation`, `commitAIReservation`, `reserveAIQuota`, and `reserveAndUpdateUsage` are strictly internal server functions encapsulated in `src/server/services/ai-settlement-service.ts` and cannot be invoked by clients. Settlement is driven authoritatively by `/api/agent/stream` and `redis-wallet.ts`:
 - **Pre-TTFT System Failure / Disconnect (`ttftMs === null`):** Server triggers internal `refundAIReservation(operationId, reason)` or `executeAtomicRefund`:
   - **Condition:** Updates `status = 'ABORTED_REFUNDED'` WHERE `operation_id = operationId AND status = 'RESERVED'`.
   - **Idempotency:** Subsequent calls find `status == 'ABORTED_REFUNDED'` or `'SETTLED'` and return `{ refunded: false, reason: "already_refunded" | "already_committed" }`, eliminating double-refund risks.
@@ -215,7 +215,7 @@ The route returns an SSE stream with headers `Content-Type: text/event-stream; c
 
 ### 8.3 Metering & Memory Hygiene
 - **StreamGovernor Runway Metering:** Initial reservation of 1,200 tokens via `StreamGovernor(userId, operationId, "google/gemini-3.8-flash")`. Every token chunk is metered in real time; if quota is exhausted, governor aborts the stream with `GOVERNOR_QUOTA_EXHAUSTED`.
-- **Background Settlement via Next.js `after()`:** Asynchronous credit settlement persistence is queued via `after(async () => { await flushPendingSettlementsToPostgres(user.id); })`, decoupling database write latency from client stream closure.
+- **Background Settlement via `scheduleAfterResponse`:** Asynchronous credit settlement persistence is queued via `scheduleAfterResponse(async () => { await flushPendingSettlementsToPostgres(user.id); })`, decoupling database write latency from client stream closure.
 - **Zero-Knowledge Buffer Cleansing:** Decrypted file plaintexts loaded into `EphemeralVaultMemoryMap` via `runWithEphemeralVaultScope` are deterministically wiped (`Buffer.fill(0)`) in both normal completion and stream abort/cancel handlers via `zeroOutEphemeralVaultMemory()`.
 
 ---
@@ -240,5 +240,5 @@ Phase 11 completes the end-to-end integration of the autonomous architectural ag
 - **Incremental Sync Contract (412 Elimination):** Ghost hunk acceptance writes directly to local IndexedDB (`localRevision += 1`) and notifies `useEditorAutosave`, coalescing multiple rapid hunk acceptances into a single debounced server save (800ms–1000ms) with matching `expectedVersion`, permanently eliminating self-inflicted 412 Precondition Failed conflicts.
 
 ### 9.4 Real-Time Micro-Credit Balance Presentation
-- **Server-Authoritative Ledger:** Dashboard (`src/app/dashboard/page.tsx`) and Account (`src/app/account/page.tsx`) pages read live balances via `getUserCreditBalance(user.id)` from `src/server/services/ai-settlement-service.ts`.
+- **Server-Authoritative Ledger:** Dashboard (`src/client/routes/dashboard-page.tsx`) and Account (`src/client/routes/account-page.tsx`) pages read live balances via `getUserCreditBalance(user.id)` from `src/server/services/ai-settlement-service.ts`.
 - **Percentage Available Indicator:** Renders visual progress bar comparing `currentCredits` against `TIER_LIMITS[tier].creditsDisplay`.

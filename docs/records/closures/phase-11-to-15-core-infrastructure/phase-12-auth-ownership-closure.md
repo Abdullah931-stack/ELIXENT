@@ -31,7 +31,7 @@ export function resolveSafeRedirectPath(
 
 ### 2.2. OAuth Callback Hardening (`/auth/callback`)
 
-The callback handler in [`src/app/auth/callback/route.ts`](../../../../src/app/auth/callback/route.ts):
+The callback handler in `src/app/auth/callback/route.ts`:
 - Cleans and verifies `redirectTo` via `resolveSafeRedirectPath`.
 - Replaces blind trust in `x-forwarded-host` with canonical trusted origin derived from `process.env.NEXT_PUBLIC_APP_URL || origin`.
 - Constructs redirection URLs using standard `new URL(safeRedirectPath, trustedOrigin)`.
@@ -39,7 +39,7 @@ The callback handler in [`src/app/auth/callback/route.ts`](../../../../src/app/a
 
 ### 2.3. Middleware Context & Deep Link Preservation
 
-In `src/middleware.ts` *(Note: In Next.js 16, route protection and deep-link preservation are implemented in the Edge proxy at [`src/proxy.ts`](../../../../src/proxy.ts))*:
+In `src/middleware.ts` *(Note: In Next.js 16, route protection and deep-link preservation are implemented in the Edge proxy at `src/proxy.ts`)*:
 - Preserves search queries on protected route redirects (`${request.nextUrl.pathname}${request.nextUrl.search}`) so users seamlessly retain their full editor / query state after authentication.
 
 ### 2.4. OAuth Client, User Sync & Dead Code Elimination

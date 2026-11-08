@@ -351,7 +351,7 @@ counter backed by Upstash Redis, keyed per user:
 | `aiStreamRateLimiter` | `POST /api/agent/stream` | **30 requests** | **60 seconds** | Fail-Closed (Redis outage returns HTTP 503 Service Unavailable) |
 
 > [!NOTE]
-> `authRateLimiter` actively protects Next.js Server Actions `signInWithGoogle` (keyed by client IP address derived from headers) and `syncUserToDatabase` (keyed by authenticated `user.id`), in addition to standard HTTP authentication endpoints, preventing brute-force abuse and credential-stuffing attacks with fail-closed semantics.
+> `authRateLimiter` actively protects server actions `signInWithGoogle` (keyed by client IP address derived from headers) and `syncUserToDatabase` (keyed by authenticated `user.id`), in addition to standard HTTP authentication endpoints, preventing brute-force abuse and credential-stuffing attacks with fail-closed semantics.
 
 ### Response (429 Too Many Requests — Exhaustion)
 ```http

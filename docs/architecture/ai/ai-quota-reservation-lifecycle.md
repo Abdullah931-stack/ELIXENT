@@ -97,7 +97,7 @@ flowchart TD
   - **Critical Rule:** The system **NEVER** silently resets user edits. All manual edits written by the user are preserved 100% without data loss.
 
 ### C. Server-Authoritative Streaming Settlement & Revocation of Client Financial Authority (Phase 11)
-- **Zero Client Financial Authority:** The server actions `refundAIReservation` and `commitAIReservation` have been completely removed from client-accessible RPC entrypoints (`"use server"`). Settlement logic is strictly encapsulated inside `src/server/services/ai-settlement-service.ts` using `import "server-only"`. The client cannot manipulate reservation states via network calls.
+- **Zero Client Financial Authority:** Settlement functions (`refundAIReservation` and `commitAIReservation`) are strictly encapsulated inside `src/server/services/ai-settlement-service.ts` and cannot be invoked by clients directly. The client cannot manipulate reservation states via network calls; settlement is driven authoritatively by the Hono agent stream.
 - **Server Stream Lifecycle Settlement (`/api/ai/stream/route.ts`):**
   - **Normal Stream Completion:** The server autonomously commits the reservation (`commitAIReservation(operationId)`) *immediately prior* to enqueuing the terminal `{ type: "done" }` NDJSON frame.
   - **Pre-TTFT Failures & Aborts (`ttftMs === null`):** If upstream generation fails before any token is emitted, or if the client disconnects before the first chunk, the server issues an atomic refund (`refundAIReservation(operationId, 'mid_stream_failure_pre_ttft' | 'disconnect_pre_generation')`).

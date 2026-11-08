@@ -107,8 +107,8 @@ const [updatedFile] = await db.update(schema.files)
     .returning();
 ```
 
-### G. Next.js Turbopack Server Actions Separation
-All pure synchronous utilities (such as `generateRestoredTitle` and `generateCopyTitle`) reside in `src/lib/utils/file-naming.ts` outside of `"use server"` files, ensuring full compliance with Next.js 16 requirements where all exported functions in server action files must be `async`.
+### G. Domain Utility Separation
+All pure synchronous utilities (such as `generateRestoredTitle` and `generateCopyTitle`) reside in `src/lib/utils/file-naming.ts` as pure domain utilities decoupled from server and RPC boundaries.
 
 ### I. BFS Hierarchy Traversal Cycle Guards & Cascade Restoration (`getDescendantIds` & `restoreFile`)
 When recursively collecting descendant file/folder IDs for cascading deletion or tree restoration, BFS queue traversals maintain a `visited = new Set<string>()` guard. If corrupt or cyclic parent pointers exist in the database, the traversal terminates safely without infinite loops or memory exhaustion.
@@ -141,7 +141,7 @@ To guarantee high cohesion and single-responsibility isolation, file and directo
  - `src/test/vault/vault-import.integration.test.ts`: Integration test verifying direct client-encrypted vault import pipeline.
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 134 unit suites (2351 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 134 unit suites (2348 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ---

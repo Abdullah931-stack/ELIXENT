@@ -4,6 +4,45 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.18.0p] - 2026-11-08 (Phase 6: Final Next.js Purge, Test Suite Alignment to Standard Request & Full CI/E2E Closure)
+
+### Permanent Purge of Next.js Legacy Artifacts & Dependencies
+
+- **Purged Next.js App Router (`src/app/**`):** Permanently deleted all 21 files under `src/app/**`, including legacy route delegates (`api/agent/stream`, `api/files`, `api/folders`, `api/stripe`, `api/cron`), OAuth callback (`auth/callback`), login, dashboard, account, and editor route views, root layout, and styles.
+- **Purged Next.js 16 Edge Proxy (`src/proxy.ts`):** Removed legacy Edge proxy middleware; session validation and route guarding are now handled exclusively by Web-standard Hono middleware (`src/server/middleware/session-middleware.ts`).
+- **Purged Transitional Modules & Configs:** Deleted `src/server/empty.ts` and `next.config.ts`.
+- **Stripped RSC Directives & Markers:** Removed `import "server-only"` markers from `src/server/services/ai-settlement-service.ts` and `src/server/services/billing-service.ts`.
+- **Uninstalled Next.js Dependencies:** Removed `next` from `dependencies` and `eslint-config-next` from `devDependencies` in `package.json`. Added modern flat ESLint plugins `@eslint/js` (`^9.39.5`) and `typescript-eslint` (`^8.72.1`).
+- **Updated Package Scripts:** Configured `"dev": "vite --port 3000"`, `"build": "vite build"`, and `"start": "npx tsx src/server/index.ts"`.
+
+### Test Suite Alignment to Standard Web Primitives (22 Test Files)
+
+- **Standard Web `Request` Adoption:** Migrated all 22 targeted test suites from proprietary `NextRequest` and `next/server` to standard global Web `Request`, `Response`, `Headers`, and `URL` objects.
+- **Eliminated Proprietary Framework Mocks:** Removed all `vi.mock("next/server")`, `vi.mock("next/headers")`, `vi.mock("next/cache")`, and `vi.mock("next/navigation")` mocks across the entire test harness.
+- **Unified Background Task Scheduling:** Intercepted background settlement flushes via `scheduleAfterResponse` and `onScheduleAfterResponse` from `@/server/context/request-context` instead of `after()` from `next/server` in `agent-stream-route.test.ts`, `ai-authoritative-stream-settlement.test.ts`, `ai-stream-fileid-governance.test.ts`, and `ai-stream-replay-prevention.test.ts`.
+- **Server Request Context Bridge:** Updated authentication test suites (`auth-signout.test.ts`, `auth-actions-rate-limit.test.ts`) to provide mocked headers and cookies via `runWithServerRequestContext` instead of Next.js header mocks.
+- **Architectural Boundary Governance:** Updated `ai-client-authority-revocation.test.ts` to assert that `src/client/rpc-client.ts` does not export financial authority functions (`reserveAIQuota`, `commitAIReservation`, `flushPendingSettlementsToPostgres`) and confirmed that `src/app/api/ai/stream/route.ts` remains permanently deleted.
+- **Import Realignment:** Re-pointed all test route imports from `@/app/api/...` to `@/server/routes/...` and from `@/proxy` to `@/server/middleware/session-middleware`.
+
+### Tooling, Bundler, CI & E2E Pipeline Alignment
+
+- **Vitest Runners (`vitest.config.mts` & `vitest.live.config.mts`):** Removed the transitional `'server-only'` path alias pointing to `src/server/empty.ts`.
+- **Playwright E2E Configuration (`playwright.config.ts`):** Updated `webServer.command` to boot the isolated test server via `npx vite --port ${PORT}` instead of `npx next dev`.
+- **TypeScript Configuration (`tsconfig.json`):** Removed `"plugins": [{ "name": "next" }]` and stripped `"next-env.d.ts"` and `".next/**"` from `include`.
+- **Flat ESLint Configuration (`eslint.config.mjs`):** Replaced legacy `eslint-config-next` with standard flat `@eslint/js` and `typescript-eslint` configs, preserving strict linting rules and ignoring `dist/**`.
+- **GitHub Actions CI Pipeline (`.github/workflows/ci.yml`):** Aligned Stage 5 build step to cache Vite artifacts (`node_modules/.vite` and `dist/`) instead of `.next/cache`, and execute `npm run build` for the Vite 6 SPA production bundle.
+- **Framework Invariant Rules (`AGENTS.md`):** Replaced legacy Next.js guidelines with pure Web-standard invariants (Dual-Plane separation, Web primitives exclusivity, zero proprietary framework leakage).
+
+### Verification & SSOT Metrics Baseline
+
+- **Zero-Leakage Grep Verification:** Confirmed 0 occurrences of `from 'next'` or `from "next"` across all source and test directories.
+- **Unit & Contract Verification:** 134 suites, 2,348 passing tests (100% green via `vitest.config.mts`).
+- **Live Multi-System Integration:** 21 suites, 108 passing tests (100% green via `vitest.live.config.mts`).
+- **Browser E2E Journeys:** 14 specs, 15 user journeys (100% green via `playwright.config.ts`).
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/framework-migration/phase-06-final-nextjs-purge-test-suite-alignment-and-ci-e2e-closure.md`](./records/closures/framework-migration/phase-06-final-nextjs-purge-test-suite-alignment-and-ci-e2e-closure.md).
+
+---
+
 ## [0.17.0] - 2026-11-08 (Phase 5: Build Vite 6 SPA + TanStack Router Presentation Layer & Unified Hono Server Entrypoint)
 
 ### Single-Page Application (SPA) Build & Modern Bundler Entrypoint (`index.html`, `vite.config.ts`, `src/client/main.tsx`)

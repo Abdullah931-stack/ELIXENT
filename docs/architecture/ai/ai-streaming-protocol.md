@@ -174,7 +174,7 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, AIStreamStatus[]> = {
 ## 5. Verification & Test Evidence
 
 The implementation is verified with automated tests covering all parser, FSM, and adversarial edge cases:
-- `src/test/ai/ai-client-authority-revocation.test.ts`: 4 tests verifying complete removal of financial Server Actions (`refundAIReservation`, `commitAIReservation`, `reserveAndUpdateUsage`) from `"use server"` boundaries and confirming encapsulation under `server-only`.
+- `src/test/ai/ai-client-authority-revocation.test.ts`: 4 tests verifying complete removal of financial authority from client-accessible boundaries, confirming server-side encapsulation.
 - `src/test/ai/ai-stream-replay-prevention.test.ts`: 3 tests verifying SHA-256 fingerprinting, rejection of divergent payloads on reused `operationId`, and HTTP 409 Conflict emission.
 - `src/test/ai/ai-authoritative-stream-settlement.test.ts`: 4 tests verifying server-authoritative commitment before `{ type: "done" }`, pre-TTFT auto-refunds on upstream failure, post-TTFT auto-commit on mid-stream failure, and autonomous pre-TTFT disconnect refunds.
 - `src/test/ai/ai-key-rotation-400.test.ts`: 5 tests verifying Google Gemini HTTP 400 error inspection for disabled/blocked key signatures (`API_KEY_INVALID`, `SERVICE_DISABLED`, etc.) and classification as `authentication` with `retryableWithKey: true`.
