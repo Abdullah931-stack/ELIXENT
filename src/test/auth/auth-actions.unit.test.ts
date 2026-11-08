@@ -29,9 +29,6 @@ const mockDbFindFirst = vi.fn();
 const mockDbInsert = vi.fn();
 const mockDbUpdate = vi.fn();
 
-let mockHeadersMap = new Map<string, string>();
-let mockCookieStoreMap = new Map<string, string>();
-
 vi.mock("@/server/auth/session", () => ({
     requireAuthenticatedUser: () => mockRequireAuthenticatedUser(),
 }));
@@ -48,21 +45,6 @@ vi.mock("@/lib/supabase/server", () => ({
         auth: {
             signInWithOAuth: mockSignInWithOAuth,
             signOut: mockSupabaseSignOut,
-        },
-    })),
-}));
-
-vi.mock("next/headers", () => ({
-    headers: vi.fn(async () => ({
-        get: (headerName: string) => mockHeadersMap.get(headerName.toLowerCase()) ?? null,
-    })),
-    cookies: vi.fn(async () => ({
-        getAll: () =>
-            Array.from(mockCookieStoreMap.entries()).map(([name, value]) => ({ name, value })),
-        delete: (name: string) => mockCookieStoreMap.delete(name),
-        get: (name: string) => {
-            const val = mockCookieStoreMap.get(name);
-            return val ? { name, value: val } : undefined;
         },
     })),
 }));
@@ -123,14 +105,11 @@ import {
 describe("Decoupled Auth Actions (src/server/actions/auth-actions.ts)", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mockHeadersMap = new Map();
-        mockCookieStoreMap = new Map();
         mockRateLimit.mockResolvedValue({ success: true, remaining: 19, reset: 1000, limit: 20 });
     });
 
     describe("signInWithGoogle", () => {
         it("returns structured success with redirectUrl when OAuth succeeds", async () => {
-            mockHeadersMap.set("x-forwarded-for", "1.2.3.4");
             mockSignInWithOAuth.mockResolvedValueOnce({
                 data: { url: "https://accounts.google.com/o/oauth2/v2/auth?client_id=123" },
                 error: null,
@@ -210,10 +189,7 @@ describe("Decoupled Auth Actions (src/server/actions/auth-actions.ts)", () => {
             });
         });
 
-        it("falls back to 'unknown' IP and succeeds when headers throw", async () => {
-            const nextHeaders = await import("next/headers");
-            vi.mocked(nextHeaders.headers).mockRejectedValueOnce(new Error("Outside request scope"));
-
+        it("falls back to 'unknown' IP and succeeds when outside active request context", async () => {
             mockSignInWithOAuth.mockResolvedValueOnce({
                 data: { url: "https://accounts.google.com/oauth" },
                 error: null,
@@ -253,49 +229,49 @@ describe("Decoupled Auth Actions (src/server/actions/auth-actions.ts)", () => {
     });
 
     describe("signOut", () => {
-        it("returns { success: true, redirectUrl: '/' } and wipes all sb-* cookies", async () => {
-            mockCookieStoreMap.set("sb-access-token", "jwt-token");
-            mockCookieStoreMap.set("sb-refresh-token", "refresh-token");
-            mockCookieStoreMap.set("theme_preference", "dark");
-            mockCookieStoreMap.set("cookie_consent", "accepted");
+        it("returns { success: true, redirectUrl: '/' } and wipes all sb-* cookies inside active request context", async () => {
+            const cookieStore = createInMemoryCookieStore([
+                { name: "sb-access-token", value: "jwt-token" },
+                { name: "sb-refresh-token", value: "refresh-token" },
+                { name: "theme_preference", value: "dark" },
+                { name: "cookie_consent", value: "accepted" },
+            ]);
 
+            const result = await runWithServerRequestContext(
+                { cookies: cookieStore, headers: new Headers() },
+                async () => signOut()
+            );
+
+            expect(mockSupabaseSignOut).toHaveBeenCalledTimes(1);
+            expect(result).toEqual({ success: true, redirectUrl: "/" });
+            expect(cookieStore.getAll()).toEqual([
+                { name: "theme_preference", value: "dark" },
+                { name: "cookie_consent", value: "accepted" },
+            ]);
+        });
+
+        it("returns undefined when invoked as a Form Action with FormData", async () => {
+            const cookieStore = createInMemoryCookieStore([
+                { name: "sb-session", value: "active" },
+            ]);
+            const formData = new FormData();
+            formData.append("reason", "manual_logout");
+
+            const result = await runWithServerRequestContext(
+                { cookies: cookieStore, headers: new Headers() },
+                async () => signOut(formData)
+            );
+
+            expect(result).toBeUndefined();
+            expect(mockSupabaseSignOut).toHaveBeenCalledTimes(1);
+            expect(cookieStore.getAll()).toEqual([]);
+        });
+
+        it("safely completes and returns { success: true, redirectUrl: '/' } when called outside request context without crashing", async () => {
             const result = await signOut();
 
             expect(mockSupabaseSignOut).toHaveBeenCalledTimes(1);
             expect(result).toEqual({ success: true, redirectUrl: "/" });
-            expect(mockCookieStoreMap.has("sb-access-token")).toBe(false);
-            expect(mockCookieStoreMap.has("sb-refresh-token")).toBe(false);
-            expect(mockCookieStoreMap.get("theme_preference")).toBe("dark");
-            expect(mockCookieStoreMap.get("cookie_consent")).toBe("accepted");
-        });
-
-        it("returns undefined when invoked as a Form Action with FormData", async () => {
-            mockCookieStoreMap.set("sb-session", "active");
-            const formData = new FormData();
-            formData.append("reason", "manual_logout");
-
-            const result = await signOut(formData);
-
-            expect(result).toBeUndefined();
-            expect(mockSupabaseSignOut).toHaveBeenCalledTimes(1);
-            expect(mockCookieStoreMap.has("sb-session")).toBe(false);
-        });
-
-        it("wipes sb-* cookies inside Hono runWithServerRequestContext", async () => {
-            const inMemoryCookies = createInMemoryCookieStore([
-                { name: "sb-auth-token", value: "hono-tok" },
-                { name: "sb-user-id", value: "usr_123" },
-                { name: "app_locale", value: "ar" },
-            ]);
-
-            const result = await runWithServerRequestContext(
-                { cookies: inMemoryCookies, headers: new Headers() },
-                async () => signOut()
-            );
-
-            expect(result).toEqual({ success: true, redirectUrl: "/" });
-            const remainingCookies = inMemoryCookies.getAll();
-            expect(remainingCookies).toEqual([{ name: "app_locale", value: "ar" }]);
         });
     });
 

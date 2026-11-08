@@ -43,9 +43,8 @@ import {
 } from "@/server/actions/files";
 import { updateUserProfile } from "@/server/actions/auth-actions";
 import { generateCopyTitle, generateRestoredTitle, MAX_TITLE_LENGTH } from "@/lib/utils/file-naming";
-import { DELETE as fileApiDELETE } from "@/app/api/files/[id]/route";
-import { POST as testAuthPOST, DELETE as testAuthDELETE } from "@/app/api/test/e2e-auth/route";
-import { NextRequest } from "next/server";
+import { handleFileByIdDelete as fileApiDELETE } from "@/server/routes/files-api.routes";
+import { handleE2EAuthPost as testAuthPOST, handleE2EAuthDelete as testAuthDELETE } from "@/server/routes/e2e-auth.routes";
 
 const USER_A = "08080808-0808-0808-0808-080808080808";
 const USER_B = "08090809-0809-0809-0809-080908090809";
@@ -209,7 +208,7 @@ describe("Phase 8: Identity, Ownership, Cycle Detection & Concurrency Control", 
             currentSessionUser = { id: USER_A, email: "user-a-phase08@example.com" };
             const doc = (await createFile("Doc for REST Delete", null, false)).data!;
 
-            const req = new NextRequest(`http://localhost:3000/api/files/${doc.id}`, {
+            const req = new Request(`http://localhost:3000/api/files/${doc.id}`, {
                 method: "DELETE",
             });
 
@@ -221,7 +220,7 @@ describe("Phase 8: Identity, Ownership, Cycle Detection & Concurrency Control", 
             currentSessionUser = { id: USER_A, email: "user-a-phase08@example.com" };
             const doc = (await createFile("Doc for 412 Test", null, false)).data!;
 
-            const req = new NextRequest(`http://localhost:3000/api/files/${doc.id}?expectedVersion=999`, {
+            const req = new Request(`http://localhost:3000/api/files/${doc.id}?expectedVersion=999`, {
                 method: "DELETE",
             });
 
@@ -233,7 +232,7 @@ describe("Phase 8: Identity, Ownership, Cycle Detection & Concurrency Control", 
             currentSessionUser = { id: USER_A, email: "user-a-phase08@example.com" };
             const doc = (await createFile("Doc for Valid REST Delete", null, false)).data!;
 
-            const req = new NextRequest(`http://localhost:3000/api/files/${doc.id}?expectedVersion=1`, {
+            const req = new Request(`http://localhost:3000/api/files/${doc.id}?expectedVersion=1`, {
                 method: "DELETE",
             });
 
@@ -259,7 +258,7 @@ describe("Phase 8: Identity, Ownership, Cycle Detection & Concurrency Control", 
             (process.env as Record<string, string | undefined>).NODE_ENV = "production";
             process.env.PLAYWRIGHT = "1";
 
-            const req = new NextRequest("http://localhost:3000/api/test/e2e-auth", {
+            const req = new Request("http://localhost:3000/api/test/e2e-auth", {
                 method: "POST",
                 body: JSON.stringify({ email: "attacker@test.local", tier: "ultra" }),
             });
@@ -274,7 +273,7 @@ describe("Phase 8: Identity, Ownership, Cycle Detection & Concurrency Control", 
             (process.env as Record<string, string | undefined>).NODE_ENV = "production";
             process.env.PLAYWRIGHT = "1";
 
-            const req = new NextRequest("http://localhost:3000/api/test/e2e-auth", {
+            const req = new Request("http://localhost:3000/api/test/e2e-auth", {
                 method: "DELETE",
             });
 

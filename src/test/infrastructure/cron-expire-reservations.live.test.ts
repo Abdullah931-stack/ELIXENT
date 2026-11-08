@@ -11,11 +11,10 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import * as schema from "@/server/db/schema";
-import { GET, POST } from "@/app/api/cron/expire-reservations/route";
+import { handleExpireReservationsCron as GET, handleExpireReservationsCron as POST } from "@/server/routes/cron.routes";
 import { randomUUID } from "node:crypto";
 import { redis, isRedisConfigured } from "@/lib/redis";
 import { REDIS_KEYS, DIRTY_SETTLEMENT_GRACE_MS } from "@/lib/metering/constants";
@@ -42,6 +41,16 @@ describe("LIVE: Cron sweeper for batch draining on isolated branch", () => {
         if (isRedisConfigured()) {
             await redis.del(REDIS_KEYS.pendingSettlements(USER_ID));
             await redis.srem(REDIS_KEYS.dirtyWallets(), USER_ID);
+            const allDirty = (await redis.smembers(REDIS_KEYS.dirtyWallets())) as string[];
+            if (Array.isArray(allDirty)) {
+                for (const uid of allDirty) {
+                    const [exists] = await testDb.select().from(schema.users).where(eq(schema.users.id, uid));
+                    if (!exists) {
+                        await redis.del(REDIS_KEYS.pendingSettlements(uid));
+                        await redis.srem(REDIS_KEYS.dirtyWallets(), uid);
+                    }
+                }
+            }
         }
     });
 
@@ -50,6 +59,16 @@ describe("LIVE: Cron sweeper for batch draining on isolated branch", () => {
         if (isRedisConfigured()) {
             await redis.del(REDIS_KEYS.pendingSettlements(USER_ID));
             await redis.srem(REDIS_KEYS.dirtyWallets(), USER_ID);
+            const allDirty = (await redis.smembers(REDIS_KEYS.dirtyWallets())) as string[];
+            if (Array.isArray(allDirty)) {
+                for (const uid of allDirty) {
+                    const [exists] = await testDb.select().from(schema.users).where(eq(schema.users.id, uid));
+                    if (!exists) {
+                        await redis.del(REDIS_KEYS.pendingSettlements(uid));
+                        await redis.srem(REDIS_KEYS.dirtyWallets(), uid);
+                    }
+                }
+            }
         }
         try {
             await testDb
@@ -74,11 +93,21 @@ describe("LIVE: Cron sweeper for batch draining on isolated branch", () => {
         if (isRedisConfigured()) {
             await redis.del(REDIS_KEYS.pendingSettlements(USER_ID));
             await redis.srem(REDIS_KEYS.dirtyWallets(), USER_ID);
+            const allDirty = (await redis.smembers(REDIS_KEYS.dirtyWallets())) as string[];
+            if (Array.isArray(allDirty)) {
+                for (const uid of allDirty) {
+                    const [exists] = await testDb.select().from(schema.users).where(eq(schema.users.id, uid));
+                    if (!exists) {
+                        await redis.del(REDIS_KEYS.pendingSettlements(uid));
+                        await redis.srem(REDIS_KEYS.dirtyWallets(), uid);
+                    }
+                }
+            }
         }
     });
 
     it("rejects unauthorized calls with HTTP 401 when Authorization header is missing or wrong", async () => {
-        const noAuthReq = new NextRequest("http://localhost:3000/api/cron/expire-reservations", {
+        const noAuthReq = new Request("http://localhost:3000/api/cron/expire-reservations", {
             method: "GET",
         });
         const res1 = await GET(noAuthReq);
@@ -87,7 +116,7 @@ describe("LIVE: Cron sweeper for batch draining on isolated branch", () => {
         expect(body1.success).toBe(false);
         expect(body1.error).toBe("Unauthorized");
 
-        const wrongAuthReq = new NextRequest("http://localhost:3000/api/cron/expire-reservations", {
+        const wrongAuthReq = new Request("http://localhost:3000/api/cron/expire-reservations", {
             method: "GET",
             headers: {
                 Authorization: "Bearer wrong-secret-token",
@@ -120,7 +149,7 @@ describe("LIVE: Cron sweeper for batch draining on isolated branch", () => {
         await redis.sadd(REDIS_KEYS.dirtyWallets(), USER_ID);
 
         // 2. Invoke cron route via GET with valid Bearer token
-        const req = new NextRequest("http://localhost:3000/api/cron/expire-reservations", {
+        const req = new Request("http://localhost:3000/api/cron/expire-reservations", {
             method: "GET",
             headers: {
                 Authorization: `Bearer ${CRON_SECRET}`,
@@ -181,7 +210,7 @@ describe("LIVE: Cron sweeper for batch draining on isolated branch", () => {
         });
         await redis.sadd(REDIS_KEYS.dirtyWallets(), USER_ID);
 
-        const req = new NextRequest("http://localhost:3000/api/cron/expire-reservations", {
+        const req = new Request("http://localhost:3000/api/cron/expire-reservations", {
             method: "GET",
             headers: {
                 Authorization: `Bearer ${CRON_SECRET}`,
@@ -206,7 +235,7 @@ describe("LIVE: Cron sweeper for batch draining on isolated branch", () => {
     });
 
     it("POST handler is identical to GET handler and functions identically", async () => {
-        const postReq = new NextRequest("http://localhost:3000/api/cron/expire-reservations", {
+        const postReq = new Request("http://localhost:3000/api/cron/expire-reservations", {
             method: "POST",
             headers: {
                 Authorization: `Bearer ${CRON_SECRET}`,

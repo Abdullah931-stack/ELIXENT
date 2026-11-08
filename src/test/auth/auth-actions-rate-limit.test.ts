@@ -9,23 +9,19 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { runWithServerRequestContext, createInMemoryCookieStore } from "@/server/context/request-context";
 
 const mockSignInWithOAuth = vi.fn();
 const mockDbInsert = vi.fn();
 const mockRateLimit = vi.fn();
 const mockRequireAuthenticatedUser = vi.fn();
 
-let mockHeadersMap = new Map<string, string>();
-
-vi.mock("next/headers", () => ({
-    headers: vi.fn(async () => ({
-        get: (headerName: string) => mockHeadersMap.get(headerName.toLowerCase()) ?? null,
-    })),
-    cookies: vi.fn(async () => ({
-        getAll: () => [],
-        delete: vi.fn(),
-    })),
-}));
+function makeContext(headersRecord?: Record<string, string>) {
+    return {
+        headers: new Headers(headersRecord),
+        cookies: createInMemoryCookieStore(),
+    };
+}
 
 vi.mock("@/lib/rate-limit", () => ({
     authRateLimiter: {
@@ -71,12 +67,10 @@ import { signInWithGoogle, syncUserToDatabase } from "@/server/actions/auth-acti
 describe("Auth Actions Rate Limiting", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mockHeadersMap = new Map<string, string>();
     });
 
     describe("signInWithGoogle", () => {
         it("rejects request and returns controlled error when IP rate limit is exceeded", async () => {
-            mockHeadersMap.set("x-forwarded-for", "203.0.113.195, 10.0.0.1");
             mockRateLimit.mockResolvedValueOnce({
                 success: false,
                 remaining: 0,
@@ -84,7 +78,10 @@ describe("Auth Actions Rate Limiting", () => {
                 limit: 20,
             });
 
-            const result = await signInWithGoogle("/workspace");
+            const result = await runWithServerRequestContext(
+                makeContext({ "x-forwarded-for": "203.0.113.195, 10.0.0.1" }),
+                () => signInWithGoogle("/workspace")
+            );
 
             expect(mockRateLimit).toHaveBeenCalledWith("signin:203.0.113.195");
             expect(result).toEqual({ success: false, error: "Rate limit exceeded. Please try again later." });
@@ -92,7 +89,6 @@ describe("Auth Actions Rate Limiting", () => {
         });
 
         it("extracts x-real-ip when x-forwarded-for is missing", async () => {
-            mockHeadersMap.set("x-real-ip", "198.51.100.42");
             mockRateLimit.mockResolvedValueOnce({
                 success: false,
                 remaining: 0,
@@ -100,14 +96,16 @@ describe("Auth Actions Rate Limiting", () => {
                 limit: 20,
             });
 
-            const result = await signInWithGoogle();
+            const result = await runWithServerRequestContext(
+                makeContext({ "x-real-ip": "198.51.100.42" }),
+                () => signInWithGoogle()
+            );
 
             expect(mockRateLimit).toHaveBeenCalledWith("signin:198.51.100.42");
             expect(result).toEqual({ success: false, error: "Rate limit exceeded. Please try again later." });
         });
 
         it("proceeds to OAuth flow when rate limit check passes", async () => {
-            mockHeadersMap.set("x-forwarded-for", "192.0.2.1");
             mockRateLimit.mockResolvedValueOnce({
                 success: true,
                 remaining: 19,
@@ -119,7 +117,10 @@ describe("Auth Actions Rate Limiting", () => {
                 error: null,
             });
 
-            const result = await signInWithGoogle("/dashboard");
+            const result = await runWithServerRequestContext(
+                makeContext({ "x-forwarded-for": "192.0.2.1" }),
+                () => signInWithGoogle("/dashboard")
+            );
             expect(result).toEqual({
                 success: true,
                 redirectUrl: "https://accounts.google.com/o/oauth2/v2/auth?client_id=test",
@@ -145,7 +146,10 @@ describe("Auth Actions Rate Limiting", () => {
                 limit: 20,
             });
 
-            const result = await syncUserToDatabase();
+            const result = await runWithServerRequestContext(
+                makeContext(),
+                () => syncUserToDatabase()
+            );
 
             expect(mockRequireAuthenticatedUser).toHaveBeenCalled();
             expect(mockRateLimit).toHaveBeenCalledWith(`sync:${testUser.id}`);
@@ -165,7 +169,10 @@ describe("Auth Actions Rate Limiting", () => {
                 limit: 20,
             });
 
-            const result = await syncUserToDatabase();
+            const result = await runWithServerRequestContext(
+                makeContext(),
+                () => syncUserToDatabase()
+            );
 
             expect(mockRequireAuthenticatedUser).toHaveBeenCalled();
             expect(mockRateLimit).toHaveBeenCalledWith(`sync:${testUser.id}`);
@@ -176,7 +183,10 @@ describe("Auth Actions Rate Limiting", () => {
         it("returns unauthenticated error without invoking rate limiter if session is missing", async () => {
             mockRequireAuthenticatedUser.mockRejectedValueOnce(new Error("Unauthorized"));
 
-            const result = await syncUserToDatabase();
+            const result = await runWithServerRequestContext(
+                makeContext(),
+                () => syncUserToDatabase()
+            );
 
             expect(result).toEqual({
                 success: false,

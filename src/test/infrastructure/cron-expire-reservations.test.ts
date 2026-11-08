@@ -1,9 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { NextRequest } from "next/server";
 import {
-  GET as expireReservationsGET,
-  POST as expireReservationsPOST,
-} from "@/app/api/cron/expire-reservations/route";
+  handleExpireReservationsCron as expireReservationsGET,
+  handleExpireReservationsCron as expireReservationsPOST,
+} from "@/server/routes/cron.routes";
 import * as aiSettlement from "@/server/services/ai-settlement-service";
 import * as cronLock from "@/lib/cron/lock";
 import * as redisModule from "@/lib/redis";
@@ -45,7 +44,7 @@ describe("Cron: Batch-Draining Sweeper (/api/cron/expire-reservations) — TD-02
   });
 
   it("should reject request with 401 Unauthorized when Authorization header is missing", async () => {
-    const req = new NextRequest(
+    const req = new Request(
       "http://localhost:3000/api/cron/expire-reservations",
       {
         method: "GET",
@@ -63,7 +62,7 @@ describe("Cron: Batch-Draining Sweeper (/api/cron/expire-reservations) — TD-02
   });
 
   it("should reject request with 401 Unauthorized when Bearer token is invalid", async () => {
-    const req = new NextRequest(
+    const req = new Request(
       "http://localhost:3000/api/cron/expire-reservations",
       {
         method: "GET",
@@ -85,7 +84,7 @@ describe("Cron: Batch-Draining Sweeper (/api/cron/expire-reservations) — TD-02
 
   it("should reject request with 401 Unauthorized when CRON_SECRET is not configured in env", async () => {
     delete process.env.CRON_SECRET;
-    const req = new NextRequest(
+    const req = new Request(
       "http://localhost:3000/api/cron/expire-reservations",
       {
         method: "GET",
@@ -109,7 +108,7 @@ describe("Cron: Batch-Draining Sweeper (/api/cron/expire-reservations) — TD-02
         release: vi.fn(),
       });
 
-    const req = new NextRequest(
+    const req = new Request(
       "http://localhost:3000/api/cron/expire-reservations",
       {
         method: "GET",
@@ -148,7 +147,7 @@ describe("Cron: Batch-Draining Sweeper (/api/cron/expire-reservations) — TD-02
         netDeltaMicro: BigInt(-40000),
       });
 
-    const req = new NextRequest(
+    const req = new Request(
       "http://localhost:3000/api/cron/expire-reservations",
       {
         method: "GET",
@@ -183,7 +182,7 @@ describe("Cron: Batch-Draining Sweeper (/api/cron/expire-reservations) — TD-02
   it("should handle empty dirty wallets set gracefully with zero counts", async () => {
     vi.mocked(redisModule.redis.smembers).mockResolvedValueOnce([]);
 
-    const req = new NextRequest(
+    const req = new Request(
       "http://localhost:3000/api/cron/expire-reservations",
       {
         method: "GET",
@@ -213,7 +212,7 @@ describe("Cron: Batch-Draining Sweeper (/api/cron/expire-reservations) — TD-02
       netDeltaMicro: BigInt(-25000),
     });
 
-    const req = new NextRequest(
+    const req = new Request(
       "http://localhost:3000/api/cron/expire-reservations",
       {
         method: "POST",
@@ -235,7 +234,7 @@ describe("Cron: Batch-Draining Sweeper (/api/cron/expire-reservations) — TD-02
   it("should return 503 Fail-Closed when Redis is not configured and release the lock", async () => {
     vi.mocked(redisModule.isRedisConfigured).mockReturnValue(false);
 
-    const req = new NextRequest(
+    const req = new Request(
       "http://localhost:3000/api/cron/expire-reservations",
       {
         method: "GET",
@@ -262,7 +261,7 @@ describe("Cron: Batch-Draining Sweeper (/api/cron/expire-reservations) — TD-02
       new MeteringServiceUnavailableError("Redis connection dropped")
     );
 
-    const req = new NextRequest(
+    const req = new Request(
       "http://localhost:3000/api/cron/expire-reservations",
       {
         method: "GET",
@@ -285,7 +284,7 @@ describe("Cron: Batch-Draining Sweeper (/api/cron/expire-reservations) — TD-02
       new Error("Postgres deadlock detected")
     );
 
-    const req = new NextRequest(
+    const req = new Request(
       "http://localhost:3000/api/cron/expire-reservations",
       {
         method: "GET",

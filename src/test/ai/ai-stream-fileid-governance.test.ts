@@ -12,8 +12,7 @@
 
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { NextRequest } from 'next/server';
-import { POST as agentStreamRoute } from '@/app/api/agent/stream/route';
+import { handleAgentStreamPost as agentStreamRoute } from "@/server/routes/agent.routes";
 import { CloudPostgresWorkspaceProvider } from '@/core/workspace/cloud-provider';
 import {
     WorkspaceFileAccessDeniedError,
@@ -31,14 +30,6 @@ const {
     mockGraphStream: vi.fn(),
     mockGovernorSettle: vi.fn(),
 }));
-
-vi.mock('next/server', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('next/server')>();
-    return {
-        ...actual,
-        after: vi.fn(),
-    };
-});
 
 vi.mock('@/server/auth/session', () => ({
     requireAuthenticatedUser: mockRequireAuthenticatedUser,
@@ -90,7 +81,7 @@ describe('Phase 10: Agent Stream targetFileIds Mandate & Zero-Knowledge Barrier 
     });
 
     it('rejects requests missing targetFileIds entirely with HTTP 400', async () => {
-        const req = new NextRequest('http://localhost/api/agent/stream', {
+        const req = new Request('http://localhost/api/agent/stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -108,7 +99,7 @@ describe('Phase 10: Agent Stream targetFileIds Mandate & Zero-Knowledge Barrier 
     });
 
     it('rejects requests where targetFileIds is null with HTTP 400', async () => {
-        const req = new NextRequest('http://localhost/api/agent/stream', {
+        const req = new Request('http://localhost/api/agent/stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -125,7 +116,7 @@ describe('Phase 10: Agent Stream targetFileIds Mandate & Zero-Knowledge Barrier 
     });
 
     it('rejects requests where targetFileIds contains empty whitespace string with HTTP 400', async () => {
-        const req = new NextRequest('http://localhost/api/agent/stream', {
+        const req = new Request('http://localhost/api/agent/stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

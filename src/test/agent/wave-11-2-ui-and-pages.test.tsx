@@ -30,43 +30,22 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 
 // ============================================================================
-// Mocks for Next.js and Supabase
+// Navigation & Router Mocks
 // ============================================================================
 
 const mockPush = vi.fn();
 const mockRedirect = vi.fn((path: string) => {
-    const error = new Error(`NEXT_REDIRECT:${path}`);
-    (error as unknown as { digest: string }).digest = `NEXT_REDIRECT;replace;${path};307;`;
+    const error = new Error(`APP_REDIRECT:${path}`);
+    (error as unknown as { digest: string }).digest = `APP_REDIRECT;replace;${path};307;`;
     throw error;
 });
 
 let mockFileIdParam = "file-arch-test-123";
 
-vi.mock("next/navigation", () => ({
-    useParams: () => ({ fileId: mockFileIdParam }),
-    useRouter: () => ({ push: mockPush }),
-    redirect: (path: string) => mockRedirect(path),
-}));
-
 vi.mock("@/client/navigation", () => ({
     useAppParams: () => ({ fileId: mockFileIdParam }),
     useAppNavigate: () => mockPush,
     navigateTo: (path: string) => mockRedirect(path),
-}));
-
-vi.mock("next/image", () => ({
-    default: ({ src, alt, ...rest }: React.ImgHTMLAttributes<HTMLImageElement>) => (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={src} alt={alt} {...rest} />
-    ),
-}));
-
-vi.mock("next/link", () => ({
-    default: ({ children, href, ...rest }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) => (
-        <a href={href} {...rest}>
-            {children}
-        </a>
-    ),
 }));
 
 const mockGetServerUser = vi.fn();
@@ -555,7 +534,7 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
         it("redirects unauthenticated visitor to /login", async () => {
             mockGetServerUser.mockResolvedValue(null);
 
-            await expect(DashboardPage({})).rejects.toThrow("NEXT_REDIRECT:/login");
+            await expect(DashboardPage({})).rejects.toThrow("APP_REDIRECT:/login");
             expect(mockRedirect).toHaveBeenCalledWith("/login");
         });
 
@@ -680,7 +659,7 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
         it("redirects unauthenticated visitor to /login", async () => {
             mockGetServerUser.mockResolvedValue(null);
 
-            await expect(AccountPage()).rejects.toThrow("NEXT_REDIRECT:/login");
+            await expect(AccountPage()).rejects.toThrow("APP_REDIRECT:/login");
             expect(mockRedirect).toHaveBeenCalledWith("/login");
         });
 

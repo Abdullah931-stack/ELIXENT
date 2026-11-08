@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { NextRequest } from "next/server";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { setScheduleAfterResponseListener } from "@/server/context/request-context";
 
 const {
     mockAfterCallbacks,
@@ -10,7 +10,7 @@ const {
     mockFlushPendingSettlements,
     mockZeroOutVaultMemory,
 } = vi.hoisted(() => ({
-    mockAfterCallbacks: [] as Array<() => Promise<unknown>>,
+    mockAfterCallbacks: [] as Array<() => Promise<void> | void>,
     mockRequireAuthenticatedUser: vi.fn(),
     mockGraphStream: vi.fn(),
     mockGovernorOnTokenChunk: vi.fn(),
@@ -18,16 +18,6 @@ const {
     mockFlushPendingSettlements: vi.fn(),
     mockZeroOutVaultMemory: vi.fn(),
 }));
-
-vi.mock("next/server", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("next/server")>();
-    return {
-        ...actual,
-        after: (cb: () => Promise<unknown>) => {
-            mockAfterCallbacks.push(cb);
-        },
-    };
-});
 
 vi.mock("@/server/auth/session", () => ({
     requireAuthenticatedUser: mockRequireAuthenticatedUser,
@@ -69,16 +59,21 @@ vi.mock("@/lib/vault/ephemeral-memory-map", async (importOriginal) => {
     };
 });
 
-import { POST as agentStreamRoute } from "@/app/api/agent/stream/route";
+import { handleAgentStreamPost as agentStreamRoute } from "@/server/routes/agent.routes";
 
 describe("Phase 11: Authoritative Server-Side Agent Stream Settlement (/api/agent/stream)", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        setScheduleAfterResponseListener((cb) => mockAfterCallbacks.push(cb));
         mockAfterCallbacks.length = 0;
         mockRequireAuthenticatedUser.mockResolvedValue({ id: "user_test_1" });
         mockGovernorOnTokenChunk.mockResolvedValue(true);
         mockGovernorSettle.mockResolvedValue({ status: "SETTLED" });
         mockFlushPendingSettlements.mockResolvedValue({ flushedCount: 1, netDeltaMicro: BigInt(-1000) });
+    });
+
+    afterEach(() => {
+        setScheduleAfterResponseListener(null);
     });
 
     async function drainSSEFrames(res: Response): Promise<Array<{ event: string; data: Record<string, unknown> }>> {
@@ -113,7 +108,7 @@ describe("Phase 11: Authoritative Server-Side Agent Stream Settlement (/api/agen
             })()
         );
 
-        const req = new NextRequest("http://localhost/api/agent/stream", {
+        const req = new Request("http://localhost/api/agent/stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -149,7 +144,7 @@ describe("Phase 11: Authoritative Server-Side Agent Stream Settlement (/api/agen
             })()
         );
 
-        const req = new NextRequest("http://localhost/api/agent/stream", {
+        const req = new Request("http://localhost/api/agent/stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -185,7 +180,7 @@ describe("Phase 11: Authoritative Server-Side Agent Stream Settlement (/api/agen
             })()
         );
 
-        const req = new NextRequest("http://localhost/api/agent/stream", {
+        const req = new Request("http://localhost/api/agent/stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -218,7 +213,7 @@ describe("Phase 11: Authoritative Server-Side Agent Stream Settlement (/api/agen
             })();
         });
 
-        const req = new NextRequest("http://localhost/api/agent/stream", {
+        const req = new Request("http://localhost/api/agent/stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

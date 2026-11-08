@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { computeRequestHash, reserveAIQuota } from "@/server/services/ai-settlement-service";
-import { NextRequest } from "next/server";
-import { POST as agentStreamRoute } from "@/app/api/agent/stream/route";
+import { handleAgentStreamPost as agentStreamRoute } from "@/server/routes/agent.routes";
 
 const {
     mockRequireAuthenticatedUser,
@@ -36,14 +35,6 @@ const {
         })),
     },
 }));
-
-vi.mock("next/server", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("next/server")>();
-    return {
-        ...actual,
-        after: vi.fn(),
-    };
-});
 
 vi.mock("@/server/auth/session", () => ({
     requireAuthenticatedUser: mockRequireAuthenticatedUser,
@@ -160,7 +151,7 @@ describe("Phase 11: Replay Attack Defense & Request Fingerprint Validation", () 
             })()
         );
 
-        const req1 = new NextRequest("http://localhost/api/agent/stream", {
+        const req1 = new Request("http://localhost/api/agent/stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -170,7 +161,7 @@ describe("Phase 11: Replay Attack Defense & Request Fingerprint Validation", () 
                 prompt: "First request",
             }),
         });
-        const req2 = new NextRequest("http://localhost/api/agent/stream", {
+        const req2 = new Request("http://localhost/api/agent/stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

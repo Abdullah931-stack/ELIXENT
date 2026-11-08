@@ -19,8 +19,7 @@ import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { randomUUID } from "crypto";
-import { PUT } from "@/app/api/files/[id]/route";
-import { NextRequest } from "next/server";
+import { handleFileByIdPut as PUT } from "@/server/routes/files-api.routes";
 
 const TEST_USER_ID = "77777777-7777-7777-7777-777777777777";
 let dbAvailable = false;
@@ -89,7 +88,7 @@ async function routePutUpdate(fileId: string, newContent: string, opts: { versio
         expectedVersion = current.version ?? 0;
     }
 
-    const req = new NextRequest(`http://localhost/api/files/${fileId}`, {
+    const req = new Request(`http://localhost/api/files/${fileId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

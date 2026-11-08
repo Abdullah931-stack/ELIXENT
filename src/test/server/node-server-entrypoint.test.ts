@@ -5,19 +5,16 @@
  * Verifies:
  * 1. Server Module Exports:
  *    - Exports Hono app instance and sessionMiddleware.
- * 2. 'server-only' Resolution Hook:
- *    - Resolves 'server-only' to 'src/server/empty.ts' in Node runtime.
- * 3. SPA Route Fallback & Static Distribution Handling:
+ * 2. SPA Route Fallback & Static Distribution Handling:
  *    - Returns 404 with helpful instructions when dist/client/index.html does not exist.
  *    - Returns 200 with HTML content when dist/client/index.html exists.
- * 4. API & OAuth Route Passthrough:
+ * 3. API & OAuth Route Passthrough:
  *    - Confirms API subroutes (such as /api/files/sync) execute their own router handlers
  *      rather than falling through to the SPA static wildcard.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
-import Module from "node:module";
 
 // Import the server module under test
 import { app, sessionMiddleware } from "@/server/index";
@@ -36,15 +33,6 @@ describe("Node Server Entrypoint (src/server/index.ts)", () => {
       expect(app).toBeDefined();
       expect(typeof app.fetch).toBe("function");
       expect(typeof sessionMiddleware).toBe("function");
-    });
-
-    it("hooks 'server-only' resolution to src/server/empty.ts", () => {
-      const modAny = Module as unknown as {
-        _resolveFilename: (request: string, parent: unknown) => string;
-      };
-
-      const resolved = modAny._resolveFilename("server-only", null);
-      expect(resolved).toContain("empty.ts");
     });
   });
 

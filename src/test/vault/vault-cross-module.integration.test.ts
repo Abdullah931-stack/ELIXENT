@@ -36,10 +36,6 @@ vi.mock("@/lib/supabase/server", () => ({
     getUser: vi.fn(),
 }));
 
-vi.mock("next/cache", () => ({
-    revalidatePath: vi.fn(),
-}));
-
 vi.mock("@/server/actions/files", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/server/actions/files")>();
     return {

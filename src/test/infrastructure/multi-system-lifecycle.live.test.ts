@@ -14,7 +14,6 @@
  */
 
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
-import { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
 import crypto, { randomUUID } from "node:crypto";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
@@ -30,7 +29,7 @@ import { reserveAndUpdateUsage, commitAIReservation } from "@/server/services/ai
 import { createUserVaultProfile } from "@/server/actions/vault-actions";
 import { CloudPostgresWorkspaceProvider } from "@/core/workspace/cloud-provider";
 import { VaultAIAccessDeniedError, WorkspaceFileAccessDeniedError } from "@/core/workspace/provider";
-import { POST as stripeWebhookPOST } from "@/app/api/stripe/webhook/route";
+import { handleStripeWebhookPost as stripeWebhookPOST } from "@/server/routes/stripe.routes";
 import { stripe } from "@/lib/stripe";
 
 const USER_ID = "35353535-3535-3535-3535-353535353535";
@@ -41,15 +40,6 @@ let currentSessionUser: { id: string; email: string } | null = {
     id: USER_ID,
     email: `${USER_ID}@live.test`,
 };
-
-// Shim next/headers for stripe-signature extraction
-let __lastRequest: NextRequest | null = null;
-vi.mock("next/headers", () => ({
-    headers: async () =>
-        ({
-            get: (name: string) => __lastRequest?.headers.get(name) ?? null,
-        }) as never,
-}));
 
 // Mock auth boundary
 vi.mock("@/lib/supabase/server", () => ({
@@ -75,18 +65,17 @@ vi.spyOn(stripe.subscriptions, "retrieve").mockImplementation(async (subId: stri
     latest_invoice: null,
 } as unknown as any));
 
-function signedStripeRequest(body: string): NextRequest {
+function signedStripeRequest(body: string): Request {
     const timestamp = Math.floor(Date.now() / 1000);
     const signature = crypto
         .createHmac("sha256", STRIPE_SECRET)
         .update(`${timestamp}.${body}`)
         .digest("hex");
-    const req = new NextRequest("http://localhost:3000/api/stripe/webhook", {
+    const req = new Request("http://localhost:3000/api/stripe/webhook", {
         method: "POST",
         headers: { "stripe-signature": `t=${timestamp},v1=${signature}` },
         body,
     });
-    __lastRequest = req;
     return req;
 }
 

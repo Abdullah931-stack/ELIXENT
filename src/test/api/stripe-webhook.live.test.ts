@@ -6,11 +6,8 @@
  * 2. REAL database transactions and persistence to `subscription_events`, `users`, and `subscriptions`.
  * 3. REAL durable idempotency ledger surviving memory resets (__resetProcessedEventIds).
  * 4. REAL subscription period validation (guaranteeing currentPeriodStart !== currentPeriodEnd).
- * 
- * Mocked boundary ONLY: `next/headers` (Next.js request store shim).
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
-import { NextRequest } from "next/server";
 import crypto from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
@@ -18,15 +15,6 @@ import { runMigrations } from "@/test/db.setup";
 import * as schema from "@/server/db/schema";
 
 const SECRET = "whsec_live_test_secret";
-
-// Shim next/headers so the route can read stripe-signature from our request.
-let __lastRequest: NextRequest | null = null;
-vi.mock("next/headers", () => ({
-    headers: async () =>
-        ({
-            get: (name: string) => __lastRequest?.headers.get(name) ?? null,
-        }) as never,
-}));
 
 import Stripe from "stripe";
 import { stripe } from "@/lib/stripe";
@@ -47,9 +35,8 @@ vi.spyOn(stripe.subscriptions, "retrieve").mockImplementation(async (subId: stri
 } as unknown as Stripe.Response<Stripe.Subscription>));
 
 process.env.STRIPE_WEBHOOK_SECRET = SECRET;
-// Dynamic import AFTER env setup
-const { POST } = await import("@/app/api/stripe/webhook/route");
-const { __resetProcessedEventIds } = await import("@/lib/stripe/webhook-dedupe");
+import { handleStripeWebhookPost as POST } from "@/server/routes/stripe.routes";
+import { __resetProcessedEventIds } from "@/lib/stripe/webhook-dedupe";
 
 const USERS = {
     checkout: "23232323-2323-2323-2323-232323232323",
@@ -68,18 +55,17 @@ const TEST_EVENTS = [
     "evt_multisub_del_live",
 ];
 
-function signedRequest(body: string, secret = SECRET): NextRequest {
+function signedRequest(body: string, secret = SECRET): Request {
     const timestamp = Math.floor(Date.now() / 1000);
     const signature = crypto
         .createHmac("sha256", secret)
         .update(`${timestamp}.${body}`)
         .digest("hex");
-    const req = new NextRequest("http://localhost:3000/api/stripe/webhook", {
+    const req = new Request("http://localhost:3000/api/stripe/webhook", {
         method: "POST",
         headers: { "stripe-signature": `t=${timestamp},v1=${signature}` },
         body,
     });
-    __lastRequest = req;
     return req;
 }
 
@@ -139,12 +125,11 @@ afterAll(async () => {
 describe("LIVE: Stripe webhook route & durable idempotency on isolated branch", () => {
     it("rejects an invalid signature with 400 BEFORE any parsing or mutation", async () => {
         const body = makeEventBody("checkout.session.completed", {}, "evt_bad_sig");
-        const req = new NextRequest("http://localhost:3000/api/stripe/webhook", {
+        const req = new Request("http://localhost:3000/api/stripe/webhook", {
             method: "POST",
             headers: { "stripe-signature": "t=1,v1=deadbeef" },
             body,
         });
-        __lastRequest = req;
 
         const res = await POST(req);
         expect(res.status).toBe(400);

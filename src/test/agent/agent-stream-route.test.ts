@@ -9,8 +9,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { NextRequest } from "next/server";
 import { Command, GraphInterrupt } from "@langchain/langgraph";
+import { setScheduleAfterResponseListener } from "@/server/context/request-context";
 import {
   hasActiveVaultPlaintextInMemory,
   getActiveEphemeralVaultPlaintexts,
@@ -139,16 +139,6 @@ const {
 // 2. Module Mocks
 // ---------------------------------------------------------------------------
 
-vi.mock("next/server", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("next/server")>();
-  return {
-    ...actual,
-    after: vi.fn((cb: () => Promise<void> | void) => {
-      scheduledAfterCallbacks.push(cb);
-    }),
-  };
-});
-
 vi.mock("@/server/auth/session", () => ({
   requireAuthenticatedUser: vi.fn(async () => {
     if (!authConfig.isAuthenticated) {
@@ -206,7 +196,8 @@ vi.mock("@/server/services/ai-settlement-service", () => ({
 }));
 
 // Import route module AFTER mocks
-import * as route from "@/app/api/agent/stream/route";
+import { handleAgentStreamPost as POST, maxDuration, dynamic } from "@/server/routes/agent.routes";
+const route = { POST, maxDuration, dynamic };
 
 // ---------------------------------------------------------------------------
 // 3. Helpers
@@ -262,6 +253,7 @@ function parseSSEFrames(raw: string): ParsedFrame[] {
 describe("POST /api/agent/stream Route Handler", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setScheduleAfterResponseListener((cb) => scheduledAfterCallbacks.push(cb));
     scheduledAfterCallbacks.length = 0;
     governorConfigState.instances.length = 0;
     governorConfigState.permitted = true;
@@ -277,6 +269,7 @@ describe("POST /api/agent/stream Route Handler", () => {
   });
 
   afterEach(() => {
+    setScheduleAfterResponseListener(null);
     vi.restoreAllMocks();
   });
 
@@ -294,7 +287,7 @@ describe("POST /api/agent/stream Route Handler", () => {
     it("should reject unauthenticated requests with HTTP 401 Problem Details before body parsing", async () => {
       authConfig.isAuthenticated = false;
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: "invalid-json-that-should-not-be-parsed",
         headers: { "Content-Type": "application/json" },
@@ -319,7 +312,7 @@ describe("POST /api/agent/stream Route Handler", () => {
       rateLimitConfig.remaining = 0;
       rateLimitConfig.isDegraded = false;
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "th-1",
@@ -343,7 +336,7 @@ describe("POST /api/agent/stream Route Handler", () => {
       rateLimitConfig.remaining = 0;
       rateLimitConfig.isDegraded = true;
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "th-1",
@@ -363,7 +356,7 @@ describe("POST /api/agent/stream Route Handler", () => {
 
   describe("4. Request Payload Validation (400 Problem Details)", () => {
     it("should return HTTP 400 when request body is not valid JSON", async () => {
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: "{malformed_json",
         headers: { "Content-Type": "application/json" },
@@ -379,7 +372,7 @@ describe("POST /api/agent/stream Route Handler", () => {
     });
 
     it("should return HTTP 400 when required fields are missing", async () => {
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           // missing threadId, projectId, targetFileIds
@@ -398,7 +391,7 @@ describe("POST /api/agent/stream Route Handler", () => {
     });
 
     it("should return HTTP 400 when unknown properties are passed (.strict() enforcement)", async () => {
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "th-1",
@@ -417,7 +410,7 @@ describe("POST /api/agent/stream Route Handler", () => {
     });
 
     it("should never echo vault secrets in 400 validation error responses", async () => {
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "", // invalid empty string
@@ -445,7 +438,7 @@ describe("POST /api/agent/stream Route Handler", () => {
         { master_ledger: { dec_1: { selectedOptionKey: "opt_a" } } },
       ];
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "thread-abc-123",
@@ -490,7 +483,7 @@ describe("POST /api/agent/stream Route Handler", () => {
     it("should pass user_request with prompt, projectId, and targetFileIds on initial invocation", async () => {
       graphConfigState.chunksToEmit = [{ step: 1 }];
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "thread-100",
@@ -526,7 +519,7 @@ describe("POST /api/agent/stream Route Handler", () => {
         selectedOptionKey: "redis_ttl_300s",
       };
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "thread-hitl-resume",
@@ -549,7 +542,7 @@ describe("POST /api/agent/stream Route Handler", () => {
     it("should load ephemeralVaultPayloads into scope and guarantee zeroing on clean completion", async () => {
       graphConfigState.chunksToEmit = [{ step: "reading" }];
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "thread-vault-test",
@@ -573,7 +566,7 @@ describe("POST /api/agent/stream Route Handler", () => {
     it("should guarantee zeroOutEphemeralVaultMemory on stream runtime error", async () => {
       graphConfigState.errorToThrow = new Error("Fatal graph crash during node execution");
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "thread-error-test",
@@ -602,7 +595,7 @@ describe("POST /api/agent/stream Route Handler", () => {
       governorConfigState.permitted = false; // Governor rejects chunks immediately
       graphConfigState.chunksToEmit = [{ heavy_chunk: "A".repeat(500) }];
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "thread-quota-exhausted",
@@ -641,7 +634,7 @@ describe("POST /api/agent/stream Route Handler", () => {
         },
       ]);
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "thread-interrupt-test",
@@ -666,7 +659,7 @@ describe("POST /api/agent/stream Route Handler", () => {
     it("should schedule background PostgreSQL settlement flush via after() with user.id", async () => {
       graphConfigState.chunksToEmit = [{ step: 1 }];
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "thread-after-test",
@@ -692,7 +685,7 @@ describe("POST /api/agent/stream Route Handler", () => {
   describe("10. Payload Thresholds & Boundary Limits (ELIXENT-ARCH-03 §5.1)", () => {
     it("should accept prompt of exactly MAX_PROMPT_CHARS (100,000 chars)", async () => {
       graphConfigState.chunksToEmit = [{ ok: true }];
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "th-prompt-max",
@@ -708,7 +701,7 @@ describe("POST /api/agent/stream Route Handler", () => {
     });
 
     it("should reject prompt exceeding MAX_PROMPT_CHARS with HTTP 400", async () => {
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "th-prompt-over",
@@ -727,7 +720,7 @@ describe("POST /api/agent/stream Route Handler", () => {
     it("should accept targetFileIds of exactly MAX_TARGET_FILES (100 files)", async () => {
       graphConfigState.chunksToEmit = [{ ok: true }];
       const targetFileIds = Array.from({ length: MAX_TARGET_FILES }, (_, i) => `file-${i}`);
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "th-files-max",
@@ -743,7 +736,7 @@ describe("POST /api/agent/stream Route Handler", () => {
 
     it("should reject targetFileIds exceeding MAX_TARGET_FILES (101 files) with HTTP 400", async () => {
       const targetFileIds = Array.from({ length: MAX_TARGET_FILES + 1 }, (_, i) => `file-${i}`);
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "th-files-over",
@@ -760,7 +753,7 @@ describe("POST /api/agent/stream Route Handler", () => {
 
     it("should accept empty targetFileIds array", async () => {
       graphConfigState.chunksToEmit = [{ ok: true }];
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "th-empty-files",
@@ -775,7 +768,7 @@ describe("POST /api/agent/stream Route Handler", () => {
     });
 
     it("should reject targetFileIds containing empty or whitespace-only strings", async () => {
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "th-1",
@@ -790,7 +783,7 @@ describe("POST /api/agent/stream Route Handler", () => {
 
     it("should reject threadId or projectId exceeding MAX_IDENTIFIER_LENGTH", async () => {
       const longId = "a".repeat(MAX_IDENTIFIER_LENGTH + 1);
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: longId,
@@ -859,7 +852,7 @@ describe("POST /api/agent/stream Route Handler", () => {
 
   describe("11. Malformed & Unusual Request Bodies", () => {
     it("should return 400 when body is an array instead of an object", async () => {
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify(["invalid", "array", "body"]),
         headers: { "Content-Type": "application/json" },
@@ -869,7 +862,7 @@ describe("POST /api/agent/stream Route Handler", () => {
     });
 
     it("should return 400 when body is null", async () => {
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: "null",
         headers: { "Content-Type": "application/json" },
@@ -879,7 +872,7 @@ describe("POST /api/agent/stream Route Handler", () => {
     });
 
     it("should return 400 when body is an empty object", async () => {
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({}),
         headers: { "Content-Type": "application/json" },
@@ -894,7 +887,7 @@ describe("POST /api/agent/stream Route Handler", () => {
       const abortCtrl = new AbortController();
       abortCtrl.abort("client_pre_aborted");
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "th-pre-abort",
@@ -934,7 +927,7 @@ describe("POST /api/agent/stream Route Handler", () => {
         return originalOnTokenChunk.call(this, chunk);
       });
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "th-mid-abort",
@@ -959,7 +952,7 @@ describe("POST /api/agent/stream Route Handler", () => {
     it("should settle governor with ABORTED and wipe memory on stream cancellation (reader.cancel())", async () => {
       graphConfigState.chunksToEmit = [{ step: 1 }, { step: 2 }];
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "th-cancel",
@@ -987,7 +980,7 @@ describe("POST /api/agent/stream Route Handler", () => {
         { step: "after_interrupt" },
       ];
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "th-inline-int",
@@ -1016,7 +1009,7 @@ describe("POST /api/agent/stream Route Handler", () => {
       (customInt as any).interrupts = [];
       graphConfigState.errorToThrow = customInt;
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "th-empty-int",
@@ -1042,7 +1035,7 @@ describe("POST /api/agent/stream Route Handler", () => {
         { id: "i2", value: "Approval 2" },
       ]);
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "th-multi-int",
@@ -1065,7 +1058,7 @@ describe("POST /api/agent/stream Route Handler", () => {
     it("should strip vault_ref:// prefix and store sections cleanly into ephemeral vault map", async () => {
       graphConfigState.chunksToEmit = [{ ok: true }];
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "th-vault-ref",
@@ -1092,7 +1085,7 @@ describe("POST /api/agent/stream Route Handler", () => {
         "Details body text.",
       ].join("\n");
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "th-ast-slice",
@@ -1113,7 +1106,7 @@ describe("POST /api/agent/stream Route Handler", () => {
     it("should store raw markdown without headings into root section", async () => {
       graphConfigState.chunksToEmit = [{ ok: true }];
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "th-no-headings",
@@ -1141,7 +1134,7 @@ describe("POST /api/agent/stream Route Handler", () => {
 
       graphConfigState.chunksToEmit = [{ ok: true }];
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "th-after-err",
@@ -1167,7 +1160,7 @@ describe("POST /api/agent/stream Route Handler", () => {
     it("should schedule after() settlement even when graph throws an execution error", async () => {
       graphConfigState.errorToThrow = new Error("Graph crashed early");
 
-      const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+      const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
           threadId: "th-after-graph-err",

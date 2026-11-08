@@ -15,8 +15,7 @@
 
 import { describe, it, test, expect, vi, beforeEach } from "vitest";
 import { resolveSafeRedirectPath } from "@/lib/auth/safe-redirect";
-import { GET as authCallbackGET } from "@/app/auth/callback/route";
-import { NextRequest } from "next/server";
+import { handleAuthCallbackGet as authCallbackGET } from "@/server/routes/auth-callback.routes";
 
 // Mock supabase client and user sync
 const mockExchangeCodeForSession = vi.fn();
@@ -188,7 +187,7 @@ describe("Phase 12: Auth Callback Handler (/auth/callback)", () => {
         mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
         mockSyncUserToDatabase.mockResolvedValueOnce({ success: true });
 
-        const req = new NextRequest("https://app.lugx.com/auth/callback?code=auth_code_123&redirectTo=/workspace/editor/doc-abc");
+        const req = new Request("https://app.lugx.com/auth/callback?code=auth_code_123&redirectTo=/workspace/editor/doc-abc");
         const res = await authCallbackGET(req);
 
         expect(res.status).toBe(307); // NextResponse.redirect default status
@@ -201,7 +200,7 @@ describe("Phase 12: Auth Callback Handler (/auth/callback)", () => {
         mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
         mockSyncUserToDatabase.mockResolvedValueOnce({ success: true });
 
-        const req = new NextRequest("https://app.lugx.com/auth/callback?code=auth_code_123&redirectTo=https://evil.com/steal-session");
+        const req = new Request("https://app.lugx.com/auth/callback?code=auth_code_123&redirectTo=https://evil.com/steal-session");
         const res = await authCallbackGET(req);
 
         expect(res.status).toBe(307);
@@ -212,7 +211,7 @@ describe("Phase 12: Auth Callback Handler (/auth/callback)", () => {
         mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
         mockSyncUserToDatabase.mockResolvedValueOnce({ success: true });
 
-        const req = new NextRequest("https://app.lugx.com/auth/callback?code=auth_code_123&redirectTo=/%2F%2Fattacker.com");
+        const req = new Request("https://app.lugx.com/auth/callback?code=auth_code_123&redirectTo=/%2F%2Fattacker.com");
         const res = await authCallbackGET(req);
 
         expect(res.status).toBe(307);
@@ -223,7 +222,7 @@ describe("Phase 12: Auth Callback Handler (/auth/callback)", () => {
         mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
         mockSyncUserToDatabase.mockResolvedValueOnce({ success: true });
 
-        const req = new NextRequest("https://app.lugx.com/auth/callback?code=auth_code_123&redirectTo=/dashboard", {
+        const req = new Request("https://app.lugx.com/auth/callback?code=auth_code_123&redirectTo=/dashboard", {
             headers: {
                 "x-forwarded-host": "attacker-spoofed-host.com",
             },
@@ -238,7 +237,7 @@ describe("Phase 12: Auth Callback Handler (/auth/callback)", () => {
     it("redirects to login error page when exchangeCodeForSession fails", async () => {
         mockExchangeCodeForSession.mockResolvedValueOnce({ error: { message: "Invalid auth code" } });
 
-        const req = new NextRequest("https://app.lugx.com/auth/callback?code=invalid_code&redirectTo=/workspace");
+        const req = new Request("https://app.lugx.com/auth/callback?code=invalid_code&redirectTo=/workspace");
         const res = await authCallbackGET(req);
 
         expect(res.status).toBe(307);
@@ -246,7 +245,7 @@ describe("Phase 12: Auth Callback Handler (/auth/callback)", () => {
     });
 
     it("redirects to login error page when code parameter is missing", async () => {
-        const req = new NextRequest("https://app.lugx.com/auth/callback?redirectTo=/workspace");
+        const req = new Request("https://app.lugx.com/auth/callback?redirectTo=/workspace");
         const res = await authCallbackGET(req);
 
         expect(res.status).toBe(307);
@@ -258,7 +257,7 @@ describe("Phase 12: Auth Callback Handler (/auth/callback)", () => {
         mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
         mockSyncUserToDatabase.mockResolvedValueOnce({ success: true });
 
-        const req = new NextRequest("https://app.lugx.com/auth/callback?code=auth_code_123&redirectTo=/workspace&redirectTo=https://evil.com");
+        const req = new Request("https://app.lugx.com/auth/callback?code=auth_code_123&redirectTo=/workspace&redirectTo=https://evil.com");
         const res = await authCallbackGET(req);
 
         expect(res.status).toBe(307);

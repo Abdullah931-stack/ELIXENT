@@ -9,18 +9,18 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { runWithServerRequestContext, type ServerCookieStore } from "@/server/context/request-context";
 
 const mockSignOut = vi.fn();
 const mockCookieDelete = vi.fn();
 
 const mockCookies: Array<{ name: string; value: string }> = [];
 
-vi.mock("next/headers", () => ({
-    cookies: vi.fn(async () => ({
-        getAll: () => [...mockCookies],
-        delete: (name: string) => mockCookieDelete(name),
-    })),
-}));
+const mockCookieStore: ServerCookieStore = {
+    getAll: () => [...mockCookies],
+    set: vi.fn(),
+    delete: (name: string) => mockCookieDelete(name),
+};
 
 vi.mock("@/lib/supabase/server", () => ({
     createClient: vi.fn(async () => ({
@@ -47,7 +47,10 @@ describe("signOut() Cookie Wiping and Structured Redirect", () => {
             { name: "sb-provider-token", value: "prov_789" }
         );
 
-        const result = await signOut();
+        const result = await runWithServerRequestContext(
+            { cookies: mockCookieStore, headers: new Headers() },
+            () => signOut()
+        );
         expect(result).toEqual({ success: true, redirectUrl: "/" });
 
         // 1. Supabase auth.signOut() was invoked
@@ -64,7 +67,10 @@ describe("signOut() Cookie Wiping and Structured Redirect", () => {
     it("handles sign-out when no sb-* cookies are present", async () => {
         mockCookies.push({ name: "app_locale", value: "en" });
 
-        const result = await signOut();
+        const result = await runWithServerRequestContext(
+            { cookies: mockCookieStore, headers: new Headers() },
+            () => signOut()
+        );
         expect(result).toEqual({ success: true, redirectUrl: "/" });
 
         expect(mockSignOut).toHaveBeenCalledTimes(1);
@@ -75,7 +81,10 @@ describe("signOut() Cookie Wiping and Structured Redirect", () => {
         mockCookies.push({ name: "sb-access-token", value: "tok_form" });
         const formData = new FormData();
 
-        const result = await signOut(formData);
+        const result = await runWithServerRequestContext(
+            { cookies: mockCookieStore, headers: new Headers() },
+            () => signOut(formData)
+        );
         expect(result).toBeUndefined();
 
         expect(mockSignOut).toHaveBeenCalledTimes(1);

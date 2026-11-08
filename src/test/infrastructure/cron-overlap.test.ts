@@ -10,9 +10,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { NextRequest } from "next/server";
-import { GET as expireReservationsGET } from "@/app/api/cron/expire-reservations/route";
-import { GET as purgeDeletedGET, POST as purgeDeletedPOST } from "@/app/api/cron/purge-deleted/route";
+import {
+    handleExpireReservationsCron as expireReservationsGET,
+    handlePurgeDeletedCron as purgeDeletedGET,
+    handlePurgeDeletedCron as purgeDeletedPOST,
+} from "@/server/routes/cron.routes";
 import * as aiSettlement from "@/server/services/ai-settlement-service";
 import { db } from "@/server/db";
 import { acquireCronLock } from "@/lib/cron/lock";
@@ -83,11 +85,11 @@ describe("Cron Overlap & Distributed Lock Protection Suite (Phase 13)", () => {
                 () => new Promise((resolve) => setTimeout(() => resolve({ flushedCount: 2, netDeltaMicro: BigInt(-50000) }), 50))
             );
 
-            const req1 = new NextRequest("http://localhost:3000/api/cron/expire-reservations", {
+            const req1 = new Request("http://localhost:3000/api/cron/expire-reservations", {
                 method: "GET",
                 headers: { Authorization: `Bearer ${CRON_SECRET}` },
             });
-            const req2 = new NextRequest("http://localhost:3000/api/cron/expire-reservations", {
+            const req2 = new Request("http://localhost:3000/api/cron/expire-reservations", {
                 method: "GET",
                 headers: { Authorization: `Bearer ${CRON_SECRET}` },
             });
@@ -115,10 +117,10 @@ describe("Cron Overlap & Distributed Lock Protection Suite (Phase 13)", () => {
 
     describe("/api/cron/purge-deleted concurrency & auth", () => {
         it("should reject unauthorized requests with HTTP 401 on both GET and POST", async () => {
-            const noAuthReq = new NextRequest("http://localhost:3000/api/cron/purge-deleted", {
+            const noAuthReq = new Request("http://localhost:3000/api/cron/purge-deleted", {
                 method: "POST",
             });
-            const wrongAuthReq = new NextRequest("http://localhost:3000/api/cron/purge-deleted", {
+            const wrongAuthReq = new Request("http://localhost:3000/api/cron/purge-deleted", {
                 method: "GET",
                 headers: { Authorization: "Bearer bad-token" },
             });
@@ -135,11 +137,11 @@ describe("Cron Overlap & Distributed Lock Protection Suite (Phase 13)", () => {
                 (() => new Promise((resolve) => setTimeout(() => resolve({ rowCount: 15 }), 50))) as never
             );
 
-            const req1 = new NextRequest("http://localhost:3000/api/cron/purge-deleted", {
+            const req1 = new Request("http://localhost:3000/api/cron/purge-deleted", {
                 method: "POST",
                 headers: { Authorization: `Bearer ${CRON_SECRET}` },
             });
-            const req2 = new NextRequest("http://localhost:3000/api/cron/purge-deleted", {
+            const req2 = new Request("http://localhost:3000/api/cron/purge-deleted", {
                 method: "POST",
                 headers: { Authorization: `Bearer ${CRON_SECRET}` },
             });

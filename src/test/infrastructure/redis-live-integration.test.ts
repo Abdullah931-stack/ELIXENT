@@ -11,7 +11,6 @@
  */
 
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
-import { NextRequest } from "next/server";
 import crypto from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
@@ -23,15 +22,6 @@ import { redis, getRedisClient } from "@/lib/redis";
 import { UpstashHttpMockServer } from "./redis-mock-server";
 
 const SECRET = "whsec_redis_live_test_secret";
-
-// Shim next/headers so the route can read stripe-signature from our requests
-let __lastRequest: NextRequest | null = null;
-vi.mock("next/headers", () => ({
-    headers: async () =>
-        ({
-            get: (name: string) => __lastRequest?.headers.get(name) ?? null,
-        }) as never,
-}));
 
 // Mock Stripe subscription retrieval to avoid external network calls during route processing
 vi.spyOn(stripe.subscriptions, "retrieve").mockImplementation(async (subId: string) => ({
@@ -49,9 +39,9 @@ vi.spyOn(stripe.subscriptions, "retrieve").mockImplementation(async (subId: stri
 
 process.env.STRIPE_WEBHOOK_SECRET = SECRET;
 
-// Dynamic import of webhook route and cache reset helper
-const { POST } = await import("@/app/api/stripe/webhook/route");
-const { __resetProcessedEventIds } = await import("@/lib/stripe/webhook-dedupe");
+// Webhook route and cache reset helper
+import { handleStripeWebhookPost as POST } from "@/server/routes/stripe.routes";
+import { __resetProcessedEventIds } from "@/lib/stripe/webhook-dedupe";
 
 const USERS = {
     healthy: "41414141-4141-4141-4141-414141414141",
@@ -67,19 +57,18 @@ const TEST_EVENTS = [
     "evt_redis_outage_test",
 ];
 
-function signedRequest(body: string, secret = SECRET): NextRequest {
+function signedRequest(body: string, secret = SECRET): Request {
     const timestamp = Math.floor(Date.now() / 1000);
     const signature = crypto
         .createHmac("sha256", secret)
         .update(`${timestamp}.${body}`)
         .digest("hex");
 
-    const req = new NextRequest("http://localhost:3000/api/stripe/webhook", {
+    const req = new Request("http://localhost:3000/api/stripe/webhook", {
         method: "POST",
         headers: { "stripe-signature": `t=${timestamp},v1=${signature}` },
         body,
     });
-    __lastRequest = req;
     return req;
 }
 

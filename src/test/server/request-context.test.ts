@@ -1,52 +1,33 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
     createInMemoryCookieStore,
     runWithServerRequestContext,
     getActiveRequestContext,
     resolveCookiesAndHeaders,
     scheduleAfterResponse,
+    setScheduleAfterResponseListener,
     type ServerRequestContext,
 } from "@/server/context/request-context";
-
-// Hoisted state for mocking `next/server` and `next/headers`
-const { mockState } = vi.hoisted(() => ({
-    mockState: {
-        afterFn: undefined as ((task: () => Promise<void> | void) => void) | undefined,
-        cookiesFn: undefined as (() => Promise<unknown>) | undefined,
-        headersFn: undefined as (() => Promise<unknown>) | undefined,
-    },
-}));
-
-vi.mock("next/server", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("next/server")>();
-    return {
-        ...actual,
-        get after() {
-            return mockState.afterFn;
-        },
-    };
-});
-
-vi.mock("next/headers", () => ({
-    get cookies() {
-        return mockState.cookiesFn;
-    },
-    get headers() {
-        return mockState.headersFn;
-    },
-}));
 
 describe("Server Request Context & Concurrency Isolation", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mockState.afterFn = undefined;
-        mockState.cookiesFn = undefined;
-        mockState.headersFn = undefined;
+        setScheduleAfterResponseListener(null);
+    });
+
+    afterEach(() => {
+        setScheduleAfterResponseListener(null);
+        vi.restoreAllMocks();
     });
 
     describe("createInMemoryCookieStore", () => {
         it("initializes an empty cookie store when no initial cookies are passed", () => {
             const store = createInMemoryCookieStore();
+            expect(store.getAll()).toEqual([]);
+        });
+
+        it("initializes an empty cookie store when an empty array is passed", () => {
+            const store = createInMemoryCookieStore([]);
             expect(store.getAll()).toEqual([]);
         });
 
@@ -94,6 +75,7 @@ describe("Server Request Context & Concurrency Isolation", () => {
                     sameSite: "lax",
                     path: "/",
                     maxAge: 3600,
+                    domain: "lugx.test",
                 });
             }).not.toThrow();
 
@@ -128,6 +110,36 @@ describe("Server Request Context & Concurrency Isolation", () => {
                 { name: "extra", value: "A_val" },
             ]);
             expect(storeB.getAll()).toEqual([]);
+        });
+
+        it("returns an isolated array from getAll() preventing external array mutation from corrupting state", () => {
+            const store = createInMemoryCookieStore([{ name: "fixed", value: "true" }]);
+            const all = store.getAll();
+            all.push({ name: "injected", value: "malicious" });
+
+            expect(store.getAll()).toEqual([{ name: "fixed", value: "true" }]);
+        });
+
+        it("preserves case sensitivity of distinct cookie names", () => {
+            const store = createInMemoryCookieStore();
+            store.set("SessionToken", "upper");
+            store.set("sessiontoken", "lower");
+
+            expect(store.getAll()).toEqual([
+                { name: "SessionToken", value: "upper" },
+                { name: "sessiontoken", value: "lower" },
+            ]);
+        });
+
+        it("handles empty string cookie values and special characters correctly", () => {
+            const store = createInMemoryCookieStore();
+            store.set("empty_val", "");
+            store.set("complex_val", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload==; value");
+
+            expect(store.getAll()).toEqual([
+                { name: "empty_val", value: "" },
+                { name: "complex_val", value: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload==; value" },
+            ]);
         });
     });
 
@@ -171,7 +183,7 @@ describe("Server Request Context & Concurrency Isolation", () => {
             expect(getActiveRequestContext()).toBeNull();
         });
 
-        it("restores context to null even if the executed function throws", async () => {
+        it("restores context to null even if the executed function throws synchronously", async () => {
             const mockContext: ServerRequestContext = {
                 cookies: createInMemoryCookieStore(),
                 headers: new Headers(),
@@ -179,9 +191,25 @@ describe("Server Request Context & Concurrency Isolation", () => {
 
             await expect(
                 runWithServerRequestContext(mockContext, () => {
-                    throw new Error("unhandled error inside context");
+                    throw new Error("unhandled sync error inside context");
                 })
-            ).rejects.toThrow("unhandled error inside context");
+            ).rejects.toThrow("unhandled sync error inside context");
+
+            expect(getActiveRequestContext()).toBeNull();
+        });
+
+        it("restores context to null even if the executed function throws asynchronously", async () => {
+            const mockContext: ServerRequestContext = {
+                cookies: createInMemoryCookieStore(),
+                headers: new Headers(),
+            };
+
+            await expect(
+                runWithServerRequestContext(mockContext, async () => {
+                    await new Promise((r) => setTimeout(r, 5));
+                    throw new Error("unhandled async error inside context");
+                })
+            ).rejects.toThrow("unhandled async error inside context");
 
             expect(getActiveRequestContext()).toBeNull();
         });
@@ -207,6 +235,30 @@ describe("Server Request Context & Concurrency Isolation", () => {
                 });
 
                 expect(getActiveRequestContext()?.headers.get("x-tier")).toBe("parent");
+            });
+
+            expect(getActiveRequestContext()).toBeNull();
+        });
+
+        it("preserves parent context when inner nested context throws an error", async () => {
+            const parentContext: ServerRequestContext = {
+                cookies: createInMemoryCookieStore(),
+                headers: new Headers({ "x-parent": "preserved" }),
+            };
+
+            const childContext: ServerRequestContext = {
+                cookies: createInMemoryCookieStore(),
+                headers: new Headers({ "x-child": "exploding" }),
+            };
+
+            await runWithServerRequestContext(parentContext, async () => {
+                await expect(
+                    runWithServerRequestContext(childContext, () => {
+                        throw new Error("inner child failure");
+                    })
+                ).rejects.toThrow("inner child failure");
+
+                expect(getActiveRequestContext()?.headers.get("x-parent")).toBe("preserved");
             });
 
             expect(getActiveRequestContext()).toBeNull();
@@ -264,6 +316,19 @@ describe("Server Request Context & Concurrency Isolation", () => {
 
             expect(getActiveRequestContext()).toBeNull();
         });
+
+        it("transparently supports primitive return values, null, undefined and objects", async () => {
+            const ctx: ServerRequestContext = {
+                cookies: createInMemoryCookieStore(),
+                headers: new Headers(),
+            };
+
+            expect(await runWithServerRequestContext(ctx, () => 42)).toBe(42);
+            expect(await runWithServerRequestContext(ctx, () => false)).toBe(false);
+            expect(await runWithServerRequestContext(ctx, () => null)).toBeNull();
+            expect(await runWithServerRequestContext(ctx, () => undefined)).toBeUndefined();
+            expect(await runWithServerRequestContext(ctx, () => ({ payload: "ok" }))).toEqual({ payload: "ok" });
+        });
     });
 
     describe("resolveCookiesAndHeaders", () => {
@@ -273,183 +338,134 @@ describe("Server Request Context & Concurrency Isolation", () => {
                 headers: new Headers({ "x-from-als": "true" }),
             };
 
-            // Setup next/headers mock to verify it is NOT called when ALS is active
-            const mockCookiesFn = vi.fn();
-            mockState.cookiesFn = mockCookiesFn;
-
             await runWithServerRequestContext(activeCtx, async () => {
                 const resolved = await resolveCookiesAndHeaders();
                 expect(resolved).toBe(activeCtx);
                 expect(resolved.cookies.getAll()).toEqual([{ name: "als_cookie", value: "yes" }]);
                 expect(resolved.headers.get("x-from-als")).toBe("true");
             });
-
-            expect(mockCookiesFn).not.toHaveBeenCalled();
         });
 
-        it("resolves from mocked next/headers when outside ALS context with full cookie store", async () => {
-            const mockRawCookies: Array<{ name: string; value: string }> = [
-                { name: "next_auth", value: "token_abc" },
-            ];
-            const rawSetMock = vi.fn();
-            const rawDeleteMock = vi.fn();
-
-            mockState.cookiesFn = vi.fn(async () => ({
-                getAll: () => [...mockRawCookies],
-                set: rawSetMock,
-                delete: rawDeleteMock,
-            }));
-
-            mockState.headersFn = vi.fn(async () => {
-                return new Headers({ "x-forwarded-proto": "https" });
-            });
-
+        it("returns ephemeral in-memory cookie store and empty Headers when outside ALS context", async () => {
             const resolved = await resolveCookiesAndHeaders();
 
-            // Cookies delegation
-            expect(resolved.cookies.getAll()).toEqual([{ name: "next_auth", value: "token_abc" }]);
-            resolved.cookies.set("new_c", "v", { path: "/" });
-            expect(rawSetMock).toHaveBeenCalledWith("new_c", "v", { path: "/" });
-
-            resolved.cookies.delete("next_auth");
-            expect(rawDeleteMock).toHaveBeenCalledWith("next_auth");
-
-            // Headers delegation
-            expect(resolved.headers.get("x-forwarded-proto")).toBe("https");
+            expect(resolved).toBeDefined();
+            expect(resolved.cookies.getAll()).toEqual([]);
+            expect(resolved.headers).toBeInstanceOf(Headers);
+            expect(Array.from(resolved.headers.entries())).toEqual([]);
         });
 
-        it("handles partial cookie stores missing set() by falling back to internal store without throwing", async () => {
-            // Emulates Server Component read-only store or auth-signout.test.ts mock (only getAll & delete)
-            const mockRawCookies: Array<{ name: string; value: string }> = [
-                { name: "read_only", value: "immutable" },
-            ];
-            const rawDeleteMock = vi.fn();
+        it("returns independent ephemeral instances on consecutive outside-ALS calls without state leakage", async () => {
+            const first = await resolveCookiesAndHeaders();
+            first.cookies.set("ephemeral_leak", "leaked");
+            first.headers.set("x-leak", "true");
 
-            mockState.cookiesFn = vi.fn(async () => ({
-                getAll: () => [...mockRawCookies],
-                delete: rawDeleteMock,
-            }));
+            const second = await resolveCookiesAndHeaders();
+            expect(second.cookies.getAll()).toEqual([]);
+            expect(second.headers.get("x-leak")).toBeNull();
+        });
 
+        it("allows mutation on ephemeral context without throwing errors", async () => {
             const resolved = await resolveCookiesAndHeaders();
-
-            // getAll() delegates to rawStore
-            expect(resolved.cookies.getAll()).toEqual([{ name: "read_only", value: "immutable" }]);
-
-            // set() must NOT throw TypeError: rawCookieStore.set is not a function
             expect(() => {
-                resolved.cookies.set("attempt_write", "value_123");
+                resolved.cookies.set("guest_session", "temp_token", { path: "/" });
+                resolved.cookies.delete("guest_session");
+                resolved.headers.set("x-custom", "value");
             }).not.toThrow();
-
-            // delete() delegates to rawStore
-            resolved.cookies.delete("read_only");
-            expect(rawDeleteMock).toHaveBeenCalledWith("read_only");
         });
 
-        it("handles partial cookie stores missing getAll() or delete() gracefully", async () => {
-            const rawSetMock = vi.fn();
-            mockState.cookiesFn = vi.fn(async () => ({
-                set: rawSetMock,
-            }));
+        it("reflects mutations made to active context across multiple resolveCookiesAndHeaders() calls in the same scope", async () => {
+            const ctx: ServerRequestContext = {
+                cookies: createInMemoryCookieStore([{ name: "initial", value: "1" }]),
+                headers: new Headers({ "x-count": "1" }),
+            };
 
-            const resolved = await resolveCookiesAndHeaders();
+            await runWithServerRequestContext(ctx, async () => {
+                const first = await resolveCookiesAndHeaders();
+                first.cookies.set("added_in_scope", "2");
+                first.headers.set("x-count", "2");
 
-            // getAll() falls back to in-memory store
-            expect(resolved.cookies.getAll()).toEqual([]);
-
-            // set() delegates to raw store
-            resolved.cookies.set("k", "v");
-            expect(rawSetMock).toHaveBeenCalledWith("k", "v", undefined);
-
-            // delete() falls back to in-memory store without throwing
-            expect(() => resolved.cookies.delete("k")).not.toThrow();
-        });
-
-        it("falls back to in-memory cookie store when next/headers cookies() throws", async () => {
-            mockState.cookiesFn = vi.fn(async () => {
-                throw new Error("cookies() can only be called in a Server Component or Route Handler");
+                const second = await resolveCookiesAndHeaders();
+                expect(second.cookies.getAll()).toEqual([
+                    { name: "initial", value: "1" },
+                    { name: "added_in_scope", value: "2" },
+                ]);
+                expect(second.headers.get("x-count")).toBe("2");
             });
-
-            const resolved = await resolveCookiesAndHeaders();
-
-            expect(resolved.cookies.getAll()).toEqual([]);
-            resolved.cookies.set("fallback_cookie", "123");
-            expect(resolved.cookies.getAll()).toEqual([{ name: "fallback_cookie", value: "123" }]);
-        });
-
-        it("falls back to empty Headers when next/headers headers() throws", async () => {
-            mockState.headersFn = vi.fn(async () => {
-                throw new Error("headers() can only be called in a Server Component or Route Handler");
-            });
-
-            const resolved = await resolveCookiesAndHeaders();
-
-            expect(resolved.headers).toBeInstanceOf(Headers);
-            expect(resolved.headers.get("any-header")).toBeNull();
-        });
-
-        it("falls back to clean cookie store and headers when next/headers exports are undefined", async () => {
-            mockState.cookiesFn = undefined;
-            mockState.headersFn = undefined;
-
-            const resolved = await resolveCookiesAndHeaders();
-
-            expect(resolved.cookies.getAll()).toEqual([]);
-            expect(resolved.headers).toBeInstanceOf(Headers);
         });
     });
 
-    describe("scheduleAfterResponse", () => {
-        it("delegates synchronously to next/server after() when available", () => {
-            const mockTask = vi.fn();
-            const afterSpy = vi.fn();
-            mockState.afterFn = afterSpy;
+    describe("setScheduleAfterResponseListener & scheduleAfterResponse", () => {
+        it("delegates synchronously to registered test listener when set", () => {
+            const capturedTasks: Array<() => Promise<void> | void> = [];
+            setScheduleAfterResponseListener((task) => capturedTasks.push(task));
 
-            scheduleAfterResponse(mockTask);
+            const taskA = vi.fn();
+            const taskB = vi.fn();
 
-            expect(afterSpy).toHaveBeenCalledTimes(1);
-            expect(afterSpy).toHaveBeenCalledWith(mockTask);
-            expect(mockTask).not.toHaveBeenCalled();
+            scheduleAfterResponse(taskA);
+            scheduleAfterResponse(taskB);
+
+            expect(capturedTasks).toHaveLength(2);
+            expect(capturedTasks[0]).toBe(taskA);
+            expect(capturedTasks[1]).toBe(taskB);
+            expect(taskA).not.toHaveBeenCalled();
+            expect(taskB).not.toHaveBeenCalled();
+
+            // Intercepted tasks can be manually invoked deterministically
+            capturedTasks[0]();
+            expect(taskA).toHaveBeenCalledTimes(1);
         });
 
-        it("falls back to async microtask execution when next/server after() throws", async () => {
-            let taskExecuted = false;
-            const mockTask = vi.fn(async () => {
-                taskExecuted = true;
+        it("allows dynamically swapping and clearing test listeners", () => {
+            const listener1Tasks: Array<() => Promise<void> | void> = [];
+            const listener2Tasks: Array<() => Promise<void> | void> = [];
+
+            setScheduleAfterResponseListener((task) => listener1Tasks.push(task));
+            scheduleAfterResponse(() => {});
+            expect(listener1Tasks).toHaveLength(1);
+
+            setScheduleAfterResponseListener((task) => listener2Tasks.push(task));
+            scheduleAfterResponse(() => {});
+            expect(listener2Tasks).toHaveLength(1);
+            expect(listener1Tasks).toHaveLength(1);
+
+            setScheduleAfterResponseListener(null);
+        });
+
+        it("executes task in microtask fallback when no listener is active", async () => {
+            let executed = false;
+            const task = vi.fn(() => {
+                executed = true;
             });
 
-            mockState.afterFn = vi.fn(() => {
-                throw new Error("`after` was called outside a request scope");
-            });
+            scheduleAfterResponse(task);
 
-            scheduleAfterResponse(mockTask);
-
-            // Wait for microtask queue flush
+            // Wait for Promise microtask turn
             await new Promise((r) => setTimeout(r, 10));
 
-            expect(taskExecuted).toBe(true);
-            expect(mockTask).toHaveBeenCalledTimes(1);
+            expect(executed).toBe(true);
+            expect(task).toHaveBeenCalledTimes(1);
         });
 
-        it("falls back to async microtask execution when next/server after is undefined", async () => {
-            let taskExecuted = false;
-            const mockTask = vi.fn(() => {
-                taskExecuted = true;
+        it("executes asynchronous promise-returning task in microtask fallback", async () => {
+            let asyncFinished = false;
+            const asyncTask = vi.fn(async () => {
+                await new Promise((r) => setTimeout(r, 5));
+                asyncFinished = true;
             });
 
-            mockState.afterFn = undefined;
+            scheduleAfterResponse(asyncTask);
 
-            scheduleAfterResponse(mockTask);
+            await new Promise((r) => setTimeout(r, 20));
 
-            await new Promise((r) => setTimeout(r, 10));
-
-            expect(taskExecuted).toBe(true);
-            expect(mockTask).toHaveBeenCalledTimes(1);
+            expect(asyncFinished).toBe(true);
+            expect(asyncTask).toHaveBeenCalledTimes(1);
         });
 
-        it("resiliently catches and logs task rejection in microtask fallback without unhandled promise rejection", async () => {
+        it("resiliently catches and logs task rejection in microtask fallback without unhandled rejection", async () => {
             const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-            mockState.afterFn = undefined;
             const failingTask = vi.fn(async () => {
                 throw new Error("Settlement flush Redis timeout");
             });
@@ -461,6 +477,25 @@ describe("Server Request Context & Concurrency Isolation", () => {
             expect(consoleErrorSpy).toHaveBeenCalledWith(
                 "[AgentStream] Settlement flush error:",
                 expect.any(Error)
+            );
+
+            consoleErrorSpy.mockRestore();
+        });
+
+        it("resiliently catches and logs synchronous exceptions thrown inside scheduled task in microtask fallback", async () => {
+            const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+            const throwingTask = vi.fn(() => {
+                throw new TypeError("Synchronous settlement failure");
+            });
+
+            scheduleAfterResponse(throwingTask);
+
+            await new Promise((r) => setTimeout(r, 15));
+
+            expect(consoleErrorSpy).toHaveBeenCalledWith(
+                "[AgentStream] Settlement flush error:",
+                expect.any(TypeError)
             );
 
             consoleErrorSpy.mockRestore();

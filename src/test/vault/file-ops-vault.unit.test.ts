@@ -7,10 +7,6 @@ vi.mock("@/lib/supabase/server", () => ({
     getUser: vi.fn(),
 }));
 
-vi.mock("next/cache", () => ({
-    revalidatePath: vi.fn(),
-}));
-
 vi.mock("@/server/db", () => ({
     db: {
         query: {

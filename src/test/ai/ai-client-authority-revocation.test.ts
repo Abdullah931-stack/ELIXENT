@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { NextRequest } from "next/server";
-import { POST as agentStreamRoute } from "@/app/api/agent/stream/route";
+import { handleAgentStreamPost as agentStreamRoute } from "@/server/routes/agent.routes";
 import { getAIReservationStatus } from "@/server/services/ai-settlement-service";
 import { updateFileContent } from "@/server/actions/files";
 import { getUser } from "@/lib/supabase/server";
@@ -57,19 +56,17 @@ describe("Phase 11 & Wave 12.2: Revocation of Client-Side Financial Authority & 
         }
     });
 
-    it("verifies ai-settlement-service enforces server-only boundary and is not a client-callable Server Action module", () => {
-        const settlementPath = path.resolve(
-            process.cwd(),
-            "src/server/services/ai-settlement-service.ts"
-        );
-        const source = fs.readFileSync(settlementPath, "utf8");
-        expect(source).toContain('import "server-only"');
-        expect(source).not.toContain('"use server"');
-        expect(source).not.toContain("'use server'");
+    it("verifies client RPC client does not export sensitive server-side financial functions", async () => {
+        const rpcClient = await import("@/client/rpc-client");
+        expect((rpcClient as Record<string, unknown>).reserveAIQuota).toBeUndefined();
+        expect((rpcClient as Record<string, unknown>).commitAIReservation).toBeUndefined();
+        expect((rpcClient as Record<string, unknown>).flushPendingSettlementsToPostgres).toBeUndefined();
+        const legacyAiStreamRoute = path.resolve(process.cwd(), "src/app/api/ai/stream/route.ts");
+        expect(fs.existsSync(legacyAiStreamRoute)).toBe(false);
     });
 
     it("runtime invocation: rejects unauthenticated client stream attempts at POST /api/agent/stream with HTTP 401", async () => {
-        const req = new NextRequest("http://localhost:3000/api/agent/stream", {
+        const req = new Request("http://localhost:3000/api/agent/stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

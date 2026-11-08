@@ -12,25 +12,6 @@
  * 8. Unknown event types are safely recorded and acknowledged without failure.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { NextRequest } from "next/server";
-
-// next/headers() shim
-vi.mock("next/headers", () => ({
-    headers: async () => {
-        return new Proxy(
-            { get: () => "sig_test" },
-            {
-                get(_target, prop) {
-                    const req = __lastRequest;
-                    if (prop === "get" && req) {
-                        return (name: string) => req.headers.get(name);
-                    }
-                    return undefined;
-                },
-            }
-        ) as never;
-    },
-}));
 
 vi.mock("@/lib/stripe", () => ({
     constructWebhookEvent: vi.fn(),
@@ -77,7 +58,7 @@ vi.mock("@/lib/metering/lua-scripts", () => ({
     executeStripeDualWrite: vi.fn(async () => ({ applied: true, newBalanceMicro: 1_000_000_000 })),
 }));
 
-import { POST } from "@/app/api/stripe/webhook/route";
+import { handleStripeWebhookPost as POST } from "@/server/routes/stripe.routes";
 import { __resetProcessedEventIds } from "@/lib/stripe/webhook-dedupe";
 import Stripe from "stripe";
 import * as stripeLib from "@/lib/stripe";
@@ -110,16 +91,13 @@ function makeEvent(
 }
 
 function makeRequest(body = "{}", signature = "sig_test") {
-    const req = new NextRequest("http://localhost:3000/api/stripe/webhook", {
+    const req = new Request("http://localhost:3000/api/stripe/webhook", {
         method: "POST",
         headers: { "stripe-signature": signature },
         body,
     });
-    __lastRequest = req;
     return req;
 }
-
-let __lastRequest: NextRequest | null = null;
 
 beforeEach(() => {
     vi.clearAllMocks();

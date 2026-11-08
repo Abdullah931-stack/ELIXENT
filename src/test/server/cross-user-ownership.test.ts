@@ -29,10 +29,9 @@ import {
 import { importFile } from "@/server/actions/import-file";
 import { getAIReservationStatus } from "@/server/services/ai-settlement-service";
 import { syncUserToDatabase } from "@/server/actions/auth-actions";
-import { POST as agentStreamPOST } from "@/app/api/agent/stream/route";
+import { handleAgentStreamPost as agentStreamPOST } from "@/server/routes/agent.routes";
 import { CloudPostgresWorkspaceProvider } from "@/core/workspace/cloud-provider";
 import { WorkspaceFileAccessDeniedError } from "@/core/workspace/provider";
-import { NextRequest } from "next/server";
 
 const USER_A_ID = "13131313-1313-1313-1313-131313131313";
 const USER_B_ID = "14141414-1414-1414-1414-141414141414";
@@ -343,7 +342,7 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
         it("POST /api/agent/stream: rejects stream initiation with 400 if targetFileIds contains non-string entries", async () => {
             currentSessionUser = { id: USER_A_ID, email: "user-a-phase12@example.com" };
 
-            const request = new NextRequest("http://localhost/api/agent/stream", {
+            const request = new Request("http://localhost/api/agent/stream", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -415,7 +414,7 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
             expect(getFilesRes.success).toBe(false);
             expect(getFilesRes.status).toBe("unauthorized");
 
-            const unauthStreamReq = new NextRequest("http://localhost/api/agent/stream", {
+            const unauthStreamReq = new Request("http://localhost/api/agent/stream", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({

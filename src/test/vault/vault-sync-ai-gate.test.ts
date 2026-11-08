@@ -22,7 +22,6 @@
 
 import 'fake-indexeddb/auto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { NextRequest } from 'next/server';
 import { validateMarkdownSyntaxIntegrity } from '@/lib/sync/syntax-validator';
 import { generateEncryptedETagSync, generateETagSync } from '@/lib/sync/etag-generator';
 import { sessionKeyStore } from '@/lib/sync/session-key-store';
@@ -103,14 +102,6 @@ const mockSettlementService = vi.hoisted(() => ({
     flushPendingSettlementsToPostgres: vi.fn().mockResolvedValue({ flushedCount: 0, netDeltaMicro: BigInt(0) }),
 }));
 
-vi.mock('next/server', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('next/server')>();
-    return {
-        ...actual,
-        after: vi.fn(),
-    };
-});
-
 vi.mock('@/lib/supabase/server', () => ({
     getUser: mockGetUser,
 }));
@@ -178,11 +169,11 @@ vi.mock('@/lib/metering/stream-governor', () => ({
     },
 }));
 
-vi.mock('@/app/api/agent/stream/route', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/app/api/agent/stream/route')>();
+vi.mock('@/server/routes/agent.routes', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/server/routes/agent.routes')>();
     return {
         ...actual,
-        POST: async (req: NextRequest) => {
+        handleAgentStreamPost: async (req: Request) => {
             const cloned = req.clone();
             try {
                 const body = await cloned.json();
@@ -214,7 +205,7 @@ vi.mock('@/app/api/agent/stream/route', async (importOriginal) => {
             } catch {
                 // Delegate malformed payloads to actual route handler
             }
-            return actual.POST(req);
+            return actual.handleAgentStreamPost(req);
         },
     };
 });
@@ -243,7 +234,7 @@ vi.mock('@/server/actions/files', async (importOriginal) => {
 });
 
 // Import Route Handlers and Server Actions after mocks
-import { POST as agentStreamRoute } from '@/app/api/agent/stream/route';
+import { handleAgentStreamPost as agentStreamRoute } from '@/server/routes/agent.routes';
 import { updateFileContent } from '@/server/actions/files';
 import { SyncManager } from '@/lib/sync/sync-manager';
 
@@ -476,7 +467,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
                 allowAIOnEncryptedFiles: false,
             });
 
-            const req = new NextRequest('http://localhost:3000/api/agent/stream', {
+            const req = new Request('http://localhost:3000/api/agent/stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -508,7 +499,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
                 allowAIOnEncryptedFiles: true,
             });
 
-            const req = new NextRequest('http://localhost:3000/api/agent/stream', {
+            const req = new Request('http://localhost:3000/api/agent/stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -541,7 +532,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
                 allowAIOnEncryptedFiles: true,
             });
 
-            const req = new NextRequest('http://localhost:3000/api/agent/stream', {
+            const req = new Request('http://localhost:3000/api/agent/stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
