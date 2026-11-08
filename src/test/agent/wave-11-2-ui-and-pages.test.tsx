@@ -6,18 +6,18 @@
  *    - Ephemeral 8-State Visual Machine (`idle`, `running_graph`, `awaiting_hitl`,
  *      `streaming_hunks`, `preview_ready`, `completed`, `aborted`, `failed`)
  *    - Conflict Precedence, Hunk Pluralization, Action Callback Wiring & Fallbacks
- * 2. DashboardPage (`src/app/dashboard/page.tsx`)
- *    - Server Component Authentication Guard (`redirect('/login')`)
+ * 2. DashboardPage (`src/client/routes/dashboard-page.tsx`)
+ *    - Server Component Authentication Guard (`redirect('/login')` / `navigateTo('/login')`)
  *    - Micro-Credit Denomination to Display Credits (`MICRO_PER_CREDIT`)
  *    - Free, Pro & Ultra Credit Progress Metering, Badge & Clamping
  *    - Session SearchParam Payment Success Notification & Profile Fallbacks
- * 3. AccountPage (`src/app/account/page.tsx`)
+ * 3. AccountPage (`src/client/routes/account-page.tsx`)
  *    - Server Component Authentication Guard
  *    - Micro-Credit Metered AI Settlement Progress Card
  *    - Dynamic Plan Upgrade Button Matrix (Free -> Pro+Ultra, Pro -> Ultra, Ultra -> None)
  *    - Plan Comparison Synchronization with `TIER_LIMITS[tier].creditsDisplay`
  *    - Profile Avatar & Uppercase Initial Fallback
- * 4. EditorPage Wiring (`src/app/workspace/editor/[fileId]/page.tsx`)
+ * 4. EditorPage Wiring (`src/client/routes/editor-page.tsx`)
  *    - Integration wiring of `useEditorOrchestrator` with `<AIToolbar />`,
  *      `<AIStreamStatus />`, and `<AgentChatPanel />`
  *    - Keyboard Shortcuts (`Escape` stop guard, `Ctrl+F` search toggle)
@@ -46,6 +46,12 @@ vi.mock("next/navigation", () => ({
     useParams: () => ({ fileId: mockFileIdParam }),
     useRouter: () => ({ push: mockPush }),
     redirect: (path: string) => mockRedirect(path),
+}));
+
+vi.mock("@/client/navigation", () => ({
+    useAppParams: () => ({ fileId: mockFileIdParam }),
+    useAppNavigate: () => mockPush,
+    navigateTo: (path: string) => mockRedirect(path),
 }));
 
 vi.mock("next/image", () => ({
@@ -88,6 +94,17 @@ vi.mock("@/lib/supabase/client", () => ({
         },
     }),
 }));
+
+vi.mock("@/client/rpc-client", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@/client/rpc-client")>();
+    return {
+        ...actual,
+        getUserProfile: () => mockGetUserProfile(),
+        signOut: () => mockSignOut(),
+        getCreditBalance: () => mockGetUserCreditBalance(),
+        getUser: () => mockGetServerUser(),
+    };
+});
 
 // ============================================================================
 // Mocks for Subcomponents used in Dashboard, Account & Editor
@@ -296,9 +313,9 @@ vi.mock("@/hooks/use-editor-orchestrator", () => ({
 // ============================================================================
 
 import { AIStreamStatus } from "@/components/editor/ai-stream-status";
-import DashboardPage from "@/app/dashboard/page";
-import AccountPage from "@/app/account/page";
-import EditorPage from "@/app/workspace/editor/[fileId]/page";
+import DashboardPage from "@/client/routes/dashboard-page";
+import AccountPage from "@/client/routes/account-page";
+import EditorPage from "@/client/routes/editor-page";
 import { TIER_LIMITS } from "@/config/tiers.config";
 import { MICRO_PER_CREDIT } from "@/lib/metering/constants";
 
