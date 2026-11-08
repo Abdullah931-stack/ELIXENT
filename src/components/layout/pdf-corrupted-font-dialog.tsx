@@ -1,5 +1,3 @@
-"use client";
-
 import { useState } from "react";
 import { AlertTriangle, Sparkles, Download, ArrowLeft, X, Loader2, Table, PowerOff, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";

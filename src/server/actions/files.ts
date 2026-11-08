@@ -1,5 +1,3 @@
-"use server";
-
 import { db, schema, type FileEncryptionMetadata } from "@/server/db";
 import { requireAuthenticatedUser } from "@/server/auth/session";
 import { eq, and, isNull, isNotNull, inArray } from "drizzle-orm";

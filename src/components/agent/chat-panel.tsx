@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * Elixent Architectural Agent Chat Panel
  *

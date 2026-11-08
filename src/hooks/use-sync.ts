@@ -1,4 +1,4 @@
-"use client";
+
 
 /**
  * React Hook for Sync System Integration

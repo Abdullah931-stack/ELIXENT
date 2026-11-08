@@ -4,8 +4,6 @@
  * Client component for handling subscription upgrades via Stripe.
  */
 
-'use client';
-
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';

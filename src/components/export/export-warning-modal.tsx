@@ -1,5 +1,3 @@
-"use client";
-
 import React, { useEffect } from "react";
 import { AlertTriangle, Download, X, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";

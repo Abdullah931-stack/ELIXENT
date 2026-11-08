@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * Human-in-the-Loop (HITL) Clarification Question Card
  *

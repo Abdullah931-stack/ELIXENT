@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * Server Action: Import File
  * Handles PDF/MD/TXT file imports with direct UTF-8 text/ciphertext payloads,

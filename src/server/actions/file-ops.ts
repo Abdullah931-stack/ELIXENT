@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * Unified File & Folder Operations Facade
  *

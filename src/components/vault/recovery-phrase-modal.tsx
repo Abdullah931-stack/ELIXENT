@@ -1,5 +1,3 @@
-"use client";
-
 import { useState } from "react";
 import { Key, Copy, Check, AlertTriangle, ShieldCheck } from "lucide-react";
 

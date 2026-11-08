@@ -1,5 +1,3 @@
-"use client";
-
 import { useState } from "react";
 import { Zap, Eye, CheckCircle, X, Table, PowerOff, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";

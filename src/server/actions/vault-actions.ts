@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * Server Actions for Zero-Knowledge User Vault Profiles
  *

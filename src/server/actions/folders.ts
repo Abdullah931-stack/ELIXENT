@@ -1,5 +1,3 @@
-"use server";
-
 import { db, schema } from "@/server/db";
 import { requireAuthenticatedUser } from "@/server/auth/session";
 import { eq, and, isNull } from "drizzle-orm";

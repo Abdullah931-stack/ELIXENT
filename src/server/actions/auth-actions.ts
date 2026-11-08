@@ -1,5 +1,3 @@
-"use server";
-
 import { resolveCookiesAndHeaders } from "@/server/context/request-context";
 import { db, schema } from "@/server/db";
 import { createClient } from "@/lib/supabase/server";

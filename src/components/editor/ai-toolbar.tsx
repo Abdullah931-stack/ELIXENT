@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * Editor Formatting & Architectural Agent Toolbar
  *

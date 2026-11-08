@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";

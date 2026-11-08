@@ -1,5 +1,3 @@
-'use client';
-
 import { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
 import type { EditorAdapter, GhostHunk } from '@/components/editor/markdown/types';
 import {

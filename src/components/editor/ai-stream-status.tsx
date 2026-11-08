@@ -1,5 +1,3 @@
-'use client';
-
 import React from 'react';
 import type { AIStreamStatus as AIStreamSessionStatus } from '@/lib/ai/stream-session';
 import { Loader2, AlertCircle, RefreshCw, XCircle, CheckCircle2, GitBranch, Square } from 'lucide-react';
