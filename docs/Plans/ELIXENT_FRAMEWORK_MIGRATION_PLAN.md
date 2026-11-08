@@ -315,10 +315,11 @@ flowchart LR
 - **Gate Verdict:** CLOSED / EXECUTED — TypeScript clean (0 errors), 4 new server router suites (120 tests) passing 100%, 121 repository unit suites (2,112 tests) passing 100%, Commit Gate 2 fully satisfied.
 - **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-02-migrate-all-8-api-routes-and-oauth-callback-to-web-standard-hono-routers.md`](../records/closures/framework-migration/phase-02-migrate-all-8-api-routes-and-oauth-callback-to-web-standard-hono-routers.md)
 
-### [Phase 3: Decouple Server Actions from Next.js Runtime & Mount Typed Hono RPC (`hc<AppType>`)]
+### [Phase 3: Decouple Server Actions from Next.js Runtime & Mount Typed Hono RPC (`hc<AppType>`)] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 3 — Decouple Server Actions from Next.js Runtime & Mount Typed Hono RPC`  
-> **Status:** `PLANNED`  
+> **Status:** `CLOSED / EXECUTED` (Commit Gate 3 Satisfied & Verified)  
+> **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-03-decouple-server-actions-and-mount-typed-hono-rpc.md`](../records/closures/framework-migration/phase-03-decouple-server-actions-and-mount-typed-hono-rpc.md)  
 > **Single Responsibility Principle (`SRP`):** Remove `"use server"`, `revalidatePath`, `next/headers`, and `next/navigation` from all 7 files in `src/server/actions/*.ts`, expose them (alongside user credit balance retrieval) as typed Hono RPC routes in `src/server/routes/rpc.routes.ts` mounted on `src/server/app.ts` (exporting `export type AppType = typeof app`), and build the unified, transport-injectable RPC client in `src/client/rpc-client.ts`.  
 > **Post-Phase 2 Baseline State:** All 8 REST/SSE API routes and `/auth/callback` run on `Hono` in `src/server/routes/*` and are mounted on `src/server/app.ts`.
 
@@ -350,11 +351,11 @@ flowchart LR
   - `src/server/actions/file-ops.ts` (modify)
 - **Exact Line-Level Implementation Actions:**
   1. **In `src/server/actions/files.ts` (lines `1–986`) and `src/server/actions/folders.ts` (lines `1–236`):**
-     - Remove the `"use server";` directive on line `1` and remove `import { revalidatePath } from "next/cache";` on line `3`.
+     - Remove `import { revalidatePath } from "next/cache";` on line `3`. Retain the `"use server";` directive transitionally as a compiler isolation guard for legacy client components until Phase 4 rewires them to `rpc-client`.
      - Remove the 7 calls to `revalidatePath("/workspace")` in `files.ts` (lines `101, 233, 380, 447, 554, 668, 858`) and the 1 call in `folders.ts` (line `192`), as SPA state invalidation is handled client-side without Next.js RSC cache invalidation.
      - Preserve $100\%$ of function signatures, return shapes (`FileOpResult<T>`), database queries, and ownership checks untouched.
   2. **In `src/server/actions/import-file.ts` (lines `1–227`) and `src/server/actions/file-ops.ts` (lines `1–75`):**
-     - Remove `"use server";` on line `1` while keeping all exported functions and types identical.
+     - Retain `"use server";` on line `1` transitionally (to prevent Next.js Webpack from leaking Node.js `pg`/`dns`/`fs` into `sidebar.tsx` before Phase 4 client rewiring) while keeping all exported functions and types identical.
 
 ##### 2. Task `Sub-Agent 3.B`: Decouple Auth, Vault & Subscription Actions (`auth-actions.ts`, `vault-actions.ts`, `subscription-actions.ts`) from Next.js Runtime
 
@@ -367,12 +368,12 @@ flowchart LR
   - `src/test/auth/auth-actions-rate-limit.test.ts` (modify: align with decoupled `signInWithGoogle`)
 - **Exact Line-Level Implementation Actions:**
   1. **In `src/server/actions/auth-actions.ts` (lines `1–194`):**
-     - Remove `"use server";`, `import { redirect } from "next/navigation"`, `import { revalidatePath } from "next/cache"`, and `import { cookies, headers } from "next/headers"`.
+     - Retain `"use server";` transitionally, remove `import { revalidatePath } from "next/cache"`, and remove `import { cookies, headers } from "next/headers"`.
      - Use `resolveCookiesAndHeaders()` from `@/server/context/request-context` inside `signInWithGoogle` (to read `x-forwarded-for` / `x-real-ip`) and inside `signOut` (to iterate `getAll()` and `delete` all `sb-*` cookies).
-     - Return structured objects `{ success: true as const, redirectUrl: data.url }` from `signInWithGoogle` and `{ success: true as const, redirectUrl: "/" }` from `signOut` instead of throwing Next.js `NEXT_REDIRECT` exceptions.
+     - Return structured objects `{ success: true as const, redirectUrl: data.url }` from `signInWithGoogle` and `{ success: true as const, redirectUrl: "/" }` from `signOut` when called via RPC, while delegating to `redirect("/")` when invoked via Next.js Server Action `FormData` submission.
      - Update `src/test/auth/auth-signout.test.ts` and `src/test/auth/auth-actions-rate-limit.test.ts` to assert on the returned `{ success: true, redirectUrl }` payload while verifying cookie wiping (`sb-*`) and rate limiting (`signin:${ip}`).
   2. **In `src/server/actions/vault-actions.ts` (lines `1–292`) and `src/server/actions/subscription-actions.ts` (lines `1–350`):**
-     - Remove `"use server";` while keeping all exported functions, types, and database logic $100\%$ unchanged.
+     - Retain `"use server";` transitionally on `vault-actions.ts` while keeping all exported functions, types, and database logic $100\%$ unchanged.
 
 ##### 3. Task `Sub-Agent 3.C`: Build Chained Hono RPC Router (`rpc.routes.ts`), Export `AppType`, and Build Injectable `rpc-client.ts`
 
@@ -399,8 +400,10 @@ flowchart LR
 - Execute the following mandatory verification commands and confirm $100\%$ pass rate before running `git commit`:
   ```bash
   npx tsc --noEmit
-  npx vitest run src/test/server src/test/vault src/test/auth
+  npx vitest run src/test/server src/test/vault src/test/auth src/test/client
   ```
+- **Gate Verdict:** CLOSED / EXECUTED — TypeScript clean (0 errors), 4 new server and client RPC suites (126 tests) passing 100%, 33 targeted commit gate suites (748 tests) passing 100%, 125 repository unit suites (2,239 tests) passing 100%, Commit Gate 3 fully satisfied.
+- **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-03-decouple-server-actions-and-mount-typed-hono-rpc.md`](../records/closures/framework-migration/phase-03-decouple-server-actions-and-mount-typed-hono-rpc.md)
 
 ### [Phase 4: Wire Client Hooks & UI Components to Hono RPC Client & Strip Next.js Directives]
 
@@ -489,6 +492,8 @@ flowchart LR
   - `src/lib/ai/stream-handler.ts`
 - **Exact Line-Level Implementation Actions:**
   1. Remove the `"use client";` / `'use client';` directive from the top of all 22 files listed above without altering a single line of component, hook, or library logic.
+  2. **Strip Transitional `"use server";` Directives across Decoupled Actions:**
+     Now that Tasks 4.A and 4.B have completely rewired all client components (`sidebar.tsx`, `file-context-menu.tsx`, `folder-picker-modal.tsx`, `vault` modals) and client hooks (`use-editor-orchestrator.ts`, `use-editor-conflict.ts`) to import from `@/client/rpc-client` instead of `@/server/actions/*`, zero client code imports directly from the server action files. Consequently, remove the temporary transitional `"use server";` directives from the 6 server action files (`src/server/actions/files.ts`, `src/server/actions/folders.ts`, `src/server/actions/import-file.ts`, `src/server/actions/file-ops.ts`, `src/server/actions/vault-actions.ts`, and `src/server/actions/auth-actions.ts`) without any risk of Webpack bundling `pg`/`dns`/`fs` into the browser bundle.
 
 #### Phase 4 Commit Gate
 

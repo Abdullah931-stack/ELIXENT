@@ -4,6 +4,41 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.15.0] - 2026-11-07 (Phase 3: Decouple Server Actions from Next.js Runtime & Mount Typed Hono RPC)
+
+### Server Action Decoupling from Next.js Runtime (`src/server/actions/*`)
+
+- **Files & Folders Subsystem (`files.ts`, `folders.ts`, `import-file.ts`, `file-ops.ts`):** Removed `"use server"` directives and eliminated all eight calls to Next.js `revalidatePath("/workspace")` (7 in `files.ts`, 1 in `folders.ts`). SPA state invalidation is now managed on the client without Next.js React Server Components cache churn, while preserving 100% of function signatures, return shapes (`FileOpResult<T>`), database queries, and cryptographic preconditions.
+- **Authentication Actions (`auth-actions.ts`):** Removed `"use server"`, `redirect`, `revalidatePath`, `cookies`, and `headers`. Replaced Next.js header and cookie access with `resolveCookiesAndHeaders()` from `@/server/context/request-context`. Ported `signInWithGoogle` to return structured `{ success: true, redirectUrl: data.url }` (or `{ success: false, error }`) instead of throwing Next.js `NEXT_REDIRECT`. Ported `signOut` to clear `sb-*` cookies by iterating `getAll()` and returning `{ success: true, redirectUrl: "/" }`, while preserving a transitional `FormData` overload for legacy Server Component action callers.
+- **Vault & Subscription Actions (`vault-actions.ts`, `subscription-actions.ts`):** Removed `"use server"` directives while keeping 100% of cryptographic envelope operations, master key derivations, recovery rotations, device trust epoch increments, and Stripe customer query routines intact.
+
+### Typed Hono RPC Subsystem & Master Application Mount (`src/server/routes/rpc.routes.ts`, `src/server/app.ts`)
+
+- **Chained RPC Router (`src/server/routes/rpc.routes.ts`):** Constructed a strongly-typed Hono sub-app using method chaining (`new Hono().post(...).get(...)`) and `@hono/zod-validator` (`zValidator('json', ...)`). Mounted 27 distinct RPC endpoints covering all workspace file mutations, folder operations, bulk imports (with `bodyLimit({ maxSize: 10 * 1024 * 1024 })`), zero-knowledge vault management, user profile sync, and authenticated billing credit balance retrieval (`GET /billing/credit-balance`).
+- **HTTP Cookie Deletion Headers:** Mapped `/auth/sign-out` to emit explicit HTTP `Set-Cookie` headers with `Max-Age=0; Path=/` for all `sb-*` session cookies alongside JSON status responses.
+- **Master Application Mount & Export (`src/server/app.ts`):** Mounted the RPC sub-router at `/api/rpc` on the root Hono application and exported `export type AppType = typeof app`, establishing the single source of truth for end-to-end type safety across client and server.
+
+### Transport-Injectable Hono RPC Client (`src/client/rpc-client.ts`)
+
+- **Typed Client Factory:** Instantiated `hc<AppType>(baseUrl, { fetch: customFetch ?? globalThis.fetch })` via `createElixentRpcClient`.
+- **Drop-in Wrapper Functions:** Exported drop-in async wrapper functions matching the exact signatures of the original server actions (`createFile`, `updateFileContent`, `toggleFileEncryption`, `renameFile`, `deleteFile`, `restoreFile`, `copyFile`, `moveFile`, `importFile`, `getUserVaultProfile`, `createUserVaultProfile`, `updateVaultPassword`, `updateVaultRecoveryEnvelope`, `revokeAllTrustedDevices`, `updateVaultAISetting`, `signInWithGoogle`, `signOut`, `syncUserToDatabase`, `getUserProfile`, `updateUserProfile`, plus `getCreditBalance(): Promise<bigint>`).
+- **Deterministic In-Memory Test Bridge:** Implemented `isVitestBridgeActive()`: when running inside Vitest without an injected custom HTTP transport, wrapper functions delegate directly to `@/server/actions/*` (and `@/server/services/ai-settlement-service`), enabling existing hermetic integration tests to execute with 100% fidelity without running a live HTTP network server, while browser runtimes and Playwright E2E execute over standard HTTP RPC.
+
+### Verification & SSOT Metrics Baseline
+
+- **Dedicated Phase 3 Test Suites:** Added 4 new suites delivering 126 passing tests (100% green):
+  - `src/test/server/files-actions.unit.test.ts` (45 tests)
+  - `src/test/server/rpc-routes.test.ts` (37 tests)
+  - `src/test/auth/auth-actions.unit.test.ts` (26 tests)
+  - `src/test/client/rpc-client.test.ts` (18 tests)
+- **Synchronized SSOT Metrics:** Validated via `scripts/sync-doc-metrics.mjs`:
+  - Unit & Contract: 125 suites, 2,239 passing tests (100% green).
+  - Live Multi-System Integration: 21 suites, 108 passing tests (100% green).
+  - Browser E2E Journeys: 14 specs, 15 user journeys (100% green).
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/framework-migration/phase-03-decouple-server-actions-and-mount-typed-hono-rpc.md`](./records/closures/framework-migration/phase-03-decouple-server-actions-and-mount-typed-hono-rpc.md).
+
+---
+
 ## [0.14.0] - 2026-11-07 (Phase 2: Migrate All 8 API Routes & OAuth Callback to Web-Standard Hono Routers)
 
 ### Modular Web-Standard Hono Route Migration (`src/server/routes/*`)

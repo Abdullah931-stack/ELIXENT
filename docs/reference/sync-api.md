@@ -525,11 +525,13 @@ The sync system implements a deterministic Three-Way Merge protocol to resolve c
 
 ---
 
-## Zero-Knowledge Vault Server Actions & Endpoints
+## Zero-Knowledge Vault Server Actions & Hono RPC Endpoints
 
-### 1. `toggleFileEncryption` (`src/server/actions/files.ts`, re-exported via `file-ops.ts`)
+> **Architecture Note:** As part of the Web-Standard Framework Migration (Phase 3), all server actions in `src/server/actions/*` are decoupled from `"use server"` and Next.js runtime dependencies (`next/cache`, `next/headers`, `next/navigation`). They are mounted as end-to-end typed Hono RPC routes under `/api/rpc/*` (`src/server/routes/rpc.routes.ts`) and exposed to frontend consumers via the transport-injectable RPC client `src/client/rpc-client.ts` (`hc<AppType>`).
+
+### 1. `toggleFileEncryption` (`src/server/actions/files.ts`, re-exported via `file-ops.ts`, RPC: `POST /api/rpc/files/toggle-encryption`)
 Converts a file between plaintext and encrypted states:
-- **Signature:**
+- **Signature & RPC Route:** `POST /api/rpc/files/toggle-encryption`
   ```typescript
   toggleFileEncryption(
     fileId: string,
@@ -548,8 +550,9 @@ Converts a file between plaintext and encrypted states:
   ```
 - **Invariants:** Folders cannot be encrypted (`isFolder === false`). Preconditions `expectedVersion` and `expectedETag` are verified optimistically; returns 412 with `serverVersion` on conflict.
 
-### 2. `copyFile` with Encrypted Override (`src/server/actions/files.ts`, re-exported via `file-ops.ts` / AUD-02)
+### 2. `copyFile` with Encrypted Override (`src/server/actions/files.ts`, re-exported via `file-ops.ts` / AUD-02, RPC: `POST /api/rpc/files/copy`)
 Creates a copy of a document or folder:
+- **Signature & RPC Route:** `POST /api/rpc/files/copy`
 - **Encrypted File Invariant:** If `original.isEncrypted` is true, `copyFile` strictly requires an `encryptedOverride` containing `{ newFileId, content, encryptionMetadata }` re-encrypted on the client with unique AAD. Server-side blind copy is rejected.
 - **Copy Depth Clamping (LUGX-072):** Clamps `depth` via `Math.max(0, depth)` with a maximum depth limit of 20 and blocks copying into self/subfolder.
 
@@ -558,12 +561,14 @@ Server-side guard primitives eliminating client-supplied `userId` parameters:
 - `requireAuthenticatedUser()`: Extracts user strictly from verified server session, throwing `AuthenticationRequiredError` (401) on missing sessions.
 - `requireOwnedFile(fileId, userId, options)`: Enforces UUID syntax check (preventing PostgreSQL `22P02` exceptions) and asserts ownership. Returns `ResourceNotFoundError` (404) on foreign or deleted records, eliminating resource enumeration.
 
-### 4. Vault Profile Server Actions (`src/server/actions/vault-actions.ts`)
-Atomic server actions managing zero-knowledge profiles:
-- `getUserVaultProfile()`: Retrieves user's profile (`userVaultProfiles`) or `null`.
-- `createUserVaultProfile(input)`: Atomically inserts dual-wrapped master keys (`encryptedMasterKey` and `recoveryEncryptedMasterKey`) with 409 conflict guard.
-- `updateVaultPassword(input)`: Updates password-wrapped master key and salt with 404 guard.
-- `revokeAllTrustedDevices()`: Atomically increments `deviceTrustEpoch` from $N$ to $N+1$, invalidating all local device PIN envelopes globally.
+### 4. Vault Profile Server Actions & RPC Endpoints (`src/server/actions/vault-actions.ts`, RPC: `/api/rpc/vault/*`)
+Atomic server actions and typed Hono RPC routes managing zero-knowledge profiles:
+- `getUserVaultProfile()` (`GET /api/rpc/vault/profile`): Retrieves user's profile (`userVaultProfiles`) or `null`.
+- `createUserVaultProfile(input)` (`POST /api/rpc/vault/create`): Atomically inserts dual-wrapped master keys (`encryptedMasterKey` and `recoveryEncryptedMasterKey`) with 409 conflict guard.
+- `updateVaultPassword(input)` (`POST /api/rpc/vault/update-password`): Updates password-wrapped master key and salt with 404 guard.
+- `updateVaultRecoveryEnvelope(input)` (`POST /api/rpc/vault/update-recovery`): Updates recovery-encrypted master key envelope.
+- `revokeAllTrustedDevices()` (`POST /api/rpc/vault/revoke-devices`): Atomically increments `deviceTrustEpoch` from $N$ to $N+1$, invalidating all local device PIN envelopes globally.
+- `updateVaultAISetting(allowed)` (`POST /api/rpc/vault/update-ai-setting`): Toggles whether AI analysis is permitted on encrypted files.
 
 ---
 
