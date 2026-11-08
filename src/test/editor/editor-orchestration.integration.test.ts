@@ -23,9 +23,18 @@ import * as fileOps from "@/server/actions/file-ops";
 vi.mock("@/server/actions/file-ops", () => ({
     getFile: vi.fn(),
     updateFileContent: vi.fn(),
+    toggleFileEncryption: vi.fn(),
     renameFile: vi.fn(),
     deleteFile: vi.fn(),
 }));
+
+vi.mock("@/client/rpc-client", async () => {
+    const mockedFileOps = await import("@/server/actions/file-ops");
+    return {
+        ...mockedFileOps,
+        getUserVaultProfile: vi.fn().mockResolvedValue({ success: false, data: null }),
+    };
+});
 
 // Manual-callback Agent SSE consumer mock
 import type { StreamHandlerOptions } from "@/lib/ai/stream-handler";

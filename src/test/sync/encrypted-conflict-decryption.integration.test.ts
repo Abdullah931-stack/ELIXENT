@@ -33,6 +33,15 @@ vi.mock("@/server/actions/vault-actions", () => ({
     }),
 }));
 
+vi.mock("@/client/rpc-client", async () => {
+    const mockedFileOps = await import("@/server/actions/file-ops");
+    const mockedVaultActions = await import("@/server/actions/vault-actions");
+    return {
+        ...mockedFileOps,
+        ...mockedVaultActions,
+    };
+});
+
 const mockLocalDb: Record<string, Record<string, unknown>> = {};
 let capturedRemoteUpdateCallback: ((event: any) => void) | null = null;
 

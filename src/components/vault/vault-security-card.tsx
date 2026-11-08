@@ -1,12 +1,10 @@
-"use client";
-
 import { useState, useEffect, useCallback } from "react";
 import { ShieldCheck, ShieldAlert, Laptop, Trash2, Key, CheckCircle2, AlertTriangle, Loader2, Sparkles, Lock } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { indexedDBManager } from "@/lib/sync/indexeddb";
 import { DeviceTrustEnvelope } from "@/lib/sync/types/vault";
-import { revokeAllTrustedDevices, getUserVaultProfile, updateVaultAISetting } from "@/server/actions/vault-actions";
+import { revokeAllTrustedDevices, getUserVaultProfile, updateVaultAISetting } from "@/client/rpc-client";
 import { TrustDeviceModal } from "./trust-device-modal";
 
 interface VaultSecurityCardProps {

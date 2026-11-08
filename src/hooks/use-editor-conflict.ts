@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * useEditorConflict
  *
@@ -20,7 +18,7 @@
 
 import { useState, useRef, useCallback, useEffect, useLayoutEffect } from "react";
 import type { EditorAdapter } from "@/components/editor/markdown/types";
-import { updateFileContent, toggleFileEncryption, renameFile, deleteFile } from "@/server/actions/file-ops";
+import { updateFileContent, toggleFileEncryption, renameFile, deleteFile } from "@/client/rpc-client";
 import type { FileEncryptionMetadata } from "@/types/storage-payload";
 import type { SyncConflict, IDBFile } from "@/lib/sync/idb-types";
 import type { ConflictResolutionPayload } from "@/components/sync/conflict-dialog";

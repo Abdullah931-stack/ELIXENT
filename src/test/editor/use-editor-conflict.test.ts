@@ -51,6 +51,13 @@ vi.mock("@/server/actions/file-ops", () => ({
     deleteFile: vi.fn(),
 }));
 
+vi.mock("@/client/rpc-client", async () => {
+    const mockedFileOps = await import("@/server/actions/file-ops");
+    return {
+        ...mockedFileOps,
+    };
+});
+
 const openChannels: BroadcastChannel[] = [];
 
 interface SetupFixture {

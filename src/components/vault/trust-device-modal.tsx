@@ -1,12 +1,10 @@
-"use client";
-
 import { useState, useEffect } from "react";
 import { ShieldCheck, Lock, AlertTriangle, Loader2, CheckCircle2, X, Fingerprint, KeyRound, Cpu } from "lucide-react";
 import { sessionKeyStore } from "@/lib/sync/session-key-store";
 import { indexedDBManager } from "@/lib/sync/indexeddb";
 import { wrapMasterKeyWithPin, generateSalt } from "@/lib/sync/encryption";
 import { checkWebAuthnSupportStatus, createWebAuthnPrfEnvelope } from "@/lib/sync/webauthn-prf";
-import { getUserVaultProfile } from "@/server/actions/vault-actions";
+import { getUserVaultProfile } from "@/client/rpc-client";
 import { cryptoWorkerBridge, wipeBuffer, base64ToUint8Array } from "@/lib/sync/crypto-worker-bridge";
 import { AAD } from "@/lib/crypto/aad";
 import { normalizePassword } from "@/lib/vault/vault-manager";

@@ -24,6 +24,15 @@ vi.mock("../../server/actions/vault-actions", () => ({
     getUserVaultProfile: vi.fn(),
 }));
 
+vi.mock("@/client/rpc-client", async () => {
+    const fileOps = await import("../../server/actions/file-ops");
+    const vaultActions = await import("../../server/actions/vault-actions");
+    return {
+        ...fileOps,
+        ...vaultActions,
+    };
+});
+
 vi.mock("../../lib/supabase/client", () => ({
     createClient: () => ({
         auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "test-user" } } }) },

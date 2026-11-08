@@ -18,6 +18,14 @@ vi.mock("../../server/actions/file-ops", () => ({
     getUserFiles: vi.fn(),
     getDeletedFiles: vi.fn(),
 }));
+vi.mock("@/client/rpc-client", async () => {
+    const fileOps = await import("../../server/actions/file-ops");
+    const importFileMod = await import("../../server/actions/import-file");
+    return {
+        ...fileOps,
+        ...importFileMod,
+    };
+});
 vi.mock("../../lib/parsers/text-parser", () => ({
     parseFileContent: vi.fn(),
 }));

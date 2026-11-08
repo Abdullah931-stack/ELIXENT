@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * useEditorOrchestrator
  *
@@ -18,8 +16,14 @@
 
 import { useState, useEffect, useCallback, useRef, useLayoutEffect } from "react";
 import type { EditorAdapter, GhostHunk } from "@/components/editor/markdown/types";
-import { getFile, updateFileContent, toggleFileEncryption, renameFile, deleteFile } from "@/server/actions/file-ops";
-import { getUserVaultProfile } from "@/server/actions/vault-actions";
+import {
+    getFile,
+    updateFileContent,
+    toggleFileEncryption,
+    renameFile,
+    deleteFile,
+    getUserVaultProfile,
+} from "@/client/rpc-client";
 import type { FileEncryptionMetadata } from "@/types/storage-payload";
 import { useSync, type UseSyncReturn } from "@/hooks/use-sync";
 import { useEditorAutosave, type UseEditorAutosaveReturn } from "@/hooks/use-editor-autosave";
@@ -856,6 +860,14 @@ export function useEditorOrchestrator({
         isDirtyRef.current = autosave.isDirty;
     }, [autosave.isDirty]);
 
+    const handleEditorChange = useCallback(
+        (newContent: string) => {
+            if (isProgrammaticUpdateRef.current) return;
+            autosave.handleEditorChange(newContent);
+        },
+        [autosave]
+    );
+
     // Initial Load - Offline-First with Background Server Sync
     useEffect(() => {
         let cancelled = false;
@@ -1444,7 +1456,7 @@ export function useEditorOrchestrator({
         canAutoSave: autosave.canAutoSave,
         hydration,
         syncHook,
-        handleEditorChange: autosave.handleEditorChange,
+        handleEditorChange,
 
         // 7. Vault State
         isEncrypted,

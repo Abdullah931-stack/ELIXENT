@@ -1,5 +1,3 @@
-"use client";
-
 import { useState, useEffect, useRef, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -17,9 +15,8 @@ import {
     Lock,
     X,
 } from "lucide-react";
-import Link from "next/link";
-import { getUserFiles, getDeletedFiles, createFile, moveFile } from "@/server/actions/file-ops";
-import { importFile } from "@/server/actions/import-file";
+import { AppLink as Link } from "@/components/ui/app-link";
+import { getUserFiles, getDeletedFiles, createFile, moveFile, importFile } from "@/client/rpc-client";
 import { validateFile } from "@/lib/parsers/file-validator";
 import { parseFileContent } from "@/lib/parsers/text-parser";
 import { pdfWorkerBridge } from "@/lib/parsers/pdf-worker-bridge";

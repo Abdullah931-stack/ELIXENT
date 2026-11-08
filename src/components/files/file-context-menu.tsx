@@ -1,9 +1,15 @@
-"use client";
-
 import { useState } from "react";
 import { Trash2, Edit3, Copy, FolderInput, RotateCcw, Lock, Unlock, Loader2 } from "lucide-react";
-import { deleteFile, restoreFile, renameFile, copyFile, moveFile, getFile, toggleFileEncryption } from "@/server/actions/file-ops";
-import { getUserVaultProfile } from "@/server/actions/vault-actions";
+import {
+    deleteFile,
+    restoreFile,
+    renameFile,
+    copyFile,
+    moveFile,
+    getFile,
+    toggleFileEncryption,
+    getUserVaultProfile,
+} from "@/client/rpc-client";
 import { sessionKeyStore } from "@/lib/sync/session-key-store";
 import { indexedDBManager } from "@/lib/sync/indexeddb";
 import { FolderPickerModal } from "./folder-picker-modal";

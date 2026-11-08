@@ -1,10 +1,8 @@
-"use client";
-
 import { useState } from "react";
 import { Shield, Copy, Check, AlertTriangle, ArrowLeft, Loader2, Lock } from "lucide-react";
 import { cryptoWorkerBridge, wipeBuffer, arrayBufferToBase64 } from "@/lib/sync/crypto-worker-bridge";
 import { sessionKeyStore } from "@/lib/sync/session-key-store";
-import { createUserVaultProfile } from "@/server/actions/vault-actions";
+import { createUserVaultProfile } from "@/client/rpc-client";
 import { indexedDBManager } from "@/lib/sync/indexeddb";
 import { broadcastCrossTabEvent } from "@/lib/sync/cross-tab-sync";
 import { AAD } from "@/lib/crypto/aad";

@@ -1,8 +1,6 @@
-"use client";
-
 import { useState, useEffect } from "react";
 import { Folder } from "lucide-react";
-import { getUserFiles } from "@/server/actions/file-ops";
+import { getUserFiles } from "@/client/rpc-client";
 
 interface FileItem {
     id: string;

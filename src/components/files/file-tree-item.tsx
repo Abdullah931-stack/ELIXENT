@@ -1,7 +1,5 @@
-"use client";
-
 import { useState } from "react";
-import Link from "next/link";
+import { AppLink as Link } from "@/components/ui/app-link";
 import { cn } from "@/lib/utils";
 import { ChevronRight, FileText, Folder, MoreHorizontal, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
