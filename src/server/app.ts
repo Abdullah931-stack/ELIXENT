@@ -6,6 +6,7 @@ import { stripeRoutes } from "@/server/routes/stripe.routes";
 import { cronRoutes } from "@/server/routes/cron.routes";
 import { authCallbackRoutes } from "@/server/routes/auth-callback.routes";
 import { e2eAuthRoutes } from "@/server/routes/e2e-auth.routes";
+import { rpcRoutes } from "@/server/routes/rpc.routes";
 
 export const app = new Hono()
   .use("*", sessionMiddleware)
@@ -14,6 +15,7 @@ export const app = new Hono()
   .route("/api/stripe", stripeRoutes)
   .route("/api/cron", cronRoutes)
   .route("/api/test/e2e-auth", e2eAuthRoutes)
+  .route("/api/rpc", rpcRoutes)
   .route("/auth/callback", authCallbackRoutes);
 
 export type AppType = typeof app;
