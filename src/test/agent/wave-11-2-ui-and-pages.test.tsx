@@ -34,13 +34,19 @@ import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/re
 // ============================================================================
 
 const mockPush = vi.fn();
-const mockRedirect = vi.fn((path: string) => {
-    const error = new Error(`APP_REDIRECT:${path}`);
-    (error as unknown as { digest: string }).digest = `APP_REDIRECT;replace;${path};307;`;
-    throw error;
-});
+const mockRedirect = vi.fn();
 
 let mockFileIdParam = "file-arch-test-123";
+
+vi.mock("@tanstack/react-router", () => ({
+    Outlet: () => <div data-testid="mock-outlet">Outlet</div>,
+    useRouter: () => null,
+    Link: ({ children, to, href, ...props }: any) => (
+        <a href={to || href || "#"} {...props}>
+            {children}
+        </a>
+    ),
+}));
 
 vi.mock("@/client/navigation", () => ({
     useAppParams: () => ({ fileId: mockFileIdParam }),
@@ -65,7 +71,10 @@ vi.mock("@/server/services/ai-settlement-service", () => ({
     getUserCreditBalance: (userId: string) => mockGetUserCreditBalance(userId),
 }));
 
-const mockGetClientUser = vi.fn();
+const mockGetClientUser = vi.fn(async () => {
+    const user = await mockGetServerUser();
+    return { data: { user } };
+});
 vi.mock("@/lib/supabase/client", () => ({
     createClient: () => ({
         auth: {
@@ -318,8 +327,10 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
             insertMarkdown: vi.fn(),
             setDirectionSettings: vi.fn(),
         };
-        mockGetClientUser.mockResolvedValue({
-            data: { user: { id: "user-client-123" } },
+        mockGetServerUser.mockResolvedValue({ id: "user-client-123" });
+        mockGetClientUser.mockImplementation(async () => {
+            const user = await mockGetServerUser();
+            return { data: { user } };
         });
         mockOrchestratorData = {};
     });
@@ -534,8 +545,10 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
         it("redirects unauthenticated visitor to /login", async () => {
             mockGetServerUser.mockResolvedValue(null);
 
-            await expect(DashboardPage({})).rejects.toThrow("APP_REDIRECT:/login");
-            expect(mockRedirect).toHaveBeenCalledWith("/login");
+            render(<DashboardPage />);
+            await waitFor(() => {
+                expect(mockRedirect).toHaveBeenCalledWith("/login");
+            });
         });
 
         it("renders Free tier credit progress bar and available balance accurately", async () => {
@@ -547,10 +560,11 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
             const balanceMicro = BigInt(25) * MICRO_PER_CREDIT;
             mockGetUserCreditBalance.mockResolvedValue(balanceMicro);
 
-            const jsx = await DashboardPage({});
-            render(jsx);
+            render(<DashboardPage />);
 
-            expect(screen.getByText("Welcome back, Alice Engineer")).toBeDefined();
+            await waitFor(() => {
+                expect(screen.getByText("Welcome back, Alice Engineer")).toBeDefined();
+            });
             expect(screen.getByText("AI Architectural Credits")).toBeDefined();
             expect(screen.getByText("50% available")).toBeDefined();
             const span = screen.getByText(new RegExp(`/ ${TIER_LIMITS.free.creditsDisplay.toLocaleString()} Credits`));
@@ -564,10 +578,11 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
             });
             mockGetUserCreditBalance.mockResolvedValue(BigInt(0));
 
-            const jsx = await DashboardPage({});
-            render(jsx);
+            render(<DashboardPage />);
 
-            expect(screen.getByText("Welcome back, Bob Architect")).toBeDefined();
+            await waitFor(() => {
+                expect(screen.getByText("Welcome back, Bob Architect")).toBeDefined();
+            });
             expect(screen.getByText("0% available")).toBeDefined();
             const span = screen.getByText(new RegExp(`/ ${TIER_LIMITS.pro.creditsDisplay.toLocaleString()} Credits`));
             expect(span.parentElement?.textContent?.replace(/\s+/g, " ").trim()).toContain("0 / 1,000 Credits");
@@ -582,10 +597,11 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
             const balanceMicro = BigInt(TIER_LIMITS.ultra.creditsDisplay) * MICRO_PER_CREDIT;
             mockGetUserCreditBalance.mockResolvedValue(balanceMicro);
 
-            const jsx = await DashboardPage({});
-            render(jsx);
+            render(<DashboardPage />);
 
-            expect(screen.getByText("Welcome back, Charlie Director")).toBeDefined();
+            await waitFor(() => {
+                expect(screen.getByText("Welcome back, Charlie Director")).toBeDefined();
+            });
             expect(screen.getByText("✦")).toBeDefined();
             expect(screen.getByText("100% available")).toBeDefined();
             const span = screen.getByText(new RegExp(`/ ${TIER_LIMITS.ultra.creditsDisplay.toLocaleString()} Credits`));
@@ -601,10 +617,11 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
             const balanceMicro = BigInt(150) * MICRO_PER_CREDIT;
             mockGetUserCreditBalance.mockResolvedValue(balanceMicro);
 
-            const jsx = await DashboardPage({});
-            render(jsx);
+            render(<DashboardPage />);
 
-            expect(screen.getByText("100% available")).toBeDefined();
+            await waitFor(() => {
+                expect(screen.getByText("100% available")).toBeDefined();
+            });
             const span = screen.getByText(new RegExp(`/ ${TIER_LIMITS.free.creditsDisplay.toLocaleString()} Credits`));
             expect(span.parentElement?.textContent?.replace(/\s+/g, " ").trim()).toContain("150 / 50 Credits");
         });
@@ -616,10 +633,11 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
             });
             mockGetUserCreditBalance.mockResolvedValue(BigInt(-5_000_000));
 
-            const jsx = await DashboardPage({});
-            render(jsx);
+            render(<DashboardPage />);
 
-            expect(screen.getByText("0% available")).toBeDefined();
+            await waitFor(() => {
+                expect(screen.getByText("0% available")).toBeDefined();
+            });
         });
 
         it("renders payment success notification banner when session_id searchParam is present", async () => {
@@ -629,12 +647,15 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
             });
             mockGetUserCreditBalance.mockResolvedValue(BigInt(1_000_000_000));
 
-            const jsx = await DashboardPage({
-                searchParams: Promise.resolve({ session_id: "cs_stripe_mock_session_123" }),
-            });
-            render(jsx);
+            render(
+                <DashboardPage
+                    searchParams={Promise.resolve({ session_id: "cs_stripe_mock_session_123" })}
+                />
+            );
 
-            expect(screen.getByText("Payment Successful!")).toBeDefined();
+            await waitFor(() => {
+                expect(screen.getByText("Payment Successful!")).toBeDefined();
+            });
             expect(
                 screen.getByText("Your subscription has been activated. Welcome to your upgraded workspace.")
             ).toBeDefined();
@@ -645,10 +666,11 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
             mockGetUserProfile.mockResolvedValue({ data: null });
             mockGetUserCreditBalance.mockResolvedValue(BigInt(0));
 
-            const jsx = await DashboardPage({});
-            render(jsx);
+            render(<DashboardPage />);
 
-            expect(screen.getByText("Welcome back, User")).toBeDefined();
+            await waitFor(() => {
+                expect(screen.getByText("Welcome back, User")).toBeDefined();
+            });
         });
     });
 
@@ -659,8 +681,10 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
         it("redirects unauthenticated visitor to /login", async () => {
             mockGetServerUser.mockResolvedValue(null);
 
-            await expect(AccountPage()).rejects.toThrow("APP_REDIRECT:/login");
-            expect(mockRedirect).toHaveBeenCalledWith("/login");
+            render(<AccountPage />);
+            await waitFor(() => {
+                expect(mockRedirect).toHaveBeenCalledWith("/login");
+            });
         });
 
         it("renders Micro-Credit Metered AI Settlement section and displays accurate balance for Free tier", async () => {
@@ -675,10 +699,11 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
             // 50 credits remaining out of 50 credits (100% remaining)
             mockGetUserCreditBalance.mockResolvedValue(BigInt(50) * MICRO_PER_CREDIT);
 
-            const jsx = await AccountPage();
-            render(jsx);
+            render(<AccountPage />);
 
-            expect(screen.getByText("Account Settings")).toBeDefined();
+            await waitFor(() => {
+                expect(screen.getByText("Account Settings")).toBeDefined();
+            });
             expect(screen.getByText("Dana Engineer")).toBeDefined();
             expect(screen.getByText("dana@example.com")).toBeDefined();
             expect(screen.getByText("Micro-Credit Metered AI Settlement")).toBeDefined();
@@ -698,10 +723,11 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
             });
             mockGetUserCreditBalance.mockResolvedValue(BigInt(0));
 
-            const jsx = await AccountPage();
-            render(jsx);
+            render(<AccountPage />);
 
-            expect(screen.getByTestId("upgrade-btn-pro")).toBeDefined();
+            await waitFor(() => {
+                expect(screen.getByTestId("upgrade-btn-pro")).toBeDefined();
+            });
             expect(screen.getByTestId("upgrade-btn-ultra")).toBeDefined();
         });
 
@@ -713,12 +739,13 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
             // 400 credits remaining out of 1000 credits (40% remaining)
             mockGetUserCreditBalance.mockResolvedValue(BigInt(400) * MICRO_PER_CREDIT);
 
-            const jsx = await AccountPage();
-            render(jsx);
+            render(<AccountPage />);
 
+            await waitFor(() => {
+                expect(screen.getByText("PRO")).toBeDefined();
+            });
             expect(screen.queryByTestId("upgrade-btn-pro")).toBeNull();
             expect(screen.getByTestId("upgrade-btn-ultra")).toBeDefined();
-            expect(screen.getByText("PRO")).toBeDefined();
             expect(screen.getByText("40% remaining")).toBeDefined();
         });
 
@@ -729,12 +756,13 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
             });
             mockGetUserCreditBalance.mockResolvedValue(BigInt(3_500) * MICRO_PER_CREDIT);
 
-            const jsx = await AccountPage();
-            render(jsx);
+            render(<AccountPage />);
 
+            await waitFor(() => {
+                expect(screen.getByText("ULTRA")).toBeDefined();
+            });
             expect(screen.queryByTestId("upgrade-btn-pro")).toBeNull();
             expect(screen.queryByTestId("upgrade-btn-ultra")).toBeNull();
-            expect(screen.getByText("ULTRA")).toBeDefined();
             expect(screen.getByText("✦")).toBeDefined();
         });
 
@@ -745,10 +773,11 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
             });
             mockGetUserCreditBalance.mockResolvedValue(BigInt(0));
 
-            const jsx = await AccountPage();
-            render(jsx);
+            render(<AccountPage />);
 
-            expect(screen.getByText("Available Plans")).toBeDefined();
+            await waitFor(() => {
+                expect(screen.getByText("Available Plans")).toBeDefined();
+            });
             expect(
                 screen.getByText(`${TIER_LIMITS.free.creditsDisplay.toLocaleString()} Credits/month`)
             ).toBeDefined();
@@ -767,10 +796,11 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
             });
             mockGetUserCreditBalance.mockResolvedValue(BigInt(0));
 
-            const jsx = await AccountPage();
-            render(jsx);
+            render(<AccountPage />);
 
-            expect(screen.getByText("E")).toBeDefined();
+            await waitFor(() => {
+                expect(screen.getByText("E")).toBeDefined();
+            });
         });
 
         it("renders user avatar image when avatarUrl is provided in profile", async () => {
@@ -784,11 +814,12 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
             });
             mockGetUserCreditBalance.mockResolvedValue(BigInt(0));
 
-            const jsx = await AccountPage();
-            render(jsx);
+            render(<AccountPage />);
 
-            const img = screen.getByAltText("Frank") as HTMLImageElement;
-            expect(img.src).toContain("https://example.com/avatar.png");
+            await waitFor(() => {
+                const img = screen.getByAltText("Frank") as HTMLImageElement;
+                expect(img.src).toContain("https://example.com/avatar.png");
+            });
         });
     });
 

@@ -219,11 +219,23 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
   });
 
   // ==========================================================================
-  // Deterministic Vitest Action Bridge (Direct Server Action Dispatch)
+  // In-Memory Loopback Integration (Standard app.fetch Transport)
   // ==========================================================================
 
-  describe("Deterministic Vitest Bridge Mode (Direct Server Action Execution)", () => {
-    it("delegates files operations directly to server actions", async () => {
+  describe("In-Memory Loopback Integration (Standard app.fetch Transport)", () => {
+    beforeEach(() => {
+      mockServerGetUser.mockResolvedValue({ id: "usr_loopback", email: "loopback@elixent.app" });
+
+      // Wire typed RPC client custom fetch directly to the master Hono app.fetch
+      setRpcClientFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const urlStr = input instanceof URL ? input.toString() : typeof input === "string" ? input : input.url;
+        const absoluteUrl = urlStr.startsWith("http") ? urlStr : `http://localhost${urlStr}`;
+        const req = new Request(absoluteUrl, init);
+        return app.fetch(req);
+      });
+    });
+
+    it("delegates files operations through RPC loopback transport", async () => {
       mockServerCreateFile.mockResolvedValueOnce({ success: true, data: { id: "f_1" } });
       mockServerUpdateFileContent.mockResolvedValueOnce({ success: true, version: 2 });
       mockServerToggleFileEncryption.mockResolvedValueOnce({ success: true });
@@ -274,7 +286,7 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
       expect(mockServerGetDeletedFiles).toHaveBeenCalledTimes(1);
     });
 
-    it("delegates folder and import operations directly to server actions", async () => {
+    it("delegates folder and import operations through RPC loopback transport", async () => {
       mockServerMoveFile.mockResolvedValueOnce({ success: true });
       mockServerGetFolderChildren.mockResolvedValueOnce({ success: true, data: [] });
       mockServerImportFile.mockResolvedValueOnce({ success: true, fileId: "f_imp_1" });
@@ -289,7 +301,7 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
       expect(mockServerImportFile).toHaveBeenCalledWith("notes.txt", "Sample", "txt", null, undefined);
     });
 
-    it("delegates vault operations directly to server actions", async () => {
+    it("delegates vault operations through RPC loopback transport", async () => {
       mockServerGetUserVaultProfile.mockResolvedValueOnce({ success: true, data: null });
       mockServerCreateUserVaultProfile.mockResolvedValueOnce({ success: true });
       mockServerUpdateVaultPassword.mockResolvedValueOnce({ success: true });
@@ -329,7 +341,7 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
       expect(mockServerUpdateVaultAISetting).toHaveBeenCalledWith(false);
     });
 
-    it("delegates auth operations directly to server actions", async () => {
+    it("delegates auth operations through RPC loopback transport", async () => {
       mockServerSignInWithGoogle.mockResolvedValueOnce({ success: true, redirectUrl: "/auth" });
       mockServerSignOut.mockResolvedValueOnce({ success: true, redirectUrl: "/" });
       mockServerSyncUserToDatabase.mockResolvedValueOnce({ success: true });
@@ -353,7 +365,7 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
       expect(mockServerUpdateUserProfile).toHaveBeenCalledWith({ displayName: "Elixent User" });
     });
 
-    it("delegates getCreditBalance to getUser + getUserCreditBalance", async () => {
+    it("delegates getCreditBalance to getUser + getUserCreditBalance via loopback", async () => {
       mockServerGetUser.mockResolvedValueOnce({ id: "usr_active_credit" });
       mockServerGetUserCreditBalance.mockResolvedValueOnce(BigInt(88000000));
 
@@ -362,7 +374,7 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
       expect(mockServerGetUserCreditBalance).toHaveBeenCalledWith("usr_active_credit");
     });
 
-    it("returns 0n from getCreditBalance when session is missing in bridge mode", async () => {
+    it("returns 0n from getCreditBalance when session is missing in loopback mode", async () => {
       mockServerGetUser.mockResolvedValueOnce(null);
 
       const balance = await getCreditBalance();

@@ -45,9 +45,6 @@ import { StreamGovernor } from "@/lib/metering/stream-governor";
 import { flushPendingSettlementsToPostgres } from "@/server/services/ai-settlement-service";
 import { sanitizeLogMessage } from "@/lib/sync/log-sanitizer";
 
-export const dynamic = "force-dynamic";
-export const maxDuration = 300;
-
 /**
  * Default model identifier used for agent state graph streaming.
  */

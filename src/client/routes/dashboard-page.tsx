@@ -8,18 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FileText, Settings, LogOut, Plus, Sparkles, Coins } from "lucide-react";
 
+import { createClient } from "@/lib/supabase/client";
+
 async function resolveAuthUser() {
-    if (typeof process !== "undefined" && process.env?.VITEST) {
-        try {
-            const serverSupabase = await import(/* @vite-ignore */ "@/lib/supabase/server");
-            const serverUser = await serverSupabase.getUser();
-            if (serverUser !== undefined) {
-                return serverUser;
-            }
-        } catch {}
-    }
     try {
-        const { createClient } = await import("@/lib/supabase/client");
         const supabase = createClient();
         const { data: { user } } = await supabase.auth.getUser();
         return user;
@@ -28,23 +20,76 @@ async function resolveAuthUser() {
     }
 }
 
-export default async function DashboardPage(props?: {
+export default function DashboardPage(props?: {
     searchParams?: Promise<{ session_id?: string }> | { session_id?: string };
+    sessionId?: string;
 }) {
-    const user = await resolveAuthUser();
+    const [resolvedSessionId, setResolvedSessionId] = useState<string | undefined>(props?.sessionId);
 
-    if (!user) {
-        navigateTo("/login");
-        return null;
+    useEffect(() => {
+        if (props?.sessionId) {
+            setResolvedSessionId(props.sessionId);
+        } else if (props?.searchParams) {
+            if ("then" in props.searchParams && typeof props.searchParams.then === "function") {
+                props.searchParams.then((sp) => setResolvedSessionId(sp?.session_id));
+            } else {
+                setResolvedSessionId((props.searchParams as { session_id?: string }).session_id);
+            }
+        }
+    }, [props?.searchParams, props?.sessionId]);
+
+    const sessionId =
+        props?.sessionId ||
+        (props?.searchParams && !("then" in props.searchParams)
+            ? (props.searchParams as { session_id?: string }).session_id
+            : undefined) ||
+        resolvedSessionId;
+    const params = sessionId ? { session_id: sessionId } : undefined;
+
+    const [loading, setLoading] = useState(true);
+    const [user, setUser] = useState<{ id: string } | null>(null);
+    const [profile, setProfile] = useState<NonNullable<Awaited<ReturnType<typeof getUserProfile>>["data"]> | null>(null);
+    const [balanceMicro, setBalanceMicro] = useState<bigint>(BigInt(0));
+
+    useEffect(() => {
+        let isMounted = true;
+        async function loadData() {
+            try {
+                const authUser = await resolveAuthUser();
+                if (!isMounted) return;
+                if (!authUser) {
+                    navigateTo("/login");
+                    return;
+                }
+                setUser(authUser);
+                const [profileResult, balance] = await Promise.all([
+                    getUserProfile(),
+                    getCreditBalance(),
+                ]);
+                if (!isMounted) return;
+                setProfile(profileResult?.data ?? null);
+                setBalanceMicro(balance ?? BigInt(0));
+                setLoading(false);
+            } catch {
+                if (isMounted) {
+                    navigateTo("/login");
+                }
+            }
+        }
+        loadData();
+        return () => {
+            isMounted = false;
+        };
+    }, []);
+
+    if (loading || !user) {
+        return (
+            <div className="min-h-screen bg-background flex items-center justify-center">
+                <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" />
+            </div>
+        );
     }
 
-    const [profileResult, balanceMicro, params] = await Promise.all([
-        getUserProfile(),
-        getCreditBalance(),
-        props?.searchParams ? props.searchParams : Promise.resolve(undefined),
-    ]);
-
-    const profile = profileResult?.data;
     const userTier: TierName = (profile?.tier as TierName) || "free";
     const limits = TIER_LIMITS[userTier] || TIER_LIMITS.free;
     const currentCredits = Number(balanceMicro / MICRO_PER_CREDIT);
@@ -53,6 +98,7 @@ export default async function DashboardPage(props?: {
         tierCredits > 0
             ? Math.min(Math.max(0, Math.round((currentCredits / tierCredits) * 100)), 100)
             : 0;
+
 
     return (
         <div className="min-h-screen bg-zinc-950">
@@ -86,15 +132,12 @@ export default async function DashboardPage(props?: {
                             </Link>
 
                             <form
-                                action={async () => {
-                                    await signOut();
-                                }}
                                 onSubmit={async (e) => {
                                     e.preventDefault();
                                     await signOut();
                                     try {
-                                        const { createClient } = await import("@/lib/supabase/client");
-                                        await createClient().auth.signOut();
+                                        const supabase = createClient();
+                                        await supabase.auth.signOut();
                                     } catch {}
                                     if (typeof window !== "undefined") {
                                         navigateTo("/");
@@ -239,24 +282,7 @@ export default async function DashboardPage(props?: {
 }
 
 export function DashboardRouteView() {
-    const [node, setNode] = useState<React.ReactNode>(null);
-
-    useEffect(() => {
-        const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
-        const sessionId = searchParams?.get("session_id") || undefined;
-
-        DashboardPage({ searchParams: { session_id: sessionId } })
-            .then(setNode)
-            .catch(() => {
-                navigateTo("/login");
-            });
-    }, []);
-
-    return (
-        node || (
-            <div className="min-h-screen bg-background flex items-center justify-center">
-                <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" />
-            </div>
-        )
-    );
+    const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+    const sessionId = searchParams?.get("session_id") || undefined;
+    return <DashboardPage searchParams={{ session_id: sessionId }} />;
 }

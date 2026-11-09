@@ -4,9 +4,11 @@ import path from "node:path";
 import dotenv from "dotenv";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-// Load environment variables for explicit Vite define configuration
-dotenv.config({ path: ".env.local" });
-dotenv.config();
+// Load environment variables from .env.local and .env (excluded in hermetic vitest)
+if (!process.env.VITEST) {
+  dotenv.config({ path: ".env.local" });
+  dotenv.config();
+}
 
 const rootDir = typeof import.meta.dirname !== "undefined"
   ? import.meta.dirname
@@ -250,7 +252,7 @@ export default defineConfig({
       "@": path.resolve(rootDir, "./src"),
     },
   },
-  envPrefix: ["VITE_", "NEXT_PUBLIC_"],
+  envPrefix: ["VITE_"],
   worker: {
     format: "es",
   },
@@ -260,21 +262,6 @@ export default defineConfig({
     emptyOutDir: true,
   },
   define: {
-    "process.env.NEXT_PUBLIC_SUPABASE_URL": JSON.stringify(
-      process.env.NEXT_PUBLIC_SUPABASE_URL || ""
-    ),
-    "process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY": JSON.stringify(
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
-    ),
-    "process.env.NEXT_PUBLIC_APP_URL": JSON.stringify(
-      process.env.NEXT_PUBLIC_APP_URL || ""
-    ),
-    "process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY": JSON.stringify(
-      process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || ""
-    ),
-    "process.env.NEXT_PUBLIC_AI_STREAMING_ENABLED": JSON.stringify(
-      process.env.NEXT_PUBLIC_AI_STREAMING_ENABLED || ""
-    ),
     "process.env": "{}",
   },
 });

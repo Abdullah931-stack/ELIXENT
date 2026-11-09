@@ -5,19 +5,10 @@ import { navigateTo } from "@/client/navigation";
 import { resolveSafeRedirectPath } from "@/lib/auth/safe-redirect";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { createClient } from "@/lib/supabase/client";
 
 async function resolveAuthUser() {
-    if (typeof process !== "undefined" && process.env?.VITEST) {
-        try {
-            const serverSupabase = await import(/* @vite-ignore */ "@/lib/supabase/server");
-            const serverUser = await serverSupabase.getUser();
-            if (serverUser !== undefined) {
-                return serverUser;
-            }
-        } catch {}
-    }
     try {
-        const { createClient } = await import("@/lib/supabase/client");
         const supabase = createClient();
         const { data: { user } } = await supabase.auth.getUser();
         return user;
@@ -26,17 +17,43 @@ async function resolveAuthUser() {
     }
 }
 
-export default async function LoginPage(props?: {
+export default function LoginPage(props?: {
     searchParams?: Promise<{ redirectTo?: string }> | { redirectTo?: string };
+    redirectTo?: string;
 }) {
-    const user = await resolveAuthUser();
-    const params = props?.searchParams ? await props.searchParams : {};
-    const redirectTo = params.redirectTo;
+    const [resolvedRedirectTo, setResolvedRedirectTo] = useState<string | undefined>(props?.redirectTo);
 
-    if (user) {
-        navigateTo(resolveSafeRedirectPath(redirectTo, "/dashboard"));
-        return null;
-    }
+    useEffect(() => {
+        if (props?.redirectTo) {
+            setResolvedRedirectTo(props.redirectTo);
+        } else if (props?.searchParams) {
+            if ("then" in props.searchParams && typeof props.searchParams.then === "function") {
+                props.searchParams.then((sp) => setResolvedRedirectTo(sp?.redirectTo));
+            } else {
+                setResolvedRedirectTo((props.searchParams as { redirectTo?: string }).redirectTo);
+            }
+        }
+    }, [props?.searchParams, props?.redirectTo]);
+
+    const redirectTo =
+        props?.redirectTo ||
+        (props?.searchParams && !("then" in props.searchParams)
+            ? (props.searchParams as { redirectTo?: string }).redirectTo
+            : undefined) ||
+        resolvedRedirectTo;
+
+    useEffect(() => {
+        let isMounted = true;
+        resolveAuthUser().then((user) => {
+            if (!isMounted) return;
+            if (user) {
+                navigateTo(resolveSafeRedirectPath(redirectTo, "/dashboard"));
+            }
+        });
+        return () => {
+            isMounted = false;
+        };
+    }, [redirectTo]);
 
     const triggerGoogleSignIn = async () => {
         const res = await signInWithGoogle(redirectTo);
@@ -47,10 +64,6 @@ export default async function LoginPage(props?: {
 
     const handleGoogleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        await triggerGoogleSignIn();
-    };
-
-    const handleGoogleAction = async () => {
         await triggerGoogleSignIn();
     };
 
@@ -78,7 +91,7 @@ export default async function LoginPage(props?: {
                     </CardHeader>
                     <CardContent className="space-y-4">
                         {/* Google Sign In */}
-                        <form action={handleGoogleAction} onSubmit={handleGoogleSubmit}>
+                        <form onSubmit={handleGoogleSubmit}>
                             <Button type="submit" variant="outline" className="w-full gap-3">
                                 <svg className="w-5 h-5" viewBox="0 0 24 24">
                                     <path
@@ -132,24 +145,8 @@ export default async function LoginPage(props?: {
 }
 
 export function LoginRouteView() {
-    const [node, setNode] = useState<React.ReactNode>(null);
-
-    useEffect(() => {
-        const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
-        const redirectTo = searchParams?.get("redirectTo") || undefined;
-
-        LoginPage({ searchParams: { redirectTo } })
-            .then(setNode)
-            .catch((err) => {
-                console.error("[LoginRouteView] error:", err);
-            });
-    }, []);
-
-    return (
-        node || (
-            <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
-                <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" />
-            </div>
-        )
-    );
+    const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+    const redirectTo = searchParams?.get("redirectTo") || undefined;
+    return <LoginPage searchParams={{ redirectTo }} />;
 }
+

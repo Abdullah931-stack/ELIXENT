@@ -60,7 +60,7 @@ function getMarkdownFiles() {
     // Fallback if git is not available
   }
 
-  const ignoredDirs = new Set(["node_modules", ".git", ".next", "dist", "build", "coverage", ".agents", ".Plans"]);
+  const ignoredDirs = new Set(["node_modules", ".git", "dist", "build", "coverage", ".agents", ".Plans"]);
   const results = [];
 
   function walk(dir) {

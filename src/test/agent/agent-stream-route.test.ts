@@ -1,7 +1,7 @@
 /**
  * Test Suite: Unified Agent SSE Stream Route Handler
  *
- * Verifies route segment configuration (maxDuration = 300), authentication guards,
+ * Verifies authentication guards,
  * fail-closed rate limiting, RFC 7807 problem details error responses,
  * Zod payload parsing & strict sanitization, happy-path SSE event streaming,
  * Command({ resume }) dispatch, StreamGovernor quota enforcement,
@@ -196,8 +196,8 @@ vi.mock("@/server/services/ai-settlement-service", () => ({
 }));
 
 // Import route module AFTER mocks
-import { handleAgentStreamPost as POST, maxDuration, dynamic } from "@/server/routes/agent.routes";
-const route = { POST, maxDuration, dynamic };
+import { handleAgentStreamPost as POST } from "@/server/routes/agent.routes";
+const route = { POST };
 
 // ---------------------------------------------------------------------------
 // 3. Helpers
@@ -271,16 +271,6 @@ describe("POST /api/agent/stream Route Handler", () => {
   afterEach(() => {
     setScheduleAfterResponseListener(null);
     vi.restoreAllMocks();
-  });
-
-  describe("1. Next.js Route Segment Configuration", () => {
-    it("should export maxDuration = 300 for long-running LangGraph agent executions", () => {
-      expect(route.maxDuration).toBe(300);
-    });
-
-    it("should export dynamic = 'force-dynamic'", () => {
-      expect(route.dynamic).toBe("force-dynamic");
-    });
   });
 
   describe("2. Authentication Guards (401 Problem Details)", () => {

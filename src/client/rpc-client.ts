@@ -1,54 +1,343 @@
 import { hc } from "hono/client";
-import type { AppType } from "@/server/app";
-import type {
-  FileOpResult,
-  UpdateFileOptions,
-  DeleteFileOptions,
-} from "@/server/actions/files";
-import type {
-  ImportFileResult,
-  ImportEncryptionOptions,
-} from "@/server/actions/import-file";
-import type {
-  VaultActionResult,
-  CreateVaultProfileInput,
-  UpdateVaultPasswordInput,
-  UpdateVaultRecoveryEnvelopeInput,
-} from "@/server/actions/vault-actions";
-import type {
-  FileEncryptionMetadata,
-  files,
-  userVaultProfiles,
-  users,
-} from "@/server/db/schema";
 
-// Re-export required contracts and input types
-export type {
-  FileOpResult,
-  UpdateFileOptions,
-  DeleteFileOptions,
-  ImportFileResult,
-  ImportEncryptionOptions,
-  VaultActionResult,
-  CreateVaultProfileInput,
-  UpdateVaultPasswordInput,
-  UpdateVaultRecoveryEnvelopeInput,
+// ============================================================================
+// Types & Contracts (Dual-Plane Client Contracts)
+// ============================================================================
+
+export interface FileEncryptionMetadata {
+  version: number;
+  algorithm: string;
+  keyId: string;
+  salt: string;
+  iv: string;
+  kdfIterations?: number;
+}
+
+export interface FileRecord {
+  id: string;
+  userId: string;
+  title: string;
+  content: string | null;
+  parentFolderId: string | null;
+  isFolder: boolean;
+  isEncrypted: boolean;
+  encryptionMetadata: FileEncryptionMetadata | null;
+  etag: string | null;
+  version: number | null;
+  deletedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface VaultProfileRecord {
+  userId: string;
+  encryptedMasterKey: string;
+  recoveryEncryptedMasterKey: string;
+  keySalt: string;
+  recoverySalt: string;
+  kdfIterations: number;
+  keyVersion: number;
+  deviceTrustEpoch: number;
+  allowAIOnEncryptedFiles: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface UserProfileRecord {
+  id: string;
+  email: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  tier: "free" | "pro" | "ultra";
+  stripeCustomerId: string | null;
+  creditBalanceMicro: bigint;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface FileOpResult<T = FileRecord> {
+  success: boolean;
+  data?: T;
+  version?: number;
+  error?: string;
+  status?: "conflict" | "unauthorized" | "not_found" | "forbidden" | "error";
+  etag?: string;
+  correlationId?: string;
+  operationId?: string;
+  statusCode?: number;
+  serverVersion?: {
+    version?: number | null;
+    etag?: string | null;
+    updatedAt?: string;
+    content?: string | null;
+    isEncrypted?: boolean | null;
+    encryptionMetadata?: FileEncryptionMetadata | null;
+  };
+  conflictDetails?: {
+    type?: string;
+    serverVersion?: number;
+    baseVersion?: number;
+    yourVersion?: number;
+    serverETag?: string;
+    message?: string;
+    serverContent?: string;
+    serverEncryptionMetadata?: FileEncryptionMetadata | null;
+  };
+}
+
+export interface UpdateFileOptions {
+  expectedVersion?: number;
+  expectedETag?: string;
+  operationId?: string;
+}
+
+export interface DeleteFileOptions {
+  expectedVersion?: number;
+  expectedETag?: string;
+}
+
+export interface ImportFileResult {
+  success: boolean;
+  data?: {
+    id: string;
+    title: string;
+    content: string;
+    wordCount: number;
+    version: number;
+    etag: string;
+  };
+  fileId?: string;
+  file?: FileRecord;
+  error?: string;
+}
+
+export interface ImportEncryptionOptions {
+  isEncrypted?: boolean;
+  encryptionMetadata?: FileEncryptionMetadata | null;
+  fileId?: string;
+}
+
+export interface VaultActionResult<T = unknown> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  status?: "unauthorized" | "not_found" | "conflict" | "error";
+}
+
+export interface CreateVaultProfileInput {
+  encryptedMasterKey: string;
+  recoveryEncryptedMasterKey: string;
+  keySalt: string;
+  recoverySalt: string;
+  kdfIterations?: number;
+  keyVersion?: number;
+}
+
+export interface UpdateVaultPasswordInput {
+  encryptedMasterKey: string;
+  keySalt: string;
+  kdfIterations?: number;
+  proofOfPossession: string;
+  proofNonce: string;
+}
+
+export interface UpdateVaultRecoveryEnvelopeInput {
+  recoveryEncryptedMasterKey: string;
+  recoverySalt?: string;
+}
+
+export interface ClientResponse<T = unknown> extends Response {
+  ok: boolean;
+  status: number;
+  json: () => Promise<T>;
+}
+
+export type ElixentRpcClient = {
+  api: {
+    rpc: {
+      files: {
+        create: {
+          $post: (args: {
+            json: {
+              title: string;
+              parentFolderId?: string | null;
+              isFolder?: boolean;
+            };
+          }) => Promise<ClientResponse<FileOpResult>>;
+        };
+        "update-content": {
+          $post: (args: {
+            json: {
+              fileId: string;
+              content: string;
+              options?: UpdateFileOptions;
+            };
+          }) => Promise<ClientResponse<FileOpResult>>;
+        };
+        "toggle-encryption": {
+          $post: (args: {
+            json: {
+              fileId: string;
+              isEncrypted: boolean;
+              content: string;
+              encryptionMetadata: FileEncryptionMetadata | null;
+              options?: UpdateFileOptions;
+            };
+          }) => Promise<ClientResponse<FileOpResult>>;
+        };
+        rename: {
+          $post: (args: {
+            json: { fileId: string; newTitle: string };
+          }) => Promise<ClientResponse<FileOpResult>>;
+        };
+        delete: {
+          $post: (args: {
+            json: { fileId: string; options?: DeleteFileOptions };
+          }) => Promise<ClientResponse<FileOpResult<null>>>;
+        };
+        restore: {
+          $post: (args: {
+            json: { fileId: string };
+          }) => Promise<ClientResponse<FileOpResult>>;
+        };
+        copy: {
+          $post: (args: {
+            json: {
+              fileId: string;
+              newParentFolderId?: string | null;
+              depth?: number;
+              encryptedOverride?: {
+                newFileId?: string;
+                content?: string;
+                encryptionMetadata?: FileEncryptionMetadata | null;
+              };
+            };
+          }) => Promise<ClientResponse<FileOpResult>>;
+        };
+        move: {
+          $post: (args: {
+            json: { fileId: string; newParentFolderId: string | null };
+          }) => Promise<ClientResponse<FileOpResult<null>>>;
+        };
+        import: {
+          $post: (args: {
+            json: {
+              fileName: string;
+              textContent: string;
+              fileType: "pdf" | "md" | "txt";
+              parentFolderId?: string | null;
+              encryption?: ImportEncryptionOptions;
+            };
+          }) => Promise<ClientResponse<ImportFileResult>>;
+        };
+        get: {
+          $post: (args: {
+            json: { fileId: string };
+          }) => Promise<ClientResponse<FileOpResult>>;
+        };
+        list: {
+          $get: () => Promise<ClientResponse<FileOpResult<FileRecord[]>>>;
+        };
+        "list-root": {
+          $get: () => Promise<ClientResponse<FileOpResult<FileRecord[]>>>;
+        };
+        "list-deleted": {
+          $get: () => Promise<ClientResponse<FileOpResult<FileRecord[]>>>;
+        };
+        children: {
+          $post: (args: {
+            json: { folderId: string | null };
+          }) => Promise<ClientResponse<FileOpResult<FileRecord[]>>>;
+        };
+      };
+      vault: {
+        profile: {
+          $get: () => Promise<ClientResponse<VaultActionResult<VaultProfileRecord | null>>>;
+        };
+        create: {
+          $post: (args: {
+            json: CreateVaultProfileInput;
+          }) => Promise<ClientResponse<VaultActionResult<VaultProfileRecord>>>;
+        };
+        "update-password": {
+          $post: (args: {
+            json: UpdateVaultPasswordInput;
+          }) => Promise<ClientResponse<VaultActionResult<VaultProfileRecord>>>;
+        };
+        "update-recovery": {
+          $post: (args: {
+            json: UpdateVaultRecoveryEnvelopeInput;
+          }) => Promise<ClientResponse<VaultActionResult<VaultProfileRecord>>>;
+        };
+        "revoke-devices": {
+          $post: () => Promise<ClientResponse<VaultActionResult<{ newEpoch: number }>>>;
+        };
+        "update-ai-setting": {
+          $post: (args: {
+            json: { allowAI: boolean };
+          }) => Promise<ClientResponse<VaultActionResult<{ allowAIOnEncryptedFiles: boolean }>>>;
+        };
+      };
+      auth: {
+        "sign-in-google": {
+          $post: (args: {
+            json: { redirectTo?: string };
+          }) => Promise<
+            ClientResponse<
+              | { success: true; redirectUrl: string }
+              | { success: false; error: string }
+            >
+          >;
+        };
+        "sign-out": {
+          $post: () => Promise<ClientResponse<{ success: true; redirectUrl: string }>>;
+        };
+        "sync-user": {
+          $post: () => Promise<ClientResponse<{ success: boolean; error?: string }>>;
+        };
+        profile: {
+          $get: () => Promise<
+            ClientResponse<{
+              success: boolean;
+              data?: UserProfileRecord;
+              error?: string;
+            }>
+          >;
+        };
+        "update-profile": {
+          $post: (args: {
+            json: { displayName?: string };
+          }) => Promise<ClientResponse<{ success: boolean; error?: string }>>;
+        };
+      };
+      billing: {
+        "credit-balance": {
+          $get: () => Promise<
+            ClientResponse<{ success: boolean; balanceMicro?: string }>
+          >;
+        };
+      };
+    };
+  };
 };
 
-type FileRecord = typeof files.$inferSelect;
-type VaultProfileRecord = typeof userVaultProfiles.$inferSelect;
-type UserProfileRecord = typeof users.$inferSelect;
+function getBaseUrl(): string {
+  if (typeof window !== "undefined") {
+    return "";
+  }
+  return "http://localhost";
+}
 
 /**
  * Creates a typed Hono RPC client instance targeting the Elixent application.
  */
 export function createElixentRpcClient(
-  baseUrl = "",
+  baseUrl = getBaseUrl(),
   customFetch?: typeof fetch
-) {
-  return hc<AppType>(baseUrl, {
+): ElixentRpcClient {
+  return hc<never>(baseUrl, {
     fetch: customFetch ?? globalThis.fetch,
-  });
+  }) as unknown as ElixentRpcClient;
 }
 
 let activeCustomFetch: typeof fetch | undefined;
@@ -63,6 +352,7 @@ export function setRpcClientFetch(fetchFn?: typeof fetch): void {
 
 /**
  * Returns true if execution is running within Vitest without an injected custom HTTP transport.
+ * Maintained for environment status checking.
  */
 export function isVitestBridgeActive(): boolean {
   return (
@@ -72,11 +362,11 @@ export function isVitestBridgeActive(): boolean {
   );
 }
 
-let defaultClient: ReturnType<typeof createElixentRpcClient> | null = null;
+let defaultClient: ElixentRpcClient | null = null;
 
-function getRpcClient(): ReturnType<typeof createElixentRpcClient> {
+function getRpcClient(): ElixentRpcClient {
   if (activeCustomFetch) {
-    return createElixentRpcClient("", activeCustomFetch);
+    return createElixentRpcClient(getBaseUrl(), activeCustomFetch);
   }
   if (!defaultClient) {
     defaultClient = createElixentRpcClient();
@@ -93,12 +383,6 @@ export async function createFile(
   parentFolderId?: string | null,
   isFolder = false
 ): Promise<FileOpResult> {
-  if (isVitestBridgeActive()) {
-    const { createFile: serverCreateFile } = await import(
-      /* webpackIgnore: true */ "@/server/actions/files"
-    );
-    return serverCreateFile(title, parentFolderId, isFolder);
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.files.create.$post({
     json: { title, parentFolderId: parentFolderId ?? null, isFolder },
@@ -111,12 +395,6 @@ export async function updateFileContent(
   content: string,
   options?: UpdateFileOptions
 ): Promise<FileOpResult> {
-  if (isVitestBridgeActive()) {
-    const { updateFileContent: serverUpdateFileContent } = await import(
-      /* webpackIgnore: true */ "@/server/actions/files"
-    );
-    return serverUpdateFileContent(fileId, content, options);
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.files["update-content"].$post({
     json: { fileId, content, options },
@@ -131,12 +409,6 @@ export async function toggleFileEncryption(
   encryptionMetadata: FileEncryptionMetadata | null,
   options?: UpdateFileOptions
 ): Promise<FileOpResult> {
-  if (isVitestBridgeActive()) {
-    const { toggleFileEncryption: serverToggle } = await import(
-      /* webpackIgnore: true */ "@/server/actions/files"
-    );
-    return serverToggle(fileId, isEncrypted, content, encryptionMetadata, options);
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.files["toggle-encryption"].$post({
     json: {
@@ -154,12 +426,6 @@ export async function renameFile(
   fileId: string,
   newTitle: string
 ): Promise<FileOpResult> {
-  if (isVitestBridgeActive()) {
-    const { renameFile: serverRename } = await import(
-      /* webpackIgnore: true */ "@/server/actions/files"
-    );
-    return serverRename(fileId, newTitle);
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.files.rename.$post({
     json: { fileId, newTitle },
@@ -171,12 +437,6 @@ export async function deleteFile(
   fileId: string,
   options?: DeleteFileOptions
 ): Promise<FileOpResult<null>> {
-  if (isVitestBridgeActive()) {
-    const { deleteFile: serverDelete } = await import(
-      /* webpackIgnore: true */ "@/server/actions/files"
-    );
-    return serverDelete(fileId, options);
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.files.delete.$post({
     json: { fileId, options },
@@ -185,12 +445,6 @@ export async function deleteFile(
 }
 
 export async function restoreFile(fileId: string): Promise<FileOpResult> {
-  if (isVitestBridgeActive()) {
-    const { restoreFile: serverRestore } = await import(
-      /* webpackIgnore: true */ "@/server/actions/files"
-    );
-    return serverRestore(fileId);
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.files.restore.$post({
     json: { fileId },
@@ -208,12 +462,6 @@ export async function copyFile(
     encryptionMetadata?: FileEncryptionMetadata | null;
   }
 ): Promise<FileOpResult> {
-  if (isVitestBridgeActive()) {
-    const { copyFile: serverCopy } = await import(
-      /* webpackIgnore: true */ "@/server/actions/files"
-    );
-    return serverCopy(fileId, newParentFolderId, depth, encryptedOverride);
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.files.copy.$post({
     json: {
@@ -230,12 +478,6 @@ export async function moveFile(
   fileId: string,
   newParentFolderId: string | null
 ): Promise<FileOpResult<null>> {
-  if (isVitestBridgeActive()) {
-    const { moveFile: serverMove } = await import(
-      /* webpackIgnore: true */ "@/server/actions/folders"
-    );
-    return serverMove(fileId, newParentFolderId);
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.files.move.$post({
     json: { fileId, newParentFolderId },
@@ -250,12 +492,6 @@ export async function importFile(
   parentFolderId: string | null = null,
   encryption?: ImportEncryptionOptions
 ): Promise<ImportFileResult> {
-  if (isVitestBridgeActive()) {
-    const { importFile: serverImport } = await import(
-      /* webpackIgnore: true */ "@/server/actions/import-file"
-    );
-    return serverImport(fileName, textContent, fileType, parentFolderId, encryption);
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.files.import.$post({
     json: {
@@ -270,12 +506,6 @@ export async function importFile(
 }
 
 export async function getFile(fileId: string): Promise<FileOpResult> {
-  if (isVitestBridgeActive()) {
-    const { getFile: serverGetFile } = await import(
-      /* webpackIgnore: true */ "@/server/actions/files"
-    );
-    return serverGetFile(fileId);
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.files.get.$post({
     json: { fileId },
@@ -284,36 +514,18 @@ export async function getFile(fileId: string): Promise<FileOpResult> {
 }
 
 export async function getUserFiles(): Promise<FileOpResult<FileRecord[]>> {
-  if (isVitestBridgeActive()) {
-    const { getUserFiles: serverGetUserFiles } = await import(
-      /* webpackIgnore: true */ "@/server/actions/files"
-    );
-    return serverGetUserFiles();
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.files.list.$get();
   return (await res.json()) as FileOpResult<FileRecord[]>;
 }
 
 export async function getRootFiles(): Promise<FileOpResult<FileRecord[]>> {
-  if (isVitestBridgeActive()) {
-    const { getRootFiles: serverGetRootFiles } = await import(
-      /* webpackIgnore: true */ "@/server/actions/files"
-    );
-    return serverGetRootFiles();
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.files["list-root"].$get();
   return (await res.json()) as FileOpResult<FileRecord[]>;
 }
 
 export async function getDeletedFiles(): Promise<FileOpResult<FileRecord[]>> {
-  if (isVitestBridgeActive()) {
-    const { getDeletedFiles: serverGetDeletedFiles } = await import(
-      /* webpackIgnore: true */ "@/server/actions/files"
-    );
-    return serverGetDeletedFiles();
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.files["list-deleted"].$get();
   return (await res.json()) as FileOpResult<FileRecord[]>;
@@ -322,12 +534,6 @@ export async function getDeletedFiles(): Promise<FileOpResult<FileRecord[]>> {
 export async function getFolderChildren(
   folderId: string | null
 ): Promise<FileOpResult<FileRecord[]>> {
-  if (isVitestBridgeActive()) {
-    const { getFolderChildren: serverGetFolderChildren } = await import(
-      /* webpackIgnore: true */ "@/server/actions/folders"
-    );
-    return serverGetFolderChildren(folderId);
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.files.children.$post({
     json: { folderId },
@@ -342,12 +548,6 @@ export async function getFolderChildren(
 export async function getUserVaultProfile(): Promise<
   VaultActionResult<VaultProfileRecord | null>
 > {
-  if (isVitestBridgeActive()) {
-    const { getUserVaultProfile: serverGetVault } = await import(
-      /* webpackIgnore: true */ "@/server/actions/vault-actions"
-    );
-    return serverGetVault();
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.vault.profile.$get();
   return (await res.json()) as VaultActionResult<VaultProfileRecord | null>;
@@ -356,12 +556,6 @@ export async function getUserVaultProfile(): Promise<
 export async function createUserVaultProfile(
   input: CreateVaultProfileInput
 ): Promise<VaultActionResult<VaultProfileRecord>> {
-  if (isVitestBridgeActive()) {
-    const { createUserVaultProfile: serverCreateVault } = await import(
-      /* webpackIgnore: true */ "@/server/actions/vault-actions"
-    );
-    return serverCreateVault(input);
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.vault.create.$post({
     json: input,
@@ -372,12 +566,6 @@ export async function createUserVaultProfile(
 export async function updateVaultPassword(
   input: UpdateVaultPasswordInput
 ): Promise<VaultActionResult<VaultProfileRecord>> {
-  if (isVitestBridgeActive()) {
-    const { updateVaultPassword: serverUpdateVaultPassword } = await import(
-      /* webpackIgnore: true */ "@/server/actions/vault-actions"
-    );
-    return serverUpdateVaultPassword(input);
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.vault["update-password"].$post({
     json: input,
@@ -388,12 +576,6 @@ export async function updateVaultPassword(
 export async function updateVaultRecoveryEnvelope(
   input: UpdateVaultRecoveryEnvelopeInput
 ): Promise<VaultActionResult<VaultProfileRecord>> {
-  if (isVitestBridgeActive()) {
-    const { updateVaultRecoveryEnvelope: serverUpdateRecovery } = await import(
-      /* webpackIgnore: true */ "@/server/actions/vault-actions"
-    );
-    return serverUpdateRecovery(input);
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.vault["update-recovery"].$post({
     json: input,
@@ -404,12 +586,6 @@ export async function updateVaultRecoveryEnvelope(
 export async function revokeAllTrustedDevices(): Promise<
   VaultActionResult<{ newEpoch: number }>
 > {
-  if (isVitestBridgeActive()) {
-    const { revokeAllTrustedDevices: serverRevokeAll } = await import(
-      /* webpackIgnore: true */ "@/server/actions/vault-actions"
-    );
-    return serverRevokeAll();
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.vault["revoke-devices"].$post();
   return (await res.json()) as VaultActionResult<{ newEpoch: number }>;
@@ -418,12 +594,6 @@ export async function revokeAllTrustedDevices(): Promise<
 export async function updateVaultAISetting(
   allowAI: boolean
 ): Promise<VaultActionResult<{ allowAIOnEncryptedFiles: boolean }>> {
-  if (isVitestBridgeActive()) {
-    const { updateVaultAISetting: serverUpdateAISetting } = await import(
-      /* webpackIgnore: true */ "@/server/actions/vault-actions"
-    );
-    return serverUpdateAISetting(allowAI);
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.vault["update-ai-setting"].$post({
     json: { allowAI },
@@ -438,12 +608,6 @@ export async function updateVaultAISetting(
 export async function signInWithGoogle(
   redirectTo?: string
 ): Promise<{ success: true; redirectUrl: string } | { success: false; error: string }> {
-  if (isVitestBridgeActive()) {
-    const { signInWithGoogle: serverSignIn } = await import(
-      /* webpackIgnore: true */ "@/server/actions/auth-actions"
-    );
-    return serverSignIn(redirectTo);
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.auth["sign-in-google"].$post({
     json: { redirectTo },
@@ -454,28 +618,12 @@ export async function signInWithGoogle(
 }
 
 export async function signOut(): Promise<{ success: true; redirectUrl: string }> {
-  if (isVitestBridgeActive()) {
-    const { signOut: serverSignOut } = await import(
-      /* webpackIgnore: true */ "@/server/actions/auth-actions"
-    );
-    const result = await serverSignOut();
-    return (result ?? { success: true as const, redirectUrl: "/" }) as {
-      success: true;
-      redirectUrl: string;
-    };
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.auth["sign-out"].$post();
   return (await res.json()) as { success: true; redirectUrl: string };
 }
 
 export async function syncUserToDatabase(): Promise<{ success: boolean; error?: string }> {
-  if (isVitestBridgeActive()) {
-    const { syncUserToDatabase: serverSyncUser } = await import(
-      /* webpackIgnore: true */ "@/server/actions/auth-actions"
-    );
-    return serverSyncUser();
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.auth["sync-user"].$post();
   return (await res.json()) as { success: boolean; error?: string };
@@ -486,12 +634,6 @@ export async function getUserProfile(): Promise<{
   data?: UserProfileRecord;
   error?: string;
 }> {
-  if (isVitestBridgeActive()) {
-    const { getUserProfile: serverGetUserProfile } = await import(
-      /* webpackIgnore: true */ "@/server/actions/auth-actions"
-    );
-    return serverGetUserProfile();
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.auth.profile.$get();
   return (await res.json()) as {
@@ -504,12 +646,6 @@ export async function getUserProfile(): Promise<{
 export async function updateUserProfile(
   data: { displayName?: string }
 ): Promise<{ success: boolean; error?: string }> {
-  if (isVitestBridgeActive()) {
-    const { updateUserProfile: serverUpdateUserProfile } = await import(
-      /* webpackIgnore: true */ "@/server/actions/auth-actions"
-    );
-    return serverUpdateUserProfile(data);
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.auth["update-profile"].$post({
     json: data,
@@ -522,19 +658,6 @@ export async function updateUserProfile(
 // ============================================================================
 
 export async function getCreditBalance(): Promise<bigint> {
-  if (isVitestBridgeActive()) {
-    const { getUser } = await import(
-      /* webpackIgnore: true */ "@/lib/supabase/server"
-    );
-    const { getUserCreditBalance } = await import(
-      /* webpackIgnore: true */ "@/server/services/ai-settlement-service"
-    );
-    const user = await getUser();
-    if (!user) {
-      return BigInt(0);
-    }
-    return await getUserCreditBalance(user.id);
-  }
   const client = getRpcClient();
   const res = await client.api.rpc.billing["credit-balance"].$get();
   if (res.ok) {

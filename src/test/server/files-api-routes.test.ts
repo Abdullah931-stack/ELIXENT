@@ -2,10 +2,9 @@
  * Comprehensive Unit & Edge-Case Test Suite for Web-Standard Files & Sync API Routes (`src/server/routes/files-api.routes.ts`)
  *
  * Verifies:
- * 1. Route metadata export (`dynamic = "force-dynamic"`).
- * 2. Both direct handler invocation (`handleFilesSyncGet`, `handleFileByIdGet`, `handleFileByIdPut`, `handleFileByIdDelete`)
+ * 1. Both direct handler invocation (`handleFilesSyncGet`, `handleFileByIdGet`, `handleFileByIdPut`, `handleFileByIdDelete`)
  *    and Hono router dispatch (`filesApiRoutes.request(...)`).
- * 3. `resolveFileId` parameter resolution across Promise params, synchronous object params, and URL pathname extraction when context is omitted.
+ * 2. `resolveFileId` parameter resolution across synchronous object params and URL pathname extraction when context is omitted.
  * 4. `GET /api/files/sync`:
  *    - 401 unauthenticated, 429 rate limited, 400 RFC 7807 on invalid `limit` or `updatedAfter` query parameters.
  *    - Pagination (`limit + 1` probe, `has_more`, base64 `next_cursor` generation & decoding, malformed cursor resilience).
@@ -118,7 +117,6 @@ import {
   handleFileByIdPut,
   handleFileByIdDelete,
   filesApiRoutes,
-  dynamic,
 } from "@/server/routes/files-api.routes";
 
 // ---------------------------------------------------------------------------
@@ -178,10 +176,6 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
       }),
     ]);
     mockGetDescendantIds.mockResolvedValue([]);
-  });
-
-  it("exports dynamic = 'force-dynamic'", () => {
-    expect(dynamic).toBe("force-dynamic");
   });
 
   // =========================================================================
@@ -315,17 +309,17 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
   // 2. GET /api/files/:id
   // =========================================================================
   describe("GET /api/files/:id (handleFileByIdGet & filesApiRoutes)", () => {
-    it("resolves file ID from Promise params, synchronous params, or URL pathname when context is omitted", async () => {
+    it("resolves file ID from synchronous params or URL pathname when context is omitted", async () => {
       // 1. Omitted context -> extracts from URL pathname
       const resNoCtx = await handleFileByIdGet(
         new Request("http://localhost/api/files/file-from-url")
       );
       expect(resNoCtx.status).toBe(200);
 
-      // 2. Promise params (Next.js 16 route signature)
+      // 2. Synchronous params context
       const resPromiseCtx = await handleFileByIdGet(
         new Request("http://localhost/api/files/ignored"),
-        { params: Promise.resolve({ id: "file-from-promise" }) }
+        { params: { id: "file-from-promise" } }
       );
       expect(resPromiseCtx.status).toBe(200);
 

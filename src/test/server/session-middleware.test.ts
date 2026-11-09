@@ -9,7 +9,7 @@
  *    - Protected route gating (`/workspace`, `/account`, `/dashboard`): 401 JSON for `next-action` or `/api/*`, 307 redirect for page navigations.
  *    - Authenticated user visiting `/login` redirected to `/dashboard` (307).
  *    - Cookie serialization and `Set-Cookie` header generation on redirects, 401, and 200 responses.
- *    - Standard `Response` decorated `cookies` helper (`.get(name)`, `.getAll()`, `.set()`, `.delete()`).
+ *    - Web standard Set-Cookie response header serialization and incoming cookie parsing.
  * 2. `sessionMiddleware` mounted on Hono (`new Hono()`):
  *    - Pass-through execution with downstream route handlers.
  *    - Context binding (`runWithServerRequestContext`) accessible to downstream handlers via `getActiveRequestContext()` and `resolveCookiesAndHeaders()`.
@@ -30,23 +30,6 @@ import {
   getActiveRequestContext,
   resolveCookiesAndHeaders,
 } from "@/server/context/request-context";
-
-interface ResponseWithCookies extends Response {
-  cookies: {
-    get(name: string): { name: string; value: string } | undefined;
-    getAll(): Array<{ name: string; value: string }>;
-    set(
-      nameOrCookie: string | { name: string; value: string; options?: Record<string, unknown> },
-      maybeValue?: string,
-      maybeOptions?: Record<string, unknown>
-    ): void;
-    delete(name: string): void;
-  };
-}
-
-function withCookies(res: Response): ResponseWithCookies {
-  return res as ResponseWithCookies;
-}
 
 // Hoisted state for mocking `@supabase/ssr` `createServerClient`
 const { mockState } = vi.hoisted(() => ({
@@ -144,7 +127,6 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
           "https://lugx.app/auth/callback?code=oauth-sample-code"
         );
         expect(res.headers.get("set-cookie")).toContain("sb-oauth-state=state_val_789");
-        expect(withCookies(res).cookies.get("sb-oauth-state")?.value).toBe("state_val_789");
       });
     });
 
@@ -394,7 +376,7 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
       });
     });
 
-    describe("Cookie Serialization & Response Cookies Helper", () => {
+    describe("Cookie Serialization & Web Headers", () => {
       it("propagates Set-Cookie headers on redirect responses", async () => {
         mockState.getUser.mockResolvedValueOnce({
           data: { user: null },
@@ -428,7 +410,6 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
         expect(setCookie).toContain("HttpOnly");
         expect(setCookie).toContain("Secure");
         expect(setCookie).toContain("SameSite=Lax");
-        expect(withCookies(res).cookies.get("sb-refresh-token")?.value).toBe("new_ref_token");
       });
 
       it("propagates Set-Cookie headers on 401 unauthorized responses", async () => {
@@ -454,7 +435,7 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
         expect(res.headers.get("set-cookie")).toContain("sb-cleared=; Max-Age=0; Path=/");
       });
 
-      it("provides .get(name) and .getAll() on response cookies reflecting incoming and mutated cookies", async () => {
+      it("propagates mutated cookies into Set-Cookie headers on 200 responses", async () => {
         mockState.setCookiesOnCreate = true;
         mockState.mockCookiesToSet = [
           { name: "mutated_cookie", value: "mutated_val" },
@@ -466,42 +447,36 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
             cookie: "theme=dark; session_tag=stag_99",
           },
         });
-        const res = withCookies(await handleSessionProxy(req));
+        const res = await handleSessionProxy(req);
 
-        expect(res.cookies.get("theme")?.value).toBe("light");
-        expect(res.cookies.get("session_tag")?.value).toBe("stag_99");
-        expect(res.cookies.get("mutated_cookie")?.value).toBe("mutated_val");
-        expect(res.cookies.get("non_existent")).toBeUndefined();
-
-        const all = res.cookies.getAll();
-        expect(all).toEqual(
-          expect.arrayContaining([
-            { name: "theme", value: "light" },
-            { name: "session_tag", value: "stag_99" },
-            { name: "mutated_cookie", value: "mutated_val" },
-          ])
-        );
+        expect(res.status).toBe(200);
+        const setCookies = res.headers.get("set-cookie");
+        expect(setCookies).toContain("mutated_cookie=mutated_val");
+        expect(setCookies).toContain("theme=light");
       });
 
-      it("supports mutating response cookies via res.cookies.set() and res.cookies.delete()", async () => {
+      it("serializes multiple Set-Cookie options including path, httpOnly, secure, and maxAge", async () => {
+        mockState.setCookiesOnCreate = true;
+        mockState.mockCookiesToSet = [
+          {
+            name: "client_exp",
+            value: "val_exp",
+            options: { path: "/app", secure: true },
+          },
+          {
+            name: "client_flag",
+            value: "enabled",
+            options: { httpOnly: true },
+          },
+          {
+            name: "old_cookie",
+            value: "",
+            options: { maxAge: 0, path: "/" },
+          },
+        ];
+
         const req = new Request("https://lugx.app/");
-        const res = withCookies(await handleSessionProxy(req));
-
-        // Mutate via object overload
-        res.cookies.set({
-          name: "client_exp",
-          value: "val_exp",
-          options: { path: "/app", secure: true },
-        });
-
-        // Mutate via parameter overload
-        res.cookies.set("client_flag", "enabled", { httpOnly: true });
-
-        // Delete cookie
-        res.cookies.delete("old_cookie");
-
-        expect(res.cookies.get("client_exp")?.value).toBe("val_exp");
-        expect(res.cookies.get("client_flag")?.value).toBe("enabled");
+        const res = await handleSessionProxy(req);
 
         const setCookies = res.headers.get("set-cookie");
         expect(setCookies).toContain("client_exp=val_exp; Path=/app; Secure");
@@ -510,12 +485,15 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
       });
 
       it("serializes SameSite variants correctly (Strict, None, Lax)", async () => {
-        const req = new Request("https://lugx.app/");
-        const res = withCookies(await handleSessionProxy(req));
+        mockState.setCookiesOnCreate = true;
+        mockState.mockCookiesToSet = [
+          { name: "c_strict", value: "1", options: { sameSite: "strict" } },
+          { name: "c_none", value: "2", options: { sameSite: "NONE" } },
+          { name: "c_lax", value: "3", options: { sameSite: "Lax" } },
+        ];
 
-        res.cookies.set("c_strict", "1", { sameSite: "strict" });
-        res.cookies.set("c_none", "2", { sameSite: "NONE" });
-        res.cookies.set("c_lax", "3", { sameSite: "Lax" });
+        const req = new Request("https://lugx.app/");
+        const res = await handleSessionProxy(req);
 
         const setCookies = res.headers.get("set-cookie");
         expect(setCookies).toContain("c_strict=1; SameSite=Strict");
@@ -524,13 +502,16 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
       });
 
       it("serializes Date and timestamp expires options correctly and ignores invalid dates", async () => {
-        const req = new Request("https://lugx.app/");
-        const res = withCookies(await handleSessionProxy(req));
-
         const fixedDate = new Date("2035-12-31T23:59:59.000Z");
-        res.cookies.set("c_date", "v1", { expires: fixedDate });
-        res.cookies.set("c_time", "v2", { expires: fixedDate.getTime() });
-        res.cookies.set("c_invalid", "v3", { expires: "not-a-valid-date" });
+        mockState.setCookiesOnCreate = true;
+        mockState.mockCookiesToSet = [
+          { name: "c_date", value: "v1", options: { expires: fixedDate } },
+          { name: "c_time", value: "v2", options: { expires: fixedDate.getTime() } },
+          { name: "c_invalid", value: "v3", options: { expires: "not-a-valid-date" } },
+        ];
+
+        const req = new Request("https://lugx.app/");
+        const res = await handleSessionProxy(req);
 
         const setCookies = res.headers.get("set-cookie");
         expect(setCookies).toContain(`c_date=v1; Expires=${fixedDate.toUTCString()}`);
@@ -539,33 +520,52 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
         expect(setCookies).not.toContain("Expires=Invalid Date");
       });
 
-      it("parses cookies robustly with messy whitespace and missing values", async () => {
-        const req = new Request("https://lugx.app/", {
+      it("parses cookies robustly with messy whitespace and missing values into request context", async () => {
+        const app = new Hono();
+        app.use("*", sessionMiddleware);
+        let capturedCookies: Array<{ name: string; value: string }> = [];
+        app.get("/", (c) => {
+          capturedCookies = getActiveRequestContext()?.cookies.getAll() ?? [];
+          return c.text("ok");
+        });
+
+        await app.request("https://lugx.app/", {
           headers: {
             cookie: "  ; key1=val1 ; ; key2= ; key3 ; key4=val4=extra ; ",
           },
         });
-        const res = withCookies(await handleSessionProxy(req));
 
-        expect(res.cookies.get("key1")?.value).toBe("val1");
-        expect(res.cookies.get("key2")?.value).toBe("");
-        expect(res.cookies.get("key4")?.value).toBe("val4=extra");
+        const cookieMap = new Map(capturedCookies.map((c) => [c.name, c.value]));
+        expect(cookieMap.get("key1")).toBe("val1");
+        expect(cookieMap.get("key2")).toBe("");
+        expect(cookieMap.get("key4")).toBe("val4=extra");
       });
 
-      it("gracefully falls back when request.cookies.getAll throws", async () => {
+      it("relies strictly on standard request headers and ignores artificial request.cookies properties", async () => {
+        const app = new Hono();
+        app.use("*", sessionMiddleware);
+        let capturedCookies: Array<{ name: string; value: string }> = [];
+        app.get("/", (c) => {
+          capturedCookies = getActiveRequestContext()?.cookies.getAll() ?? [];
+          return c.text("ok");
+        });
+
         const req = new Request("https://lugx.app/", {
           headers: { cookie: "fallback_token=ok" },
         });
+        const throwingGetter = vi.fn(() => {
+          throw new Error("Legacy request.cookies shim should not be accessed");
+        });
         Object.defineProperty(req, "cookies", {
-          value: {
-            getAll() {
-              throw new Error("Broken NextRequest mock");
-            },
-          },
+          get: throwingGetter,
         });
 
-        const res = withCookies(await handleSessionProxy(req));
-        expect(res.cookies.get("fallback_token")?.value).toBe("ok");
+        const res = await app.request(req);
+        expect(res.status).toBe(200);
+        expect(throwingGetter).not.toHaveBeenCalled();
+        expect(capturedCookies).toEqual(
+          expect.arrayContaining([{ name: "fallback_token", value: "ok" }])
+        );
       });
     });
 

@@ -60,7 +60,7 @@ function serializeCookie(
 }
 
 /**
- * Parses cookies from incoming Request headers or request.cookies helper (if present).
+ * Parses cookies from incoming standard Request headers.
  */
 function parseIncomingCookies(request: Request): Map<string, string> {
   const map = new Map<string, string>();
@@ -82,38 +82,15 @@ function parseIncomingCookies(request: Request): Map<string, string> {
     }
   }
 
-  const reqWithCookies = request as unknown as {
-    cookies?: {
-      getAll?: () => Array<{ name: string; value: string }>;
-    };
-  };
-
-  if (typeof reqWithCookies.cookies?.getAll === "function") {
-    try {
-      const list = reqWithCookies.cookies.getAll();
-      if (Array.isArray(list)) {
-        for (const item of list) {
-          if (item && typeof item.name === "string" && typeof item.value === "string") {
-            map.set(item.name, item.value);
-          }
-        }
-      }
-    } catch {
-      // Fallback silently if cookies.getAll throws
-    }
-  }
-
   return map;
 }
 
 /**
- * Decorates a Web standard Response with Set-Cookie headers and attaches a non-enumerable
- * cookies helper property compatible with Next.js NextResponse.cookies test assertions.
+ * Applies Set-Cookie headers to a Web standard Response.
  */
 function applyCookiesToResponse(
   response: Response,
-  mutatedCookies: Map<string, ServerCookieRecord>,
-  incomingCookies: Map<string, string>
+  mutatedCookies: Map<string, ServerCookieRecord>
 ): Response {
   for (const cookie of mutatedCookies.values()) {
     response.headers.append(
@@ -121,57 +98,6 @@ function applyCookiesToResponse(
       serializeCookie(cookie.name, cookie.value, cookie.options)
     );
   }
-
-  Object.defineProperty(response, "cookies", {
-    enumerable: false,
-    configurable: true,
-    value: {
-      get(name: string) {
-        const mutated = mutatedCookies.get(name);
-        if (mutated) return { name: mutated.name, value: mutated.value };
-        const val = incomingCookies.get(name);
-        return val !== undefined ? { name, value: val } : undefined;
-      },
-      getAll() {
-        const all = new Map<string, { name: string; value: string }>();
-        for (const [k, v] of incomingCookies) all.set(k, { name: k, value: v });
-        for (const [k, m] of mutatedCookies) all.set(k, { name: m.name, value: m.value });
-        return Array.from(all.values());
-      },
-      set(
-        nameOrCookie: string | { name: string; value: string; options?: Record<string, unknown> },
-        maybeValue?: string,
-        maybeOptions?: Record<string, unknown>
-      ) {
-        if (typeof nameOrCookie === "object" && nameOrCookie !== null) {
-          mutatedCookies.set(nameOrCookie.name, {
-            name: nameOrCookie.name,
-            value: nameOrCookie.value,
-            options: nameOrCookie.options,
-          });
-          response.headers.append(
-            "Set-Cookie",
-            serializeCookie(nameOrCookie.name, nameOrCookie.value, nameOrCookie.options)
-          );
-        } else {
-          const name = String(nameOrCookie);
-          const value = String(maybeValue ?? "");
-          mutatedCookies.set(name, { name, value, options: maybeOptions });
-          response.headers.append(
-            "Set-Cookie",
-            serializeCookie(name, value, maybeOptions)
-          );
-        }
-      },
-      delete(name: string) {
-        mutatedCookies.set(name, { name, value: "", options: { maxAge: 0, path: "/" } });
-        response.headers.append(
-          "Set-Cookie",
-          serializeCookie(name, "", { maxAge: 0, path: "/" })
-        );
-      },
-    },
-  });
 
   return response;
 }
@@ -181,8 +107,7 @@ function applyCookiesToResponse(
  */
 function createRedirectResponse(
   url: URL | string,
-  mutatedCookies: Map<string, ServerCookieRecord>,
-  incomingCookies: Map<string, string>
+  mutatedCookies: Map<string, ServerCookieRecord>
 ): Response {
   const destination = typeof url === "string" ? url : url.toString();
   const response = new Response(null, {
@@ -191,7 +116,7 @@ function createRedirectResponse(
       Location: destination,
     },
   });
-  return applyCookiesToResponse(response, mutatedCookies, incomingCookies);
+  return applyCookiesToResponse(response, mutatedCookies);
 }
 
 /**
@@ -244,13 +169,7 @@ async function evaluateSession(
         return Array.from(all.values());
       },
       setAll(cookiesToSet) {
-        const reqWithCookies = request as unknown as {
-          cookies?: { set?: (name: string, value: string) => void };
-        };
         cookiesToSet.forEach(({ name, value, options }) => {
-          if (typeof reqWithCookies.cookies?.set === "function") {
-            reqWithCookies.cookies.set(name, value);
-          }
           mutatedCookies.set(name, { name, value, options });
         });
       },
@@ -265,7 +184,7 @@ async function evaluateSession(
   if (parsedUrl.searchParams.has("code") && isOAuthLandingCandidate) {
     const url = new URL(request.url);
     url.pathname = "/auth/callback";
-    return createRedirectResponse(url, mutatedCookies, incomingCookies);
+    return createRedirectResponse(url, mutatedCookies);
   }
 
   // Protected routes - require authentication
@@ -324,7 +243,7 @@ async function evaluateSession(
         status: 401,
         headers: { "Content-Type": "application/json" },
       });
-      return applyCookiesToResponse(res, mutatedCookies, incomingCookies);
+      return applyCookiesToResponse(res, mutatedCookies);
     }
 
     // Redirect to login for page navigation
@@ -333,7 +252,7 @@ async function evaluateSession(
     url.pathname = "/login";
     url.search = "";
     url.searchParams.set("redirectTo", redirectTarget);
-    return createRedirectResponse(url, mutatedCookies, incomingCookies);
+    return createRedirectResponse(url, mutatedCookies);
   }
 
   // If user is logged in and tries to access login page, redirect to dashboard
@@ -341,7 +260,7 @@ async function evaluateSession(
     const url = new URL(request.url);
     url.pathname = "/dashboard";
     url.search = "";
-    return createRedirectResponse(url, mutatedCookies, incomingCookies);
+    return createRedirectResponse(url, mutatedCookies);
   }
 
   return null;
@@ -366,7 +285,7 @@ export async function handleSessionProxy(request: Request): Promise<Response> {
       return earlyResponse;
     }
     const passThroughResponse = new Response(null, { status: 200 });
-    return applyCookiesToResponse(passThroughResponse, mutatedCookies, incomingCookies);
+    return applyCookiesToResponse(passThroughResponse, mutatedCookies);
   });
 }
 

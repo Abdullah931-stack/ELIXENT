@@ -1,9 +1,9 @@
 /**
  * Comprehensive Unit & Edge-Case Test Suite for Web-Standard Hono Route Modules (Wave 2.1 - Part B):
- * 1. `src/server/routes/stripe.routes.ts` (`handleStripeCreateCheckoutPost`, `handleStripeWebhookPost`, `stripeRoutes`, `dynamic`)
- * 2. `src/server/routes/cron.routes.ts` (`handleExpireReservationsCron`, `handlePurgeDeletedCron`, `cronRoutes`, `runtime`, `dynamic`)
- * 3. `src/server/routes/auth-callback.routes.ts` (`handleAuthCallbackGet`, `GET`, `authCallbackRoutes`)
- * 4. `src/server/routes/e2e-auth.routes.ts` (`handleE2EAuthPost`, `handleE2EAuthDelete`, `POST`, `DELETE`, `e2eAuthRoutes`, `dynamic`)
+ * 1. `src/server/routes/stripe.routes.ts` (`handleStripeCreateCheckoutPost`, `handleStripeWebhookPost`, `stripeRoutes`)
+ * 2. `src/server/routes/cron.routes.ts` (`handleExpireReservationsCron`, `handlePurgeDeletedCron`, `cronRoutes`)
+ * 3. `src/server/routes/auth-callback.routes.ts` (`handleAuthCallbackGet`, `authCallbackRoutes`)
+ * 4. `src/server/routes/e2e-auth.routes.ts` (`handleE2EAuthPost`, `handleE2EAuthDelete`, `e2eAuthRoutes`)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -278,27 +278,20 @@ import {
   handleStripeCreateCheckoutPost,
   handleStripeWebhookPost,
   stripeRoutes,
-  dynamic as stripeDynamic,
 } from "@/server/routes/stripe.routes";
 import {
   handleExpireReservationsCron,
   handlePurgeDeletedCron,
   cronRoutes,
-  runtime as cronRuntime,
-  dynamic as cronDynamic,
 } from "@/server/routes/cron.routes";
 import {
   handleAuthCallbackGet,
-  GET as authCallbackGET,
   authCallbackRoutes,
 } from "@/server/routes/auth-callback.routes";
 import {
   handleE2EAuthPost,
   handleE2EAuthDelete,
-  POST as e2eAuthPOST,
-  DELETE as e2eAuthDELETE,
   e2eAuthRoutes,
-  dynamic as e2eAuthDynamic,
 } from "@/server/routes/e2e-auth.routes";
 
 // ===========================================================================
@@ -357,10 +350,6 @@ describe("Stripe Route Module (src/server/routes/stripe.routes.ts)", () => {
 
   afterEach(() => {
     process.env = ORIGINAL_ENV;
-  });
-
-  it("exports dynamic = 'force-dynamic'", () => {
-    expect(stripeDynamic).toBe("force-dynamic");
   });
 
   describe("POST /create-checkout (handleStripeCreateCheckoutPost & stripeRoutes)", () => {
@@ -667,11 +656,6 @@ describe("Cron Maintenance Route Module (src/server/routes/cron.routes.ts)", () 
     process.env = ORIGINAL_ENV;
   });
 
-  it("exports runtime = 'nodejs' and dynamic = 'force-dynamic'", () => {
-    expect(cronRuntime).toBe("nodejs");
-    expect(cronDynamic).toBe("force-dynamic");
-  });
-
   describe("GET | POST /expire-reservations", () => {
     it.each([
       [undefined, "missing Authorization header"],
@@ -868,10 +852,6 @@ describe("OAuth Auth Callback Route Module (src/server/routes/auth-callback.rout
     process.env = ORIGINAL_ENV;
   });
 
-  it("exports GET as an alias for handleAuthCallbackGet", () => {
-    expect(authCallbackGET).toBe(handleAuthCallbackGet);
-  });
-
   it("prioritizes VITE_APP_URL over NEXT_PUBLIC_APP_URL and request origin, and preserves Set-Cookie headers in standalone mode", async () => {
     process.env.VITE_APP_URL = "https://vite.elixent.app";
     process.env.NEXT_PUBLIC_APP_URL = "https://next.elixent.app";
@@ -1017,12 +997,6 @@ describe("E2E Auth Route Module (src/server/routes/e2e-auth.routes.ts)", () => {
 
   afterEach(() => {
     process.env = ORIGINAL_ENV;
-  });
-
-  it("exports dynamic = 'force-dynamic' and POST / DELETE aliases", () => {
-    expect(e2eAuthDynamic).toBe("force-dynamic");
-    expect(e2eAuthPOST).toBe(handleE2EAuthPost);
-    expect(e2eAuthDELETE).toBe(handleE2EAuthDelete);
   });
 
   describe("Environment Guard (isAllowedEnvironment)", () => {

@@ -11,18 +11,10 @@ import { UpgradeButton } from "@/components/subscription/upgrade-button";
 import { VaultSecurityCard } from "@/components/vault";
 import { OcrSettingsCard } from "@/components/layout/ocr-settings-card";
 
+import { createClient } from "@/lib/supabase/client";
+
 async function resolveAuthUser() {
-    if (typeof process !== "undefined" && process.env?.VITEST) {
-        try {
-            const serverSupabase = await import(/* @vite-ignore */ "@/lib/supabase/server");
-            const serverUser = await serverSupabase.getUser();
-            if (serverUser !== undefined) {
-                return serverUser;
-            }
-        } catch {}
-    }
     try {
-        const { createClient } = await import("@/lib/supabase/client");
         const supabase = createClient();
         const { data: { user } } = await supabase.auth.getUser();
         return user;
@@ -31,20 +23,51 @@ async function resolveAuthUser() {
     }
 }
 
-export default async function AccountPage() {
-    const user = await resolveAuthUser();
+export default function AccountPage() {
+    const [loading, setLoading] = useState(true);
+    const [user, setUser] = useState<{ id: string } | null>(null);
+    const [profile, setProfile] = useState<NonNullable<Awaited<ReturnType<typeof getUserProfile>>["data"]> | null>(null);
+    const [balanceMicro, setBalanceMicro] = useState<bigint>(BigInt(0));
 
-    if (!user) {
-        navigateTo("/login");
-        return null;
+    useEffect(() => {
+        let isMounted = true;
+        async function loadData() {
+            try {
+                const authUser = await resolveAuthUser();
+                if (!isMounted) return;
+                if (!authUser) {
+                    navigateTo("/login");
+                    return;
+                }
+                setUser(authUser);
+                const [profileResult, balance] = await Promise.all([
+                    getUserProfile(),
+                    getCreditBalance(),
+                ]);
+                if (!isMounted) return;
+                setProfile(profileResult?.data ?? null);
+                setBalanceMicro(balance ?? BigInt(0));
+                setLoading(false);
+            } catch {
+                if (isMounted) {
+                    navigateTo("/login");
+                }
+            }
+        }
+        loadData();
+        return () => {
+            isMounted = false;
+        };
+    }, []);
+
+    if (loading || !user) {
+        return (
+            <div className="min-h-screen bg-background flex items-center justify-center">
+                <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" />
+            </div>
+        );
     }
 
-    const [profileResult, balanceMicro] = await Promise.all([
-        getUserProfile(),
-        getCreditBalance(),
-    ]);
-
-    const profile = profileResult?.data;
     const currentTier: TierName = (profile?.tier as TierName) || "free";
     const limits = TIER_LIMITS[currentTier] || TIER_LIMITS.free;
     const currentCredits = Number(balanceMicro / MICRO_PER_CREDIT);
@@ -53,6 +76,7 @@ export default async function AccountPage() {
         tierCredits > 0
             ? Math.min(Math.max(0, Math.round((currentCredits / tierCredits) * 100)), 100)
             : 0;
+
 
     return (
         <div className="min-h-screen bg-zinc-950">
@@ -79,15 +103,12 @@ export default async function AccountPage() {
                         </div>
 
                         <form
-                            action={async () => {
-                                await signOut();
-                            }}
                             onSubmit={async (e) => {
                                 e.preventDefault();
                                 await signOut();
                                 try {
-                                    const { createClient } = await import("@/lib/supabase/client");
-                                    await createClient().auth.signOut();
+                                    const supabase = createClient();
+                                    await supabase.auth.signOut();
                                 } catch {}
                                 if (typeof window !== "undefined") {
                                     navigateTo("/");
@@ -301,19 +322,5 @@ export default async function AccountPage() {
 }
 
 export function AccountRouteView() {
-    const [node, setNode] = useState<React.ReactNode>(null);
-
-    useEffect(() => {
-        AccountPage()
-            .then(setNode)
-            .catch(() => navigateTo("/login"));
-    }, []);
-
-    return (
-        node || (
-            <div className="min-h-screen bg-background flex items-center justify-center">
-                <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" />
-            </div>
-        )
-    );
+    return <AccountPage />;
 }

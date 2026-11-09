@@ -5,80 +5,16 @@ import { navigateTo } from "@/client/navigation";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Button } from "@/components/ui/button";
 import { Settings, Home } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 
 async function resolveAuthUser() {
-    if (typeof process !== "undefined" && process.env?.VITEST) {
-        try {
-            const serverSupabase = await import(/* @vite-ignore */ "@/lib/supabase/server");
-            const serverUser = await serverSupabase.getUser();
-            if (serverUser !== undefined) {
-                return serverUser;
-            }
-        } catch {}
-    }
     try {
-        const { createClient } = await import("@/lib/supabase/client");
         const supabase = createClient();
         const { data: { user } } = await supabase.auth.getUser();
         return user;
     } catch {
         return null;
     }
-}
-
-export default async function WorkspaceLayout({
-    children,
-}: {
-    children: React.ReactNode;
-}) {
-    const user = await resolveAuthUser();
-
-    if (!user) {
-        navigateTo("/login");
-        return null;
-    }
-
-    return (
-        <div className="h-screen bg-zinc-950 flex overflow-hidden">
-            {/* Sidebar */}
-            <Sidebar userId={user.id} />
-
-            {/* Main Area */}
-            <div className="flex-1 flex flex-col overflow-hidden">
-                {/* Top Bar */}
-                <header className="h-14 border-b border-zinc-800/50 bg-zinc-950 flex items-center justify-between px-4 flex-shrink-0">
-                    <Link href="/dashboard" className="flex items-center gap-2">
-                        <img
-                            src="/logo.png"
-                            alt="LUGX"
-                            width={80}
-                            height={24}
-                            className="h-6 w-auto"
-                            style={{ width: "auto" }}
-                        />
-                    </Link>
-
-                    <div className="flex items-center gap-2">
-                        <Button asChild variant="ghost" size="icon-sm">
-                            <Link href="/dashboard">
-                                <Home className="w-4 h-4" />
-                            </Link>
-                        </Button>
-                        <Button asChild variant="ghost" size="icon-sm">
-                            <Link href="/account">
-                                <Settings className="w-4 h-4" />
-                            </Link>
-                        </Button>
-                    </div>
-                </header>
-
-                {/* Content - Independent scrolling container */}
-                <main className="flex-1 overflow-auto">
-                    {children}
-                </main>
-            </div>
-        </div>
-    );
 }
 
 export function WorkspaceLayoutRouteView() {
@@ -150,3 +86,6 @@ export function WorkspaceLayoutRouteView() {
         </div>
     );
 }
+
+export default WorkspaceLayoutRouteView;
+

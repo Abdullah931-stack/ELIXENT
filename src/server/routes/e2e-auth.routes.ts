@@ -7,8 +7,6 @@ import {
 } from "@supabase/supabase-js";
 import { db, schema } from "@/server/db";
 
-export const dynamic = "force-dynamic";
-
 interface SessionCookieRecord {
   name: string;
   value: string;
@@ -93,28 +91,6 @@ function parseRequestCookies(
           trimmed.slice(eqIdx + 1).trim()
         );
       }
-    }
-  }
-
-  const reqWithCookies = request as unknown as {
-    cookies?: { getAll?: () => Array<{ name: string; value: string }> };
-  };
-  if (typeof reqWithCookies.cookies?.getAll === "function") {
-    try {
-      const list = reqWithCookies.cookies.getAll();
-      if (Array.isArray(list)) {
-        for (const entry of list) {
-          if (
-            entry &&
-            typeof entry.name === "string" &&
-            typeof entry.value === "string"
-          ) {
-            cookieMap.set(entry.name, entry.value);
-          }
-        }
-      }
-    } catch {
-      // Ignore accessor errors on partial test mocks
     }
   }
 
@@ -379,8 +355,6 @@ export async function handleE2EAuthDelete(request: Request): Promise<Response> {
     { status: 200, headers }
   );
 }
-
-export { handleE2EAuthPost as POST, handleE2EAuthDelete as DELETE };
 
 export const e2eAuthRoutes = new Hono()
   .post("/", (c) => handleE2EAuthPost(c.req.raw))

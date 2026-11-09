@@ -33,15 +33,13 @@ import { syncPullRequestSchema } from "@/types/sync-contracts";
 import { documentStoragePayloadSchema } from "@/types/storage-payload";
 import { createProblemDetails } from "@/types/problem-details";
 
-export const dynamic = "force-dynamic";
-
 /**
  * Default and maximum page sizes
  */
 const DEFAULT_LIMIT = 50;
 
 export interface RouteParams {
-  params?: Promise<{ id: string }> | { id: string };
+  params?: { id: string };
 }
 
 export type RouteContext = RouteParams;
@@ -49,13 +47,12 @@ export type RouteContext = RouteParams;
 /**
  * Resolves the target file ID from route context params or the request URL path.
  */
-async function resolveFileId(
+function resolveFileId(
   request: Request,
   context?: RouteContext
-): Promise<string> {
-  if (context?.params) {
-    const resolved = await context.params;
-    return resolved.id;
+): string {
+  if (context?.params?.id) {
+    return context.params.id;
   }
   return new URL(request.url).pathname.split("/").filter(Boolean).pop() ?? "";
 }
@@ -256,7 +253,7 @@ export async function handleFileByIdGet(
 ): Promise<Response> {
   const correlationId = getOrGenerateCorrelationId(request);
   try {
-    const fileId = await resolveFileId(request, context);
+    const fileId = resolveFileId(request, context);
     const user = await getUser();
     if (!user) {
       const res = Response.json(
@@ -343,7 +340,7 @@ export async function handleFileByIdPut(
 ): Promise<Response> {
   const correlationId = getOrGenerateCorrelationId(request);
   try {
-    const fileId = await resolveFileId(request, context);
+    const fileId = resolveFileId(request, context);
     const user = await getUser();
     if (!user) {
       const res = Response.json(
@@ -677,7 +674,7 @@ export async function handleFileByIdDelete(
 ): Promise<Response> {
   const correlationId = getOrGenerateCorrelationId(request);
   try {
-    const fileId = await resolveFileId(request, context);
+    const fileId = resolveFileId(request, context);
     const user = await getUser();
     if (!user) {
       const res = Response.json(

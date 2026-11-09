@@ -15,9 +15,6 @@ import { REDIS_KEYS, DIRTY_SETTLEMENT_GRACE_MS } from "@/lib/metering/constants"
 import { flushPendingSettlementsToPostgres } from "@/server/services/ai-settlement-service";
 import { MeteringServiceUnavailableError } from "@/lib/metering/lua-scripts";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
 const RETENTION_DAYS = 30;
 const BATCH_LIMIT = 500;
 

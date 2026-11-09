@@ -77,6 +77,16 @@ vi.mock("@/client/navigation", () => ({
   useAppNavigate: () => mockUseAppNavigate(),
 }));
 
+vi.mock("@tanstack/react-router", () => ({
+  Outlet: () => <div data-testid="mock-outlet">Outlet</div>,
+  useRouter: () => null,
+  Link: ({ children, to, href, ...props }: any) => (
+    <a href={to || href || "#"} {...props}>
+      {children}
+    </a>
+  ),
+}));
+
 // Mock both server and client supabase auth resolvers for Vitest environment
 vi.mock("@/lib/supabase/server", () => ({
   getUser: () => mockGetServerUser(),
@@ -182,7 +192,7 @@ import { HomeRouteView } from "@/client/routes/home-page";
 import LoginPage from "@/client/routes/login-page";
 import DashboardPage from "@/client/routes/dashboard-page";
 import AccountPage from "@/client/routes/account-page";
-import WorkspaceLayout from "@/client/routes/workspace-layout";
+import WorkspaceLayoutRouteView from "@/client/routes/workspace-layout";
 import WorkspacePage from "@/client/routes/workspace-page";
 import { EditorRouteView } from "@/client/routes/editor-page";
 
@@ -229,11 +239,10 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
   // 2. LoginPage & LoginRouteView
   // ==========================================================================
   describe("2. LoginPage & LoginRouteView", () => {
-    it("renders Google sign in button when user is unauthenticated", async () => {
+    it("renders Google sign in button when user is unauthenticated", () => {
       setMockUser(null);
 
-      const node = await LoginPage();
-      render(node as React.ReactElement);
+      render(<LoginPage />);
 
       expect(screen.getByText("Welcome Back")).toBeTruthy();
       expect(screen.getByRole("button", { name: /continue with google/i })).toBeTruthy();
@@ -242,19 +251,21 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
     it("redirects authenticated user to /dashboard via navigateTo", async () => {
       setMockUser({ id: "user-123", email: "user@example.com" });
 
-      const node = await LoginPage();
-      expect(node).toBeNull();
-      expect(mockNavigateTo).toHaveBeenCalledWith("/dashboard");
+      render(<LoginPage />);
+      await waitFor(() => {
+        expect(mockNavigateTo).toHaveBeenCalledWith("/dashboard");
+      });
     });
 
     it("sanitizes open-redirect attempts in redirectTo parameter", async () => {
       setMockUser({ id: "user-123", email: "user@example.com" });
 
       // Attempt open redirect via //evil.com
-      const node = await LoginPage({ searchParams: { redirectTo: "//evil.com" } });
-      expect(node).toBeNull();
-      // Sanitized by resolveSafeRedirectPath to fallback
-      expect(mockNavigateTo).toHaveBeenCalledWith("/dashboard");
+      render(<LoginPage searchParams={{ redirectTo: "//evil.com" }} />);
+      await waitFor(() => {
+        // Sanitized by resolveSafeRedirectPath to fallback
+        expect(mockNavigateTo).toHaveBeenCalledWith("/dashboard");
+      });
     });
 
     it("submitting Google sign in invokes RPC signInWithGoogle", async () => {
@@ -270,8 +281,7 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
         value: { assign: assignSpy },
       });
 
-      const node = await LoginPage();
-      render(node as React.ReactElement);
+      render(<LoginPage />);
 
       const submitBtn = screen.getByRole("button", { name: /continue with google/i });
       fireEvent.click(submitBtn);
@@ -289,9 +299,10 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
     it("redirects unauthenticated user to /login", async () => {
       setMockUser(null);
 
-      const node = await DashboardPage();
-      expect(node).toBeNull();
-      expect(mockNavigateTo).toHaveBeenCalledWith("/login");
+      render(<DashboardPage />);
+      await waitFor(() => {
+        expect(mockNavigateTo).toHaveBeenCalledWith("/login");
+      });
     });
 
     it("calculates micro-credits display and renders user profile when authenticated", async () => {
@@ -303,10 +314,11 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
       // 500,000,000 micro-credits = 500 credits (Pro allocation is 1,000 credits -> 50%)
       mockGetCreditBalance.mockResolvedValue(BigInt(500_000_000));
 
-      const node = await DashboardPage();
-      render(node as React.ReactElement);
+      render(<DashboardPage />);
 
-      expect(screen.getByText(/Welcome back, Ada Lovelace/i)).toBeTruthy();
+      await waitFor(() => {
+        expect(screen.getByText(/Welcome back, Ada Lovelace/i)).toBeTruthy();
+      });
       expect(screen.getByText(/50% available/i)).toBeTruthy();
       expect(screen.getByText(/500/i)).toBeTruthy();
     });
@@ -319,12 +331,11 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
       });
       mockGetCreditBalance.mockResolvedValue(BigInt(1_000_000_000));
 
-      const node = await DashboardPage({
-        searchParams: { session_id: "cs_test_success_123" },
-      });
-      render(node as React.ReactElement);
+      render(<DashboardPage searchParams={{ session_id: "cs_test_success_123" }} />);
 
-      expect(screen.getByText(/Payment Successful!/i)).toBeTruthy();
+      await waitFor(() => {
+        expect(screen.getByText(/Payment Successful!/i)).toBeTruthy();
+      });
     });
   });
 
@@ -335,9 +346,10 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
     it("redirects unauthenticated user to /login", async () => {
       setMockUser(null);
 
-      const node = await AccountPage();
-      expect(node).toBeNull();
-      expect(mockNavigateTo).toHaveBeenCalledWith("/login");
+      render(<AccountPage />);
+      await waitFor(() => {
+        expect(mockNavigateTo).toHaveBeenCalledWith("/login");
+      });
     });
 
     it("renders profile initial fallback when avatarUrl is missing", async () => {
@@ -348,11 +360,12 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
       });
       mockGetCreditBalance.mockResolvedValue(BigInt(50_000_000));
 
-      const node = await AccountPage();
-      render(node as React.ReactElement);
+      render(<AccountPage />);
 
+      await waitFor(() => {
+        expect(screen.getByText("Grace Hopper")).toBeTruthy();
+      });
       expect(screen.getByText("G")).toBeTruthy();
-      expect(screen.getByText("Grace Hopper")).toBeTruthy();
       expect(screen.getByText("grace@navy.mil")).toBeTruthy();
     });
 
@@ -364,11 +377,11 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
       });
       mockGetCreditBalance.mockResolvedValue(BigInt(100_000_000));
 
-      const node = await AccountPage();
-      render(node as React.ReactElement);
+      render(<AccountPage />);
 
-      // Free user sees both Pro and Ultra upgrade buttons
-      expect(screen.getByTestId("upgrade-btn-pro")).toBeTruthy();
+      await waitFor(() => {
+        expect(screen.getByTestId("upgrade-btn-pro")).toBeTruthy();
+      });
       expect(screen.getByTestId("upgrade-btn-ultra")).toBeTruthy();
     });
   });
@@ -380,22 +393,23 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
     it("redirects unauthenticated user to /login", async () => {
       setMockUser(null);
 
-      const node = await WorkspaceLayout({ children: <div>Workspace Content</div> });
-      expect(node).toBeNull();
-      expect(mockNavigateTo).toHaveBeenCalledWith("/login");
+      render(<WorkspaceLayoutRouteView />);
+      await waitFor(() => {
+        expect(mockNavigateTo).toHaveBeenCalledWith("/login");
+      });
     });
 
     it("renders Sidebar with authenticated userId and top-bar navigation actions", async () => {
       setMockUser({ id: "workspace-user-id" });
 
-      const node = await WorkspaceLayout({
-        children: <div data-testid="workspace-child">Child Element</div>,
-      });
-      render(node as React.ReactElement);
+      render(<WorkspaceLayoutRouteView />);
 
-      const sidebar = screen.getByTestId("mock-sidebar");
-      expect(sidebar.getAttribute("data-user-id")).toBe("workspace-user-id");
-      expect(screen.getByTestId("workspace-child")).toBeTruthy();
+      await waitFor(() => {
+        const sidebar = screen.getByTestId("mock-sidebar");
+        expect(sidebar.getAttribute("data-user-id")).toBe("workspace-user-id");
+      });
+      expect(screen.getByTestId("mock-outlet")).toBeTruthy();
+      expect(screen.getByAltText("LUGX")).toBeTruthy();
     });
   });
 
@@ -406,9 +420,10 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
     it("redirects unauthenticated user to /login", async () => {
       setMockUser(null);
 
-      const node = await WorkspacePage();
-      expect(node).toBeNull();
-      expect(mockNavigateTo).toHaveBeenCalledWith("/login");
+      render(<WorkspacePage />);
+      await waitFor(() => {
+        expect(mockNavigateTo).toHaveBeenCalledWith("/login");
+      });
     });
 
     it("renders empty state when user has no files and triggers document creation", async () => {
@@ -422,10 +437,11 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
         data: { id: "new-file-999" },
       });
 
-      const node = await WorkspacePage();
-      render(node as React.ReactElement);
+      render(<WorkspacePage />);
 
-      expect(screen.getByText("No documents yet")).toBeTruthy();
+      await waitFor(() => {
+        expect(screen.getByText("No documents yet")).toBeTruthy();
+      });
 
       const createBtn = screen.getByRole("button", { name: /create document/i });
       fireEvent.click(createBtn);
@@ -456,11 +472,12 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
         ],
       });
 
-      const node = await WorkspacePage();
-      render(node as React.ReactElement);
+      render(<WorkspacePage />);
 
-      expect(screen.getByText("Architecture Plan")).toBeTruthy();
-      expect(screen.getByText("Research Papers")).toBeTruthy();
+      await waitFor(() => {
+        expect(screen.getByText("Architecture Plan")).toBeTruthy();
+        expect(screen.getByText("Research Papers")).toBeTruthy();
+      });
     });
   });
 

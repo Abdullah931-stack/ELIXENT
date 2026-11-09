@@ -212,7 +212,7 @@ describe("Phase 8: Identity, Ownership, Cycle Detection & Concurrency Control", 
                 method: "DELETE",
             });
 
-            const res = await fileApiDELETE(req, { params: Promise.resolve({ id: doc.id }) });
+            const res = await fileApiDELETE(req, { params: { id: doc.id } });
             expect(res.status).toBe(428);
         });
 
@@ -224,7 +224,7 @@ describe("Phase 8: Identity, Ownership, Cycle Detection & Concurrency Control", 
                 method: "DELETE",
             });
 
-            const res = await fileApiDELETE(req, { params: Promise.resolve({ id: doc.id }) });
+            const res = await fileApiDELETE(req, { params: { id: doc.id } });
             expect(res.status).toBe(412);
         });
 
@@ -236,7 +236,7 @@ describe("Phase 8: Identity, Ownership, Cycle Detection & Concurrency Control", 
                 method: "DELETE",
             });
 
-            const res = await fileApiDELETE(req, { params: Promise.resolve({ id: doc.id }) });
+            const res = await fileApiDELETE(req, { params: { id: doc.id } });
             expect(res.status).toBe(200);
 
             const json = await res.json();

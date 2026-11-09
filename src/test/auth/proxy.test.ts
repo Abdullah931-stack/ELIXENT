@@ -187,7 +187,7 @@ describe("Next.js 16 Edge Proxy (src/proxy.ts)", () => {
             expect(res.status).toBe(307);
             expect(res.headers.get("location")).toBe("https://lugx.app/login?redirectTo=%2Fworkspace");
             // Verify that cookies set on supabaseResponse (e.g. session tokens or deletion directives) are preserved on redirect
-            expect((res as any).cookies.get("sb-access-token")?.value).toBe("test-token");
+            expect(res.headers.get("set-cookie")).toContain("sb-access-token=test-token");
         });
 
         it("handles Supabase network / offline errors gracefully without crashing", async () => {

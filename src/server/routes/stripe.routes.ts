@@ -60,8 +60,6 @@ import {
 } from '@/lib/stripe/webhook-dedupe';
 import { resolveCookiesAndHeaders } from '@/server/context/request-context';
 
-export const dynamic = "force-dynamic";
-
 /**
  * Maximum age (in seconds) of an accepted webhook signature timestamp.
  * Protects against replay attacks: events older than this window are

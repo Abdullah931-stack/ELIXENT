@@ -1,40 +1,54 @@
 import * as React from "react";
+import { Link as TanStackLink, useRouter } from "@tanstack/react-router";
 
-export type AppLinkProps = React.AnchorHTMLAttributes<HTMLAnchorElement> & {
-    href: string;
+export type AppLinkProps = Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, "href"> & {
+    href?: string;
+    to?: string;
     replace?: boolean;
 };
 
 export const AppLink = React.forwardRef<HTMLAnchorElement, AppLinkProps>(
-    function AppLink({ href, replace, onClick, target, children, ...props }, ref) {
-        function handleClick(e: React.MouseEvent<HTMLAnchorElement>) {
-            onClick?.(e);
+    function AppLink({ href, to, replace, onClick, target, children, ...props }, ref) {
+        const router = useRouter({ warn: false });
+        const targetPath = to ?? href ?? "";
 
-            if (
-                !e.defaultPrevented &&
-                e.button === 0 &&
-                !e.metaKey &&
-                !e.ctrlKey &&
-                !e.altKey &&
-                !e.shiftKey &&
-                !target &&
-                href.startsWith("/") &&
-                typeof window !== "undefined"
-            ) {
-                e.preventDefault();
-                if (replace) {
-                    window.history.replaceState({}, "", href);
-                } else {
-                    window.history.pushState({}, "", href);
-                }
-                window.dispatchEvent(new PopStateEvent("popstate"));
-            }
+        // Determine if target should bypass TanStack client-side routing
+        const isExternal =
+            !targetPath.startsWith("/") ||
+            targetPath.startsWith("//") ||
+            Boolean(target);
+
+        // Outside RouterProvider context or for external targets, render standard anchor
+        if (!router || isExternal) {
+            return (
+                <a
+                    ref={ref}
+                    href={targetPath}
+                    target={target}
+                    onClick={onClick}
+                    {...props}
+                >
+                    {children}
+                </a>
+            );
         }
 
+        type TanStackLinkProps = React.ComponentProps<typeof TanStackLink>;
+        const linkProps = props as unknown as Omit<TanStackLinkProps, "to" | "replace" | "target" | "onClick">;
+
         return (
-            <a ref={ref} href={href} target={target} onClick={handleClick} {...props}>
+            <TanStackLink
+                ref={ref}
+                to={targetPath as unknown as TanStackLinkProps["to"]}
+                replace={replace}
+                target={target}
+                onClick={onClick}
+                {...linkProps}
+            >
                 {children}
-            </a>
+            </TanStackLink>
         );
     }
 );
+
+AppLink.displayName = "AppLink";

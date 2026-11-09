@@ -63,24 +63,6 @@ function parseRequestCookies(
     }
   }
 
-  const reqWithCookies = request as unknown as {
-    cookies?: { getAll?: () => Array<{ name: string; value: string }> };
-  };
-  if (typeof reqWithCookies.cookies?.getAll === "function") {
-    try {
-      const list = reqWithCookies.cookies.getAll();
-      if (Array.isArray(list)) {
-        for (const entry of list) {
-          if (entry && typeof entry.name === "string" && typeof entry.value === "string") {
-            cookieMap.set(entry.name, entry.value);
-          }
-        }
-      }
-    } catch {
-      // Ignore accessor errors on partial test doubles
-    }
-  }
-
   return Array.from(cookieMap.entries()).map(([name, value]) => ({
     name,
     value,
@@ -213,8 +195,6 @@ export async function handleAuthCallbackGet(
   );
   return await runWithServerRequestContext(scopedContext, executeExchange);
 }
-
-export { handleAuthCallbackGet as GET };
 
 export const authCallbackRoutes = new Hono().get("/", (c) =>
   handleAuthCallbackGet(c.req.raw)

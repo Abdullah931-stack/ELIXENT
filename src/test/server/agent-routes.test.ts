@@ -2,8 +2,7 @@
  * Comprehensive Unit & Edge-Case Test Suite for Web-Standard Agent SSE Route (`src/server/routes/agent.routes.ts`)
  *
  * Verifies:
- * 1. Route metadata exports (`maxDuration = 300`, `dynamic = "force-dynamic"`).
- * 2. Both direct `handleAgentStreamPost(Request)` invocation and Hono `agentRoutes.request("/stream", ...)` dispatch.
+ * 1. Both direct `handleAgentStreamPost(Request)` invocation and Hono `agentRoutes.request("/stream", ...)` dispatch.
  * 3. Authentication guard (401 Problem Details before body parsing, non-Error throw resilience).
  * 4. Rate limiting (429 quota exceeded, 503 fail-closed when limiter throws or returns degraded).
  * 5. Request body & Zod contract validation (400 Problem Details on malformed JSON, schema violations, unknown fields).
@@ -218,8 +217,6 @@ vi.mock("@/server/services/ai-settlement-service", () => ({
 import {
   handleAgentStreamPost,
   agentRoutes,
-  maxDuration,
-  dynamic,
 } from "@/server/routes/agent.routes";
 
 // ---------------------------------------------------------------------------
@@ -282,13 +279,6 @@ describe("Web-Standard Hono Agent Route Module (src/server/routes/agent.routes.t
 
   afterEach(() => {
     vi.restoreAllMocks();
-  });
-
-  describe("Route Constants & Exports", () => {
-    it("exports maxDuration = 300 and dynamic = 'force-dynamic'", () => {
-      expect(maxDuration).toBe(300);
-      expect(dynamic).toBe("force-dynamic");
-    });
   });
 
   describe("Authentication & Fail-Closed Rate Limiting", () => {

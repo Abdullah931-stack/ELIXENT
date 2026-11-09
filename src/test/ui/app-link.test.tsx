@@ -1,70 +1,84 @@
 // @vitest-environment jsdom
 /**
- * Exhaustive Unit & Edge Case Test Suite for AppLink (`src/components/ui/app-link.tsx`)
+ * Exhaustive Unit & Integration Test Suite for AppLink (`src/components/ui/app-link.tsx`)
  *
  * Verifies:
- * 1. Standard Client-Side Navigation:
- *    - Pushes state via window.history.pushState on normal left click with internal path.
- *    - Replaces state via window.history.replaceState when replace={true}.
- *    - Dispatches a standard PopStateEvent ('popstate') to window on client navigation.
- *    - Calls e.preventDefault() to suppress native browser full-page reload.
- * 2. Modifier Keys Bypass (Browser Multi-Tab / New-Window Native Behavior):
- *    - metaKey (Cmd on macOS): client navigation is bypassed (e.preventDefault NOT called, pushState NOT called).
- *    - ctrlKey (Ctrl on Windows/Linux): client navigation is bypassed.
- *    - altKey (Alt/Option): client navigation is bypassed.
- *    - shiftKey (Shift): client navigation is bypassed.
- * 3. Mouse Button Filtering:
- *    - Left click (button === 0): triggers client navigation.
- *    - Middle click (button === 1 / auxclick): bypasses client navigation.
- *    - Right click (button === 2 / contextmenu): bypasses client navigation.
- *    - Extended buttons (button === 3, 4): bypasses client navigation.
- * 4. URL Scheme & Route Isolation:
- *    - Internal routes (starting with "/"): executes client-side navigation.
- *    - External HTTP/HTTPS URLs ("https://..."): bypasses client navigation.
- *    - Mailto URLs ("mailto:..."): bypasses client navigation.
- *    - Telephone URLs ("tel:..."): bypasses client navigation.
- *    - Hash fragments ("#section"): bypasses client navigation.
- *    - Relative paths without leading slash ("workspace/doc-1"): bypasses client navigation.
- *    - Empty string (""): bypasses client navigation.
- * 5. Target Attribute Bypass:
- *    - target="_blank": bypasses client navigation.
- *    - target="_self": bypasses client navigation.
- *    - target="_parent" / "_top": bypasses client navigation.
- * 6. Event Interception & defaultPrevented Handling:
- *    - Custom onClick handler is invoked first with the React mouse event.
- *    - If onClick executes e.preventDefault(), client-side routing is aborted.
- *    - If onClick does NOT execute e.preventDefault(), client-side routing proceeds normally.
- * 7. HTML Element Forwarding & Accessibility (DOM Invariants):
- *    - Forwards ref to underlying HTMLAnchorElement.
+ * 1. TanStack Router Delegation:
+ *    - Delegates to TanStack Router Link component when router context is present.
+ *    - Maps `href` to `to` prop on TanStack Link.
+ *    - Maps `to` prop directly to `to` on TanStack Link.
+ *    - Forwards `replace={true}` to TanStack Link.
+ * 2. URL Scheme & Route Isolation:
+ *    - Internal routes (starting with "/"): delegates to TanStack Link.
+ *    - External HTTP/HTTPS URLs ("https://..."): renders native anchor, bypasses TanStack Link.
+ *    - Mailto URLs ("mailto:..."): renders native anchor, bypasses TanStack Link.
+ *    - Telephone URLs ("tel:..."): renders native anchor, bypasses TanStack Link.
+ *    - Hash fragments ("#section"): renders native anchor, bypasses TanStack Link.
+ *    - Relative paths without leading slash ("workspace/relative"): renders native anchor, bypasses TanStack Link.
+ *    - Empty string (""): renders native anchor, bypasses TanStack Link.
+ * 3. Target Attribute Bypass:
+ *    - target="_blank": renders native anchor, bypasses TanStack Link.
+ *    - target="_self": renders native anchor, bypasses TanStack Link.
+ *    - target="_parent" / "_top": renders native anchor, bypasses TanStack Link.
+ *    - target="custom-frame": renders native anchor, bypasses TanStack Link.
+ * 4. Event Interception & Click Handling:
+ *    - Invokes custom onClick handler when link is clicked.
+ *    - Allows e.preventDefault() to abort downstream handling.
+ * 5. Standalone & Resilient Fallback (Outside RouterProvider):
+ *    - Renders cleanly as standard HTML anchor when outside router context without throwing.
+ *    - Preserves attributes, children, and onClick handling in standalone mode.
+ * 6. HTML Element Forwarding & Accessibility (DOM Invariants):
+ *    - Forwards React ref to underlying HTMLAnchorElement.
  *    - Forwards standard attributes (className, id, aria-label, aria-current, title, rel, data-*).
  *    - Renders text children and nested JSX elements cleanly.
  */
 
 import React, { createRef } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+
+const { mockUseRouter, mockLinkComponent } = vi.hoisted(() => ({
+    mockUseRouter: vi.fn(),
+    mockLinkComponent: vi.fn(),
+}));
+
+vi.mock("@tanstack/react-router", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@tanstack/react-router")>();
+    return {
+        ...actual,
+        useRouter: (...args: unknown[]) => mockUseRouter(...args),
+        Link: React.forwardRef<HTMLAnchorElement, Record<string, unknown>>(function MockTanStackLink(props, ref) {
+            mockLinkComponent(props);
+            const { to, replace: _replace, children, ...rest } = props;
+            return (
+                <a ref={ref} href={typeof to === "string" ? to : undefined} {...rest}>
+                    {children as React.ReactNode}
+                </a>
+            );
+        }),
+    };
+});
+
 import { AppLink } from "@/components/ui/app-link";
 
 describe("AppLink Component", () => {
-    let pushStateSpy: ReturnType<typeof vi.spyOn>;
-    let replaceStateSpy: ReturnType<typeof vi.spyOn>;
-    let dispatchEventSpy: ReturnType<typeof vi.spyOn>;
+    const fakeRouter = {
+        navigate: vi.fn(),
+        state: { location: { pathname: "/" } },
+    };
 
     beforeEach(() => {
         vi.clearAllMocks();
-        pushStateSpy = vi.spyOn(window.history, "pushState").mockImplementation(() => {});
-        replaceStateSpy = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
-        dispatchEventSpy = vi.spyOn(window, "dispatchEvent").mockImplementation(() => true);
+        mockUseRouter.mockReturnValue(fakeRouter);
     });
 
     afterEach(() => {
-        pushStateSpy.mockRestore();
-        replaceStateSpy.mockRestore();
-        dispatchEventSpy.mockRestore();
+        cleanup();
+        vi.restoreAllMocks();
     });
 
-    describe("1. Standard Client-Side Navigation", () => {
-        it("triggers pushState and dispatches popstate event on primary left click for internal routes", () => {
+    describe("1. TanStack Router Delegation", () => {
+        it("delegates to TanStack Link with mapped 'to' prop when 'href' is provided", () => {
             render(
                 <AppLink href="/workspace/doc-101" data-testid="test-link">
                     Open Document
@@ -72,109 +86,50 @@ describe("AppLink Component", () => {
             );
 
             const link = screen.getByTestId("test-link");
-            const clickEvent = new MouseEvent("click", {
-                bubbles: true,
-                cancelable: true,
-                button: 0,
-            });
-
-            const defaultPrevented = !link.dispatchEvent(clickEvent);
-
-            expect(defaultPrevented).toBe(true);
-            expect(pushStateSpy).toHaveBeenCalledTimes(1);
-            expect(pushStateSpy).toHaveBeenCalledWith({}, "", "/workspace/doc-101");
-            expect(replaceStateSpy).not.toHaveBeenCalled();
-            expect(dispatchEventSpy).toHaveBeenCalledTimes(1);
-            const dispatchedEvent = dispatchEventSpy.mock.calls[0][0];
-            expect(dispatchedEvent).toBeInstanceOf(PopStateEvent);
-            expect(dispatchedEvent.type).toBe("popstate");
+            expect(link).toBeDefined();
+            expect(link.getAttribute("href")).toBe("/workspace/doc-101");
+            expect(mockLinkComponent).toHaveBeenCalledTimes(1);
+            expect(mockLinkComponent).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    to: "/workspace/doc-101",
+                    children: "Open Document",
+                })
+            );
         });
 
-        it("triggers replaceState instead of pushState when replace is true", () => {
+        it("delegates to TanStack Link directly when 'to' prop is provided", () => {
             render(
-                <AppLink href="/account" replace data-testid="replace-link">
+                <AppLink to="/account" data-testid="to-link">
                     Account Settings
                 </AppLink>
             );
 
-            const link = screen.getByTestId("replace-link");
-            const clickEvent = new MouseEvent("click", {
-                bubbles: true,
-                cancelable: true,
-                button: 0,
-            });
-
-            const defaultPrevented = !link.dispatchEvent(clickEvent);
-
-            expect(defaultPrevented).toBe(true);
-            expect(replaceStateSpy).toHaveBeenCalledTimes(1);
-            expect(replaceStateSpy).toHaveBeenCalledWith({}, "", "/account");
-            expect(pushStateSpy).not.toHaveBeenCalled();
-            expect(dispatchEventSpy).toHaveBeenCalledTimes(1);
-            expect(dispatchEventSpy.mock.calls[0][0].type).toBe("popstate");
+            const link = screen.getByTestId("to-link");
+            expect(link.getAttribute("href")).toBe("/account");
+            expect(mockLinkComponent).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    to: "/account",
+                })
+            );
         });
-    });
 
-    describe("2. Modifier Keys Bypass (Browser Native Multitasking)", () => {
-        it.each([
-            ["metaKey (Cmd/Command)", { metaKey: true }],
-            ["ctrlKey (Control)", { ctrlKey: true }],
-            ["altKey (Alt/Option)", { altKey: true }],
-            ["shiftKey (Shift)", { shiftKey: true }],
-        ])("bypasses client routing when %s is pressed", (_, modifier) => {
+        it("forwards replace={true} to TanStack Link", () => {
             render(
-                <AppLink href="/workspace/new-tab" data-testid="mod-link">
-                    Open in New Tab
+                <AppLink href="/dashboard" replace data-testid="replace-link">
+                    Dashboard
                 </AppLink>
             );
 
-            const link = screen.getByTestId("mod-link");
-            const clickEvent = new MouseEvent("click", {
-                bubbles: true,
-                cancelable: true,
-                button: 0,
-                ...modifier,
-            });
-
-            const defaultPrevented = !link.dispatchEvent(clickEvent);
-
-            expect(defaultPrevented).toBe(false);
-            expect(pushStateSpy).not.toHaveBeenCalled();
-            expect(replaceStateSpy).not.toHaveBeenCalled();
-            expect(dispatchEventSpy).not.toHaveBeenCalled();
-        });
-    });
-
-    describe("3. Mouse Button Filtering", () => {
-        it.each([
-            ["middle click (button: 1)", 1],
-            ["right click (button: 2)", 2],
-            ["auxiliary button 3", 3],
-            ["auxiliary button 4", 4],
-        ])("bypasses client routing on non-primary button: %s", (_, button) => {
-            render(
-                <AppLink href="/workspace/aux" data-testid="button-link">
-                    Aux Click
-                </AppLink>
+            expect(mockLinkComponent).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    to: "/dashboard",
+                    replace: true,
+                })
             );
-
-            const link = screen.getByTestId("button-link");
-            const clickEvent = new MouseEvent("click", {
-                bubbles: true,
-                cancelable: true,
-                button,
-            });
-
-            const defaultPrevented = !link.dispatchEvent(clickEvent);
-
-            expect(defaultPrevented).toBe(false);
-            expect(pushStateSpy).not.toHaveBeenCalled();
-            expect(replaceStateSpy).not.toHaveBeenCalled();
-            expect(dispatchEventSpy).not.toHaveBeenCalled();
         });
     });
 
-    describe("4. URL Scheme & Route Isolation", () => {
+    describe("2. URL Scheme & Route Isolation", () => {
         it.each([
             ["external HTTPS URL", "https://elixent.dev/docs"],
             ["external HTTP URL", "http://example.com"],
@@ -183,7 +138,7 @@ describe("AppLink Component", () => {
             ["hash-only anchor", "#section-anchor"],
             ["relative path without leading slash", "workspace/relative"],
             ["empty string", ""],
-        ])("bypasses client routing for non-root URL: %s (%s)", (_, href) => {
+        ])("bypasses TanStack Link for non-internal URL: %s (%s)", (_, href) => {
             render(
                 <AppLink href={href} data-testid="external-link">
                     Navigate
@@ -191,29 +146,20 @@ describe("AppLink Component", () => {
             );
 
             const link = screen.getByTestId("external-link");
-            const clickEvent = new MouseEvent("click", {
-                bubbles: true,
-                cancelable: true,
-                button: 0,
-            });
-
-            const defaultPrevented = !link.dispatchEvent(clickEvent);
-
-            expect(defaultPrevented).toBe(false);
-            expect(pushStateSpy).not.toHaveBeenCalled();
-            expect(replaceStateSpy).not.toHaveBeenCalled();
-            expect(dispatchEventSpy).not.toHaveBeenCalled();
+            expect(link.getAttribute("href")).toBe(href);
+            // Must NOT delegate to TanStack Link
+            expect(mockLinkComponent).not.toHaveBeenCalled();
         });
     });
 
-    describe("5. Target Attribute Bypass", () => {
+    describe("3. Target Attribute Bypass", () => {
         it.each([
             ["target='_blank'", "_blank"],
             ["target='_self'", "_self"],
             ["target='_parent'", "_parent"],
             ["target='_top'", "_top"],
             ["target='custom-frame'", "custom-frame"],
-        ])("bypasses client routing when %s is specified", (_, target) => {
+        ])("bypasses TanStack Link when %s is specified", (_, target) => {
             render(
                 <AppLink href="/dashboard" target={target} data-testid="target-link">
                     Target Link
@@ -221,23 +167,14 @@ describe("AppLink Component", () => {
             );
 
             const link = screen.getByTestId("target-link");
-            const clickEvent = new MouseEvent("click", {
-                bubbles: true,
-                cancelable: true,
-                button: 0,
-            });
-
-            const defaultPrevented = !link.dispatchEvent(clickEvent);
-
-            expect(defaultPrevented).toBe(false);
-            expect(pushStateSpy).not.toHaveBeenCalled();
-            expect(replaceStateSpy).not.toHaveBeenCalled();
-            expect(dispatchEventSpy).not.toHaveBeenCalled();
+            expect(link.getAttribute("target")).toBe(target);
+            // Must NOT delegate to TanStack Link
+            expect(mockLinkComponent).not.toHaveBeenCalled();
         });
     });
 
-    describe("6. Event Interception & defaultPrevented Handling", () => {
-        it("invokes custom onClick handler before navigation logic", () => {
+    describe("4. Event Interception & Click Handling", () => {
+        it("invokes custom onClick handler when link is clicked", () => {
             const customOnClick = vi.fn();
             render(
                 <AppLink href="/workspace/test" onClick={customOnClick} data-testid="click-link">
@@ -249,32 +186,61 @@ describe("AppLink Component", () => {
             fireEvent.click(link);
 
             expect(customOnClick).toHaveBeenCalledTimes(1);
-            expect(pushStateSpy).toHaveBeenCalledTimes(1);
-            expect(dispatchEventSpy).toHaveBeenCalledTimes(1);
         });
 
-        it("aborts client-side routing if custom onClick calls e.preventDefault()", () => {
+        it("forwards onClick to native anchor for external URLs", () => {
             const customOnClick = vi.fn((e: React.MouseEvent<HTMLAnchorElement>) => {
                 e.preventDefault();
             });
 
             render(
-                <AppLink href="/workspace/guarded" onClick={customOnClick} data-testid="prevent-link">
-                    Guarded Link
+                <AppLink href="https://elixent.dev" onClick={customOnClick} data-testid="external-click">
+                    External Link
                 </AppLink>
             );
 
-            const link = screen.getByTestId("prevent-link");
+            const link = screen.getByTestId("external-click");
             fireEvent.click(link);
 
             expect(customOnClick).toHaveBeenCalledTimes(1);
-            expect(pushStateSpy).not.toHaveBeenCalled();
-            expect(replaceStateSpy).not.toHaveBeenCalled();
-            expect(dispatchEventSpy).not.toHaveBeenCalled();
+            expect(mockLinkComponent).not.toHaveBeenCalled();
         });
     });
 
-    describe("7. HTML Element Forwarding & Accessibility (DOM Invariants)", () => {
+    describe("5. Standalone & Resilient Fallback (Outside RouterProvider)", () => {
+        it("renders cleanly as standard HTML anchor when outside RouterProvider context", () => {
+            mockUseRouter.mockReturnValue(null);
+
+            render(
+                <AppLink href="/workspace/editor/file-101" data-testid="standalone-link">
+                    Standalone Link
+                </AppLink>
+            );
+
+            const link = screen.getByTestId("standalone-link");
+            expect(link).toBeInstanceOf(HTMLAnchorElement);
+            expect(link.getAttribute("href")).toBe("/workspace/editor/file-101");
+            expect(link.textContent).toBe("Standalone Link");
+            expect(mockLinkComponent).not.toHaveBeenCalled();
+        });
+
+        it("invokes onClick handler in standalone mode without error", () => {
+            mockUseRouter.mockReturnValue(null);
+            const handleClick = vi.fn();
+
+            render(
+                <AppLink href="/dashboard" onClick={handleClick} data-testid="standalone-click">
+                    Click Test
+                </AppLink>
+            );
+
+            const link = screen.getByTestId("standalone-click");
+            fireEvent.click(link);
+            expect(handleClick).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe("6. HTML Element Forwarding & Accessibility (DOM Invariants)", () => {
         it("forwards React ref to the underlying HTMLAnchorElement", () => {
             const anchorRef = createRef<HTMLAnchorElement>();
             render(

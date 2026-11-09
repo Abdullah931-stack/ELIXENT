@@ -97,7 +97,7 @@ async function routePutUpdate(fileId: string, newContent: string, opts: { versio
         }),
     });
 
-    const res = await PUT(req, { params: Promise.resolve({ id: fileId }) });
+    const res = await PUT(req, { params: { id: fileId } });
     if (res.status === 200) {
         const data = await res.json();
         return { success: true, version: data.version, affected: 1 };

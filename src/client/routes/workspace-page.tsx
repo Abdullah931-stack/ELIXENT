@@ -4,19 +4,10 @@ import { navigateTo } from "@/client/navigation";
 import { getRootFiles, createFile } from "@/client/rpc-client";
 import { Button } from "@/components/ui/button";
 import { Plus, FileText, Folder, Sparkles } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 
 async function resolveAuthUser() {
-    if (typeof process !== "undefined" && process.env?.VITEST) {
-        try {
-            const serverSupabase = await import(/* @vite-ignore */ "@/lib/supabase/server");
-            const serverUser = await serverSupabase.getUser();
-            if (serverUser !== undefined) {
-                return serverUser;
-            }
-        } catch {}
-    }
     try {
-        const { createClient } = await import("@/lib/supabase/client");
         const supabase = createClient();
         const { data: { user } } = await supabase.auth.getUser();
         return user;
@@ -25,16 +16,44 @@ async function resolveAuthUser() {
     }
 }
 
-export default async function WorkspacePage() {
-    const user = await resolveAuthUser();
+interface WorkspaceFileItem {
+    id: string;
+    title: string;
+    isFolder?: boolean;
+    updatedAt?: string | Date | null;
+}
 
-    if (!user) {
-        navigateTo("/login");
-        return null;
-    }
+export default function WorkspacePage() {
+    const [loading, setLoading] = useState(true);
+    const [user, setUser] = useState<{ id: string } | null>(null);
+    const [files, setFiles] = useState<WorkspaceFileItem[]>([]);
 
-    const filesResult = await getRootFiles();
-    const files = filesResult.data || [];
+    useEffect(() => {
+        let isMounted = true;
+        async function loadData() {
+            try {
+                const authUser = await resolveAuthUser();
+                if (!isMounted) return;
+                if (!authUser) {
+                    navigateTo("/login");
+                    return;
+                }
+                setUser(authUser);
+                const filesResult = await getRootFiles();
+                if (!isMounted) return;
+                setFiles(filesResult?.data || []);
+                setLoading(false);
+            } catch {
+                if (isMounted) {
+                    navigateTo("/login");
+                }
+            }
+        }
+        loadData();
+        return () => {
+            isMounted = false;
+        };
+    }, []);
 
     const triggerCreateDocument = async () => {
         const result = await createFile("Untitled Document", null, false);
@@ -48,9 +67,15 @@ export default async function WorkspacePage() {
         await triggerCreateDocument();
     };
 
-    const handleCreateAction = async () => {
-        await triggerCreateDocument();
-    };
+    if (loading || !user) {
+        return (
+            <div className="p-6">
+                <div className="max-w-4xl mx-auto flex items-center justify-center py-20">
+                    <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" />
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="p-6">
@@ -64,7 +89,7 @@ export default async function WorkspacePage() {
                         </p>
                     </div>
 
-                    <form onSubmit={handleCreateSubmit} action={handleCreateAction}>
+                    <form onSubmit={handleCreateSubmit}>
                         <Button type="submit" variant="ai" className="gap-2">
                             <Plus className="w-4 h-4" />
                             New Document
@@ -84,7 +109,7 @@ export default async function WorkspacePage() {
                         <p className="text-zinc-500 text-sm mb-6">
                             Create your first document to get started
                         </p>
-                        <form onSubmit={handleCreateSubmit} action={handleCreateAction}>
+                        <form onSubmit={handleCreateSubmit}>
                             <Button type="submit" variant="primary" className="gap-2">
                                 <Plus className="w-4 h-4" />
                                 Create Document
@@ -102,7 +127,7 @@ export default async function WorkspacePage() {
                                 <div className="p-4 rounded-lg border border-zinc-800 bg-zinc-900/30 hover:bg-zinc-900/50 hover:border-zinc-700 transition-all">
                                     <div className="w-10 h-10 rounded-lg bg-zinc-800/50 flex items-center justify-center mb-3 group-hover:bg-zinc-800 transition-colors">
                                         {file.isFolder ? (
-                                            <Folder className="w-5 h-5 text-amber-500/70" />
+                                             <Folder className="w-5 h-5 text-amber-500/70" />
                                         ) : (
                                             <FileText className="w-5 h-5 text-zinc-500" />
                                         )}
@@ -111,7 +136,7 @@ export default async function WorkspacePage() {
                                         {file.title}
                                     </h3>
                                     <p className="text-xs text-zinc-500 mt-1">
-                                        {new Date(file.updatedAt).toLocaleDateString()}
+                                        {file.updatedAt ? new Date(file.updatedAt).toLocaleDateString() : ""}
                                     </p>
                                 </div>
                             </Link>
@@ -124,21 +149,6 @@ export default async function WorkspacePage() {
 }
 
 export function WorkspaceRouteView() {
-    const [node, setNode] = useState<React.ReactNode>(null);
-
-    useEffect(() => {
-        WorkspacePage()
-            .then(setNode)
-            .catch(() => navigateTo("/login"));
-    }, []);
-
-    return (
-        node || (
-            <div className="p-6">
-                <div className="max-w-4xl mx-auto flex items-center justify-center py-20">
-                    <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" />
-                </div>
-            </div>
-        )
-    );
+    return <WorkspacePage />;
 }
+
