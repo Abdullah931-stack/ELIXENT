@@ -65,7 +65,7 @@ graph TD
 | `ConcurrencyManager` | In-memory mutex promise locking per file ID |
 | `ConnectionDetector` | Network monitoring with exponential backoff and jitter |
 | `Vault Server Actions` (`vault-actions.ts`) | Atomic vault profile CRUD, AI setting persistence (`updateVaultAISetting`), and remote device revocation |
-| `File Operations` (`file-ops.ts`) | Optimistic `toggleFileEncryption` & client-re-encrypted `copyFile` guard (AUD-02) with `operationId` continuity |
+| `File Operations` (`files.ts`) | Optimistic `toggleFileEncryption` & client-re-encrypted `copyFile` guard (AUD-02) with `operationId` continuity |
 | `AI Commit Action` (`ai-commit.ts`) | Transactional AI commit with Zero-Knowledge plaintext rejection and automatic reservation refunding |
 
 ### 3. Data & Cryptography Layer

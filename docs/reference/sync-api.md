@@ -529,7 +529,7 @@ The sync system implements a deterministic Three-Way Merge protocol to resolve c
 
 > **Architecture Note:** As part of the Web-Standard Framework Migration (Phase 3 & Phase 4), all server actions in `src/server/actions/*` are fully decoupled from Next.js runtime dependencies, stripped of transitional `"use server"` directives, and mounted as end-to-end typed Hono RPC routes under `/api/rpc/*` (`src/server/routes/rpc.routes.ts`). All client hooks (`useEditorOrchestrator`, `useEditorConflict`, `useSync`) and UI components (`Sidebar`, `FileContextMenu`, `FolderPickerModal`, `FileTreeItem`, and Vault modals) invoke file and vault operations exclusively via `@/client/rpc-client` (`hc<AppType>`), with internal navigation routed through `AppLink` (`src/components/ui/app-link.tsx`). All `"use client"` directives have been permanently stripped.
 
-### 1. `toggleFileEncryption` (`src/server/actions/files.ts`, re-exported via `file-ops.ts`, RPC: `POST /api/rpc/files/toggle-encryption`)
+### 1. `toggleFileEncryption` (`src/server/actions/files.ts`, RPC: `POST /api/rpc/files/toggle-encryption`)
 Converts a file between plaintext and encrypted states:
 - **Signature & RPC Route:** `POST /api/rpc/files/toggle-encryption`
   ```typescript
@@ -550,7 +550,7 @@ Converts a file between plaintext and encrypted states:
   ```
 - **Invariants:** Folders cannot be encrypted (`isFolder === false`). Preconditions `expectedVersion` and `expectedETag` are verified optimistically; returns 412 with `serverVersion` on conflict.
 
-### 2. `copyFile` with Encrypted Override (`src/server/actions/files.ts`, re-exported via `file-ops.ts` / AUD-02, RPC: `POST /api/rpc/files/copy`)
+### 2. `copyFile` with Encrypted Override (`src/server/actions/files.ts`, RPC: `POST /api/rpc/files/copy`)
 Creates a copy of a document or folder:
 - **Signature & RPC Route:** `POST /api/rpc/files/copy`
 - **Encrypted File Invariant:** If `original.isEncrypted` is true, `copyFile` strictly requires an `encryptedOverride` containing `{ newFileId, content, encryptionMetadata }` re-encrypted on the client with unique AAD. Server-side blind copy is rejected.

@@ -119,11 +119,11 @@ The signature `getDescendantIds(folderId: string, userId: string, includeDeleted
 - **Optimistic Concurrency Guard**: Validates `expectedVersion` and `expectedETag` against live database state. On mismatch, returns 412 Conflict with the current `serverVersion` including `isEncrypted` and `encryptionMetadata`.
 - **Atomic Metadata & ETag Update**: Inverts `isEncrypted`, sets/clears structured `encryptionMetadata`, updates normalized content, computes strong SHA-256 ETag, and increments version atomically in a single SQL operation.
 
-### L. Modular Action Architecture & Facade Pattern (`src/server/actions/*`)
+### L. Modular Action Architecture & Domain Separation (`src/server/actions/*`)
 To guarantee high cohesion and single-responsibility isolation, file and directory operations are divided into two dedicated server action modules:
 - **`src/server/actions/files.ts`:** Governs individual file life cycles, including `createFile`, `updateFileContent`, `toggleFileEncryption`, `renameFile`, `deleteFile`, `restoreFile`, and `copyFile`.
 - **`src/server/actions/folders.ts`:** Governs folder hierarchy graph logic, including `moveFile`, `getFolderChildren`, `getDescendantIds`, and `isDescendantOf`.
-- **`src/server/actions/file-ops.ts` Facade:** Re-exports all functions and types from `files.ts` and `folders.ts`, preserving 100% backward compatibility across all existing UI and server callers.
+- **Direct Domain Imports:** Callers import domain actions directly from `@/server/actions/files` and `@/server/actions/folders`. The temporary Turbopack workaround facade `src/server/actions/file-ops.ts` has been permanently purged in Phase 2.
 
 ---
 
@@ -141,7 +141,7 @@ To guarantee high cohesion and single-responsibility isolation, file and directo
  - `src/test/vault/vault-import.integration.test.ts`: Integration test verifying direct client-encrypted vault import pipeline.
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 137 unit suites (2468 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 140 unit suites (2540 tests) · 21 live suites (105 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ---

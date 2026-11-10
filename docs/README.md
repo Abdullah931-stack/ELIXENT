@@ -198,6 +198,7 @@ docs/
 
 | Document | Scope / Date |
 | :--- | :--- |
+| [nextjs-decoupling-phases-1-and-2-forensic-audit.md](./records/audits/nextjs-decoupling-phases-1-and-2-forensic-audit.md) | Forensic architectural and code review of Next.js decoupling Phases 1 & 2 (8 verified findings, dual-plane RPC analysis) — 2026-11-11 |
 | [comprehensive-test-suite-audit-and-refactor-baseline.md](./records/audits/comprehensive-test-suite-audit-and-refactor-baseline.md) | Exhaustive test suite audit and refactoring baseline (134 files, 1,364 tests, 5 anti-pattern clusters, 89 sacred regressions) — 2026-10-28 |
 | [unified-security-and-engineering-audit.md](./records/audits/unified-security-and-engineering-audit.md) | Comprehensive 7-module security, reliability & architectural audit (183 consolidated findings, v1.32.4 / commit `d2d60a7`) |
 | [W10-Final-Closure-Round.md](./records/audits/W10-Final-Closure-Round.md) | Concurrency-window closure F1 (SQL optimistic locking on `PUT /api/files/:id`) & Vitest `singleFork` serialization — 2026-08-16 |
@@ -262,7 +263,7 @@ docs/
 ## 4. Verification Commands
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 137 unit suites (2468 tests) · 21 live suites (108 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 140 unit suites (2540 tests) · 21 live suites (105 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ```bash
@@ -271,8 +272,8 @@ npm run lint:links      # deterministic markdown internal link verification (zer
 npm run test:ci-gate    # deterministic CI gating simulation matrix (30 assertions, zero broken contracts)
 npx tsc --noEmit        # strict TypeScript type-checking (0 errors)
 npm run audit:ci        # dependency security gate: production fail-closed (0 vulnerabilities) + dev allowlist (TD-15)
-npm run test            # pure unit, contract, and vault cryptographic test suites (137 files, 2468 tests via vitest.config.mts)
-npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (21 files, 108 tests via vitest.live.config.mts)
+npm run test            # pure unit, contract, and vault cryptographic test suites (140 files, 2540 tests via vitest.config.mts)
+npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (21 files, 105 tests via vitest.live.config.mts)
 npm run test:e2e        # browser-driven E2E user journeys (14 specs, 15 scenarios via Playwright / Chromium)
 npm run test:all        # full suite execution (unit + live)
 npm run build           # Vite 6 production bundle compilation

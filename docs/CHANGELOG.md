@@ -4,6 +4,32 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.20.0] - 2026-11-10 (Phase 2: Purge Next.js Middleware Relics, Turbopack Facades & Unify Hono RPC Contracts)
+
+### Session Middleware Purification & RFC 9110 Content Negotiation
+- **Purged `next-action` Header Check:** Removed proprietary Next.js action header sniffing from `src/server/middleware/session-middleware.ts`. Protected paths (`/workspace`, `/account`, `/dashboard`) now standardly negotiate RFC 9110 content: unauthenticated requests carrying `Accept: application/json` or targeting `/api/*` return `HTTP 401 JSON` (`{ error: "Unauthorized" }`), while standard browser navigations redirect `307` to `/login?redirectTo=...`.
+- **Eradicated Dead Edge Matcher:** Permanently deleted Next.js Edge Middleware matcher `export const config = { matcher: [...] }` (including `/_next/static`, `/_next/image`).
+- **Removed Backward Compatibility Aliases:** Purged `export const proxy = handleSessionProxy` from `session-middleware.ts`.
+- **Standardized Fallback Env Lookups:** Aligned Supabase environment variable lookups to standard `process.env.VITE_SUPABASE_URL` and `process.env.VITE_SUPABASE_ANON_KEY`.
+- **Middleware Test Realignment:** Realigned `src/test/server/session-middleware.test.ts`, `src/test/auth/proxy.test.ts`, and `src/test/server/app-dispatcher.test.ts` (DEF-09) to assert standard content negotiation and purified middleware imports.
+
+### Turbopack Facade Eradication & Server Action Purification
+- **Purged `signOut(FormData)` Overload (DEF-08):** Removed Next.js `<form action={signOut}>` `FormData` overload and internal branching from `src/server/actions/auth-actions.ts`. Established a single pure signature returning `Promise<{ success: true; redirectUrl: string }>`. Aligned `auth-signout.test.ts` and `auth-actions.unit.test.ts`.
+- **Permanently Deleted `file-ops.ts` Facade (DEF-07):** Removed the legacy Turbopack workaround facade `src/server/actions/file-ops.ts`.
+- **Repointed All 15 Callers:** Re-pointed all 11 unit/mock test suites and all 4 live database integration suites (`cross-user-ownership.test.ts`, `conflict-resolution.integration.test.ts`, `vault-sync.live.test.ts`, `multi-system-lifecycle.live.test.ts`) directly to `@/server/actions/files` and `@/server/actions/folders`.
+- **Cleaned Residual Next.js JSDocs & Branding:** Replaced `Next.js after()` mentions with `scheduleAfterResponse() (ADR-007 ALS)` in `agent.routes.ts` and `agent-stream-route.test.ts`. Updated JSDoc headers across `import-file.ts`, `vault-actions.ts`, `webhook-dedupe.ts`, and `correlation.ts` to Hono RPC terminology. Updated server entrypoint banner branding from `LUGX` to `ELIXENT`.
+
+### Shared RPC Contract Extraction & End-to-End Typed Client
+- **Extracted Shared Zero-Dependency Contracts:** Created `src/types/rpc-contracts.ts` containing all data transfer interfaces (`FileRecord`, `VaultProfileRecord`, `UserProfileRecord`, `FileOpResult`, etc.) and Zod schemas (`fileIdSchema`, `createFileSchema`, `updateFileSchema`, `toggleEncryptionSchema`, etc.) with zero runtime dependencies.
+- **Wired Strongly-Typed `hc<AppType>` Client:** Refactored `src/client/rpc-client.ts` to derive `ElixentRpcClient = ReturnType<typeof hc<AppType>>`, re-exporting shared contracts from `@/types/rpc-contracts` and eliminating untyped `hc<never>` casts.
+- **Adopted `hono/cookie` with Explicit Expiration (DEF-11):** Updated `POST /api/rpc/auth/sign-out` in `src/server/routes/rpc.routes.ts` to delete all `sb-*` auth cookies via `deleteCookie(c, name, { expires: new Date(0), path: "/", httpOnly: true, sameSite: "Lax" })`.
+- **Simplified File Route Params:** Cleaned `src/server/routes/files-api.routes.ts` to directly extract route parameters via `c.req.param("id")`, removing asynchronous param wrapper types.
+- **New Contract & Decoupling Test Suites:** Added `src/test/contracts/rpc-contracts.test.ts`, `src/test/server/wave-2-1-decoupling-architecture.test.ts`, and `src/test/server/wave-2-2-rpc-unification.test.ts` (72 tests).
+- **Verification Baseline:** 140 unit suites (2,540 passing tests), 21 live suites (105 passing tests), 14 E2E specs (15 journeys), 100% green.
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/nextjs-decoupling/phase-02-purge-middleware-relics-turbopack-facade-and-unify-rpc-contracts.md`](./records/closures/nextjs-decoupling/phase-02-purge-middleware-relics-turbopack-facade-and-unify-rpc-contracts.md).
+
+---
+
 ## [0.19.0] - 2026-11-10 (Phase 1: Archive Prior Migration Plan, Clean Compiler/Env Relics & Enforce Fail-Closed Vite Boundary Guard)
 
 ### Framework Migration Plan Archival & Cross-Document Link Synchronization

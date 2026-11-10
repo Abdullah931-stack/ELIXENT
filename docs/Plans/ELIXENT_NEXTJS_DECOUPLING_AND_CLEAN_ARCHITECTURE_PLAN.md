@@ -109,7 +109,7 @@ flowchart TB
 ### [Phase 1: Archive Prior Migration Plan, Clean Compiler/Env Relics & Enforce Fail-Closed Vite Boundary Guard]
 
 > **Phase Identifier:** `Phase 1 — Archive Prior Migration Plan, Clean Compiler/Env Relics & Enforce Fail-Closed Vite Boundary Guard`  
-> **Status:** `PENDING EXECUTION`  
+> **Status:** `CLOSED / VERIFIED (v0.19.0)` ✅  
 > **Target Closure Dossier:** `docs/records/closures/nextjs-decoupling/phase-01-archive-plan-clean-compiler-env-and-vite-boundary-guard.md`  
 > **Single Responsibility Principle (`SRP`):** Archive the completed 6-phase `ELIXENT_FRAMEWORK_MIGRATION_PLAN.md` to `docs/records/plans/` in compliance with `.agents/rules/docs-governance.md` Rule 4, purge residual Next.js compiler plugins and `.next/` type globs from `tsconfig.json`, eliminate legacy `NEXT_PUBLIC_*` lookups across client/server config and production services (`stripe`, `billing`), realign all 5 environment-dependent test suites, and replace `clientServerStubPlugin` and `define: { "process.env": "{}" }` in `vite.config.ts` with a mathematically sound fail-closed boundary assertion plugin that excludes `node_modules` and prevents false positives.  
 > **Pre-Phase 1 Baseline State:** `Elixent v0.18.0` repository with `135` unit suites (`2,346` tests), `21` live suites (`108` tests), and `14` Playwright E2E specs (`15` journeys) passing $100\%$, containing residual Next.js config artifacts in `tsconfig.json`, `vite.config.ts`, `.env.example`, and `docs/Plans/`.
@@ -350,7 +350,7 @@ flowchart LR
 ### [Phase 2: Purge Next.js Middleware Relics, Turbopack Facades & Unify Hono RPC Contracts]
 
 > **Phase Identifier:** `Phase 2 — Purge Next.js Middleware Relics, Turbopack Facades & Unify Hono RPC Contracts`  
-> **Status:** `PENDING EXECUTION`  
+> **Status:** `CLOSED / VERIFIED (v0.20.0)` ✅  
 > **Target Closure Dossier:** `docs/records/closures/nextjs-decoupling/phase-02-purge-middleware-relics-turbopack-facade-and-unify-rpc-contracts.md`  
 > **Single Responsibility Principle (`SRP`):** Purge the dead Next.js `next-action` header check, `export const config = { matcher }` (`_next/static`, `_next/image`), and `proxy` alias from `src/server/middleware/session-middleware.ts` (realigning `session-middleware.test.ts`, `proxy.test.ts`, and `app-dispatcher.test.ts`); remove the Next.js `<form action={signOut}>` `FormData` overload from `auth-actions.ts` (realigning `auth-actions.unit.test.ts`); permanently delete the Next.js Turbopack `"use server"` facade `src/server/actions/file-ops.ts` (repointing all 15 unit and live callers); adopt `hono/cookie` (`deleteCookie` with `expires: new Date(0)`) in `rpc.routes.ts`; and extract shared zero-dependency RPC types into `src/types/rpc-contracts.ts` so `src/client/rpc-client.ts` uses true `hc<AppType>` via `ReturnType<typeof hc<AppType>>`.  
 > **Post-Phase 1 Baseline State:** Prior migration plan is archived, `tsconfig.json` and `vite.config.ts` are completely free of Next.js plugins and silent server stubs, all `VITE_*` environment lookups are standardized, and all 5 environment test suites pass green.

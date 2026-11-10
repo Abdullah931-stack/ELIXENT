@@ -9,7 +9,7 @@ the current source files referenced inline.
 
 ## 1. Request Authentication (`src/server/middleware/session-middleware.ts`)
 
-Request-level session authentication and routing protection are handled by the Web-standard Hono middleware (`sessionMiddleware` and `handleSessionProxy` in `src/server/middleware/session-middleware.ts`), backed by request-scoped context (`src/server/context/request-context.ts`). The middleware executes across all non-static routes matching `config.matcher`. Behavior:
+Request-level session authentication and routing protection are handled by the Web-standard Hono middleware (`sessionMiddleware` and `handleSessionProxy` in `src/server/middleware/session-middleware.ts`), backed by request-scoped context (`src/server/context/request-context.ts`). The middleware executes across all incoming routes mounted on Hono (`app.use("*", sessionMiddleware)`). Behavior:
 
 | Concern | Implementation |
 | :--- | :--- |
@@ -18,10 +18,10 @@ Request-level session authentication and routing protection are handled by the W
 | Fast-Path Routing (TD-12) | Public routes (`/` homepage, static assets) and `/login` requests without auth cookies completely bypass `supabase.auth.getUser()`, eliminating unnecessary network round-trips and socket contention |
 | Watchdog Timeout (TD-12) | `supabase.auth.getUser()` is encapsulated inside a 2500ms timeout watchdog (`AbortSignal.timeout(2500)`). If Supabase auth stalls or hangs, the call safely aborts to `null` user, preventing Chromium socket pool saturation (`CLOSE_WAIT` exhaustion) |
 | Cookie Preservation (TD-12) | Redirect responses (307) and API 401 JSON responses preserve all `Set-Cookie` headers (serialized via `applyCookiesToResponse`), ensuring cookie deletion and session rotation directives reach the browser |
-| Server Actions & API routes | Under protected paths, an unauthenticated request receives a **JSON `401 Unauthorized`** instead of an HTML redirect (an HTML redirect breaks the Server Action client runtime) |
+| RFC 9110 Content Negotiation | Under protected paths, an unauthenticated request carrying `Accept: application/json` or targeting `/api/*` receives a **JSON `401 Unauthorized`** (`{ error: "Unauthorized" }`), while standard browser navigations redirect `307` to `/login?redirectTo=…` |
 | Logged-in access control | Authenticated users hitting `/login` are redirected to `/dashboard` |
 | OAuth code interception (LUGX-140) | Any request carrying an OAuth `code` query param strictly targeting root (`/`) or login (`/login`) is redirected to `/auth/callback`, preventing parameter interception on arbitrary application sub-paths |
-| Session refresh & Sign-Out | The middleware refreshes the Supabase session cookie on matched requests. When signing out (`signOut()` in `src/server/actions/auth-actions.ts`), all `sb-*` auth cookies are proactively cleared from `cookieStore` and `{ success: true, redirectUrl: "/" }` is returned |
+| Session refresh & Sign-Out | The middleware refreshes the Supabase session cookie on matched requests. When signing out (`POST /api/rpc/auth/sign-out`), all `sb-*` auth cookies are proactively cleared via `hono/cookie` (`deleteCookie(c, name, { expires: new Date(0), path: "/", httpOnly: true, sameSite: "Lax" })`) and `{ success: true, redirectUrl: "/" }` is returned |
 
 ### 1.1. Open Redirect & Host Header Injection Hardening (`src/lib/auth/safe-redirect.ts`)
 
@@ -32,11 +32,11 @@ All redirect parameters entering the authentication pipeline are strictly valida
 - **Control Character & Null-Byte Stripping**: Strips ASCII `0x00-0x1F`, `0x7F`, and blocks null-byte/CRLF injection.
 - **Iterative 3-Pass Decoding**: Prevents multi-encoded bypasses (`/%2F%2Fevil.com`).
 - **Scheme & Protocol Rejection**: Rejects `javascript:`, `data:`, `vbscript:`, `blob:`, `file:`, `about:`, `mailto:`, `tel:`, `sms:`, `urn:`, and external protocols `http:`, `https:`.
-- **OAuth Callback (`/auth/callback`)**: Redirection targets are anchored exclusively to trusted origins (`process.env.NEXT_PUBLIC_APP_URL || origin`), completely ignoring spoofable `x-forwarded-host` headers.
+- **OAuth Callback (`/auth/callback`)**: Redirection targets are anchored exclusively to trusted origins (`process.env.VITE_APP_URL || process.env.APP_URL || origin`), completely ignoring spoofable `x-forwarded-host` headers.
 
 ### 1.2. Cross-User Resource Isolation & Anti-Enumeration (404 vs 403)
 
-To prevent resource enumeration (probing for valid UUIDs via 403 vs 404 responses), all lookups across `src/server/auth/session.ts` (`requireOwnedFile`), `file-ops.ts`, `import-file.ts`, and `src/server/routes/agent.routes.ts` return unified `404 Not Found` responses when foreign/unauthorized resources are accessed. Furthermore, `requireOwnedFile` performs upfront UUID regex syntax verification, preventing PostgreSQL `22P02` syntax errors from revealing invalid UUID queries.
+To prevent resource enumeration (probing for valid UUIDs via 403 vs 404 responses), all lookups across `src/server/auth/session.ts` (`requireOwnedFile`), `src/server/actions/files.ts`, `import-file.ts`, and `src/server/routes/agent.routes.ts` return unified `404 Not Found` responses when foreign/unauthorized resources are accessed. Furthermore, `requireOwnedFile` performs upfront UUID regex syntax verification, preventing PostgreSQL `22P02` syntax errors from revealing invalid UUID queries.
 
 ### 1.3 Zero-Knowledge Encrypted Content Governance & AI Route Hardening (LUGX-085, LUGX-004, LUGX-017)
 

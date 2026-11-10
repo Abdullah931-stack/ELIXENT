@@ -56,7 +56,7 @@
 - `src/components/editor/markdown/markdown-theme.ts`: Unified font stack, bidi isolation classes, and dark theme tokens.
 - `src/components/editor/markdown/types.ts`: `TextDirectionMode`, `DirectionSettings`, and `EditorAdapter` direction methods.
 - `src/components/editor/markdown/editor-adapter.ts`: CodeMirror 6 adapter direction management implementation.
-- `src/server/actions/file-ops.ts`: Core logic for `copyFile` (Deep Copy).
+- `src/server/actions/files.ts`: Core logic for `copyFile` (Deep Copy).
 - `src/components/files/folder-picker-modal.tsx`: New folder selection UI.
-- `src/app/workspace/editor/[fileId]/page.tsx`: Editor UI integration, global shortcuts, and stats logic.
+- `src/client/routes/editor-page.tsx`: Editor UI integration, global shortcuts, and stats logic.
 - `src/components/layout/sidebar.tsx`: Refresh logic implementation.
