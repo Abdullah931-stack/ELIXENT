@@ -21,7 +21,7 @@ Phase 3 introduces:
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 135 | 2346 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 137 | 2468 | 100% ✅ |
 | **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 108 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
@@ -37,7 +37,7 @@ flowchart TD
     end
 
     subgraph S2 ["Stage 2: Pure Unit Contracts"]
-        UC["npm run test (135 files, 2346 tests)<br/>Zero DB / Zero Network"]
+        UC["npm run test (137 files, 2468 tests)<br/>Zero DB / Zero Network"]
     end
 
     subgraph S3 ["Stage 3: Schema Integrity"]
@@ -125,9 +125,9 @@ flowchart TD
 | Secret Name | Gating Level | Fallback Mechanism |
 | :--- | :--- | :--- |
 | `TEST_DATABASE_URL` | **Mandatory** | None. Missing triggers fail-closed in protected contexts. |
-| `NEXT_PUBLIC_SUPABASE_URL` | **Mandatory** | None. Required for client-side authentication mocking and token resolution. |
+| `VITE_SUPABASE_URL` | **Mandatory** | None. Required for client-side authentication mocking and token resolution. |
 | `SUPABASE_SERVICE_ROLE_KEY` | **Mandatory** | None. Required for server-side test user provisioning and teardown. |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Optional | Defaults to dummy anon token if unconfigured. |
+| `VITE_SUPABASE_ANON_KEY` | Optional | Defaults to dummy anon token if unconfigured. |
 | `STRIPE_SECRET_KEY` | Optional | Handled via internal test mocks during standard browser runs. |
 | `STRIPE_WEBHOOK_SECRET` | Optional | Handled via internal webhook fixture signers. |
 | `UPSTASH_REDIS_REST_URL` | Optional | Falls back to in-memory mock or container service. |

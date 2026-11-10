@@ -3,10 +3,10 @@
 | Standard Field              | Approved Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | :-------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Document ID**             | `ELIXENT-FRAMEWORK-MIGRATION-PLAN-v1.1`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| **Classification**          | `ACTIVE TRACKED EXECUTION PLAN` (per `docs/DOCUMENTATION_GUIDELINES.md` §2 & §3)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **Classification**          | `COMPLETED HISTORICAL EXECUTION PLAN` (per `docs/DOCUMENTATION_GUIDELINES.md` §2 & §3)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | **Version & Status**        | `v1.1 — CLOSED & VERIFIED (Phases 1-6 Complete · 100% Zero-Regression Baseline)`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | **Baseline Repository**     | `Elixent v0.12.0` (`112 Unit/Contract Suites · 1,892 Tests` + `21 Live Suites · 108 Tests` + `14 Playwright E2E Specs · 15 Journeys` — with full commitment to `100% Behavior-Preserving Zero Regression Tolerance`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| **SSOT Architecture Suite** | • [01_architecture_vision_and_adrs](https://www.google.com/search?q=../architecture/01_architecture_vision_and_adrs.md) (`ELIXENT-ARCH-01 v3.1`)<br>• [02_agent_orchestration_and_decision_engine](https://www.google.com/search?q=../architecture/02_agent_orchestration_and_decision_engine.md) (`ELIXENT-ARCH-02 v3.1`)<br>• [03_workspace_ast_editor_and_vault_integration](https://www.google.com/search?q=../architecture/03_workspace_ast_editor_and_vault_integration.md) (`ELIXENT-ARCH-03 v3.2`)<br>• [04_credit_metering_and_settlement_architecture](https://www.google.com/search?q=../architecture/04_credit_metering_and_settlement_architecture.md) (`ELIXENT-ARCH-04 v3.0`)<br>• [05_data_contracts_and_lugx_migration_plan](https://www.google.com/search?q=../architecture/05_data_contracts_and_lugx_migration_plan.md) (`ELIXENT-ARCH-05 v3.2`) |
+| **SSOT Architecture Suite** | • [01_architecture_vision_and_adrs](../../architecture/01_architecture_vision_and_adrs.md) (`ELIXENT-ARCH-01 v3.1`)<br>• [02_agent_orchestration_and_decision_engine](../../architecture/02_agent_orchestration_and_decision_engine.md) (`ELIXENT-ARCH-02 v3.1`)<br>• [03_workspace_ast_editor_and_vault_integration](../../architecture/03_workspace_ast_editor_and_vault_integration.md) (`ELIXENT-ARCH-03 v3.2`)<br>• [04_credit_metering_and_settlement_architecture](../../architecture/04_credit_metering_and_settlement_architecture.md) (`ELIXENT-ARCH-04 v3.0`)<br>• [05_data_contracts_and_lugx_migration_plan](../../architecture/05_data_contracts_and_lugx_migration_plan.md) (`ELIXENT-ARCH-05 v3.2`) |
 
 ## 1. Executive Purpose & Execution Protocol
 
@@ -122,7 +122,7 @@ flowchart TB
 
 > **Phase Identifier:** `Phase 1 — Archive Prior Plan, Install Target Packages & Build Request-Scoped Session Middleware`  
 > **Status:** `CLOSED / EXECUTED` (Commit Gate 1 Satisfied & Verified)  
-> **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-01-archive-prior-plan-target-packages-and-session-middleware.md`](../records/closures/framework-migration/phase-01-archive-prior-plan-target-packages-and-session-middleware.md)  
+> **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-01-archive-prior-plan-target-packages-and-session-middleware.md`](../closures/framework-migration/phase-01-archive-prior-plan-target-packages-and-session-middleware.md)  
 > **Single Responsibility Principle (`SRP`):** Archive the completed `ELIXENT_EXECUTION_PLAN.md` in accordance with `docs/DOCUMENTATION_GUIDELINES.md` §3–§4, install the approved `Hono`, `Vite 6`, and `TanStack Router` dependencies, and decouple `src/lib/supabase/server.ts` from `next/headers` via a deterministic `AsyncLocalStorage` request context (`src/server/context/request-context.ts`) and Hono session middleware (`src/server/middleware/session-middleware.ts`).  
 > **Pre-Phase 1 Baseline State:** Raw `Elixent v0.12.0` repository on `Next.js 16.3.8` with `112` unit suites (`1,892` tests), `21` live suites (`108` tests), and `14` E2E specs (`15` journeys) passing $100\%$.
 
@@ -159,7 +159,7 @@ flowchart LR
 - **Exact Line-Level Implementation Actions:**
   1. **Archive the completed 12-phase execution plan per `docs/DOCUMENTATION_GUIDELINES.md` §3 & §4:**
      - Append the `— ✅ CLOSED / EXECUTED` suffix to all four remaining phase headings inside `ELIXENT_EXECUTION_PLAN.md` (`Phase 2` on line `306`, `Phase 9` on line `996`, `Phase 10` on line `1075`, and `Phase 11` on line `1127`), and move the file from `docs/Plans/ELIXENT_EXECUTION_PLAN.md` to `docs/records/plans/elixent-agentic-architecture-execution-plan.md`.
-     - Inside the moved file `docs/records/plans/elixent-agentic-architecture-execution-plan.md`, update all 21 relative Markdown links to account for the deeper directory level (`docs/records/plans/` instead of `docs/Plans/`): replace `](../architecture/` with `](../../architecture/` (line `9`) and replace `](../records/closures/` with `](../closures/` (lines `188, 309, 552, 557, 560, 624, 629, 632, 713, 718, 721, 781, 786, 789, 846, 851, 854, 928, 933, 935, 994, 1073, 1125, 1196`).
+     - Inside the moved file `docs/records/plans/elixent-agentic-architecture-execution-plan.md`, update all 21 relative Markdown links to account for the deeper directory level (`docs/records/plans/` instead of `docs/Plans/`): replace `](../architecture/` with `](../../architecture/` (line `9`) and replace `](../closures/` with `](../closures/` (lines `188, 309, 552, 557, 560, 624, 629, 632, 713, 718, 721, 781, 786, 789, 846, 851, 854, 928, 933, 935, 994, 1073, 1125, 1196`).
      - Place this active migration plan at `docs/Plans/ELIXENT_FRAMEWORK_MIGRATION_PLAN.md`.
      - Update the Markdown links in `README.md` (lines `168, 798`), `docs/README.md` (lines `48, 172`), and the three closure dossiers (`phase-10` line `290`, `phase-11` line `229`, `phase-12` line `9`: change `../../../Plans/ELIXENT_EXECUTION_PLAN.md` to `../../plans/elixent-agentic-architecture-execution-plan.md`) so `node scripts/check-markdown-links.mjs` passes with zero broken links.
   2. **Install the approved Web-Standard framework packages in `package.json`:**
@@ -220,13 +220,13 @@ flowchart LR
   node scripts/check-markdown-links.mjs
   ```
 - **Gate Verdict:** CLOSED / EXECUTED — TypeScript clean (0 errors), 5 dedicated Phase 1 test suites (100 tests) passing 100%, 117 repository unit suites (1,992 tests) passing 100%, Commit Gate 1 fully satisfied.
-- **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-01-archive-prior-plan-target-packages-and-session-middleware.md`](../records/closures/framework-migration/phase-01-archive-prior-plan-target-packages-and-session-middleware.md)
+- **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-01-archive-prior-plan-target-packages-and-session-middleware.md`](../closures/framework-migration/phase-01-archive-prior-plan-target-packages-and-session-middleware.md)
 
 ### [Phase 2: Migrate All 8 API Routes & OAuth Callback to Web-Standard Hono Routers] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 2 — Migrate All 8 API Routes & OAuth Callback to Web-Standard Hono Routers`  
 > **Status:** `CLOSED / EXECUTED` (Commit Gate 2 Satisfied & Verified)  
-> **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-02-migrate-all-8-api-routes-and-oauth-callback-to-web-standard-hono-routers.md`](../records/closures/framework-migration/phase-02-migrate-all-8-api-routes-and-oauth-callback-to-web-standard-hono-routers.md)  
+> **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-02-migrate-all-8-api-routes-and-oauth-callback-to-web-standard-hono-routers.md`](../closures/framework-migration/phase-02-migrate-all-8-api-routes-and-oauth-callback-to-web-standard-hono-routers.md)  
 > **Single Responsibility Principle (`SRP`):** Extract the exact implementation of all 8 REST/SSE API routes (`src/app/api/**`) and `/auth/callback` into modular, Web-standard Hono route modules under `src/server/routes/*.routes.ts`, assemble the central Hono application in `src/server/app.ts`, and re-export thin `GET`/`POST`/`PUT`/`DELETE` wrappers from `src/app/**` delegating to the Hono handlers so all existing route tests stay $100\%$ green.  
 > **Post-Phase 1 Baseline State:** `Hono` is installed, `request-context.ts` (including `scheduleAfterResponse`) and `session-middleware.ts` are active, and `src/lib/supabase/server.ts` is decoupled from static `next/headers` imports.
 
@@ -313,13 +313,13 @@ flowchart LR
   npx vitest run src/test/agent/agent-stream-route.test.ts src/test/ai/ai-authoritative-stream-settlement.test.ts src/test/api/stripe-webhook.test.ts src/test/infrastructure/cron-expire-reservations.test.ts src/test/infrastructure/cron-overlap.test.ts src/test/auth/auth-redirect.test.ts
   ```
 - **Gate Verdict:** CLOSED / EXECUTED — TypeScript clean (0 errors), 4 new server router suites (120 tests) passing 100%, 121 repository unit suites (2,112 tests) passing 100%, Commit Gate 2 fully satisfied.
-- **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-02-migrate-all-8-api-routes-and-oauth-callback-to-web-standard-hono-routers.md`](../records/closures/framework-migration/phase-02-migrate-all-8-api-routes-and-oauth-callback-to-web-standard-hono-routers.md)
+- **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-02-migrate-all-8-api-routes-and-oauth-callback-to-web-standard-hono-routers.md`](../closures/framework-migration/phase-02-migrate-all-8-api-routes-and-oauth-callback-to-web-standard-hono-routers.md)
 
 ### [Phase 3: Decouple Server Actions from Next.js Runtime & Mount Typed Hono RPC (`hc<AppType>`)] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 3 — Decouple Server Actions from Next.js Runtime & Mount Typed Hono RPC`  
 > **Status:** `CLOSED / EXECUTED` (Commit Gate 3 Satisfied & Verified)  
-> **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-03-decouple-server-actions-and-mount-typed-hono-rpc.md`](../records/closures/framework-migration/phase-03-decouple-server-actions-and-mount-typed-hono-rpc.md)  
+> **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-03-decouple-server-actions-and-mount-typed-hono-rpc.md`](../closures/framework-migration/phase-03-decouple-server-actions-and-mount-typed-hono-rpc.md)  
 > **Single Responsibility Principle (`SRP`):** Remove `"use server"`, `revalidatePath`, `next/headers`, and `next/navigation` from all 7 files in `src/server/actions/*.ts`, expose them (alongside user credit balance retrieval) as typed Hono RPC routes in `src/server/routes/rpc.routes.ts` mounted on `src/server/app.ts` (exporting `export type AppType = typeof app`), and build the unified, transport-injectable RPC client in `src/client/rpc-client.ts`.  
 > **Post-Phase 2 Baseline State:** All 8 REST/SSE API routes and `/auth/callback` run on `Hono` in `src/server/routes/*` and are mounted on `src/server/app.ts`.
 
@@ -403,9 +403,9 @@ flowchart LR
   npx vitest run src/test/server src/test/vault src/test/auth src/test/client
   ```
 - **Gate Verdict:** CLOSED / EXECUTED — TypeScript clean (0 errors), 4 new server and client RPC suites (126 tests) passing 100%, 33 targeted commit gate suites (748 tests) passing 100%, 125 repository unit suites (2,239 tests) passing 100%, Commit Gate 3 fully satisfied.
-- **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-03-decouple-server-actions-and-mount-typed-hono-rpc.md`](../records/closures/framework-migration/phase-03-decouple-server-actions-and-mount-typed-hono-rpc.md)
+- **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-03-decouple-server-actions-and-mount-typed-hono-rpc.md`](../closures/framework-migration/phase-03-decouple-server-actions-and-mount-typed-hono-rpc.md)
 
-### [Phase 4: Wire Client Hooks & UI Components to Hono RPC Client & Strip Next.js Directives]
+### [Phase 4: Wire Client Hooks & UI Components to Hono RPC Client & Strip Next.js Directives] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 4 — Wire Client Hooks & UI Components to Hono RPC Client & Strip Next.js Directives`  
 > **Status:** `CLOSED / VERIFIED`  
@@ -504,13 +504,13 @@ flowchart LR
   npx vitest run src/test/editor src/test/files src/test/layout src/test/export src/test/sync src/test/agent/wave-11-1-ui-and-sync.test.tsx
   ```
 - **Gate Verdict:** CLOSED / EXECUTED — TypeScript clean (0 errors), 5 new UI/RPC test suites (65 tests) passing 100%, 130 repository unit suites (2,304 tests) passing 100%, Commit Gate 4 fully satisfied.
-- **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-04-wire-client-hooks-and-ui-to-hono-rpc-and-strip-directives.md`](../records/closures/framework-migration/phase-04-wire-client-hooks-and-ui-to-hono-rpc-and-strip-directives.md)
+- **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-04-wire-client-hooks-and-ui-to-hono-rpc-and-strip-directives.md`](../closures/framework-migration/phase-04-wire-client-hooks-and-ui-to-hono-rpc-and-strip-directives.md)
 
 ### [Phase 5: Build `Vite 6 SPA` + `TanStack Router` Presentation Layer & Unified Hono Server Entrypoint] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 5 — Build Vite 6 SPA + TanStack Router Presentation Layer & Unified Hono Server Entrypoint`  
 > **Status:** `CLOSED / EXECUTED (Commit Gate 5 Satisfied & Verified)`  
-> **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-05-vite-spa-tanstack-router-and-unified-hono-server.md`](../records/closures/framework-migration/phase-05-vite-spa-tanstack-router-and-unified-hono-server.md)  
+> **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-05-vite-spa-tanstack-router-and-unified-hono-server.md`](../closures/framework-migration/phase-05-vite-spa-tanstack-router-and-unified-hono-server.md)  
 > **Single Responsibility Principle (`SRP`):** Construct the root `index.html`, `vite.config.ts`, the Node.js Hono server entrypoint (`src/server/index.ts`), the `TanStack Router` tree (`src/client/router.tsx` & `src/client/main.tsx`), and migrate all 5 application views (`home`, `login`, `dashboard`, `account`, `workspace`, and `workspace/editor/$fileId`) into `src/client/routes/**` while updating `wave-11-2-ui-and-pages.test.tsx`.  
 > **Post-Phase 4 Baseline State:** All server routes (`src/server/routes/*`), RPC endpoints (`src/client/rpc-client.ts`), hooks (`src/hooks/*`), and UI components (`src/components/*`) are completely free of `next/*` dependencies.
 
@@ -599,9 +599,9 @@ flowchart LR
   npx vitest run src/test/agent/wave-11-2-ui-and-pages.test.tsx src/test/agent/wave-11-1-ui-and-sync.test.tsx
   ```
 - **Gate Verdict:** CLOSED / EXECUTED — TypeScript clean (0 errors), 4 new SPA/Router test suites (47 tests) passing 100%, 134 repository unit suites (2,351 tests) passing 100%, Commit Gate 5 fully satisfied.
-- **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-05-vite-spa-tanstack-router-and-unified-hono-server.md`](../records/closures/framework-migration/phase-05-vite-spa-tanstack-router-and-unified-hono-server.md)
+- **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-05-vite-spa-tanstack-router-and-unified-hono-server.md`](../closures/framework-migration/phase-05-vite-spa-tanstack-router-and-unified-hono-server.md)
 
-### [Phase 6: Final Next.js Purge, Test Suite Alignment to Standard `Request` & Full CI/E2E Closure]
+### [Phase 6: Final Next.js Purge, Test Suite Alignment to Standard `Request` & Full CI/E2E Closure] — ✅ CLOSED / EXECUTED
 
 > **Phase Identifier:** `Phase 6 — Final Next.js Purge, Test Suite Alignment to Standard Request & Full CI/E2E Closure`  
 > **Status:** `COMPLETED & VERIFIED (Commit Gate 6 Fully Satisfied)`  
@@ -716,7 +716,7 @@ flowchart LR
   npm run lint:links
   ```
 - **Gate Verdict:** CLOSED / FULLY EXECUTED — Zero references to Next.js in codebase, all 134 unit suites (2,348 tests) and 21 live suites (108 tests) passing 100%, Vite 6 SPA build clean, Playwright E2E and CI workflows aligned, Commit Gate 6 and entire Elixent framework migration fully closed.
-- **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-06-final-nextjs-purge-test-suite-alignment-and-ci-e2e-closure.md`](../records/closures/framework-migration/phase-06-final-nextjs-purge-test-suite-alignment-and-ci-e2e-closure.md)
+- **Closure Report Dossier:** [`docs/records/closures/framework-migration/phase-06-final-nextjs-purge-test-suite-alignment-and-ci-e2e-closure.md`](../closures/framework-migration/phase-06-final-nextjs-purge-test-suite-alignment-and-ci-e2e-closure.md)
 
 ## 5. 6-Phase Cumulative State & Isolation Audit Matrix
 

@@ -6,7 +6,7 @@
 | **Version** | `v0.13.0` |
 | **Status** | `CLOSED / VERIFIED` |
 | **Closure Date** | 2026-11-07 |
-| **Governing Plan** | [`docs/Plans/ELIXENT_FRAMEWORK_MIGRATION_PLAN.md`](../../../Plans/ELIXENT_FRAMEWORK_MIGRATION_PLAN.md) |
+| **Governing Plan** | [`docs/records/plans/elixent-framework-migration-execution-plan.md`](../../plans/elixent-framework-migration-execution-plan.md) |
 | **Associated ADRs** | [`ADR-006: Replacing Next.js 16 with Unified Web-Standard Architecture`](../../../architecture/adr_006_unified_vite_tanstack_hono_rpc_architecture.md) · [`ADR-007: Dual-Plane Separation & ALS Request Context`](../../../architecture/adr_007_dual_plane_separation_and_als_request_context.md) |
 | **SSOT Architecture Specs** | [`01_architecture_vision_and_adrs.md`](../../../architecture/01_architecture_vision_and_adrs.md) · [`03_workspace_ast_editor_and_vault_integration.md`](../../../architecture/03_workspace_ast_editor_and_vault_integration.md) · [`security-and-rate-limiting.md`](../../../architecture/security/security-and-rate-limiting.md) |
 
@@ -18,7 +18,7 @@ Phase 1 initiates the architectural migration of the **Elixent** platform from `
 
 1. **Archival of Prior 12-Phase Execution Plan:**
    - Completed execution plan `ELIXENT_EXECUTION_PLAN.md` moved to [`docs/records/plans/elixent-agentic-architecture-execution-plan.md`](../../plans/elixent-agentic-architecture-execution-plan.md) with all internal links updated.
-   - Activated the 6-phase migration plan [`docs/Plans/ELIXENT_FRAMEWORK_MIGRATION_PLAN.md`](../../../Plans/ELIXENT_FRAMEWORK_MIGRATION_PLAN.md).
+   - Activated the 6-phase migration plan [`docs/records/plans/elixent-framework-migration-execution-plan.md`](../../plans/elixent-framework-migration-execution-plan.md).
    - Synchronized all cross-document markdown links across `README.md`, `docs/README.md`, and past closure dossiers.
 2. **Installation of Approved Target Framework Packages:**
    - Added core dependencies to `package.json`: `hono` (`^4.13.17`), `@hono/node-server` (`^2.1.6`), `@hono/zod-validator` (`^0.9.1`), and `@tanstack/react-router` (`^1.170.46`).
@@ -90,7 +90,7 @@ flowchart TB
 - Prior execution plan moved from `docs/Plans/ELIXENT_EXECUTION_PLAN.md` to `docs/records/plans/elixent-agentic-architecture-execution-plan.md`.
 - Closed status banners appended to phases 2, 9, 10, 11 in the archived plan.
 - All 21 relative links within the archived plan adjusted for one level deeper directory depth (`../../architecture/` and `../closures/`).
-- Active execution plan placed at `docs/Plans/ELIXENT_FRAMEWORK_MIGRATION_PLAN.md`.
+- Active execution plan placed at `docs/records/plans/elixent-framework-migration-execution-plan.md`.
 - Updated cross-document references in `README.md`, `docs/README.md`, and past closure records (`phase-10`, `phase-11`, `phase-12`).
 
 ### 3.2 Target Framework Dependencies Installation
@@ -163,7 +163,7 @@ flowchart TB
 
 ## 5. Related Documentation & Relative Links
 
-- Governing Active Plan: [`ELIXENT_FRAMEWORK_MIGRATION_PLAN.md`](../../../Plans/ELIXENT_FRAMEWORK_MIGRATION_PLAN.md)
+- Governing Plan: [`elixent-framework-migration-execution-plan.md`](../../plans/elixent-framework-migration-execution-plan.md)
 - Completed Archived Plan: [`elixent-agentic-architecture-execution-plan.md`](../../plans/elixent-agentic-architecture-execution-plan.md)
 - Architectural Decision Records:
   - [`ADR-006: Replacing Next.js 16 with Unified Web-Standard Architecture`](../../../architecture/adr_006_unified_vite_tanstack_hono_rpc_architecture.md)

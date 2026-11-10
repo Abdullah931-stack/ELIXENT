@@ -170,7 +170,7 @@ SDK request options).
 Feature flags are centralized in `src/config/features.config.ts`:
 ```typescript
 export const FEATURES = {
-    AI_STREAMING_ENABLED: process.env.NEXT_PUBLIC_AI_STREAMING_ENABLED === "true",
+    AI_STREAMING_ENABLED: (import.meta.env?.VITE_AI_STREAMING_ENABLED ?? process.env.VITE_AI_STREAMING_ENABLED) === "true",
     RESERVATION_TTL_MS: 5 * 60 * 1000,
     PREVIEW_BUFFER_MAX_CHARS: 500_000,
 };

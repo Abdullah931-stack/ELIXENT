@@ -6,7 +6,7 @@
 | **Version** | `v0.17.0` |
 | **Status** | `CLOSED / VERIFIED` |
 | **Closure Date** | 2026-11-08 |
-| **Governing Plan** | [`docs/Plans/ELIXENT_FRAMEWORK_MIGRATION_PLAN.md`](../../../Plans/ELIXENT_FRAMEWORK_MIGRATION_PLAN.md) |
+| **Governing Plan** | [`docs/records/plans/elixent-framework-migration-execution-plan.md`](../../plans/elixent-framework-migration-execution-plan.md) |
 | **Associated ADRs** | [`ADR-006: Replacing Next.js 16 with Unified Web-Standard Architecture`](../../../architecture/adr_006_unified_vite_tanstack_hono_rpc_architecture.md) · [`ADR-007: Dual-Plane Separation & ALS Request Context`](../../../architecture/adr_007_dual_plane_separation_and_als_request_context.md) |
 | **SSOT Architecture Specs** | [`01_architecture_vision_and_adrs.md`](../../../architecture/01_architecture_vision_and_adrs.md) · [`03_workspace_ast_editor_and_vault_integration.md`](../../../architecture/03_workspace_ast_editor_and_vault_integration.md) · [`sync-api.md`](../../../reference/sync-api.md) |
 
@@ -197,7 +197,7 @@ The Vite development server plugin implements full parity with production sessio
 - `package.json` (bump version to `0.17.0`)
 - `.gitignore` (ignore `/dist` and `/.vite`)
 - `src/test/agent/wave-11-2-ui-and-pages.test.tsx` (aligned route imports to `@/client/routes/*` and navigation mocks)
-- `docs/Plans/ELIXENT_FRAMEWORK_MIGRATION_PLAN.md` (marked Phase 5 closed, advanced Phase 6 to next active)
+- `docs/records/plans/elixent-framework-migration-execution-plan.md` (marked Phase 5 closed, advanced Phase 6 to next active)
 - `docs/METRICS.json` & all monitored SSOT living documents (synchronized to 134 suites / 2,351 tests)
 - `docs/CHANGELOG.md` (recorded release notes for v0.17.0)
 - `docs/README.md` (indexed Phase 4 & Phase 5 closure dossiers and updated tree map)

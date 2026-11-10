@@ -4,11 +4,37 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
-## [0.18.0p] - 2026-11-08 (Phase 6: Final Next.js Purge, Test Suite Alignment to Standard Request & Full CI/E2E Closure)
+## [0.19.0] - 2026-11-10 (Phase 1: Archive Prior Migration Plan, Clean Compiler/Env Relics & Enforce Fail-Closed Vite Boundary Guard)
+
+### Framework Migration Plan Archival & Cross-Document Link Synchronization
+- **Archived Completed Framework Migration Plan:** Transferred `docs/Plans/ELIXENT_FRAMEWORK_MIGRATION_PLAN.md` to permanent records at [`docs/records/plans/elixent-framework-migration-execution-plan.md`](./records/plans/elixent-framework-migration-execution-plan.md) per documentation governance Rule 4 & Rule 5.
+- **Cross-Document Link Remediation:** Re-pointed all relative links across `docs/CHANGELOG.md` (line 208), `README.md`, `docs/README.md`, `ADR-006`, `ADR-007`, and all 6 framework migration closure dossiers (`phase-01` through `phase-06`).
+- **Activated Active Decoupling Plan:** Published [`docs/Plans/ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md`](./Plans/ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md) as the authoritative active tracked execution plan.
+
+### Compiler & Production Environment Variable Purification (DEF-01)
+- **Purged Next.js Compiler Plugins:** Removed `"plugins": [{ "name": "next" }]` and `.next/` type glob inclusions from `tsconfig.json`, standardizing to `["**/*.ts", "**/*.tsx", "**/*.mts"]`.
+- **Zero Production Environment Leaks (DEF-01):** Resolved legacy `NEXT_PUBLIC_APP_URL` in `src/lib/stripe/index.ts` and `src/server/services/billing-service.ts` to prioritize `VITE_APP_URL` and `APP_URL`, preventing production checkout session redirect failures.
+- **Client & Server Environment Standardization:** Modernized `src/lib/supabase/client.ts`, `src/lib/supabase/server.ts`, `src/config/features.config.ts`, `src/server/actions/auth-actions.ts`, `src/server/routes/auth-callback.routes.ts`, and `src/server/routes/e2e-auth.routes.ts` to pure `VITE_*` environment variables.
+- **CI Pipeline & Gating Realignment:** Aligned `.github/workflows/ci.yml` (Stages 4–7), `scripts/test-ci-gating.mjs`, `.env.example`, and `playwright.config.ts` to inject and monitor canonical `VITE_*` keys.
+
+### Fail-Closed Vite Bundler Boundary Guard (DEF-02)
+- **Replaced Bundler Stubs:** Eradicated transitional `clientServerStubPlugin` and removed redundant `define: { "process.env": "{}" }` from `vite.config.ts`.
+- **Enforced Boundary Guard Plugin:** Implemented `clientServerBoundaryGuardPlugin()` in `vite.config.ts`. Excludes virtual modules and `node_modules`, bypasses SSR builds, resolves relative client specifiers, and triggers a fail-closed compiler error upon direct client import of server modules (`@/server`, `@/server/*`, `@/lib/supabase/server*`, `/src/server/*`).
+
+### Test Suite Alignment & Coverage Expansion
+- **Environment Test Realignment:** Realigned 5 environment-dependent test suites (`src/test/auth/auth-redirect.test.ts`, `src/test/auth/supabase-client.test.ts`, `src/test/config/features.config.test.ts`, `src/test/server/supabase-server.test.ts`, `src/test/server/stripe-cron-auth-routes.test.ts`).
+- **New Boundary Guard Test Suite:** Added `src/test/config/vite-boundary-guard.test.ts` (85 unit & contract tests) verifying bundler boundary invariants, exclusions, SSR bypass, and diagnostics.
+- **Stripe Index Derivation Test Suite:** Added `src/test/server/stripe-index.test.ts` (24 unit tests) verifying production URL derivation and edge fallbacks.
+- **Verification Baseline:** 137 unit & contract suites (2,468 passing tests), 21 live suites (108 tests), 14 E2E specs (15 journeys), 100% green.
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/nextjs-decoupling/phase-01-archive-plan-clean-compiler-env-and-vite-boundary-guard.md`](./records/closures/nextjs-decoupling/phase-01-archive-plan-clean-compiler-env-and-vite-boundary-guard.md).
+
+---
+
+## [0.18.0] - 2026-11-08 (Phase 6: Final Next.js Purge, Test Suite Alignment to Standard Request & Full CI/E2E Closure)
 
 ### Permanent Purge of Next.js Legacy Artifacts & Dependencies
 
-- **Purged Next.js App Router (`src/app/**`):** Permanently deleted all 21 files under `src/app/**`, including legacy route delegates (`api/agent/stream`, `api/files`, `api/folders`, `api/stripe`, `api/cron`), OAuth callback (`auth/callback`), login, dashboard, account, and editor route views, root layout, and styles.
+- **Purged Next.js App Router (`src/app/**`):** Permanently deleted all 21 files under `src/app/\*\*`, including legacy route delegates (`api/agent/stream`, `api/files`, `api/folders`, `api/stripe`, `api/cron`), OAuth callback (`auth/callback`), login, dashboard, account, and editor route views, root layout, and styles.
 - **Purged Next.js 16 Edge Proxy (`src/proxy.ts`):** Removed legacy Edge proxy middleware; session validation and route guarding are now handled exclusively by Web-standard Hono middleware (`src/server/middleware/session-middleware.ts`).
 - **Purged Transitional Modules & Configs:** Deleted `src/server/empty.ts` and `next.config.ts`.
 - **Stripped RSC Directives & Markers:** Removed `import "server-only"` markers from `src/server/services/ai-settlement-service.ts` and `src/server/services/billing-service.ts`.
@@ -205,7 +231,7 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 ### Prior Execution Plan Archival & Active Migration Plan Inception
 
 - **Prior Plan Archival:** Moved completed 12-phase plan from `docs/Plans/ELIXENT_EXECUTION_PLAN.md` to [`docs/records/plans/elixent-agentic-architecture-execution-plan.md`](./records/plans/elixent-agentic-architecture-execution-plan.md), marked completed phases, and updated 21 internal relative links.
-- **Migration Plan Inception:** Adopted the 6-phase framework migration plan at [`docs/Plans/ELIXENT_FRAMEWORK_MIGRATION_PLAN.md`](./Plans/ELIXENT_FRAMEWORK_MIGRATION_PLAN.md) governing the decoupling of the platform from Next.js 16 into a Vite 6 SPA, TanStack Router, and Web-standard Hono RPC architecture.
+- **Migration Plan Inception:** Adopted the 6-phase framework migration plan at [`docs/records/plans/elixent-framework-migration-execution-plan.md`](./records/plans/elixent-framework-migration-execution-plan.md) governing the decoupling of the platform from Next.js 16 into a Vite 6 SPA, TanStack Router, and Web-standard Hono RPC architecture.
 - **Cross-Document Link Synchronization:** Aligned links in `README.md`, `docs/README.md`, and past closure records (`phase-10`, `phase-11`, `phase-12`), with zero broken markdown links across 123 repository documents.
 
 ### Target Framework Dependencies Installation
@@ -403,9 +429,9 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 ### Deterministic Local Candidate Retriever (`src/core/agent/atms/candidate-retriever.ts`)
 
 - **Multi-Signal Candidate Retrieval:** Implemented `retrieveCandidatePriorDecisions` evaluating candidate decisions across three orthogonal signals prior to relational adjudication:
-  - *AST Section Proximity:* Computes structural proximity ($1.0$ for exact `fileId` and `headingSlug` match, $0.5$ for hierarchical ancestor/child prefixes, $0.0$ for disjoint sections). Strictly enforces that heading proximity is a retrieval comparison signal, never an automatic dependency edge.
-  - *Concept Tags Jaccard Overlap:* Computes normalized Jaccard similarity across active project-scoped concept tags without static tag constraints.
-  - *Okapi BM25 Lexical Match:* Scores assumption statements against prior decision questions, rationales, and evaluated alternatives using path-coupled lexical information retrieval.
+  - _AST Section Proximity:_ Computes structural proximity ($1.0$ for exact `fileId` and `headingSlug` match, $0.5$ for hierarchical ancestor/child prefixes, $0.0$ for disjoint sections). Strictly enforces that heading proximity is a retrieval comparison signal, never an automatic dependency edge.
+  - _Concept Tags Jaccard Overlap:_ Computes normalized Jaccard similarity across active project-scoped concept tags without static tag constraints.
+  - _Okapi BM25 Lexical Match:_ Scores assumption statements against prior decision questions, rationales, and evaluated alternatives using path-coupled lexical information retrieval.
 - **Composite Scoring & Deterministic Tie-Breaking:** Combines signals using weighted formula (Proximity: 3.0, Concept Tags: 2.0, BM25: 1.5) with strict alphabetical tie-breaking by `decisionId` and configurable candidate bounds (`DEFAULT_MAX_CANDIDATE_DECISIONS = 8`).
 
 ### Waterfall-Free Relational Linker (`src/core/agent/atms/relational-linker.ts`)
@@ -417,10 +443,10 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 ### Contagious Cascade BFS & Differential Section Invalidation (`src/core/agent/atms/invalidation.ts`)
 
 - **Bidirectional Cascade Algorithm (`resolveATMSCascadeBFS`):**
-  - *Upward Promotion Path:* Traverses `dependsOn` edges via BFS. If a new assumption depends on a provisional peripheral decision (`APPROVED_CONSERVATIVE`), the target is promoted to `CORE_ARCHITECTURAL` (`isLoadBearing: true`), pulled with its preserved alternatives, and evicted from the working ledger for formal re-evaluation under new evidence.
-  - *Downward Invalidation Path:* When a relation is classified as `REOPENS_OR_OVERRIDES`, reopens the root decision and traverses all downstream dependents via BFS over `dependedBy`, pulling them for parallel update.
-  - *Cycle-Safe Invariant:* Enforces dedicated visited sets (`upwardVisited`, `downwardVisited`) preventing infinite traversal loops on cyclic graphs.
-  - *Sibling Independence:* Guarantees that sibling sub-decisions under the same heading classified as `INDEPENDENT` remain completely untouched.
+  - _Upward Promotion Path:_ Traverses `dependsOn` edges via BFS. If a new assumption depends on a provisional peripheral decision (`APPROVED_CONSERVATIVE`), the target is promoted to `CORE_ARCHITECTURAL` (`isLoadBearing: true`), pulled with its preserved alternatives, and evicted from the working ledger for formal re-evaluation under new evidence.
+  - _Downward Invalidation Path:_ When a relation is classified as `REOPENS_OR_OVERRIDES`, reopens the root decision and traverses all downstream dependents via BFS over `dependedBy`, pulling them for parallel update.
+  - _Cycle-Safe Invariant:_ Enforces dedicated visited sets (`upwardVisited`, `downwardVisited`) preventing infinite traversal loops on cyclic graphs.
+  - _Sibling Independence:_ Guarantees that sibling sub-decisions under the same heading classified as `INDEPENDENT` remain completely untouched.
 - **Differential Section Invalidation (`computeMinimalSectionInvalidationMap`):** Traverses downward dependents to aggregate the exact `(fileId, headingSlug)` section targets impacted by an override, enabling surgical document updates without invalidating unrelated document sections.
 
 ### Verification & Metrics Baseline
@@ -465,11 +491,11 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 ### Conformal Adaptive Prediction Sets (APS) Classifier & Calibration Store (`src/lib/jev/conformal-classifier.ts` & `src/lib/jev/calibration-store.ts`)
 
 - **5-Step Deterministic Conformal APS Algorithm:** Implemented `classifyDecisionConformalAPS` executing pure mathematical classification with zero LLM involvement:
-  1. *Abstention Gate:* Rejects with `UNRESOLVED` if $p_{\text{abstain}} \ge 0.25$ or $\text{evidenceGrounding} < 0.50$; otherwise normalizes valid options $\tilde{p}(a_k) = p(a_k) / (1 - p_{\text{abstain}})$.
-  2. *Structural Impact Index:* $\text{ImpactIndex}(x) = \text{CORE\_ARCHITECTURAL}$ if $C \ge 1.5 \lor R \ge 1.5$ else $\text{PERIPHERAL}$.
-  3. *Top-2 Dominance Margin:* $m(x) = \tilde{p}_{(1)} - \tilde{p}_{(2)}$.
-  4. *Conformal Prediction Sets:* $\mathcal{C}_{\alpha}(x) = \{ a_k : (1 - \tilde{p}(a_k)) \le \hat{q}_{1-\alpha} \}$.
-  5. *Classification Rules:* `APPROVED_DIRECT` ($|\mathcal{C}_{\alpha_{\text{core}}}| == 1 \land m(x) \ge 0.25$); `APPROVED_CONSERVATIVE` ($\text{PERIPHERAL} \land 1 \le |\mathcal{C}_{\alpha_{\text{periph}}}| \le 2 \land m(x) \ge 0.15$); `UNRESOLVED` otherwise.
+  1. _Abstention Gate:_ Rejects with `UNRESOLVED` if $p_{\text{abstain}} \ge 0.25$ or $\text{evidenceGrounding} < 0.50$; otherwise normalizes valid options $\tilde{p}(a_k) = p(a_k) / (1 - p_{\text{abstain}})$.
+  2. _Structural Impact Index:_ $\text{ImpactIndex}(x) = \text{CORE\_ARCHITECTURAL}$ if $C \ge 1.5 \lor R \ge 1.5$ else $\text{PERIPHERAL}$.
+  3. _Top-2 Dominance Margin:_ $m(x) = \tilde{p}_{(1)} - \tilde{p}_{(2)}$.
+  4. _Conformal Prediction Sets:_ $\mathcal{C}_{\alpha}(x) = \{ a_k : (1 - \tilde{p}(a_k)) \le \hat{q}_{1-\alpha} \}$.
+  5. _Classification Rules:_ `APPROVED_DIRECT` ($|\mathcal{C}_{\alpha_{\text{core}}}| == 1 \land m(x) \ge 0.25$); `APPROVED_CONSERVATIVE` ($\text{PERIPHERAL} \land 1 \le |\mathcal{C}_{\alpha_{\text{periph}}}| \le 2 \land m(x) \ge 0.15$); `UNRESOLVED` otherwise.
 - **Strict Conservative Approval Invariant:** Enforced strict invariant categorically forbidding `APPROVED_CONSERVATIVE` classification when $\text{ImpactIndex}(x) == \text{CORE\_ARCHITECTURAL}$.
 - **Sliding-Window Calibration Store:** Built `CalibrationStore` maintaining an in-memory sliding window ($N = 200$) with non-blocking Upstash Redis sync (`gemini:calibration_window:<modelId>`). Computes empirical quantiles at rank $k = \min(n, \lceil(n+1)(1-\alpha)\rceil)$ when $n \ge 20$ with fallback to static bootstrap priors registered in `models.config.json`.
 
@@ -543,7 +569,7 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ### Fence-Aware AST Heading Slicer (`src/core/ast/heading-slicer.ts`)
 
-- **CommonMark §4.2 & §4.5 Compliant Parsing:** Implemented `parseMarkdownHeadingTree` with state-machine code fence tracking (```` ``` ```` and `~~~`), strictly ignoring `#` comment lines inside code blocks. Skips YAML frontmatter delimiters (`---` and `...`) at document start.
+- **CommonMark §4.2 & §4.5 Compliant Parsing:** Implemented `parseMarkdownHeadingTree` with state-machine code fence tracking (` ``` ` and `~~~`), strictly ignoring `#` comment lines inside code blocks. Skips YAML frontmatter delimiters (`---` and `...`) at document start.
 - **Section Span Calculation:** Computes deterministic section boundaries where a section for heading $H_k$ (level $L \in [1, 6]$) extends up to the line immediately preceding the next heading with level $L_{\text{next}} \le L$.
 - **Hierarchical Breadcrumbs & Unicode Slugs:** Maintains an active heading stack to generate ancestor breadcrumb strings (`"Parent > Child"`) and emits URL-friendly, Unicode-aware heading slugs with collision resolution (`slug`, `slug-1`, `slug-2`).
 - **Pure TypeScript SHA-256 (Zero `node:crypto` Imports):** Built bitwise FIPS 180-4 SHA-256 implementation (`computeSectionHash`) to hash normalized section contents (`\0` removed, CRLF/CR to LF, Unicode NFC), guaranteeing 100% Next.js client-side bundle safety without polyfills.

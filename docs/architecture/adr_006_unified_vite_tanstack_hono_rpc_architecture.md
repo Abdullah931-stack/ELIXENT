@@ -6,7 +6,7 @@
 | **Classification** | `STANDALONE ARCHITECTURAL DECISION RECORD (ADR)` |
 | **Version & Status** | `v1.0 — Accepted` |
 | **Supersedes / Amends** | Amends Cloud Runtime Framework specification in [01_architecture_vision_and_adrs.md](./01_architecture_vision_and_adrs.md) (§1.1 & §2) |
-| **Governing Execution Plan** | [ELIXENT_FRAMEWORK_MIGRATION_PLAN.md](../Plans/ELIXENT_FRAMEWORK_MIGRATION_PLAN.md) (`ELIXENT-FRAMEWORK-MIGRATION-PLAN-v1.1`) |
+| **Governing Execution Plan** | [elixent-framework-migration-execution-plan.md](../records/plans/elixent-framework-migration-execution-plan.md) (`ELIXENT-FRAMEWORK-MIGRATION-PLAN-v1.1`) |
 | **Affected Repository Scope** | `src/server/**`, `src/client/**`, `src/hooks/**`, `src/components/**`, `vite.config.ts`, `playwright.config.ts`, `vitest*.config.mts` |
 
 ## 1. Context & Forensic Problem Diagnosis
