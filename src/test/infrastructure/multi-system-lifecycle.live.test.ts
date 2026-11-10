@@ -24,7 +24,7 @@ import {
     getFile,
     toggleFileEncryption,
     updateFileContent,
-} from "@/server/actions/file-ops";
+} from "@/server/actions/files";
 import { reserveAndUpdateUsage, commitAIReservation } from "@/server/services/ai-settlement-service";
 import { createUserVaultProfile } from "@/server/actions/vault-actions";
 import { CloudPostgresWorkspaceProvider } from "@/core/workspace/cloud-provider";

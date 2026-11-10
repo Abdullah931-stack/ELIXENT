@@ -16,7 +16,7 @@
  * 9. Anti-echo & teardown: Ignores self-broadcasts matching currentTabId and unsubscribes on unmount.
  *
  * System Boundaries & Mock Justifications:
- * - Server action `@/server/actions/file-ops` is mocked: network RPCs / DB operations cannot execute in isolated jsdom tests.
+ * - Action handler `@/server/actions/files` is mocked: network RPCs / DB operations cannot execute in isolated jsdom tests.
  * - All other modules are real: real `normalizeMarkdownSource`, real `classifyRemoteUpdate`,
  *   real `broadcastCrossTabEvent` / `subscribeCrossTabSync`, and real `sessionKeyStore`.
  */
@@ -27,7 +27,7 @@ import {
     useEditorConflict,
     type UseEditorConflictOptions,
 } from "../../hooks/use-editor-conflict";
-import { updateFileContent } from "../../server/actions/file-ops";
+import { updateFileContent } from "@/server/actions/files";
 import {
     getSyncChannelName,
     setActiveSyncUserId,
@@ -44,7 +44,7 @@ if (typeof window !== "undefined" && typeof window.BroadcastChannel === "undefin
 }
 
 // Minimal server action boundaries: database persistence cannot execute in isolated in-memory jsdom contract tests.
-vi.mock("@/server/actions/file-ops", () => ({
+vi.mock("@/server/actions/files", () => ({
     updateFileContent: vi.fn(),
     toggleFileEncryption: vi.fn(),
     renameFile: vi.fn(),
@@ -52,7 +52,7 @@ vi.mock("@/server/actions/file-ops", () => ({
 }));
 
 vi.mock("@/client/rpc-client", async () => {
-    const mockedFileOps = await import("@/server/actions/file-ops");
+    const mockedFileOps = await import("@/server/actions/files");
     return {
         ...mockedFileOps,
     };

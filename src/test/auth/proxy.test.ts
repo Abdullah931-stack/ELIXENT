@@ -1,19 +1,18 @@
 /**
- * Next.js 16 Edge Proxy Test Suite
+ * Web-Standard Session Proxy Test Suite
  *
  * Verifies:
  * 1. OAuth code interception and auto-forwarding to /auth/callback (preserving original code & query parameters).
  * 2. Protected route gating (/workspace, /account, /dashboard) for unauthenticated visitors.
  * 3. Deep link and query parameter preservation inside redirectTo on login redirection.
- * 4. JSON 401 response enforcement for Server Actions and API endpoints on protected paths.
+ * 4. JSON 401 response enforcement for RFC 9110 Accept: application/json and API endpoints on protected paths.
  * 5. Logged-in user redirection from /login to /dashboard.
  * 6. Public route access for unauthenticated users.
  * 7. Graceful offline/network failure handling during Supabase session retrieval.
- * 8. Static asset exclusion matcher regex validation.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { handleSessionProxy as proxy, config } from "@/server/middleware/session-middleware";
+import { handleSessionProxy } from "@/server/middleware/session-middleware";
 
 // Mock @supabase/ssr createServerClient
 const mockGetUser = vi.fn();
@@ -34,17 +33,17 @@ vi.mock("@supabase/ssr", () => ({
     }),
 }));
 
-describe("Next.js 16 Edge Proxy (src/proxy.ts)", () => {
+describe("Web-Standard Session Proxy (handleSessionProxy)", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        process.env.NEXT_PUBLIC_SUPABASE_URL = "https://mock-supabase.co";
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "mock-anon-key";
+        process.env.VITE_SUPABASE_URL = "https://mock-supabase.co";
+        process.env.VITE_SUPABASE_ANON_KEY = "mock-anon-key";
     });
 
     describe("OAuth Code Interception", () => {
         it("redirects request with code parameter on root to /auth/callback preserving code", async () => {
             const req = new Request("https://lugx.app/?code=oauth-sample-code");
-            const res = await proxy(req);
+            const res = await handleSessionProxy(req);
 
             expect(res.status).toBe(307);
             expect(res.headers.get("location")).toBe("https://lugx.app/auth/callback?code=oauth-sample-code");
@@ -52,7 +51,7 @@ describe("Next.js 16 Edge Proxy (src/proxy.ts)", () => {
 
         it("redirects request with code parameter on nested path to /auth/callback preserving all query params", async () => {
             const req = new Request("https://lugx.app/login?code=oauth-sample-code&state=123");
-            const res = await proxy(req);
+            const res = await handleSessionProxy(req);
 
             expect(res.status).toBe(307);
             expect(res.headers.get("location")).toBe("https://lugx.app/auth/callback?code=oauth-sample-code&state=123");
@@ -60,7 +59,7 @@ describe("Next.js 16 Edge Proxy (src/proxy.ts)", () => {
 
         it("does not intercept request if code is already on /auth/callback", async () => {
             const req = new Request("https://lugx.app/auth/callback?code=oauth-sample-code");
-            const res = await proxy(req);
+            const res = await handleSessionProxy(req);
 
             // Should proceed without redirecting back to /auth/callback (Fast-Path bypasses getUser)
             expect(res.status).toBe(200);
@@ -73,7 +72,7 @@ describe("Next.js 16 Edge Proxy (src/proxy.ts)", () => {
             mockGetUser.mockResolvedValueOnce({ data: { user: null }, error: null });
 
             const req = new Request("https://lugx.app/workspace");
-            const res = await proxy(req);
+            const res = await handleSessionProxy(req);
 
             expect(res.status).toBe(307);
             expect(res.headers.get("location")).toBe("https://lugx.app/login?redirectTo=%2Fworkspace");
@@ -83,7 +82,7 @@ describe("Next.js 16 Edge Proxy (src/proxy.ts)", () => {
             mockGetUser.mockResolvedValueOnce({ data: { user: null }, error: null });
 
             const req = new Request("https://lugx.app/workspace/editor/doc-99?tab=recent&view=split");
-            const res = await proxy(req);
+            const res = await handleSessionProxy(req);
 
             expect(res.status).toBe(307);
             expect(res.headers.get("location")).toBe(
@@ -95,7 +94,7 @@ describe("Next.js 16 Edge Proxy (src/proxy.ts)", () => {
             mockGetUser.mockResolvedValueOnce({ data: { user: null }, error: null });
 
             const req = new Request("https://lugx.app/dashboard");
-            const res = await proxy(req);
+            const res = await handleSessionProxy(req);
 
             expect(res.status).toBe(307);
             expect(res.headers.get("location")).toBe("https://lugx.app/login?redirectTo=%2Fdashboard");
@@ -105,23 +104,23 @@ describe("Next.js 16 Edge Proxy (src/proxy.ts)", () => {
             mockGetUser.mockResolvedValueOnce({ data: { user: null }, error: null });
 
             const req = new Request("https://lugx.app/account");
-            const res = await proxy(req);
+            const res = await handleSessionProxy(req);
 
             expect(res.status).toBe(307);
             expect(res.headers.get("location")).toBe("https://lugx.app/login?redirectTo=%2Faccount");
         });
     });
 
-    describe("Server Actions & Protected Route API Requests (401 JSON Response)", () => {
-        it("returns JSON 401 Unauthorized for unauthenticated requests with next-action header on protected routes", async () => {
+    describe("Protected Route JSON & API Requests (401 JSON Response)", () => {
+        it("returns JSON 401 Unauthorized for unauthenticated requests with Accept: application/json header on protected routes", async () => {
             mockGetUser.mockResolvedValueOnce({ data: { user: null }, error: null });
 
             const req = new Request("https://lugx.app/workspace", {
                 headers: {
-                    "next-action": "action_id_abc123",
+                    Accept: "application/json",
                 },
             });
-            const res = await proxy(req);
+            const res = await handleSessionProxy(req);
 
             expect(res.status).toBe(401);
             expect(res.headers.get("Content-Type")).toBe("application/json");
@@ -129,16 +128,17 @@ describe("Next.js 16 Edge Proxy (src/proxy.ts)", () => {
             expect(body).toEqual({ error: "Unauthorized" });
         });
 
-        it("redirects unauthenticated subpath requests without next-action header to login (307) even with json accept header", async () => {
+        it("returns JSON 401 Unauthorized for unauthenticated subpath requests carrying accept: application/json header", async () => {
             mockGetUser.mockResolvedValueOnce({ data: { user: null }, error: null });
 
             const req = new Request("https://lugx.app/workspace/api/save", {
                 headers: { accept: "application/json" },
             });
-            const res = await proxy(req);
+            const res = await handleSessionProxy(req);
 
-            // Gated under /workspace; proxy currently gates 401 strictly on next-action header or /api/ prefix
-            expect(res.status).toBe(307);
+            expect(res.status).toBe(401);
+            const body = await res.json();
+            expect(body).toEqual({ error: "Unauthorized" });
         });
     });
 
@@ -150,7 +150,7 @@ describe("Next.js 16 Edge Proxy (src/proxy.ts)", () => {
             });
 
             const req = new Request("https://lugx.app/workspace");
-            const res = await proxy(req);
+            const res = await handleSessionProxy(req);
 
             expect(res.status).toBe(200);
         });
@@ -162,7 +162,7 @@ describe("Next.js 16 Edge Proxy (src/proxy.ts)", () => {
             });
 
             const req = new Request("https://lugx.app/login");
-            const res = await proxy(req);
+            const res = await handleSessionProxy(req);
 
             expect(res.status).toBe(307);
             expect(res.headers.get("location")).toBe("https://lugx.app/dashboard");
@@ -172,7 +172,7 @@ describe("Next.js 16 Edge Proxy (src/proxy.ts)", () => {
     describe("Public Routes & Fault Tolerance", () => {
         it("allows unauthenticated visitor on public homepage via fast-path without calling getUser", async () => {
             const req = new Request("https://lugx.app/");
-            const res = await proxy(req);
+            const res = await handleSessionProxy(req);
 
             expect(res.status).toBe(200);
             expect(mockGetUser).not.toHaveBeenCalled();
@@ -182,7 +182,7 @@ describe("Next.js 16 Edge Proxy (src/proxy.ts)", () => {
             mockGetUser.mockResolvedValueOnce({ data: { user: null }, error: null });
 
             const req = new Request("https://lugx.app/workspace");
-            const res = await proxy(req);
+            const res = await handleSessionProxy(req);
 
             expect(res.status).toBe(307);
             expect(res.headers.get("location")).toBe("https://lugx.app/login?redirectTo=%2Fworkspace");
@@ -195,7 +195,7 @@ describe("Next.js 16 Edge Proxy (src/proxy.ts)", () => {
             mockGetUser.mockRejectedValueOnce(new Error("Supabase Network Connection Timeout"));
 
             const req = new Request("https://lugx.app/workspace");
-            const res = await proxy(req);
+            const res = await handleSessionProxy(req);
 
             // Should catch error, log warning, treat user as null, and redirect to /login
             expect(warnSpy).toHaveBeenCalledWith(
@@ -216,7 +216,7 @@ describe("Next.js 16 Edge Proxy (src/proxy.ts)", () => {
             vi.useFakeTimers();
             try {
                 const req = new Request("https://lugx.app/workspace");
-                const proxyPromise = proxy(req);
+                const proxyPromise = handleSessionProxy(req);
 
                 // Advance clock past the 2500ms watchdog
                 await vi.advanceTimersByTimeAsync(2600);
@@ -235,27 +235,6 @@ describe("Next.js 16 Edge Proxy (src/proxy.ts)", () => {
                 vi.useRealTimers();
                 warnSpy.mockRestore();
             }
-        });
-    });
-
-    describe("Matcher Configuration", () => {
-        it("contains single comprehensive matcher string", () => {
-            expect(config.matcher).toHaveLength(1);
-            const pattern = new RegExp(`^${config.matcher[0]}$`);
-
-            // Should match regular pages
-            expect(pattern.test("/workspace")).toBe(true);
-            expect(pattern.test("/dashboard")).toBe(true);
-            expect(pattern.test("/login")).toBe(true);
-            expect(pattern.test("/api/files/sync")).toBe(true);
-
-            // Should exclude Next.js static assets and images
-            expect(pattern.test("/_next/static/chunks/main.js")).toBe(false);
-            expect(pattern.test("/_next/image?url=%2Flogo.png")).toBe(false);
-            expect(pattern.test("/favicon.ico")).toBe(false);
-            expect(pattern.test("/logo.svg")).toBe(false);
-            expect(pattern.test("/avatar.png")).toBe(false);
-            expect(pattern.test("/font.woff2")).toBe(false);
         });
     });
 });

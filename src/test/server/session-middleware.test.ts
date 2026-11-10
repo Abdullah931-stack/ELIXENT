@@ -2,11 +2,11 @@
  * Comprehensive Test Suite for Web-Standard Session Middleware
  *
  * Verifies:
- * 1. `handleSessionProxy` (and `proxy` alias) with standard Web Request and Response objects:
+ * 1. `handleSessionProxy` with standard Web Request and Response objects:
  *    - OAuth code redirection on `/` and `/login` (307 to `/auth/callback` preserving query params and cookies).
  *    - Fast-Path Cookie Gate (`TD-12`): `getUser()` bypassed on public routes and on `/login` when no `sb-*` cookie exists.
  *    - Watchdog timeout (`AbortSignal.timeout(2500)`) and offline network error handling with `console.warn`.
- *    - Protected route gating (`/workspace`, `/account`, `/dashboard`): 401 JSON for `next-action` or `/api/*`, 307 redirect for page navigations.
+ *    - Protected route gating (`/workspace`, `/account`, `/dashboard`): 401 JSON for `Accept: application/json` or `/api/*`, 307 redirect for page navigations.
  *    - Authenticated user visiting `/login` redirected to `/dashboard` (307).
  *    - Cookie serialization and `Set-Cookie` header generation on redirects, 401, and 200 responses.
  *    - Web standard Set-Cookie response header serialization and incoming cookie parsing.
@@ -15,16 +15,13 @@
  *    - Context binding (`runWithServerRequestContext`) accessible to downstream handlers via `getActiveRequestContext()` and `resolveCookiesAndHeaders()`.
  *    - Mutated cookie propagation from downstream handlers to `c.res.headers`.
  *    - Direct intercept and short-circuit on unauthorized access, OAuth redirection, and logged-in user visits to `/login`.
- * 3. Route matcher configuration (`config.matcher`) against regular routes and excluded static assets.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
 import {
   handleSessionProxy,
-  proxy,
   sessionMiddleware,
-  config,
 } from "@/server/middleware/session-middleware";
 import {
   getActiveRequestContext,
@@ -290,7 +287,7 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
         );
       });
 
-      it("returns JSON 401 Unauthorized for unauthenticated requests with next-action header on protected routes", async () => {
+      it("returns JSON 401 Unauthorized for unauthenticated requests with Accept: application/json header on protected routes", async () => {
         mockState.getUser.mockResolvedValueOnce({
           data: { user: null },
           error: null,
@@ -298,7 +295,7 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
 
         const req = new Request("https://lugx.app/workspace", {
           headers: {
-            "next-action": "action_id_abc123",
+            Accept: "application/json",
           },
         });
         const res = await handleSessionProxy(req);
@@ -309,16 +306,14 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
         expect(body).toEqual({ error: "Unauthorized" });
       });
 
-      it("returns JSON 401 Unauthorized for unauthenticated requests targeting /api/* subpath", async () => {
+      it("returns JSON 401 Unauthorized for unauthenticated subpath requests carrying accept: application/json header", async () => {
         mockState.getUser.mockResolvedValueOnce({
           data: { user: null },
           error: null,
         });
 
-        const req = new Request("https://lugx.app/workspace", {
-          headers: {
-            "next-action": "true",
-          },
+        const req = new Request("https://lugx.app/workspace/api/save", {
+          headers: { accept: "application/json, text/plain, */*" },
         });
         const res = await handleSessionProxy(req);
 
@@ -327,18 +322,118 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
         expect(body).toEqual({ error: "Unauthorized" });
       });
 
-      it("redirects unauthenticated subpath requests without next-action header to login (307) even with json accept header", async () => {
+      it("redirects unauthenticated HTML navigation requests on protected subpaths to login (307)", async () => {
         mockState.getUser.mockResolvedValueOnce({
           data: { user: null },
           error: null,
         });
 
-        const req = new Request("https://lugx.app/workspace/api/save", {
-          headers: { accept: "application/json" },
+        const req = new Request("https://lugx.app/workspace/editor/doc-1", {
+          headers: { accept: "text/html,application/xhtml+xml" },
         });
         const res = await handleSessionProxy(req);
 
         expect(res.status).toBe(307);
+      });
+
+      describe("RFC 9110 Content Negotiation & Next.js Action Header Purge Matrix", () => {
+        it("redirects unauthenticated request carrying legacy Next.js 'next-action' header to login when Accept is HTML (purged next-action behavior)", async () => {
+          mockState.getUser.mockResolvedValueOnce({
+            data: { user: null },
+            error: null,
+          });
+
+          const req = new Request("https://lugx.app/workspace", {
+            headers: {
+              "next-action": "legacy_server_action_hash_123",
+              accept: "text/html,application/xhtml+xml",
+            },
+          });
+          const res = await handleSessionProxy(req);
+
+          // With next-action purged, content negotiation falls through to standard page navigation redirect
+          expect(res.status).toBe(307);
+          expect(res.headers.get("location")).toBe(
+            "https://lugx.app/login?redirectTo=%2Fworkspace"
+          );
+        });
+
+        it("returns JSON 401 for request carrying legacy Next.js 'next-action' header when Accept is application/json", async () => {
+          mockState.getUser.mockResolvedValueOnce({
+            data: { user: null },
+            error: null,
+          });
+
+          const req = new Request("https://lugx.app/workspace", {
+            headers: {
+              "next-action": "legacy_server_action_hash_123",
+              accept: "application/json",
+            },
+          });
+          const res = await handleSessionProxy(req);
+
+          expect(res.status).toBe(401);
+          expect(res.headers.get("Content-Type")).toBe("application/json");
+          const body = await res.json();
+          expect(body).toEqual({ error: "Unauthorized" });
+        });
+
+        it.each([
+          {
+            accept: "application/json; charset=utf-8",
+            expectedStatus: 401,
+            desc: "parameterized application/json",
+          },
+          {
+            accept: "application/json, text/plain, */*",
+            expectedStatus: 401,
+            desc: "compound media range with application/json",
+          },
+          {
+            accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            expectedStatus: 307,
+            desc: "standard browser HTML Accept header",
+          },
+          {
+            accept: "*/*",
+            expectedStatus: 307,
+            desc: "wildcard Accept header without explicit json",
+          },
+          {
+            accept: "text/plain",
+            expectedStatus: 307,
+            desc: "text/plain non-json Accept header",
+          },
+          {
+            accept: "",
+            expectedStatus: 307,
+            desc: "empty string Accept header",
+          },
+        ])(
+          "evaluates RFC 9110 content negotiation for $desc on protected route",
+          async ({ accept, expectedStatus }) => {
+            mockState.getUser.mockResolvedValueOnce({
+              data: { user: null },
+              error: null,
+            });
+
+            const req = new Request("https://lugx.app/workspace", {
+              headers: accept ? { accept } : {},
+            });
+            const res = await handleSessionProxy(req);
+
+            expect(res.status).toBe(expectedStatus);
+            if (expectedStatus === 401) {
+              expect(res.headers.get("Content-Type")).toBe("application/json");
+              const body = await res.json();
+              expect(body).toEqual({ error: "Unauthorized" });
+            } else {
+              expect(res.headers.get("location")).toBe(
+                "https://lugx.app/login?redirectTo=%2Fworkspace"
+              );
+            }
+          }
+        );
       });
     });
 
@@ -427,7 +522,7 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
         ];
 
         const req = new Request("https://lugx.app/workspace", {
-          headers: { "next-action": "logout" },
+          headers: { Accept: "application/json" },
         });
         const res = await handleSessionProxy(req);
 
@@ -568,12 +663,6 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
         );
       });
     });
-
-    describe("Backward Compatibility Alias", () => {
-      it("exports proxy as an exact reference alias to handleSessionProxy", () => {
-        expect(proxy).toBe(handleSessionProxy);
-      });
-    });
   });
 
   describe("sessionMiddleware — Mounted on Hono Application", () => {
@@ -671,7 +760,7 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
       );
     });
 
-    it("short-circuits downstream handlers when unauthenticated user sends next-action request", async () => {
+    it("short-circuits downstream handlers when unauthenticated user sends Accept: application/json request", async () => {
       const downstreamSpy = vi.fn((c) => c.text("should-not-reach"));
       const app = new Hono();
       app.use("*", sessionMiddleware);
@@ -684,7 +773,7 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
 
       const res = await app.request("https://lugx.app/workspace", {
         method: "POST",
-        headers: { "next-action": "save_doc" },
+        headers: { Accept: "application/json" },
       });
 
       expect(downstreamSpy).not.toHaveBeenCalled();
@@ -727,55 +816,57 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
       expect(res.status).toBe(307);
       expect(res.headers.get("location")).toBe("https://lugx.app/dashboard");
     });
-  });
 
-  describe("Matcher Configuration (config.matcher)", () => {
-    it("matches all standard application pages and API routes", () => {
-      const regex = new RegExp(`^${config.matcher[0]}$`);
+    it("short-circuits downstream handlers and redirects unauthenticated request carrying next-action to /login when Accept is HTML", async () => {
+      const downstreamSpy = vi.fn((c) => c.text("secret-page"));
+      const app = new Hono();
+      app.use("*", sessionMiddleware);
+      app.post("/workspace", downstreamSpy);
 
-      const validRoutes = [
-        "/",
-        "/login",
-        "/auth/callback",
-        "/dashboard",
-        "/workspace",
-        "/workspace/editor/doc-1",
-        "/account",
-        "/pricing",
-        "/api/agent/stream",
-        "/api/files/sync",
-        "/api/stripe/webhook",
-      ];
+      mockState.getUser.mockResolvedValueOnce({
+        data: { user: null },
+        error: null,
+      });
 
-      for (const route of validRoutes) {
-        expect(regex.test(route)).toBe(true);
-      }
+      const res = await app.request("https://lugx.app/workspace", {
+        method: "POST",
+        headers: {
+          "next-action": "legacy_action_hash",
+          accept: "text/html",
+        },
+      });
+
+      expect(downstreamSpy).not.toHaveBeenCalled();
+      expect(res.status).toBe(307);
+      expect(res.headers.get("location")).toBe(
+        "https://lugx.app/login?redirectTo=%2Fworkspace"
+      );
     });
 
-    it("excludes Next.js static chunks, images, assets, favicon and common static file extensions", () => {
-      const regex = new RegExp(`^${config.matcher[0]}$`);
+    it("short-circuits downstream handlers and returns 401 JSON for unauthenticated request on protected route carrying next-action with Accept: application/json", async () => {
+      const downstreamSpy = vi.fn((c) => c.json({ data: "ok" }));
+      const app = new Hono();
+      app.use("*", sessionMiddleware);
+      app.post("/workspace", downstreamSpy);
 
-      const excludedRoutes = [
-        "/_next/static/chunks/main.js",
-        "/_next/static/css/global.css",
-        "/_next/image?url=%2Flogo.png",
-        "/assets/bundle.js",
-        "/assets/images/logo.png",
-        "/favicon.ico",
-        "/logo.svg",
-        "/avatar.png",
-        "/banner.jpg",
-        "/photo.jpeg",
-        "/loader.gif",
-        "/preview.webp",
-        "/custom.ico",
-        "/fonts/inter.woff",
-        "/fonts/inter.woff2",
-      ];
+      mockState.getUser.mockResolvedValueOnce({
+        data: { user: null },
+        error: null,
+      });
 
-      for (const route of excludedRoutes) {
-        expect(regex.test(route)).toBe(false);
-      }
+      const res = await app.request("https://lugx.app/workspace", {
+        method: "POST",
+        headers: {
+          "next-action": "legacy_action_hash",
+          accept: "application/json",
+        },
+      });
+
+      expect(downstreamSpy).not.toHaveBeenCalled();
+      expect(res.status).toBe(401);
+      expect(res.headers.get("Content-Type")).toBe("application/json");
+      const body = await res.json();
+      expect(body).toEqual({ error: "Unauthorized" });
     });
   });
 });

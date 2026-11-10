@@ -77,17 +77,44 @@ describe("signOut() Cookie Wiping and Structured Redirect", () => {
         expect(mockCookieDelete).not.toHaveBeenCalled();
     });
 
-    it("handles form action invocation when FormData is passed", async () => {
-        mockCookies.push({ name: "sb-access-token", value: "tok_form" });
-        const formData = new FormData();
+    it("strictly returns structured redirect even if unexpected arguments are provided (purged FormData overload)", async () => {
+        mockCookies.push({ name: "sb-auth-token", value: "token-abc" });
+
+        // Purged overload: passing FormData or arguments should not return void
+        const dummyFormData = new FormData();
+        dummyFormData.append("action", "signout");
 
         const result = await runWithServerRequestContext(
             { cookies: mockCookieStore, headers: new Headers() },
-            () => signOut(formData)
+            () => (signOut as any)(dummyFormData)
         );
-        expect(result).toBeUndefined();
 
+        expect(result).toEqual({ success: true, redirectUrl: "/" });
+        expect(result).not.toBeUndefined();
         expect(mockSignOut).toHaveBeenCalledTimes(1);
-        expect(mockCookieDelete).toHaveBeenCalledWith("sb-access-token");
+        expect(mockCookieDelete).toHaveBeenCalledWith("sb-auth-token");
+    });
+
+    it("wipes diverse sb-* auth cookies (access, refresh, code-verifier) while preserving non-auth cookies", async () => {
+        mockCookies.push(
+            { name: "sb-token-12345", value: "val1" },
+            { name: "sb-refresh-token", value: "val2" },
+            { name: "sb-code-verifier", value: "val3" },
+            { name: "theme", value: "dark" },
+            { name: "analytics_consent", value: "true" }
+        );
+
+        const result = await runWithServerRequestContext(
+            { cookies: mockCookieStore, headers: new Headers() },
+            () => signOut()
+        );
+
+        expect(result).toEqual({ success: true, redirectUrl: "/" });
+        expect(mockCookieDelete).toHaveBeenCalledWith("sb-token-12345");
+        expect(mockCookieDelete).toHaveBeenCalledWith("sb-refresh-token");
+        expect(mockCookieDelete).toHaveBeenCalledWith("sb-code-verifier");
+        expect(mockCookieDelete).not.toHaveBeenCalledWith("theme");
+        expect(mockCookieDelete).not.toHaveBeenCalledWith("analytics_consent");
+        expect(mockCookieDelete).toHaveBeenCalledTimes(3);
     });
 });

@@ -1,7 +1,7 @@
 /**
- * Server Actions for Zero-Knowledge User Vault Profiles
+ * Hono RPC Action Handlers for Zero-Knowledge User Vault Profiles
  *
- * Provides atomic server actions for retrieving, creating, and updating
+ * Provides atomic server handlers for retrieving, creating, and updating
  * dual-wrapped master key profiles (password KEK + BIP-39 recovery seed KEK).
  * Zero plaintext or master keys ever touch this layer.
  */

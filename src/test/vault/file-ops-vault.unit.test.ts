@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { toggleFileEncryption, copyFile } from "@/server/actions/file-ops";
+import { toggleFileEncryption, copyFile } from "@/server/actions/files";
 import { db } from "@/server/db";
 import { getUser } from "@/lib/supabase/server";
 

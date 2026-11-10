@@ -79,7 +79,7 @@ export class CryptoWorkerBridge {
 
     if (typeof window !== 'undefined' && typeof Worker !== 'undefined' && !this.isTerminated) {
       try {
-        // Next.js Web Worker module instantiation
+        // Standard Web Worker instantiation
         this.worker = new Worker(
           new URL('../workers/crypto.worker.ts', import.meta.url),
           { type: 'module' }

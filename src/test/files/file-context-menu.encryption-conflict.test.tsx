@@ -4,19 +4,22 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { FileContextMenu } from "../../components/files/file-context-menu";
 import { indexedDBManager } from "../../lib/sync/indexeddb";
-import { toggleFileEncryption } from "../../server/actions/file-ops";
+import { toggleFileEncryption } from "@/server/actions/files";
 import { sessionKeyStore } from "../../lib/sync/session-key-store";
 import { cryptoWorkerBridge } from "../../lib/sync/crypto-worker-bridge";
 import { getUserVaultProfile } from "../../server/actions/vault-actions";
 
 // Mock server actions at module boundary (Contract/Unit test)
-vi.mock("../../server/actions/file-ops", () => ({
+vi.mock("@/server/actions/files", () => ({
     toggleFileEncryption: vi.fn(),
     getFile: vi.fn(),
     deleteFile: vi.fn(),
     restoreFile: vi.fn(),
     renameFile: vi.fn(),
     copyFile: vi.fn(),
+}));
+
+vi.mock("@/server/actions/folders", () => ({
     moveFile: vi.fn(),
 }));
 
@@ -25,10 +28,12 @@ vi.mock("../../server/actions/vault-actions", () => ({
 }));
 
 vi.mock("@/client/rpc-client", async () => {
-    const fileOps = await import("../../server/actions/file-ops");
+    const fileOps = await import("@/server/actions/files");
+    const folderOps = await import("@/server/actions/folders");
     const vaultActions = await import("../../server/actions/vault-actions");
     return {
         ...fileOps,
+        ...folderOps,
         ...vaultActions,
     };
 });

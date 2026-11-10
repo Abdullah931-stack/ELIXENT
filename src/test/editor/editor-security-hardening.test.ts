@@ -15,11 +15,11 @@ import { useEditorOrchestrator } from "../../hooks/use-editor-orchestrator";
 import { sessionKeyStore } from "../../lib/sync/session-key-store";
 import { SyncCryptoGateway } from "../../lib/sync/sync-crypto-gateway";
 import { AAD, AADValidationError } from "../../lib/crypto/aad";
-import * as fileOps from "../../server/actions/file-ops";
+import * as fileOps from "@/server/actions/files";
 import type { EditorAdapter } from "../../components/editor/markdown/types";
 
 // Mock dependencies
-vi.mock("../../server/actions/file-ops", () => ({
+vi.mock("@/server/actions/files", () => ({
     getFile: vi.fn(),
     updateFileContent: vi.fn(),
     toggleFileEncryption: vi.fn(),

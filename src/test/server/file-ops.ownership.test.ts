@@ -18,7 +18,8 @@ import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup"
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { randomUUID } from "crypto";
 import { generateRestoredTitle, generateCopyTitle } from "@/lib/utils/file-naming";
-import { moveFile, restoreFile } from "@/server/actions/file-ops";
+import { moveFile } from "@/server/actions/folders";
+import { restoreFile } from "@/server/actions/files";
 
 const USER_A_ID = "33333333-3333-3333-3333-333333333333";
 const USER_B_ID = "44444444-4444-4444-4444-444444444444";

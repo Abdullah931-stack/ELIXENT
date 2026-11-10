@@ -51,7 +51,7 @@ describe("Node Server Entrypoint (src/server/index.ts)", () => {
 
       expect(res.status).toBe(404);
       const text = await res.text();
-      expect(text).toContain("LUGX SPA client build not found");
+      expect(text).toContain("ELIXENT SPA client build not found");
       expect(text).toContain("vite build");
     });
 

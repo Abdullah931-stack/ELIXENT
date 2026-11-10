@@ -1,5 +1,5 @@
 /**
- * Server Action: Import File
+ * Hono RPC Action Handler: Import File
  * Handles PDF/MD/TXT file imports with direct UTF-8 text/ciphertext payloads,
  * parent folder ownership validation, and Zero-Knowledge Vault encrypted import.
  */

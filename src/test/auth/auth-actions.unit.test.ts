@@ -4,7 +4,7 @@
  * Verifies the decoupled behavior of `src/server/actions/auth-actions.ts`:
  * 1. signInWithGoogle: structured return types, OAuth error handling, open redirect protection,
  *    rate limiting, IP extraction fallbacks, and execution within `runWithServerRequestContext`.
- * 2. signOut: overloaded signatures (direct call vs. FormData action), selective `sb-*` cookie wiping,
+ * 2. signOut: structured redirect return, selective `sb-*` cookie wiping,
  *    and execution within Hono `runWithServerRequestContext`.
  * 3. getUserProfile: unauthenticated rejection, successful profile retrieval, not found handling,
  *    and database failure isolation.
@@ -315,23 +315,6 @@ describe("Decoupled Auth Actions (src/server/actions/auth-actions.ts)", () => {
                 { name: "theme_preference", value: "dark" },
                 { name: "cookie_consent", value: "accepted" },
             ]);
-        });
-
-        it("returns undefined when invoked as a Form Action with FormData", async () => {
-            const cookieStore = createInMemoryCookieStore([
-                { name: "sb-session", value: "active" },
-            ]);
-            const formData = new FormData();
-            formData.append("reason", "manual_logout");
-
-            const result = await runWithServerRequestContext(
-                { cookies: cookieStore, headers: new Headers() },
-                async () => signOut(formData)
-            );
-
-            expect(result).toBeUndefined();
-            expect(mockSupabaseSignOut).toHaveBeenCalledTimes(1);
-            expect(cookieStore.getAll()).toEqual([]);
         });
 
         it("safely completes and returns { success: true, redirectUrl: '/' } when called outside request context without crashing", async () => {

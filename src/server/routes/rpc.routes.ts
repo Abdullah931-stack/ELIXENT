@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
+import { getCookie, deleteCookie } from "hono/cookie";
 import {
   createFile,
   updateFileContent,
@@ -14,14 +15,9 @@ import {
   getUserFiles,
   getRootFiles,
   getDeletedFiles,
-  type UpdateFileOptions,
-  type DeleteFileOptions,
 } from "@/server/actions/files";
 import { moveFile, getFolderChildren } from "@/server/actions/folders";
-import {
-  importFile,
-  type ImportEncryptionOptions,
-} from "@/server/actions/import-file";
+import { importFile } from "@/server/actions/import-file";
 import {
   getUserVaultProfile,
   createUserVaultProfile,
@@ -29,9 +25,6 @@ import {
   updateVaultRecoveryEnvelope,
   revokeAllTrustedDevices,
   updateVaultAISetting,
-  type CreateVaultProfileInput,
-  type UpdateVaultPasswordInput,
-  type UpdateVaultRecoveryEnvelopeInput,
 } from "@/server/actions/vault-actions";
 import {
   signInWithGoogle,
@@ -42,61 +35,23 @@ import {
 } from "@/server/actions/auth-actions";
 import { getUserCreditBalance } from "@/server/services/ai-settlement-service";
 import { getUser } from "@/lib/supabase/server";
-import type { FileEncryptionMetadata } from "@/server/db/schema";
-
-const encryptionMetadataSchema = z.object({
-  version: z.number(),
-  algorithm: z.string(),
-  keyId: z.string(),
-  salt: z.string(),
-  iv: z.string(),
-  kdfIterations: z.number().optional(),
-});
-
-const updateFileOptionsSchema = z.object({
-  expectedVersion: z.number().optional(),
-  expectedETag: z.string().optional(),
-  operationId: z.string().optional(),
-});
-
-const deleteFileOptionsSchema = z.object({
-  expectedVersion: z.number().optional(),
-  expectedETag: z.string().optional(),
-});
-
-const encryptedOverrideSchema = z.object({
-  newFileId: z.string().optional(),
-  content: z.string().optional(),
-  encryptionMetadata: encryptionMetadataSchema.nullable().optional(),
-});
-
-const importEncryptionSchema = z.object({
-  isEncrypted: z.boolean().optional(),
-  encryptionMetadata: encryptionMetadataSchema.nullable().optional(),
-  fileId: z.string().optional(),
-});
-
-const createVaultProfileSchema = z.object({
-  encryptedMasterKey: z.string(),
-  recoveryEncryptedMasterKey: z.string(),
-  keySalt: z.string(),
-  recoverySalt: z.string(),
-  kdfIterations: z.number().optional(),
-  keyVersion: z.number().optional(),
-});
-
-const updateVaultPasswordSchema = z.object({
-  encryptedMasterKey: z.string(),
-  keySalt: z.string(),
-  kdfIterations: z.number().optional(),
-  proofOfPossession: z.string(),
-  proofNonce: z.string(),
-});
-
-const updateVaultRecoveryEnvelopeSchema = z.object({
-  recoveryEncryptedMasterKey: z.string(),
-  recoverySalt: z.string().optional(),
-});
+import {
+  encryptionMetadataSchema,
+  updateFileOptionsSchema,
+  deleteFileOptionsSchema,
+  encryptedOverrideSchema,
+  importEncryptionSchema,
+  createVaultProfileSchema,
+  updateVaultPasswordSchema,
+  updateVaultRecoveryEnvelopeSchema,
+  type UpdateFileOptions,
+  type DeleteFileOptions,
+  type ImportEncryptionOptions,
+  type CreateVaultProfileInput,
+  type UpdateVaultPasswordInput,
+  type UpdateVaultRecoveryEnvelopeInput,
+  type FileEncryptionMetadata,
+} from "@/types/rpc-contracts";
 
 export const rpcRoutes = new Hono()
   // -------------------------------------------------------------
@@ -427,27 +382,17 @@ export const rpcRoutes = new Hono()
   )
   .post("/auth/sign-out", async (c) => {
     await signOut();
-
-    // Explicitly delete any sb-* Supabase auth cookies present on the incoming request
-    const cookieHeader = c.req.header("cookie") || "";
-    const cookieNames = new Set<string>();
-    for (const pair of cookieHeader.split(";")) {
-      const trimmed = pair.trim();
-      if (!trimmed) continue;
-      const name = trimmed.split("=")[0]?.trim();
-      if (name && name.startsWith("sb-")) {
-        cookieNames.add(name);
+    const cookies = getCookie(c);
+    for (const name of Object.keys(cookies)) {
+      if (name.startsWith("sb-")) {
+        deleteCookie(c, name, {
+          path: "/",
+          httpOnly: true,
+          sameSite: "Lax",
+          expires: new Date(0),
+        });
       }
     }
-
-    for (const name of cookieNames) {
-      c.header(
-        "Set-Cookie",
-        `${name}=; Max-Age=0; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax`,
-        { append: true }
-      );
-    }
-
     return c.json({ success: true as const, redirectUrl: "/" });
   })
   .post("/auth/sync-user", async (c) => {

@@ -2,7 +2,7 @@
  * Correlation ID & Structured Error Utilities
  *
  * Implements lightweight, non-breaking distributed tracing across
- * API route handlers, Server Actions, NDJSON stream frames, and client telemetry.
+ * Hono route handlers, RPC action handlers, NDJSON stream frames, and client telemetry.
  */
 
 export const CORRELATION_HEADER = 'X-Correlation-ID';

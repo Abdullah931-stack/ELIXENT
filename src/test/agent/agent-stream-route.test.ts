@@ -5,7 +5,7 @@
  * fail-closed rate limiting, RFC 7807 problem details error responses,
  * Zod payload parsing & strict sanitization, happy-path SSE event streaming,
  * Command({ resume }) dispatch, StreamGovernor quota enforcement,
- * real zero-knowledge memory wiping (Buffer.fill(0)), and Next.js after() settlement scheduling.
+ * real zero-knowledge memory wiping (Buffer.fill(0)), and scheduleAfterResponse() (ADR-007 ALS) settlement scheduling.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -645,8 +645,8 @@ describe("POST /api/agent/stream Route Handler", () => {
     });
   });
 
-  describe("9. Next.js after() Settlement Scheduling", () => {
-    it("should schedule background PostgreSQL settlement flush via after() with user.id", async () => {
+  describe("9. scheduleAfterResponse() (ADR-007 ALS) Settlement Scheduling", () => {
+    it("should schedule background PostgreSQL settlement flush via scheduleAfterResponse() with user.id", async () => {
       graphConfigState.chunksToEmit = [{ step: 1 }];
 
       const req = new Request("http://localhost:3000/api/agent/stream", {

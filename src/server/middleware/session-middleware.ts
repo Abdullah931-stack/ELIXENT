@@ -143,7 +143,7 @@ function createCookieStore(
 }
 
 /**
- * Core session evaluation logic porting src/proxy.ts invariants.
+ * Core session evaluation logic enforcing route authentication and session refresh invariants.
  * Returns an early Response (307 redirect or 401 unauthorized) or null if request is allowed to proceed.
  */
 async function evaluateSession(
@@ -152,13 +152,9 @@ async function evaluateSession(
   mutatedCookies: Map<string, ServerCookieRecord>
 ): Promise<Response | null> {
   const supabaseUrl =
-    process.env.VITE_SUPABASE_URL ||
-    process.env.NEXT_PUBLIC_SUPABASE_URL ||
-    "https://placeholder.supabase.co";
+    process.env.VITE_SUPABASE_URL || "https://placeholder.supabase.co";
   const supabaseAnonKey =
-    process.env.VITE_SUPABASE_ANON_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    "placeholder-anon-key";
+    process.env.VITE_SUPABASE_ANON_KEY || "placeholder-anon-key";
 
   const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
     cookies: {
@@ -233,12 +229,13 @@ async function evaluateSession(
     }
   }
 
-  // If it's a Server Action or API request, never redirect to HTML login page (which breaks Server Action client runtime)
-  const isActionOrApi =
-    request.headers.has("next-action") || pathname.startsWith("/api/");
+  // Enforce RFC 9110 Web content negotiation: return 401 JSON for Accept: application/json or /api/* requests
+  const isJsonOrApi =
+    Boolean(request.headers.get("accept")?.includes("application/json")) ||
+    pathname.startsWith("/api/");
 
   if (isProtectedPath && !user) {
-    if (isActionOrApi) {
+    if (isJsonOrApi) {
       const res = new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { "Content-Type": "application/json" },
@@ -268,7 +265,7 @@ async function evaluateSession(
 
 /**
  * Standalone Web standard session proxy handler.
- * Provides identical semantics to src/proxy.ts for pure Request / Response consumers.
+ * Evaluates session state and route access invariants for pure Request / Response consumers.
  */
 export async function handleSessionProxy(request: Request): Promise<Response> {
   const incomingCookies = parseIncomingCookies(request);
@@ -288,11 +285,6 @@ export async function handleSessionProxy(request: Request): Promise<Response> {
     return applyCookiesToResponse(passThroughResponse, mutatedCookies);
   });
 }
-
-/**
- * Backward compatibility alias for handleSessionProxy.
- */
-export const proxy = handleSessionProxy;
 
 /**
  * Standard Hono middleware wrapping session validation, auth protection, and cookie synchronization.
@@ -328,12 +320,3 @@ export const sessionMiddleware = createMiddleware(async (c, next) => {
     }
   }
 });
-
-/**
- * Route matcher configuration for static asset exclusion.
- */
-export const config = {
-  matcher: [
-    "/((?!_next/static|_next/image|assets/|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff|woff2)$).*)",
-  ],
-};

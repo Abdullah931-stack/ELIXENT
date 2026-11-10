@@ -22,10 +22,10 @@ import {
     updateFileContent,
     deleteFile,
     copyFile,
-    moveFile,
     getFile,
     getUserFiles,
-} from "@/server/actions/file-ops";
+} from "@/server/actions/files";
+import { moveFile } from "@/server/actions/folders";
 import { importFile } from "@/server/actions/import-file";
 import { getAIReservationStatus } from "@/server/services/ai-settlement-service";
 import { syncUserToDatabase } from "@/server/actions/auth-actions";

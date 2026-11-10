@@ -24,7 +24,7 @@ import {
     createFile,
     getFile,
     toggleFileEncryption,
-} from "@/server/actions/file-ops";
+} from "@/server/actions/files";
 import { CloudPostgresWorkspaceProvider } from "@/core/workspace/cloud-provider";
 import { VaultAIAccessDeniedError, WorkspaceFileAccessDeniedError } from "@/core/workspace/provider";
 import { runWithEphemeralVaultScope } from "@/lib/vault/ephemeral-memory-map";

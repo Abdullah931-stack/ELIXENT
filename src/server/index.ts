@@ -26,7 +26,7 @@ app.get("*", async (c) => {
     return c.html(html);
   }
   return c.text(
-    "LUGX SPA client build not found. Run 'vite build' to generate dist/client.",
+    "ELIXENT SPA client build not found. Run 'vite build' to generate dist/client.",
     404
   );
 });
@@ -34,7 +34,7 @@ app.get("*", async (c) => {
 const port = Number(process.env.PORT || 3000);
 
 if (process.env.NODE_ENV !== "test") {
-  console.log(`[LUGX Server] Listening on http://localhost:${port}`);
+  console.log(`[ELIXENT Server] Listening on http://localhost:${port}`);
   serve({
     fetch: app.fetch,
     port,

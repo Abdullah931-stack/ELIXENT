@@ -27,8 +27,7 @@ import {
     createUserVaultProfile,
     revokeAllTrustedDevices,
 } from "@/server/actions/vault-actions";
-import { toggleFileEncryption, copyFile } from "@/server/actions/file-ops";
-import { updateFileContent } from "@/server/actions/files";
+import { toggleFileEncryption, copyFile, updateFileContent } from "@/server/actions/files";
 import { db } from "@/server/db";
 import { getUser } from "@/lib/supabase/server";
 

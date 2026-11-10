@@ -51,11 +51,9 @@ export async function signInWithGoogle(redirectTo?: string): Promise<
 }
 
 /**
- * Sign out
+ * Sign out and clear all Supabase auth session cookies
  */
-export async function signOut(): Promise<{ success: true; redirectUrl: string }>;
-export async function signOut(formData: FormData): Promise<void>;
-export async function signOut(formData?: FormData): Promise<{ success: true; redirectUrl: string } | void> {
+export async function signOut(): Promise<{ success: true; redirectUrl: string }> {
     const supabase = await createClient();
     await supabase.auth.signOut();
 
@@ -66,10 +64,6 @@ export async function signOut(formData?: FormData): Promise<{ success: true; red
         if (cookie.name.startsWith("sb-")) {
             cookieStore.delete(cookie.name);
         }
-    }
-
-    if (formData !== undefined) {
-        return;
     }
 
     return { success: true as const, redirectUrl: "/" };

@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Sidebar } from "../../components/layout/sidebar";
 import { indexedDBManager } from "../../lib/sync/indexeddb";
 import { importFile } from "../../server/actions/import-file";
-import { getUserFiles } from "../../server/actions/file-ops";
+import { getUserFiles } from "@/server/actions/files";
 import { sessionKeyStore } from "../../lib/sync/session-key-store";
 import { cryptoWorkerBridge } from "../../lib/sync/crypto-worker-bridge";
 import { parseFileContent } from "../../lib/parsers/text-parser";
@@ -14,12 +14,12 @@ import { parseFileContent } from "../../lib/parsers/text-parser";
 vi.mock("../../server/actions/import-file", () => ({
     importFile: vi.fn(),
 }));
-vi.mock("../../server/actions/file-ops", () => ({
+vi.mock("@/server/actions/files", () => ({
     getUserFiles: vi.fn(),
     getDeletedFiles: vi.fn(),
 }));
 vi.mock("@/client/rpc-client", async () => {
-    const fileOps = await import("../../server/actions/file-ops");
+    const fileOps = await import("@/server/actions/files");
     const importFileMod = await import("../../server/actions/import-file");
     return {
         ...fileOps,

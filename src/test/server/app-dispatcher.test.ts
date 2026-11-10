@@ -572,11 +572,11 @@ describe("Master Hono Application Dispatcher (src/server/app.ts)", () => {
       expect(res.headers.get("location")).toContain("/login?redirectTo=%2Fdashboard");
     });
 
-    it("returns 401 JSON when unauthenticated action request hits protected route", async () => {
+    it("returns 401 JSON when unauthenticated JSON request hits protected route", async () => {
       mockGetUser.mockResolvedValueOnce(null);
 
       const res = await app.request("http://localhost/dashboard", {
-        headers: { "next-action": "action_uuid_test" },
+        headers: { Accept: "application/json" },
       });
       expect(res.status).toBe(401);
       const body = await res.json();

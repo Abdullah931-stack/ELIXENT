@@ -4,7 +4,7 @@
  * REAL DATABASE TEST: local Postgres + Drizzle (pg driver) + full schema.
  *
  * Verifies the production soft-delete contract implemented in
- * @/server/actions/file-ops and enforced by migration 0003:
+ * @/server/actions/files and enforced by migration 0003:
  *
  *   1. delete = tombstone (deleted_at IS NOT NULL), row stays in the DB.
  *   2. Every live read query filters deleted_at IS NULL
@@ -29,7 +29,7 @@ import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { getDescendantIds } from "@/server/actions/folders";
-import { deleteFile, restoreFile } from "@/server/actions/file-ops";
+import { deleteFile, restoreFile } from "@/server/actions/files";
 import { randomUUID } from "crypto";
 
 const TEST_USER_ID = "22222222-2222-2222-2222-222222222222";

@@ -8,7 +8,7 @@
  * 1. ELIXENT-ARCH-03 §5.1 & §5.2: Transient EphemeralVaultMemoryMap hydration and zeroing.
  * 2. ELIXENT-ARCH-02 §6: StreamGovernor dynamic multi-slice reservation, runway monitoring,
  *    and fail-closed termination.
- * 3. Next.js Route Standards: maxDuration = 300, background flush via `after()`.
+ * 3. Hono Route Standards: background flush via `scheduleAfterResponse() (ADR-007 ALS)`.
  * 4. Zero-Knowledge Hygiene: Vault plaintexts never enter persistent state or error logs.
  */
 
@@ -247,7 +247,7 @@ export async function handleAgentStreamPost(req: Request): Promise<Response> {
     }
   );
 
-  // 5. Schedule background settlement flush to PostgreSQL via Next.js after()
+  // 5. Schedule background settlement flush to PostgreSQL via scheduleAfterResponse() (ADR-007 ALS)
   scheduleAfterResponse(async () => {
     try {
       await flushPendingSettlementsToPostgres(user.id);

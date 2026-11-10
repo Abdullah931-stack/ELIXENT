@@ -2,7 +2,7 @@
  * In-Memory Webhook Deduplication and Test Reset Utilities (Phase 13)
  *
  * Provides fast-path deduplication for Stripe webhook events and isolated test reset helper.
- * Extracted from route.ts to strictly adhere to Next.js App Router route module export rules.
+ * Modularized from the Hono webhook route handler for clean separation of concerns.
  */
 
 const processedEventIds = new Set<string>();

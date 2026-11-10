@@ -39,18 +39,25 @@ import { createProblemDetails } from "@/types/problem-details";
 const DEFAULT_LIMIT = 50;
 
 export interface RouteParams {
+  id?: string;
   params?: { id: string };
 }
 
 export type RouteContext = RouteParams;
 
 /**
- * Resolves the target file ID from route context params or the request URL path.
+ * Resolves the target file ID from route context or the request URL path.
  */
 function resolveFileId(
   request: Request,
-  context?: RouteContext
+  context?: RouteContext | string
 ): string {
+  if (typeof context === "string") {
+    return context;
+  }
+  if (context?.id) {
+    return context.id;
+  }
   if (context?.params?.id) {
     return context.params.id;
   }
@@ -855,12 +862,6 @@ export async function handleFileByIdDelete(
 
 export const filesApiRoutes = new Hono()
   .get("/sync", (c) => handleFilesSyncGet(c.req.raw))
-  .get("/:id", (c) =>
-    handleFileByIdGet(c.req.raw, { params: { id: c.req.param("id") } })
-  )
-  .put("/:id", (c) =>
-    handleFileByIdPut(c.req.raw, { params: { id: c.req.param("id") } })
-  )
-  .delete("/:id", (c) =>
-    handleFileByIdDelete(c.req.raw, { params: { id: c.req.param("id") } })
-  );
+  .get("/:id", (c) => handleFileByIdGet(c.req.raw, { id: c.req.param("id") }))
+  .put("/:id", (c) => handleFileByIdPut(c.req.raw, { id: c.req.param("id") }))
+  .delete("/:id", (c) => handleFileByIdDelete(c.req.raw, { id: c.req.param("id") }));

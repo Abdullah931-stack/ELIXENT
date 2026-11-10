@@ -4,7 +4,7 @@
  * REAL DATABASE TEST: local Postgres + Drizzle (pg driver) + full schema.
  *
  * Verifies the optimistic-locking contract implemented in
- * @/server/actions/file-ops (updateFileContent):
+ * @/server/actions/files (updateFileContent):
  *
  *   1. A normal update succeeds: version advances by 1, content and etag
  *      are persisted.
@@ -21,7 +21,7 @@ import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { randomUUID } from "crypto";
-import { updateFileContent } from "@/server/actions/file-ops";
+import { updateFileContent } from "@/server/actions/files";
 
 const TEST_USER_ID = "55555555-5555-5555-5555-555555555555";
 let dbAvailable = false;

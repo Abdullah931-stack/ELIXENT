@@ -14,11 +14,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { EditorAdapter } from "@/components/editor/markdown/types";
 import { useEditorOrchestrator } from "@/hooks/use-editor-orchestrator";
-import * as fileOps from "@/server/actions/file-ops";
+import * as fileOps from "@/server/actions/files";
 import { sessionKeyStore } from "@/lib/sync/session-key-store";
 import { SyncCryptoGateway } from "@/lib/sync/sync-crypto-gateway";
 
-vi.mock("@/server/actions/file-ops", () => ({
+vi.mock("@/server/actions/files", () => ({
     getFile: vi.fn(),
     updateFileContent: vi.fn(),
     toggleFileEncryption: vi.fn(),
@@ -34,7 +34,7 @@ vi.mock("@/server/actions/vault-actions", () => ({
 }));
 
 vi.mock("@/client/rpc-client", async () => {
-    const mockedFileOps = await import("@/server/actions/file-ops");
+    const mockedFileOps = await import("@/server/actions/files");
     const mockedVaultActions = await import("@/server/actions/vault-actions");
     return {
         ...mockedFileOps,
