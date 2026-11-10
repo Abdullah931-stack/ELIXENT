@@ -1,18 +1,22 @@
 import { createBrowserClient } from "@supabase/ssr";
 
 export function createClient() {
+    const isNode = typeof process !== "undefined" && Boolean(process.versions?.node);
+    const metaEnv = (
+        import.meta as ImportMeta & {
+            env?: Record<string, string | undefined>;
+        }
+    ).env;
+    const nodeEnv = (
+        globalThis as {
+            process?: { env?: Record<string, string | undefined> };
+        }
+    ).process?.env;
     const supabaseUrl =
-        (typeof process !== "undefined" &&
-            (process.env?.VITE_SUPABASE_URL || process.env?.NEXT_PUBLIC_SUPABASE_URL)) ||
-        (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_SUPABASE_URL ||
-        (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.NEXT_PUBLIC_SUPABASE_URL ||
+        (isNode ? nodeEnv?.VITE_SUPABASE_URL : metaEnv?.VITE_SUPABASE_URL) ||
         "https://placeholder.supabase.co";
-
     const supabaseAnonKey =
-        (typeof process !== "undefined" &&
-            (process.env?.VITE_SUPABASE_ANON_KEY || process.env?.NEXT_PUBLIC_SUPABASE_ANON_KEY)) ||
-        (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_SUPABASE_ANON_KEY ||
-        (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+        (isNode ? nodeEnv?.VITE_SUPABASE_ANON_KEY : metaEnv?.VITE_SUPABASE_ANON_KEY) ||
         "placeholder-anon-key";
 
     return createBrowserClient(supabaseUrl, supabaseAnonKey);

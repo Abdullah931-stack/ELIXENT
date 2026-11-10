@@ -30,7 +30,7 @@ function simulateStage6Gating({ eventName, ref, runLiveSmoke, secrets }) {
     runLiveSmoke === "true";
 
   const dbStatus = secrets.TEST_DATABASE_URL ? "✅ Configured" : "❌ Missing";
-  const sbUrlStatus = secrets.NEXT_PUBLIC_SUPABASE_URL ? "✅ Configured" : "❌ Missing";
+  const sbUrlStatus = secrets.VITE_SUPABASE_URL ? "✅ Configured" : "❌ Missing";
   const sbKeyStatus = secrets.SUPABASE_SERVICE_ROLE_KEY ? "✅ Configured" : "❌ Missing";
   const stripeStatus = secrets.STRIPE_SECRET_KEY ? "✅ Configured" : "❌ Missing";
   const redisStatus = secrets.UPSTASH_REDIS_REST_URL ? "✅ Configured" : "❌ Missing";
@@ -38,7 +38,7 @@ function simulateStage6Gating({ eventName, ref, runLiveSmoke, secrets }) {
 
   const missingMandatory =
     !secrets.TEST_DATABASE_URL ||
-    !secrets.NEXT_PUBLIC_SUPABASE_URL ||
+    !secrets.VITE_SUPABASE_URL ||
     !secrets.SUPABASE_SERVICE_ROLE_KEY;
 
   let exitCode = 0;
@@ -59,7 +59,7 @@ function simulateStage6Gating({ eventName, ref, runLiveSmoke, secrets }) {
 | Secret / Environment Variable | Status | Gating Rule |
 | :--- | :--- | :--- |
 | \`TEST_DATABASE_URL\` | ${dbStatus} | **Mandatory (Missing)** |
-| \`NEXT_PUBLIC_SUPABASE_URL\` | ${sbUrlStatus} | **Mandatory** |
+| \`VITE_SUPABASE_URL\` | ${sbUrlStatus} | **Mandatory** |
 | \`SUPABASE_SERVICE_ROLE_KEY\` | ${sbKeyStatus} | **Mandatory** |
 | \`STRIPE_SECRET_KEY\` | ${stripeStatus} | Optional / Mock Fallback |
 | \`UPSTASH_REDIS_REST_URL\` | ${redisStatus} | Optional / Mock Fallback |
@@ -79,7 +79,7 @@ function simulateStage6Gating({ eventName, ref, runLiveSmoke, secrets }) {
 | Secret / Environment Variable | Status | Context Classification |
 | :--- | :--- | :--- |
 | \`TEST_DATABASE_URL\` | ${dbStatus} | Mandatory for Release |
-| \`NEXT_PUBLIC_SUPABASE_URL\` | ${sbUrlStatus} | Mandatory for Release |
+| \`VITE_SUPABASE_URL\` | ${sbUrlStatus} | Mandatory for Release |
 | \`SUPABASE_SERVICE_ROLE_KEY\` | ${sbKeyStatus} | Mandatory for Release |
 | \`STRIPE_SECRET_KEY\` | ${stripeStatus} | Optional |
 | \`UPSTASH_REDIS_REST_URL\` | ${redisStatus} | Optional |
@@ -102,7 +102,7 @@ function simulateStage6Gating({ eventName, ref, runLiveSmoke, secrets }) {
 | Secret / Environment Variable | Status |
 | :--- | :--- |
 | \`TEST_DATABASE_URL\` | ${dbStatus} |
-| \`NEXT_PUBLIC_SUPABASE_URL\` | ${sbUrlStatus} |
+| \`VITE_SUPABASE_URL\` | ${sbUrlStatus} |
 | \`SUPABASE_SERVICE_ROLE_KEY\` | ${sbKeyStatus} |
 | \`STRIPE_SECRET_KEY\` | ${stripeStatus} |
 | \`UPSTASH_REDIS_REST_URL\` | ${redisStatus} |
@@ -182,7 +182,7 @@ function assertCheck(desc, condition) {
 
 // 1. Verify static ci.yml configuration
 console.log("=== 1. Validating Static .github/workflows/ci.yml Contract ===");
-const ciContent = fs.readFileSync(CI_YML_PATH, "utf8");
+const ciContent = fs.readFileSync(CI_YML_PATH, "utf8").replace(/\r\n/g, "\n");
 
 assertCheck("ci.yml includes tags: ['v*'] in push triggers", ciContent.includes("tags: ['v*']"));
 assertCheck("ci.yml includes release: types: [published]", ciContent.includes("release:\n    types: [published]"));
@@ -246,7 +246,7 @@ const m5 = simulateStage6Gating({
   runLiveSmoke: "false",
   secrets: {
     TEST_DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/lugx_test",
-    NEXT_PUBLIC_SUPABASE_URL: "https://mock.supabase.co",
+    VITE_SUPABASE_URL: "https://mock.supabase.co",
     SUPABASE_SERVICE_ROLE_KEY: "mock-key",
   },
 });

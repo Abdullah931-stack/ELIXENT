@@ -834,7 +834,6 @@ describe("OAuth Auth Callback Route Module (src/server/routes/auth-callback.rout
     vi.clearAllMocks();
     process.env = { ...ORIGINAL_ENV };
     delete process.env.VITE_APP_URL;
-    delete process.env.NEXT_PUBLIC_APP_URL;
 
     mockCreateClient.mockImplementation((ctx: ServerRequestContext) => ({
       auth: {
@@ -852,9 +851,8 @@ describe("OAuth Auth Callback Route Module (src/server/routes/auth-callback.rout
     process.env = ORIGINAL_ENV;
   });
 
-  it("prioritizes VITE_APP_URL over NEXT_PUBLIC_APP_URL and request origin, and preserves Set-Cookie headers in standalone mode", async () => {
+  it("prioritizes VITE_APP_URL over request origin, and preserves Set-Cookie headers in standalone mode", async () => {
     process.env.VITE_APP_URL = "https://vite.elixent.app";
-    process.env.NEXT_PUBLIC_APP_URL = "https://next.elixent.app";
 
     mockExchangeCodeForSession.mockImplementationOnce(
       async (_code: string, ctx: ServerRequestContext) => {
@@ -894,6 +892,20 @@ describe("OAuth Auth Callback Route Module (src/server/routes/auth-callback.rout
     expect(setCookieHeader).toContain("Secure");
     expect(setCookieHeader).toContain("SameSite=Lax");
     expect(setCookieHeader).toContain("pkce_verifier=; Max-Age=0; Path=/");
+  });
+
+  it("falls back to request origin when VITE_APP_URL is absent, strictly ignoring NEXT_PUBLIC_APP_URL", async () => {
+    delete process.env.VITE_APP_URL;
+    process.env.NEXT_PUBLIC_APP_URL = "https://legacy-ignored.elixent.app";
+
+    const res = await authCallbackRoutes.request(
+      "https://auth-origin.elixent.app/?code=oauth_123&redirectTo=/dashboard"
+    );
+
+    expect(res.status).toBe(307);
+    expect(res.headers.get("Location")).toBe(
+      "https://auth-origin.elixent.app/dashboard"
+    );
   });
 
   it("continues with 307 redirect to safeRedirectPath even if syncUserToDatabase throws", async () => {

@@ -14,7 +14,7 @@
  *    metadata fallbacks, and database upsert error handling.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
     runWithServerRequestContext,
     createInMemoryCookieStore,
@@ -103,9 +103,16 @@ import {
 } from "@/server/actions/auth-actions";
 
 describe("Decoupled Auth Actions (src/server/actions/auth-actions.ts)", () => {
+    const originalEnv = process.env;
+
     beforeEach(() => {
         vi.clearAllMocks();
+        process.env = { ...originalEnv };
         mockRateLimit.mockResolvedValue({ success: true, remaining: 19, reset: 1000, limit: 20 });
+    });
+
+    afterEach(() => {
+        process.env = originalEnv;
     });
 
     describe("signInWithGoogle", () => {
@@ -224,6 +231,66 @@ describe("Decoupled Auth Actions (src/server/actions/auth-actions.ts)", () => {
             expect(result).toEqual({
                 success: true,
                 redirectUrl: "https://accounts.google.com/oauth-hono",
+            });
+        });
+
+        it("anchors callback URL to VITE_APP_URL when configured", async () => {
+            process.env.VITE_APP_URL = "https://vite.auth.elixent.com";
+            process.env.APP_URL = "https://app.auth.elixent.com";
+            delete process.env.NEXT_PUBLIC_APP_URL;
+
+            mockSignInWithOAuth.mockResolvedValueOnce({
+                data: { url: "https://accounts.google.com/o/oauth2/v2/auth" },
+                error: null,
+            });
+
+            await signInWithGoogle("/editor");
+
+            expect(mockSignInWithOAuth).toHaveBeenCalledWith({
+                provider: "google",
+                options: {
+                    redirectTo: "https://vite.auth.elixent.com/auth/callback?redirectTo=%2Feditor",
+                },
+            });
+        });
+
+        it("falls back to APP_URL when VITE_APP_URL is not set", async () => {
+            delete process.env.VITE_APP_URL;
+            process.env.APP_URL = "https://canonical.auth.elixent.com";
+            delete process.env.NEXT_PUBLIC_APP_URL;
+
+            mockSignInWithOAuth.mockResolvedValueOnce({
+                data: { url: "https://accounts.google.com/o/oauth2/v2/auth" },
+                error: null,
+            });
+
+            await signInWithGoogle("/workspace");
+
+            expect(mockSignInWithOAuth).toHaveBeenCalledWith({
+                provider: "google",
+                options: {
+                    redirectTo: "https://canonical.auth.elixent.com/auth/callback?redirectTo=%2Fworkspace",
+                },
+            });
+        });
+
+        it("falls back to http://localhost:3000 when both VITE_APP_URL and APP_URL are not set (ignoring NEXT_PUBLIC_APP_URL)", async () => {
+            delete process.env.VITE_APP_URL;
+            delete process.env.APP_URL;
+            process.env.NEXT_PUBLIC_APP_URL = "https://legacy.auth.elixent.com";
+
+            mockSignInWithOAuth.mockResolvedValueOnce({
+                data: { url: "https://accounts.google.com/o/oauth2/v2/auth" },
+                error: null,
+            });
+
+            await signInWithGoogle("/dashboard");
+
+            expect(mockSignInWithOAuth).toHaveBeenCalledWith({
+                provider: "google",
+                options: {
+                    redirectTo: "http://localhost:3000/auth/callback?redirectTo=%2Fdashboard",
+                },
             });
         });
     });

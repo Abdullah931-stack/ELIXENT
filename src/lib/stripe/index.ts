@@ -77,7 +77,11 @@ export async function createCheckoutSession(
 ): Promise<Stripe.Checkout.Session> {
     ensureStripeSecretKey();
     try {
-        let appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+        let appUrl =
+            process.env.VITE_APP_URL ||
+            process.env.APP_URL ||
+            process.env.NEXT_PUBLIC_APP_URL ||
+            'http://localhost:3000';
         if (appUrl.includes('localhost') && appUrl.startsWith('https://')) {
             appUrl = appUrl.replace('https://', 'http://');
         }

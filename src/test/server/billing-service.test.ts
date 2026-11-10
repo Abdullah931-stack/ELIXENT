@@ -1,6 +1,32 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+const { mockGlobalDb } = vi.hoisted(() => ({
+    mockGlobalDb: {
+        select: vi.fn(),
+        insert: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn(),
+    },
+}));
+
+vi.mock("@/server/db", () => ({
+    db: mockGlobalDb,
+}));
+
 import { BillingService, type DbClient } from "@/server/services/billing-service";
 import { executeStripeDualWrite } from "@/lib/metering/lua-scripts";
+
+const mockBillingPortalSessionsCreate = vi.fn();
+
+vi.mock("@/lib/stripe", () => ({
+    stripe: {
+        billingPortal: {
+            sessions: {
+                create: (...args: unknown[]) => mockBillingPortalSessionsCreate(...args),
+            },
+        },
+    },
+}));
 
 vi.mock("@/lib/metering/lua-scripts", () => ({
     executeStripeDualWrite: vi.fn(),
@@ -8,9 +34,12 @@ vi.mock("@/lib/metering/lua-scripts", () => ({
 
 describe("BillingService (Phase 12 Domain Logic)", () => {
     let mockDb: DbClient;
+    const originalEnv = process.env;
 
     beforeEach(() => {
         vi.mocked(executeStripeDualWrite).mockReset();
+        mockBillingPortalSessionsCreate.mockReset();
+        process.env = { ...originalEnv };
 
         // Clean, minimal typed stubs returning resolved promises directly
         mockDb = {
@@ -431,6 +460,195 @@ describe("BillingService (Phase 12 Domain Logic)", () => {
                     topupMicro: BigInt(500_000_000),
                 });
             });
+        });
+    });
+
+    describe("createCustomerPortalSession (DEF-01 P0 Environment Precedence)", () => {
+        afterEach(() => {
+            process.env = originalEnv;
+        });
+
+        it("prioritizes VITE_APP_URL over APP_URL and NEXT_PUBLIC_APP_URL for return_url", async () => {
+            process.env.VITE_APP_URL = "https://vite.portal.elixent.com";
+            process.env.APP_URL = "https://app.portal.elixent.com";
+            process.env.NEXT_PUBLIC_APP_URL = "https://legacy.portal.elixent.com";
+
+            mockGlobalDb.select.mockReturnValueOnce({
+                from: () => ({
+                    where: () => ({
+                        limit: () => Promise.resolve([{ stripeCustomerId: "cus_portal_123" }]),
+                    }),
+                }),
+            } as any);
+
+            mockBillingPortalSessionsCreate.mockResolvedValueOnce({
+                url: "https://billing.stripe.com/p/session_portal_123",
+            });
+
+            const result = await BillingService.createCustomerPortalSession("user-1");
+
+            expect(result).toEqual({ url: "https://billing.stripe.com/p/session_portal_123" });
+            expect(mockBillingPortalSessionsCreate).toHaveBeenCalledWith({
+                customer: "cus_portal_123",
+                return_url: "https://vite.portal.elixent.com/account",
+            });
+        });
+
+        it("falls back to APP_URL when VITE_APP_URL is absent", async () => {
+            delete process.env.VITE_APP_URL;
+            process.env.APP_URL = "https://app.portal.elixent.com";
+            process.env.NEXT_PUBLIC_APP_URL = "https://legacy.portal.elixent.com";
+
+            mockGlobalDb.select.mockReturnValueOnce({
+                from: () => ({
+                    where: () => ({
+                        limit: () => Promise.resolve([{ stripeCustomerId: "cus_portal_app_url" }]),
+                    }),
+                }),
+            } as any);
+
+            mockBillingPortalSessionsCreate.mockResolvedValueOnce({
+                url: "https://billing.stripe.com/p/session_app_url",
+            });
+
+            const result = await BillingService.createCustomerPortalSession("user-1");
+
+            expect(result.url).toBe("https://billing.stripe.com/p/session_app_url");
+            expect(mockBillingPortalSessionsCreate).toHaveBeenCalledWith({
+                customer: "cus_portal_app_url",
+                return_url: "https://app.portal.elixent.com/account",
+            });
+        });
+
+        it("falls back to NEXT_PUBLIC_APP_URL for backward compatibility when VITE_APP_URL and APP_URL are absent", async () => {
+            delete process.env.VITE_APP_URL;
+            delete process.env.APP_URL;
+            process.env.NEXT_PUBLIC_APP_URL = "https://legacy.portal.elixent.com";
+
+            mockGlobalDb.select.mockReturnValueOnce({
+                from: () => ({
+                    where: () => ({
+                        limit: () => Promise.resolve([{ stripeCustomerId: "cus_portal_legacy" }]),
+                    }),
+                }),
+            } as any);
+
+            mockBillingPortalSessionsCreate.mockResolvedValueOnce({
+                url: "https://billing.stripe.com/p/session_legacy",
+            });
+
+            const result = await BillingService.createCustomerPortalSession("user-1");
+
+            expect(result.url).toBe("https://billing.stripe.com/p/session_legacy");
+            expect(mockBillingPortalSessionsCreate).toHaveBeenCalledWith({
+                customer: "cus_portal_legacy",
+                return_url: "https://legacy.portal.elixent.com/account",
+            });
+        });
+
+        it("falls back to http://localhost:3000 when all URL environment variables are absent", async () => {
+            delete process.env.VITE_APP_URL;
+            delete process.env.APP_URL;
+            delete process.env.NEXT_PUBLIC_APP_URL;
+
+            mockGlobalDb.select.mockReturnValueOnce({
+                from: () => ({
+                    where: () => ({
+                        limit: () => Promise.resolve([{ stripeCustomerId: "cus_portal_local" }]),
+                    }),
+                }),
+            } as any);
+
+            mockBillingPortalSessionsCreate.mockResolvedValueOnce({
+                url: "https://billing.stripe.com/p/session_local",
+            });
+
+            const result = await BillingService.createCustomerPortalSession("user-1");
+
+            expect(result.url).toBe("https://billing.stripe.com/p/session_local");
+            expect(mockBillingPortalSessionsCreate).toHaveBeenCalledWith({
+                customer: "cus_portal_local",
+                return_url: "http://localhost:3000/account",
+            });
+        });
+
+        it("uses explicit custom returnUrl parameter when provided", async () => {
+            process.env.VITE_APP_URL = "https://vite.portal.elixent.com";
+
+            mockGlobalDb.select.mockReturnValueOnce({
+                from: () => ({
+                    where: () => ({
+                        limit: () => Promise.resolve([{ stripeCustomerId: "cus_portal_custom" }]),
+                    }),
+                }),
+            } as any);
+
+            mockBillingPortalSessionsCreate.mockResolvedValueOnce({
+                url: "https://billing.stripe.com/p/session_custom",
+            });
+
+            const result = await BillingService.createCustomerPortalSession(
+                "user-1",
+                "https://custom.elixent.com/settings/billing"
+            );
+
+            expect(result.url).toBe("https://billing.stripe.com/p/session_custom");
+            expect(mockBillingPortalSessionsCreate).toHaveBeenCalledWith({
+                customer: "cus_portal_custom",
+                return_url: "https://custom.elixent.com/settings/billing",
+            });
+        });
+
+        it("throws when user record is not found in database", async () => {
+            mockGlobalDb.select.mockReturnValueOnce({
+                from: () => ({
+                    where: () => ({
+                        limit: () => Promise.resolve([]),
+                    }),
+                }),
+            } as any);
+
+            await expect(
+                BillingService.createCustomerPortalSession("unknown-user")
+            ).rejects.toThrow("No Stripe customer found for this account. Please subscribe first.");
+
+            expect(mockBillingPortalSessionsCreate).not.toHaveBeenCalled();
+        });
+
+        it("throws when user has no stripeCustomerId in database", async () => {
+            mockGlobalDb.select.mockReturnValueOnce({
+                from: () => ({
+                    where: () => ({
+                        limit: () => Promise.resolve([{ stripeCustomerId: null }]),
+                    }),
+                }),
+            } as any);
+
+            await expect(
+                BillingService.createCustomerPortalSession("user-without-stripe")
+            ).rejects.toThrow("No Stripe customer found for this account. Please subscribe first.");
+
+            expect(mockBillingPortalSessionsCreate).not.toHaveBeenCalled();
+        });
+
+        it("propagates Stripe API errors when billingPortal.sessions.create fails", async () => {
+            process.env.VITE_APP_URL = "https://vite.portal.elixent.com";
+
+            mockGlobalDb.select.mockReturnValueOnce({
+                from: () => ({
+                    where: () => ({
+                        limit: () => Promise.resolve([{ stripeCustomerId: "cus_portal_err" }]),
+                    }),
+                }),
+            } as any);
+
+            mockBillingPortalSessionsCreate.mockRejectedValueOnce(
+                new Error("Stripe billing portal down")
+            );
+
+            await expect(
+                BillingService.createCustomerPortalSession("user-1")
+            ).rejects.toThrow("Stripe billing portal down");
         });
     });
 });

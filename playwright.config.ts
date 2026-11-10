@@ -68,7 +68,7 @@ export default defineConfig({
             PORT: String(PORT),
             DATABASE_URL: testDbUrl,
             TEST_DATABASE_URL: testDbUrl,
-            NEXT_PUBLIC_APP_URL: BASE_URL,
+            VITE_APP_URL: BASE_URL,
             NODE_ENV: 'test',
             PLAYWRIGHT: '1',
             STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET || 'whsec_test_mock_ci_secret',

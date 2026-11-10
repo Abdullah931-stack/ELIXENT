@@ -145,8 +145,7 @@ export async function handleAuthCallbackGet(
   );
 
   // Enforce trusted origin: never trust spoofable x-forwarded-host headers blindly
-  const trustedOrigin =
-    process.env.VITE_APP_URL || process.env.NEXT_PUBLIC_APP_URL || origin;
+  const trustedOrigin = process.env.VITE_APP_URL || origin;
 
   const standaloneMutatedCookies = new Map<string, ServerCookieRecord>();
 

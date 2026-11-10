@@ -413,6 +413,7 @@ describe("Master Hono Application Dispatcher (src/server/app.ts)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env = { ...originalEnv };
+    delete (process.env as Record<string, string | undefined>).VITE_APP_URL;
     (process.env as Record<string, string | undefined>).NODE_ENV = "test";
     process.env.PLAYWRIGHT = "1";
     process.env.CRON_SECRET = "test_cron_secret_app_999";

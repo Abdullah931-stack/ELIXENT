@@ -201,33 +201,56 @@ function elixentHonoDevServerPlugin(): Plugin {
   };
 }
 
-function clientServerStubPlugin(): Plugin {
-  const virtualModuleId = "\0virtual:server-empty";
+function clientServerBoundaryGuardPlugin(): Plugin {
   return {
-    name: "client-server-stub",
+    name: "client-server-boundary-guard",
     enforce: "pre",
-    resolveId(id, _importer, options) {
-      if (options?.ssr) {
+    resolveId(id, importer, options) {
+      // 1. Bypass during SSR builds or if importer/id is undefined
+      if (options?.ssr || !importer || !id) return null;
+
+      const normalizedId = id.replace(/\\/g, "/");
+      const normalizedImporter = importer.replace(/\\/g, "/");
+
+      // 2. Invariant: Exclude virtual modules and node_modules
+      if (
+        normalizedId.startsWith("\0") ||
+        normalizedId.startsWith("virtual:") ||
+        normalizedId.includes("/node_modules/") ||
+        normalizedImporter.includes("/node_modules/")
+      ) {
         return null;
       }
-      if (
-        id.includes("/server/actions/") ||
-        id.includes("@/server/actions/") ||
-        id.includes("/server/services/") ||
-        id.includes("@/server/services/") ||
-        id.includes("/server/context/") ||
-        id.includes("@/server/context/") ||
-        id.includes("/lib/supabase/server") ||
-        id.includes("@/lib/supabase/server")
-      ) {
-        return virtualModuleId;
+
+      // 3. Importer plane detection: modules inside /src/server/ are permitted
+      const isServerImporter = normalizedImporter.includes("/src/server/");
+      if (isServerImporter) return null;
+
+      // 4. Resolve relative specifiers to absolute POSIX paths
+      let resolvedTarget = normalizedId;
+      if (normalizedId.startsWith("./") || normalizedId.startsWith("../")) {
+        resolvedTarget = path
+          .resolve(path.dirname(importer), id)
+          .replace(/\\/g, "/");
       }
-      return null;
-    },
-    load(id) {
-      if (id === virtualModuleId) {
-        return "export default {};";
+
+      // 5. Fail-closed server boundary detection: exact aliases & physical paths
+      const isServerTarget =
+        normalizedId === "@/server" ||
+        normalizedId.startsWith("@/server/") ||
+        normalizedId === "@/lib/supabase/server" ||
+        normalizedId.startsWith("@/lib/supabase/server.") ||
+        normalizedId.startsWith("@/lib/supabase/server/") ||
+        resolvedTarget.includes("/src/server/") ||
+        resolvedTarget.endsWith("/src/server") ||
+        resolvedTarget.includes("/src/lib/supabase/server");
+
+      if (isServerTarget) {
+        this.error(
+          `[Security / Architecture Boundary Violation] Direct client import of server module "${id}" from "${importer}" is prohibited. Use Hono RPC client (src/client/rpc-client.ts) or extract shared types into src/types/rpc-contracts.ts.`
+        );
       }
+
       return null;
     },
   };
@@ -243,7 +266,7 @@ export default defineConfig({
     },
   },
   plugins: [
-    clientServerStubPlugin(),
+    clientServerBoundaryGuardPlugin(),
     react(),
     elixentHonoDevServerPlugin(),
   ],
@@ -260,8 +283,5 @@ export default defineConfig({
     target: "esnext",
     outDir: "dist/client",
     emptyOutDir: true,
-  },
-  define: {
-    "process.env": "{}",
   },
 });

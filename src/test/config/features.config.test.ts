@@ -20,26 +20,16 @@ describe("Features Configuration (src/config/features.config.ts)", () => {
 
     it("resolves AI_STREAMING_ENABLED to true when VITE_AI_STREAMING_ENABLED is string 'true'", async () => {
         process.env.VITE_AI_STREAMING_ENABLED = "true";
-        delete process.env.NEXT_PUBLIC_AI_STREAMING_ENABLED;
 
         const { FEATURES } = await import("@/config/features.config");
         expect(FEATURES.AI_STREAMING_ENABLED).toBe(true);
     });
 
-    it("resolves AI_STREAMING_ENABLED to true when NEXT_PUBLIC_AI_STREAMING_ENABLED is string 'true'", async () => {
+    it("strictly ignores legacy NEXT_PUBLIC_AI_STREAMING_ENABLED flag", async () => {
         delete process.env.VITE_AI_STREAMING_ENABLED;
         process.env.NEXT_PUBLIC_AI_STREAMING_ENABLED = "true";
 
         const { FEATURES } = await import("@/config/features.config");
-        expect(FEATURES.AI_STREAMING_ENABLED).toBe(true);
-    });
-
-    it("evaluates VITE_AI_STREAMING_ENABLED with precedence over NEXT_PUBLIC_AI_STREAMING_ENABLED", async () => {
-        process.env.VITE_AI_STREAMING_ENABLED = "false";
-        process.env.NEXT_PUBLIC_AI_STREAMING_ENABLED = "true";
-
-        const { FEATURES } = await import("@/config/features.config");
-        // "false" is a non-empty string and thus truthy in the logical OR chain; ("false" === "true") -> false
         expect(FEATURES.AI_STREAMING_ENABLED).toBe(false);
     });
 
@@ -55,10 +45,8 @@ describe("Features Configuration (src/config/features.config.ts)", () => {
         vi.resetModules();
         if (val === undefined) {
             delete process.env.VITE_AI_STREAMING_ENABLED;
-            delete process.env.NEXT_PUBLIC_AI_STREAMING_ENABLED;
         } else {
             process.env.VITE_AI_STREAMING_ENABLED = val;
-            delete process.env.NEXT_PUBLIC_AI_STREAMING_ENABLED;
         }
 
         const { FEATURES } = await import("@/config/features.config");

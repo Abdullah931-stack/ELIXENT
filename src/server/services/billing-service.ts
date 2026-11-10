@@ -466,7 +466,11 @@ export class BillingService {
             throw new Error("No Stripe customer found for this account. Please subscribe first.");
         }
 
-        const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+        const appUrl =
+            process.env.VITE_APP_URL ||
+            process.env.APP_URL ||
+            process.env.NEXT_PUBLIC_APP_URL ||
+            "http://localhost:3000";
         const session = await stripe.billingPortal.sessions.create({
             customer: user.stripeCustomerId,
             return_url: returnUrl || `${appUrl}/account`,

@@ -210,8 +210,8 @@ jobs:
           TEST_DB_FORBIDDEN_HOSTS: ep-main-branch.neon.tech,production.neon.tech
           UPSTASH_REDIS_REST_URL: http://localhost:8079
           UPSTASH_REDIS_REST_TOKEN: mock-test-token
-          NEXT_PUBLIC_SUPABASE_URL: https://mock-project.supabase.co
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: mock-anon-key-ci-test
+          VITE_SUPABASE_URL: https://mock-project.supabase.co
+          VITE_SUPABASE_ANON_KEY: mock-anon-key-ci-test
           SUPABASE_SERVICE_ROLE_KEY: mock-service-role-key-ci-test
           STRIPE_SECRET_KEY: sk_test_mock_ci_key
           STRIPE_WEBHOOK_SECRET: whsec_test_mock_ci_secret
@@ -251,11 +251,11 @@ jobs:
 
       - name: Build Vite SPA Application
         env:
-          NEXT_PUBLIC_SUPABASE_URL: https://mock-project.supabase.co
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: mock-anon-key
-          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_mock
+          VITE_SUPABASE_URL: https://mock-project.supabase.co
+          VITE_SUPABASE_ANON_KEY: mock-anon-key
+          VITE_STRIPE_PUBLISHABLE_KEY: pk_test_mock
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lugx_test
-          NEXT_PUBLIC_APP_URL: https://lugx.app
+          VITE_APP_URL: https://lugx.app
         run: npm run build
 
   # =========================================================================
@@ -287,8 +287,8 @@ jobs:
         env:
           TEST_DATABASE_URL: ${{ secrets.TEST_DATABASE_URL || vars.TEST_DATABASE_URL }}
           DATABASE_URL: ${{ secrets.TEST_DATABASE_URL || vars.TEST_DATABASE_URL }}
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || vars.NEXT_PUBLIC_SUPABASE_URL }}
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY || vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || vars.VITE_SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY || vars.SUPABASE_SERVICE_ROLE_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY || vars.STRIPE_SECRET_KEY || 'sk_test_mock_ci_key' }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET || vars.STRIPE_WEBHOOK_SECRET || 'whsec_test_mock_ci_secret' }}
@@ -317,7 +317,7 @@ jobs:
           }
 
           DB_STATUS=$(status_icon "$TEST_DATABASE_URL")
-          SB_URL_STATUS=$(status_icon "$NEXT_PUBLIC_SUPABASE_URL")
+          SB_URL_STATUS=$(status_icon "$VITE_SUPABASE_URL")
           SB_KEY_STATUS=$(status_icon "$SUPABASE_SERVICE_ROLE_KEY")
           STRIPE_KEY_STATUS=$(status_icon "$STRIPE_SECRET_KEY")
           REDIS_URL_STATUS=$(status_icon "$UPSTASH_REDIS_REST_URL")
@@ -325,7 +325,7 @@ jobs:
 
           # 3. Check mandatory secret requirements
           MISSING_MANDATORY="false"
-          if [ -z "$TEST_DATABASE_URL" ] || [ -z "$NEXT_PUBLIC_SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+          if [ -z "$TEST_DATABASE_URL" ] || [ -z "$VITE_SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
             MISSING_MANDATORY="true"
           fi
 
@@ -346,7 +346,7 @@ jobs:
                   "| Secret / Environment Variable | Status | Gating Rule |" \
                   "| :--- | :--- | :--- |" \
                   "| \`TEST_DATABASE_URL\` | $DB_STATUS | **Mandatory (Missing)** |" \
-                  "| \`NEXT_PUBLIC_SUPABASE_URL\` | $SB_URL_STATUS | **Mandatory** |" \
+                  "| \`VITE_SUPABASE_URL\` | $SB_URL_STATUS | **Mandatory** |" \
                   "| \`SUPABASE_SERVICE_ROLE_KEY\` | $SB_KEY_STATUS | **Mandatory** |" \
                   "| \`STRIPE_SECRET_KEY\` | $STRIPE_KEY_STATUS | Optional / Mock Fallback |" \
                   "| \`UPSTASH_REDIS_REST_URL\` | $REDIS_URL_STATUS | Optional / Mock Fallback |" \
@@ -371,7 +371,7 @@ jobs:
                   "| Secret / Environment Variable | Status | Context Classification |" \
                   "| :--- | :--- | :--- |" \
                   "| \`TEST_DATABASE_URL\` | $DB_STATUS | Mandatory for Release |" \
-                  "| \`NEXT_PUBLIC_SUPABASE_URL\` | $SB_URL_STATUS | Mandatory for Release |" \
+                  "| \`VITE_SUPABASE_URL\` | $SB_URL_STATUS | Mandatory for Release |" \
                   "| \`SUPABASE_SERVICE_ROLE_KEY\` | $SB_KEY_STATUS | Mandatory for Release |" \
                   "| \`STRIPE_SECRET_KEY\` | $STRIPE_KEY_STATUS | Optional |" \
                   "| \`UPSTASH_REDIS_REST_URL\` | $REDIS_URL_STATUS | Optional |" \
@@ -426,7 +426,7 @@ jobs:
               "| Secret / Environment Variable | Status |" \
               "| :--- | :--- |" \
               "| \`TEST_DATABASE_URL\` | $DB_STATUS |" \
-              "| \`NEXT_PUBLIC_SUPABASE_URL\` | $SB_URL_STATUS |" \
+              "| \`VITE_SUPABASE_URL\` | $SB_URL_STATUS |" \
               "| \`SUPABASE_SERVICE_ROLE_KEY\` | $SB_KEY_STATUS |" \
               "| \`STRIPE_SECRET_KEY\` | $STRIPE_KEY_STATUS |" \
               "| \`UPSTASH_REDIS_REST_URL\` | $REDIS_URL_STATUS |" \
@@ -483,8 +483,8 @@ jobs:
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET || vars.STRIPE_WEBHOOK_SECRET || 'whsec_test_mock_ci_secret' }}
           UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL || vars.UPSTASH_REDIS_REST_URL }}
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN || vars.UPSTASH_REDIS_REST_TOKEN }}
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || vars.NEXT_PUBLIC_SUPABASE_URL }}
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY || vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || vars.VITE_SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY || vars.SUPABASE_SERVICE_ROLE_KEY }}
           EVENT_NAME: ${{ github.event_name }}
           REF: ${{ github.ref }}

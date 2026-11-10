@@ -39,12 +39,10 @@ describe("Supabase Server Client & Auth Resolution", () => {
         process.env = originalEnv;
     });
 
-    describe("Environment Variable Precedence & Fallbacks", () => {
-        it("prioritizes VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY over NEXT_PUBLIC_* and placeholders", async () => {
+    describe("Environment Variable Configuration & Fallbacks", () => {
+        it("resolves VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY from environment", async () => {
             process.env.VITE_SUPABASE_URL = "https://vite-primary.supabase.co";
-            process.env.NEXT_PUBLIC_SUPABASE_URL = "https://next-secondary.supabase.co";
             process.env.VITE_SUPABASE_ANON_KEY = "vite-anon-key-123";
-            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "next-anon-key-456";
 
             await createClient();
 
@@ -55,26 +53,63 @@ describe("Supabase Server Client & Auth Resolution", () => {
             );
         });
 
-        it("falls back to NEXT_PUBLIC_* when VITE_* variables are not defined", async () => {
+        it("falls back to canonical placeholder credentials when no environment variables are set", async () => {
             delete process.env.VITE_SUPABASE_URL;
             delete process.env.VITE_SUPABASE_ANON_KEY;
-            process.env.NEXT_PUBLIC_SUPABASE_URL = "https://next-fallback.supabase.co";
-            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "next-fallback-anon-key";
 
             await createClient();
 
             expect(mockCreateServerClient).toHaveBeenCalledWith(
-                "https://next-fallback.supabase.co",
-                "next-fallback-anon-key",
+                "https://placeholder.supabase.co",
+                "placeholder-anon-key",
                 expect.any(Object)
             );
         });
 
-        it("falls back to canonical placeholder credentials when no environment variables are set", async () => {
+        it("strictly ignores legacy NEXT_PUBLIC_* variables and falls back to placeholders", async () => {
             delete process.env.VITE_SUPABASE_URL;
-            delete process.env.NEXT_PUBLIC_SUPABASE_URL;
             delete process.env.VITE_SUPABASE_ANON_KEY;
-            delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+            process.env.NEXT_PUBLIC_SUPABASE_URL = "https://legacy-server.supabase.co";
+            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "legacy-server-anon-key";
+
+            await createClient();
+
+            expect(mockCreateServerClient).toHaveBeenCalledWith(
+                "https://placeholder.supabase.co",
+                "placeholder-anon-key",
+                expect.any(Object)
+            );
+        });
+
+        it("allows independent fallback when URL is present but anon key is absent", async () => {
+            process.env.VITE_SUPABASE_URL = "https://vite-only.supabase.co";
+            delete process.env.VITE_SUPABASE_ANON_KEY;
+
+            await createClient();
+
+            expect(mockCreateServerClient).toHaveBeenCalledWith(
+                "https://vite-only.supabase.co",
+                "placeholder-anon-key",
+                expect.any(Object)
+            );
+        });
+
+        it("allows independent fallback when anon key is present but URL is absent", async () => {
+            delete process.env.VITE_SUPABASE_URL;
+            process.env.VITE_SUPABASE_ANON_KEY = "vite-only-key";
+
+            await createClient();
+
+            expect(mockCreateServerClient).toHaveBeenCalledWith(
+                "https://placeholder.supabase.co",
+                "vite-only-key",
+                expect.any(Object)
+            );
+        });
+
+        it("falls back to placeholders when environment variables are empty strings", async () => {
+            process.env.VITE_SUPABASE_URL = "";
+            process.env.VITE_SUPABASE_ANON_KEY = "";
 
             await createClient();
 

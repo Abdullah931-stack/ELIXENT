@@ -28,7 +28,7 @@ export async function signInWithGoogle(redirectTo?: string): Promise<
     const supabase = await createClient();
 
     const safeRedirect = resolveSafeRedirectPath(redirectTo, "/dashboard");
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const appUrl = process.env.VITE_APP_URL || process.env.APP_URL || "http://localhost:3000";
     const callbackUrl = new URL("/auth/callback", appUrl);
     callbackUrl.searchParams.set("redirectTo", safeRedirect);
 

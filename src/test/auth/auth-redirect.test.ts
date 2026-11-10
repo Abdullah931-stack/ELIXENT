@@ -180,6 +180,7 @@ describe("Phase 12: Auth Callback Handler (/auth/callback)", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         process.env = { ...ORIGINAL_ENV };
+        process.env.VITE_APP_URL = "https://app.lugx.com";
         process.env.NEXT_PUBLIC_APP_URL = "https://app.lugx.com";
     });
 
@@ -218,7 +219,7 @@ describe("Phase 12: Auth Callback Handler (/auth/callback)", () => {
         expect(res.headers.get("location")).toBe("https://app.lugx.com/dashboard");
     });
 
-    it("rejects untrusted x-forwarded-host and anchors redirect to NEXT_PUBLIC_APP_URL", async () => {
+    it("rejects untrusted x-forwarded-host and anchors redirect to VITE_APP_URL", async () => {
         mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
         mockSyncUserToDatabase.mockResolvedValueOnce({ success: true });
 
@@ -230,8 +231,23 @@ describe("Phase 12: Auth Callback Handler (/auth/callback)", () => {
         const res = await authCallbackGET(req);
 
         expect(res.status).toBe(307);
-        // Location MUST be on trusted NEXT_PUBLIC_APP_URL, NOT attacker-spoofed-host.com
+        // Location MUST be on trusted VITE_APP_URL, NOT attacker-spoofed-host.com
         expect(res.headers.get("location")).toBe("https://app.lugx.com/dashboard");
+    });
+
+    it("falls back to request origin when VITE_APP_URL is absent, strictly ignoring NEXT_PUBLIC_APP_URL", async () => {
+        delete process.env.VITE_APP_URL;
+        process.env.NEXT_PUBLIC_APP_URL = "https://legacy-ignored.lugx.com";
+
+        mockExchangeCodeForSession.mockResolvedValueOnce({ error: null });
+        mockSyncUserToDatabase.mockResolvedValueOnce({ success: true });
+
+        const req = new Request("https://origin.lugx.com/auth/callback?code=auth_code_123&redirectTo=/workspace");
+        const res = await authCallbackGET(req);
+
+        expect(res.status).toBe(307);
+        // Location MUST use request origin, NOT legacy NEXT_PUBLIC_APP_URL
+        expect(res.headers.get("location")).toBe("https://origin.lugx.com/workspace");
     });
 
     it("redirects to login error page when exchangeCodeForSession fails", async () => {

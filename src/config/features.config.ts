@@ -12,12 +12,11 @@ export const FEATURES = {
      * Default: false (falls back to safe buffered accumulator path).
      */
     AI_STREAMING_ENABLED:
-        ((typeof process !== "undefined" &&
-            (process.env?.VITE_AI_STREAMING_ENABLED || process.env?.NEXT_PUBLIC_AI_STREAMING_ENABLED)) ||
-            (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
-                ?.VITE_AI_STREAMING_ENABLED ||
-            (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
-                ?.NEXT_PUBLIC_AI_STREAMING_ENABLED) === "true",
+        (((typeof process !== "undefined" && Boolean(process.versions?.node)
+            ? (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
+                ?.env?.VITE_AI_STREAMING_ENABLED
+            : (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
+                ?.VITE_AI_STREAMING_ENABLED) ?? "false") === "true"),
 
     /**
      * Maximum duration in milliseconds for an in-flight reservation before expiry.
