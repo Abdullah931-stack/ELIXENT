@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { importFile } from "@/server/actions/import-file";
 import { db } from "@/server/db";
 import { getUser } from "@/lib/supabase/server";
-import { generateEncryptedETagSync } from "@/lib/sync/etag-generator";
+import { generateEncryptedETagSync } from "@/lib/sync/etag-generator.server";
 import { randomUUID } from "crypto";
 
 vi.mock("@/lib/supabase/server", () => ({

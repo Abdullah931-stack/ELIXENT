@@ -4,7 +4,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { generateETagSync, compareETags, normalizeMarkdownSource } from '@/lib/sync/etag-generator';
+import { generateETag, generateEncryptedETag, compareETags, normalizeMarkdownSource } from '@/lib/sync/etag-generator';
+import { generateETagSync, generateEncryptedETagSync } from '@/lib/sync/etag-generator.server';
 
 describe('ETag Generator & Normalization', () => {
     describe('normalizeMarkdownSource', () => {
@@ -223,6 +224,52 @@ describe('ETag Generator & Normalization', () => {
         it('should be case-insensitive', () => {
             expect(compareETags('ABC123', 'abc123')).toBe(true);
             expect(compareETags('AbC123', 'aBc123')).toBe(true);
+        });
+    });
+
+    describe('Synchronous ETag isolation (.server.ts)', () => {
+        it('client module (@/lib/sync/etag-generator) does NOT export generateETagSync or generateEncryptedETagSync', async () => {
+            const clientModule = await import('@/lib/sync/etag-generator');
+            expect((clientModule as Record<string, unknown>).generateETagSync).toBeUndefined();
+            expect((clientModule as Record<string, unknown>).generateEncryptedETagSync).toBeUndefined();
+        });
+
+        it('sync main index (@/lib/sync) does NOT export generateETagSync or generateEncryptedETagSync', async () => {
+            const syncIndex = await import('@/lib/sync');
+            expect((syncIndex as Record<string, unknown>).generateETagSync).toBeUndefined();
+            expect((syncIndex as Record<string, unknown>).generateEncryptedETagSync).toBeUndefined();
+        });
+
+        it('server module (@/lib/sync/etag-generator.server) exports generateETagSync and generateEncryptedETagSync', async () => {
+            const serverModule = await import('@/lib/sync/etag-generator.server');
+            expect(typeof serverModule.generateETagSync).toBe('function');
+            expect(typeof serverModule.generateEncryptedETagSync).toBe('function');
+        });
+
+        it('async Web Crypto generateETag produces identical digest to server generateETagSync', async () => {
+            const file = {
+                id: '550e8400-e29b-41d4-a716-446655440000',
+                content: '# Cross-Platform Parity\n\nTesting parity.',
+                updatedAt: new Date('2026-11-11T12:00:00.000Z'),
+            };
+            const asyncEtag = await generateETag(file);
+            const syncEtag = generateETagSync(file);
+            expect(asyncEtag).toBe(syncEtag);
+        });
+
+        it('async Web Crypto generateEncryptedETag produces identical digest to server generateEncryptedETagSync', async () => {
+            const envelope = {
+                version: 1 as const,
+                algorithm: 'AES-GCM-256' as const,
+                keyId: 'master-v1',
+                salt: 'salt123',
+                iv: 'iv123',
+                kdfIterations: 600000,
+                ciphertext: 'cipher123',
+            };
+            const asyncEtag = await generateEncryptedETag(envelope);
+            const syncEtag = generateEncryptedETagSync(envelope);
+            expect(asyncEtag).toBe(syncEtag);
         });
     });
 });

@@ -34,7 +34,7 @@ export { indexedDBManager, IndexedDBManager, createIndexedDBManager } from './in
 export { canCoalesce, coalesceOperations } from './coalescing';
 
 // ETag & Markdown Normalization
-export { generateETag, generateETagSync, generateEncryptedETag, generateEncryptedETagSync, isValidETag, compareETags, parseETagHeader, formatETagHeader, normalizeMarkdownSource } from './etag-generator';
+export { generateETag, generateEncryptedETag, isValidETag, compareETags, parseETagHeader, formatETagHeader, normalizeMarkdownSource } from './etag-generator';
 export { validateMarkdownSyntaxIntegrity } from './syntax-validator';
 
 // Error Handling

@@ -14,33 +14,33 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { EditorAdapter } from "@/components/editor/markdown/types";
 import { useEditorOrchestrator } from "@/hooks/use-editor-orchestrator";
-import * as fileOps from "@/server/actions/files";
+import * as fileOps from "@/client/rpc-client";
 import { sessionKeyStore } from "@/lib/sync/session-key-store";
 import { SyncCryptoGateway } from "@/lib/sync/sync-crypto-gateway";
 
-vi.mock("@/server/actions/files", () => ({
+vi.mock("@/client/rpc-client", () => ({
     getFile: vi.fn(),
     updateFileContent: vi.fn(),
     toggleFileEncryption: vi.fn(),
     renameFile: vi.fn(),
     deleteFile: vi.fn(),
-}));
-
-vi.mock("@/server/actions/vault-actions", () => ({
     getUserVaultProfile: vi.fn().mockResolvedValue({
-        hasVaultProfile: true,
-        allowAIOnEncryptedFiles: true,
+        success: true,
+        data: {
+            userId: "user-e2e-123",
+            encryptedMasterKey: "mock-key",
+            recoveryEncryptedMasterKey: "mock-recovery",
+            keySalt: "salt",
+            recoverySalt: "rec-salt",
+            kdfIterations: 600000,
+            keyVersion: 1,
+            deviceTrustEpoch: 1,
+            allowAIOnEncryptedFiles: true,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+        },
     }),
 }));
-
-vi.mock("@/client/rpc-client", async () => {
-    const mockedFileOps = await import("@/server/actions/files");
-    const mockedVaultActions = await import("@/server/actions/vault-actions");
-    return {
-        ...mockedFileOps,
-        ...mockedVaultActions,
-    };
-});
 
 const mockLocalDb: Record<string, Record<string, unknown>> = {};
 let capturedRemoteUpdateCallback: ((event: any) => void) | null = null;

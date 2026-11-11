@@ -17,7 +17,7 @@ import {
   parseETagHeader,
   formatETagHeader,
   normalizeMarkdownSource,
-} from "@/lib/sync/etag-generator";
+} from "@/lib/sync/etag-generator.server";
 import {
   syncApiRateLimiter,
   fileApiRateLimiter,
@@ -45,23 +45,81 @@ export interface RouteParams {
 
 export type RouteContext = RouteParams;
 
+const UUID_V4_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function normalizeFileId(rawId: string | undefined): string | null {
+  if (!rawId || typeof rawId !== "string") {
+    return null;
+  }
+  // Reject double-percent-encoding (%25)
+  if (rawId.toLowerCase().includes("%25")) {
+    return null;
+  }
+  let decoded = rawId;
+  try {
+    decoded = decodeURIComponent(rawId);
+  } catch {
+    return null;
+  }
+  if (decoded.toLowerCase().includes("%25")) {
+    return null;
+  }
+  const trimmed = decoded.trim();
+  if (!UUID_V4_REGEX.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
+function createInvalidFileIdResponse(correlationId: string): Response {
+  const res = Response.json(
+    { error: "Invalid or missing file ID", correlationId },
+    { status: 400 }
+  );
+  addCorrelationHeader(res.headers, correlationId);
+  return res;
+}
+
 /**
  * Resolves the target file ID from route context or the request URL path.
+ * Rejects double-percent-encoding, malformed URL path structures, and non-UUID formats.
+ * Returns null if the candidate ID is missing, malformed, or not a valid UUID v4.
  */
-function resolveFileId(
+export function resolveFileId(
   request: Request,
   context?: RouteContext | string
-): string {
+): string | null {
   if (typeof context === "string") {
-    return context;
+    return normalizeFileId(context);
   }
-  if (context?.id) {
-    return context.id;
+  if (typeof context?.id === "string") {
+    return normalizeFileId(context.id);
   }
-  if (context?.params?.id) {
-    return context.params.id;
+  if (typeof context?.params?.id === "string") {
+    return normalizeFileId(context.params.id);
   }
-  return new URL(request.url).pathname.split("/").filter(Boolean).pop() ?? "";
+
+  try {
+    const segments = new URL(request.url).pathname.split("/").filter(Boolean);
+    if (segments.length === 0) {
+      return null;
+    }
+
+    let candidateSegment = "";
+    if (segments[0] === "api") {
+      if (segments[1] !== "files" || segments.length !== 3) {
+        return null;
+      }
+      candidateSegment = segments[2];
+    } else {
+      candidateSegment = segments[segments.length - 1];
+    }
+
+    return normalizeFileId(candidateSegment);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -261,6 +319,10 @@ export async function handleFileByIdGet(
   const correlationId = getOrGenerateCorrelationId(request);
   try {
     const fileId = resolveFileId(request, context);
+    if (!fileId) {
+      return createInvalidFileIdResponse(correlationId);
+    }
+
     const user = await getUser();
     if (!user) {
       const res = Response.json(
@@ -348,6 +410,10 @@ export async function handleFileByIdPut(
   const correlationId = getOrGenerateCorrelationId(request);
   try {
     const fileId = resolveFileId(request, context);
+    if (!fileId) {
+      return createInvalidFileIdResponse(correlationId);
+    }
+
     const user = await getUser();
     if (!user) {
       const res = Response.json(
@@ -365,7 +431,38 @@ export async function handleFileByIdPut(
       return res;
     }
 
-    const body = await request.json().catch(() => ({}));
+    let rawBody: unknown;
+    try {
+      rawBody = await request.json();
+    } catch {
+      const res = Response.json(
+        { error: "Invalid JSON request body", correlationId },
+        { status: 400 }
+      );
+      addCorrelationHeader(res.headers, correlationId);
+      return res;
+    }
+
+    if (!rawBody || typeof rawBody !== "object" || Array.isArray(rawBody)) {
+      const res = Response.json(
+        { error: "Invalid request body: expected a JSON object", correlationId },
+        { status: 400 }
+      );
+      addCorrelationHeader(res.headers, correlationId);
+      return res;
+    }
+
+    const body = rawBody as Record<string, unknown>;
+
+    if ("title" in body && body.title !== null && typeof body.title !== "string") {
+      const res = Response.json(
+        { error: "Invalid title: must be a string", correlationId },
+        { status: 400 }
+      );
+      addCorrelationHeader(res.headers, correlationId);
+      return res;
+    }
+
     const {
       content,
       title,
@@ -455,6 +552,20 @@ export async function handleFileByIdPut(
     if (currentFile.isFolder) {
       const res = Response.json(
         { error: "Cannot update content of a folder", correlationId },
+        { status: 400 }
+      );
+      addCorrelationHeader(res.headers, correlationId);
+      return res;
+    }
+
+    // Security invariant: If the existing file is encrypted, reject attempts to set isEncrypted: false unless explicit replacement plaintext content is supplied
+    if (currentFile.isEncrypted && isEncrypted === false && content === undefined) {
+      const res = Response.json(
+        {
+          error:
+            "Cannot remove encryption from a file without supplying replacement plaintext content",
+          correlationId,
+        },
         { status: 400 }
       );
       addCorrelationHeader(res.headers, correlationId);
@@ -566,7 +677,7 @@ export async function handleFileByIdPut(
           : normalizeMarkdownSource(content)
         : currentFile.content;
     const newTitle =
-      title !== undefined ? title.trim().slice(0, 500) : currentFile.title;
+      typeof title === "string" ? title.trim().slice(0, 500) : currentFile.title;
 
     const newEtag = generateETagSync({
       id: fileId,
@@ -682,6 +793,10 @@ export async function handleFileByIdDelete(
   const correlationId = getOrGenerateCorrelationId(request);
   try {
     const fileId = resolveFileId(request, context);
+    if (!fileId) {
+      return createInvalidFileIdResponse(correlationId);
+    }
+
     const user = await getUser();
     if (!user) {
       const res = Response.json(
@@ -704,8 +819,12 @@ export async function handleFileByIdDelete(
     const expectedVersionParam = searchParams.get("expectedVersion");
     let expectedVersion: number | undefined;
     if (expectedVersionParam !== null) {
-      const parsed = parseInt(expectedVersionParam, 10);
-      if (!Number.isNaN(parsed)) expectedVersion = parsed;
+      if (/^\d+$/.test(expectedVersionParam)) {
+        const parsed = Number(expectedVersionParam);
+        if (Number.isSafeInteger(parsed)) {
+          expectedVersion = parsed;
+        }
+      }
     }
 
     // PHASE 3 & PHASE 8: Mandatory If-Match or expectedVersion on file mutations

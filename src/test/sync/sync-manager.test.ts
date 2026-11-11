@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { setRpcClientFetch } from '@/client/rpc-client';
 
 // Mock dependencies
 const mockIndexedDBManager = vi.hoisted(() => ({
@@ -123,6 +124,7 @@ describe('Sync Manager', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        setRpcClientFetch(undefined);
         manager = new SyncManager();
 
         // Reset mocks to default behavior
@@ -137,6 +139,7 @@ describe('Sync Manager', () => {
     });
 
     afterEach(() => {
+        setRpcClientFetch(undefined);
         manager.destroy();
     });
 
@@ -938,6 +941,78 @@ describe('Sync Manager', () => {
 
             expect(remoteUpdateListener).not.toHaveBeenCalled();
             mockIndexedDBManager.getFile.mockReset();
+        });
+    });
+
+    describe('Unified Transport Fetch Injection (FIND-07)', () => {
+        it('should dispatch pull engine requests via custom fetch handler when registered with setRpcClientFetch', async () => {
+            await manager.init({ userId: 'user-123' });
+
+            const customFetch = vi.fn(async () => ({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    files: [],
+                    has_more: false,
+                    next_cursor: undefined,
+                }),
+            }));
+
+            setRpcClientFetch(customFetch as unknown as typeof fetch);
+
+            const result = await manager.sync();
+
+            expect(result.success).toBe(true);
+            expect(customFetch).toHaveBeenCalled();
+            const firstCall = customFetch.mock.calls[0] as unknown[] | undefined;
+            const calledUrl = String(firstCall?.[0] || '');
+            expect(calledUrl).toContain('/api/files/sync');
+        });
+
+        it('should dispatch queue worker push operations via custom fetch handler when registered with setRpcClientFetch', async () => {
+            await manager.init({ userId: 'user-123' });
+
+            mockIndexedDBManager.getFile.mockResolvedValue({
+                id: 'file-transport-test',
+                title: 'Test Transport File',
+                content: '# Hello unified transport',
+                version: 1,
+                isDirty: true,
+                updatedAt: new Date().toISOString(),
+            });
+
+            const customFetch = vi.fn(async (url: string | URL | Request) => {
+                const urlStr = typeof url === 'string' ? url : url.toString();
+                if (urlStr.includes('/api/files/file-transport-test')) {
+                    return {
+                        ok: true,
+                        status: 200,
+                        json: async () => ({
+                            id: 'file-transport-test',
+                            version: 2,
+                            etag: 'transport-etag-v2',
+                        }),
+                    };
+                }
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ files: [], has_more: false }),
+                };
+            });
+
+            setRpcClientFetch(customFetch as unknown as typeof fetch);
+
+            const result = await manager.syncFile('file-transport-test');
+
+            expect(result.success).toBe(true);
+            expect(result.action).toBe('pushed');
+            expect(customFetch).toHaveBeenCalledWith(
+                expect.stringContaining('/api/files/file-transport-test'),
+                expect.objectContaining({
+                    method: 'PUT',
+                })
+            );
         });
     });
 });

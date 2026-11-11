@@ -20,6 +20,7 @@ import type {
     RemoteUpdateEvent,
     ConflictCallback,
 } from './sync-manager.types';
+import { getRpcClientFetch } from '@/client/rpc-client';
 
 /**
  * Injected options and dependencies for SyncPullEngine
@@ -106,18 +107,31 @@ export class SyncPullEngine {
             let cursor: string | undefined;
 
             const baseUrl = this.apiBaseUrl ||
-                (typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'http://localhost:3000');
+                (typeof import.meta !== 'undefined' && import.meta.env?.VITE_APP_URL ? import.meta.env.VITE_APP_URL : undefined) ||
+                (typeof window !== 'undefined' && window.location?.origin && window.location.origin !== 'null' ? window.location.origin : undefined);
 
             while (hasMore) {
                 if (signal?.aborted || this.isDestroyed) break;
 
-                const url = new URL('/api/files/sync', baseUrl);
-                if (lastSyncedAt) url.searchParams.set('updated_after', lastSyncedAt);
-                if (cursor) url.searchParams.set('cursor', cursor);
-                url.searchParams.set('limit', '50');
+                const searchParams = new URLSearchParams();
+                if (lastSyncedAt) searchParams.set('updated_after', lastSyncedAt);
+                if (cursor) searchParams.set('cursor', cursor);
+                searchParams.set('limit', '50');
 
+                const queryString = searchParams.toString();
+                const relativePath = `/api/files/sync${queryString ? `?${queryString}` : ''}`;
+                let requestUrl = relativePath;
+                if (baseUrl) {
+                    try {
+                        requestUrl = new URL(relativePath, baseUrl).toString();
+                    } catch {
+                        requestUrl = `${baseUrl.replace(/\/+$/, '')}${relativePath}`;
+                    }
+                }
+
+                const activeFetch = getRpcClientFetch() ?? globalThis.fetch;
                 const response = await withBackoff(async () => {
-                    return fetch(url.toString(), { signal });
+                    return activeFetch(requestUrl, { signal });
                 }, 3, undefined, signal);
 
                 if (!response.ok) {

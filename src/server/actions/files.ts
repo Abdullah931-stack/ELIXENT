@@ -1,7 +1,7 @@
 import { db, schema, type FileEncryptionMetadata } from "@/server/db";
 import { requireAuthenticatedUser } from "@/server/auth/session";
 import { eq, and, isNull, isNotNull, inArray } from "drizzle-orm";
-import { generateETagSync, normalizeMarkdownSource } from "@/lib/sync/etag-generator";
+import { generateETagSync, normalizeMarkdownSource } from "@/lib/sync/etag-generator.server";
 import { randomUUID } from "crypto";
 import { generateRestoredTitle, generateCopyTitle } from "@/lib/utils/file-naming";
 import { getDescendantIds, isDescendantOf } from "./folders";
@@ -53,7 +53,7 @@ export async function createFile(
             return { success: false, status: "unauthorized", error: "Authentication required" };
         }
 
-        const sanitizedTitle = (title || "Untitled Document").trim().slice(0, 500);
+        const sanitizedTitle = ((title || "").trim() || "Untitled Document").slice(0, 500);
 
         // Validate parent folder ownership and validity if specified
         if (parentFolderId) {
@@ -684,13 +684,24 @@ export async function copyFile(
             return { success: false, status: "not_found", error: "Original file not found" };
         }
 
-        // Zero-knowledge security guard: If file is encrypted and no client-side re-encrypted payload is provided, block copy
-        if (original.isEncrypted && !encryptedOverride) {
-            return {
-                success: false,
-                status: "error",
-                error: "Encrypted files require client-side re-encryption with a unique authentication tag. Please copy via the workspace UI.",
-            };
+        // Zero-knowledge security guard: If file is encrypted, strictly require complete client-side re-encrypted payload
+        if (original.isEncrypted) {
+            const hasValidNewFileId = typeof encryptedOverride?.newFileId === "string" && encryptedOverride.newFileId.trim().length > 0;
+            const hasValidContent = typeof encryptedOverride?.content === "string" && encryptedOverride.content.length > 0;
+            const hasValidMetadata = Boolean(
+                encryptedOverride?.encryptionMetadata &&
+                typeof encryptedOverride.encryptionMetadata === "object" &&
+                typeof encryptedOverride.encryptionMetadata.iv === "string" &&
+                encryptedOverride.encryptionMetadata.iv.length > 0
+            );
+
+            if (!encryptedOverride || !hasValidNewFileId || !hasValidContent || !hasValidMetadata) {
+                return {
+                    success: false,
+                    status: "error",
+                    error: "Encrypted files require client-side re-encryption with a valid newFileId, content, and complete encryptionMetadata. Please copy via the workspace UI.",
+                };
+            }
         }
 
         // Validate destination parent folder if specified

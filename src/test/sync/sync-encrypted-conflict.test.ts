@@ -9,12 +9,13 @@ import {
     generateMasterKeyRaw, generateSalt,
     encryptEnvelope, sessionKeyStore, wipeBuffer,
     arrayBufferToBase64, validateMarkdownSyntaxIntegrity,
-    conflictResolver, generateEncryptedETagSync,
+    conflictResolver,
     MAX_QUARANTINED_CONFLICTS,
     SyncRollback, IndexedDBManager, createIndexedDBManager, createSyncRollback,
     type EncryptedEnvelope,
     type QuarantineDiagnostics,
 } from '@/lib/sync';
+import { generateEncryptedETagSync } from '@/lib/sync/etag-generator.server';
 import { SyncManager, createSyncManager } from '@/lib/sync/sync-manager';
 const ITER = 5000;
 const USER = 'user-enconf-closure-5';

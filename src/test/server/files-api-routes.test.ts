@@ -112,6 +112,7 @@ vi.mock("@/server/db", () => {
 });
 
 import {
+  resolveFileId,
   handleFilesSyncGet,
   handleFileByIdGet,
   handleFileByIdPut,
@@ -124,10 +125,13 @@ import {
 // ---------------------------------------------------------------------------
 
 const TEST_USER = { id: "user-files-001", email: "files@elixent.ai" };
+const TEST_FILE_ID = "550e8400-e29b-41d4-a716-446655440000";
+const TEST_FOLDER_ID = "660e8400-e29b-41d4-a716-446655440000";
+const TEST_FILE_2 = "770e8400-e29b-41d4-a716-446655440000";
 
 function buildFileRecord(overrides: Record<string, unknown> = {}) {
   return {
-    id: "file-uuid-100",
+    id: TEST_FILE_ID,
     userId: TEST_USER.id,
     title: "Architecture Spec",
     content: "# Architecture\n\nClean content.",
@@ -312,20 +316,20 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
     it("resolves file ID from synchronous params or URL pathname when context is omitted", async () => {
       // 1. Omitted context -> extracts from URL pathname
       const resNoCtx = await handleFileByIdGet(
-        new Request("http://localhost/api/files/file-from-url")
+        new Request(`http://localhost/api/files/${TEST_FILE_ID}`)
       );
       expect(resNoCtx.status).toBe(200);
 
       // 2. Synchronous params context
       const resPromiseCtx = await handleFileByIdGet(
         new Request("http://localhost/api/files/ignored"),
-        { params: { id: "file-from-promise" } }
+        { params: { id: TEST_FILE_ID } }
       );
       expect(resPromiseCtx.status).toBe(200);
 
       // 3. Hono router dispatch (sync params)
       const resHono = await filesApiRoutes.request(
-        "http://localhost/file-from-hono",
+        `http://localhost/${TEST_FILE_ID}`,
         { method: "GET" }
       );
       expect(resHono.status).toBe(200);
@@ -335,7 +339,7 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
       mockFindFirst.mockResolvedValueOnce(null);
 
       const res = await handleFileByIdGet(
-        new Request("http://localhost/api/files/missing-id")
+        new Request(`http://localhost/api/files/${TEST_FILE_2}`)
       );
 
       expect(res.status).toBe(404);
@@ -349,7 +353,7 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
       );
 
       const res = await handleFileByIdGet(
-        new Request("http://localhost/api/files/file-uuid-100", {
+        new Request(`http://localhost/api/files/${TEST_FILE_ID}`, {
           headers: { "If-None-Match": 'W/"etag_match_999"' },
         })
       );
@@ -365,7 +369,7 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
       mockFindFirst.mockResolvedValueOnce(record);
 
       const res = await handleFileByIdGet(
-        new Request("http://localhost/api/files/file-uuid-100", {
+        new Request(`http://localhost/api/files/${TEST_FILE_ID}`, {
           headers: { "If-None-Match": '"etag_stale"' },
         })
       );
@@ -377,7 +381,7 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
 
       const body = await res.json();
       expect(body).toMatchObject({
-        id: "file-uuid-100",
+        id: TEST_FILE_ID,
         title: "Architecture Spec",
         version: 3,
         etag: "etag_current",
@@ -391,7 +395,7 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
   describe("PUT /api/files/:id (handleFileByIdPut & filesApiRoutes)", () => {
     it("returns 400 RFC 7807 Invalid Storage Payload when plaintext payload includes non-null encryptionMetadata", async () => {
       const res = await handleFileByIdPut(
-        new Request("http://localhost/api/files/file-uuid-100", {
+        new Request(`http://localhost/api/files/${TEST_FILE_ID}`, {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
@@ -415,12 +419,12 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
       expect(res.headers.get("Content-Type")).toBe("application/problem+json");
       const body = await res.json();
       expect(body.type).toBe("urn:problem-type:invalid-storage-payload");
-      expect(body.instance).toBe("/api/files/file-uuid-100");
+      expect(body.instance).toBe(`/api/files/${TEST_FILE_ID}`);
     });
 
     it("returns 428 Precondition Required when neither If-Match nor expectedVersion/baseVersion is provided", async () => {
       const res = await handleFileByIdPut(
-        new Request("http://localhost/api/files/file-uuid-100", {
+        new Request(`http://localhost/api/files/${TEST_FILE_ID}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ title: "Updated Title Only" }),
@@ -438,7 +442,7 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
       );
 
       const res = await handleFileByIdPut(
-        new Request("http://localhost/api/files/folder-1", {
+        new Request(`http://localhost/api/files/${TEST_FOLDER_ID}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ title: "Rename Folder", expectedVersion: 3 }),
@@ -459,7 +463,7 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
       );
 
       const res = await handleFileByIdPut(
-        new Request("http://localhost/api/files/file-enc-broken", {
+        new Request(`http://localhost/api/files/${TEST_FILE_2}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -480,7 +484,7 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
       );
 
       const res = await handleFileByIdPut(
-        new Request("http://localhost/api/files/file-uuid-100", {
+        new Request(`http://localhost/api/files/${TEST_FILE_ID}`, {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
@@ -506,7 +510,7 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
       );
 
       const res = await handleFileByIdPut(
-        new Request("http://localhost/api/files/file-uuid-100", {
+        new Request(`http://localhost/api/files/${TEST_FILE_ID}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ content: "New text", baseVersion: 2 }),
@@ -533,7 +537,7 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
       mockUpdateReturning.mockResolvedValueOnce([]); // CAS update matched 0 rows
 
       const res = await handleFileByIdPut(
-        new Request("http://localhost/api/files/file-uuid-100", {
+        new Request(`http://localhost/api/files/${TEST_FILE_ID}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ content: "My content", expectedVersion: 3 }),
@@ -562,7 +566,7 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
       mockUpdateReturning.mockResolvedValueOnce([]);
 
       const res = await handleFileByIdPut(
-        new Request("http://localhost/api/files/file-uuid-100", {
+        new Request(`http://localhost/api/files/${TEST_FILE_ID}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ content: "My content", expectedVersion: 3 }),
@@ -598,7 +602,7 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
         }),
       ]);
 
-      const res = await filesApiRoutes.request("http://localhost/file-uuid-100", {
+      const res = await filesApiRoutes.request(`http://localhost/${TEST_FILE_ID}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -614,7 +618,7 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
       expect(res.headers.get("ETag")).toBe(formatETagHeader("etag_enc_v4"));
       const body = await res.json();
       expect(body).toMatchObject({
-        id: "file-uuid-100",
+        id: TEST_FILE_ID,
         title: "Encrypted Spec",
         version: 4,
         etag: "etag_enc_v4",
@@ -631,7 +635,7 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
     it("parses expectedVersion from standard Web Request URL searchParams without requiring request.nextUrl", async () => {
       const res = await handleFileByIdDelete(
         new Request(
-          "http://localhost/api/files/file-uuid-100?expectedVersion=3",
+          `http://localhost/api/files/${TEST_FILE_ID}?expectedVersion=3`,
           { method: "DELETE" }
         )
       );
@@ -640,7 +644,7 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
       const body = await res.json();
       expect(body).toMatchObject({
         success: true,
-        id: "file-uuid-100",
+        id: TEST_FILE_ID,
         version: 4,
       });
       expect(body.deletedAt).toBeTruthy();
@@ -649,7 +653,7 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
     it("returns 428 Precondition Required when neither If-Match nor a valid numeric expectedVersion is provided", async () => {
       const res = await handleFileByIdDelete(
         new Request(
-          "http://localhost/api/files/file-uuid-100?expectedVersion=not-a-num",
+          `http://localhost/api/files/${TEST_FILE_ID}?expectedVersion=not-a-num`,
           { method: "DELETE" }
         )
       );
@@ -667,7 +671,7 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
       );
 
       const resEtag = await handleFileByIdDelete(
-        new Request("http://localhost/api/files/file-uuid-100", {
+        new Request(`http://localhost/api/files/${TEST_FILE_ID}`, {
           method: "DELETE",
           headers: { "If-Match": '"etag_wrong"' },
         })
@@ -679,7 +683,7 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
 
       const resVer = await handleFileByIdDelete(
         new Request(
-          "http://localhost/api/files/file-uuid-100?expectedVersion=2",
+          `http://localhost/api/files/${TEST_FILE_ID}?expectedVersion=2`,
           { method: "DELETE" }
         )
       );
@@ -694,7 +698,7 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
 
       const res = await handleFileByIdDelete(
         new Request(
-          "http://localhost/api/files/file-uuid-100?expectedVersion=3",
+          `http://localhost/api/files/${TEST_FILE_ID}?expectedVersion=3`,
           { method: "DELETE" }
         )
       );
@@ -707,30 +711,242 @@ describe("Web-Standard Hono Files & Sync API Routes (src/server/routes/files-api
     it("soft-deletes folder and cascades deletedAt to all descendant IDs via Hono router", async () => {
       mockFindFirst.mockResolvedValueOnce(
         buildFileRecord({
-          id: "folder-root-1",
+          id: TEST_FOLDER_ID,
           isFolder: true,
           version: 2,
           etag: "etag_folder_v2",
         })
       );
       mockUpdateReturning.mockResolvedValueOnce([
-        buildFileRecord({ id: "folder-root-1", isFolder: true, version: 3 }),
+        buildFileRecord({ id: TEST_FOLDER_ID, isFolder: true, version: 3 }),
       ]);
       mockGetDescendantIds.mockResolvedValueOnce(["child-1", "child-2"]);
 
       const res = await filesApiRoutes.request(
-        "http://localhost/folder-root-1?expectedVersion=2",
+        `http://localhost/${TEST_FOLDER_ID}?expectedVersion=2`,
         { method: "DELETE" }
       );
 
       expect(res.status).toBe(200);
       expect(mockGetDescendantIds).toHaveBeenCalledWith(
-        "folder-root-1",
+        TEST_FOLDER_ID,
         TEST_USER.id
       );
       // 1st update for the folder itself, 2nd update for the descendants
       expect(mockUpdateSetCalls).toHaveLength(2);
       expect(mockUpdateSetCalls[1]).toHaveProperty("deletedAt");
+    });
+  });
+
+  // =========================================================================
+  // 5. DEF-A08: resolveFileId Hardening & Invalid File ID Rejection
+  // =========================================================================
+  describe("DEF-A08: resolveFileId Hardening & Invalid File ID Rejection", () => {
+    it.each([
+      { url: "http://localhost/api/files/", label: "trailing slash after /api/files" },
+      { url: "http://localhost/api/files", label: "base /api/files without ID" },
+      { url: "http://localhost/api/files/sync", label: "reserved sync route" },
+      { url: "http://localhost/api/files/sync/", label: "reserved sync route with trailing slash" },
+      { url: "http://localhost/api/files/upload", label: "reserved upload route" },
+      { url: "http://localhost/api/files/upload/", label: "reserved upload route with trailing slash" },
+      { url: "http://localhost/api/files/file-123/extra", label: "nested extra segment under /api/files" },
+      { url: "http://localhost/api/files/%20%20", label: "URL-encoded whitespace segment" },
+      { url: "http://localhost/api/files/%2F", label: "URL-encoded slash segment" },
+      { url: "http://localhost/api/files/%73%79%6e%63", label: "URL-encoded reserved 'sync' segment" },
+      { url: "http://localhost/api/files/%2e", label: "URL-encoded dot segment" },
+      { url: "http://localhost/api/files/%2e%2e", label: "URL-encoded dot-dot traversal segment" },
+      { url: "http://localhost/api/files/550e8400-e29b-41d4-a716-446655440000%2520", label: "double-percent encoded %2520" },
+      { url: "http://localhost/api/files/%252e%252e", label: "double-percent encoded %252e%252e" },
+      { url: "http://localhost/api/files/file-123", label: "non-UUID segment file-123" },
+      { url: "http://localhost/api/files/not-a-valid-uuid", label: "arbitrary non-UUID string" },
+      { url: "http://localhost/api", label: "bare /api path" },
+      { url: "http://localhost/", label: "root path" },
+    ])(
+      "returns null for $url ($label)",
+      ({ url }) => {
+        expect(resolveFileId(new Request(url))).toBeNull();
+      }
+    );
+
+    it.each([
+      { context: "sync", label: "string reserved sync" },
+      { context: "upload", label: "string reserved upload" },
+      { context: "..", label: "string dot-dot traversal" },
+      { context: "not-a-uuid", label: "string non-UUID" },
+      { context: "550e8400-e29b-41d4-a716-446655440000%2520", label: "string double-percent-encoded" },
+      { context: { id: "files" }, label: "object reserved files" },
+      { context: { params: { id: "api" } }, label: "nested reserved api" },
+      { context: { id: "not-a-uuid" }, label: "object non-UUID" },
+      { context: { id: "   " }, label: "whitespace-only id" },
+      { context: { id: "" }, label: "explicit empty string id" },
+      { context: { params: { id: "" } }, label: "explicit nested empty string id" },
+    ])("rejects reserved, non-UUID, or empty context ($label)", ({ context }) => {
+      expect(
+        resolveFileId(new Request(`http://localhost/api/files/${TEST_FILE_ID}`), context)
+      ).toBeNull();
+    });
+
+    it.each([
+      [
+        "http://localhost/api/files/550e8400-e29b-41d4-a716-446655440000",
+        undefined,
+        "550e8400-e29b-41d4-a716-446655440000",
+      ],
+      [
+        "http://localhost/api/files/550e8400-e29b-41d4-a716-446655440000/",
+        undefined,
+        "550e8400-e29b-41d4-a716-446655440000",
+      ],
+      [
+        "http://localhost/api/files/ignored",
+        "  550e8400-e29b-41d4-a716-446655440000  ",
+        "550e8400-e29b-41d4-a716-446655440000",
+      ],
+      [
+        "http://localhost/api/files/ignored",
+        { id: "  550e8400-e29b-41d4-a716-446655440000  " },
+        "550e8400-e29b-41d4-a716-446655440000",
+      ],
+      [
+        "http://localhost/api/files/ignored",
+        { params: { id: "  550e8400-e29b-41d4-a716-446655440000  " } },
+        "550e8400-e29b-41d4-a716-446655440000",
+      ],
+    ])(
+      "extracts valid UUID file ID from %s with context %o -> %s",
+      (url, context, expectedId) => {
+        expect(resolveFileId(new Request(url), context)).toBe(expectedId);
+      }
+    );
+
+    it.each([
+      ["GET", "http://localhost/api/files/", handleFileByIdGet],
+      ["GET", "http://localhost/api/files", handleFileByIdGet],
+      ["GET", "http://localhost/api/files/upload", handleFileByIdGet],
+      ["GET", "http://localhost/api/files/malformed-id-123", handleFileByIdGet],
+      ["PUT", "http://localhost/api/files/", handleFileByIdPut],
+      ["PUT", "http://localhost/api/files/sync", handleFileByIdPut],
+      ["PUT", "http://localhost/api/files/malformed-id-123", handleFileByIdPut],
+      ["DELETE", "http://localhost/api/files/", handleFileByIdDelete],
+      ["DELETE", "http://localhost/api/files/upload", handleFileByIdDelete],
+      ["DELETE", "http://localhost/api/files/malformed-id-123", handleFileByIdDelete],
+    ] as const)(
+      "returns 400 without querying DB and without consuming rate limit when %s %s has invalid fileId",
+      async (method, url, handler) => {
+        const res = await handler(
+          new Request(url, {
+            method,
+            headers: { "X-Correlation-ID": "corr-invalid-id" },
+          })
+        );
+
+        expect(res.status).toBe(400);
+        expect(res.headers.get("X-Correlation-ID")).toBe("corr-invalid-id");
+        expect(await res.json()).toEqual({
+          error: "Invalid or missing file ID",
+          correlationId: "corr-invalid-id",
+        });
+        expect(mockFindFirst).not.toHaveBeenCalled();
+        expect(mockFileLimit).not.toHaveBeenCalled();
+      }
+    );
+
+    it("rejects reserved /upload path routed through Hono /:id with 400 without hitting DB or consuming rate limit", async () => {
+      const res = await filesApiRoutes.request("http://localhost/upload", {
+        method: "GET",
+      });
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe("Invalid or missing file ID");
+      expect(mockFindFirst).not.toHaveBeenCalled();
+      expect(mockFileLimit).not.toHaveBeenCalled();
+    });
+
+    it("PUT /api/files/:id rejects null and array JSON bodies with 400", async () => {
+      const resNull = await handleFileByIdPut(
+        new Request(`http://localhost/api/files/${TEST_FILE_ID}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: "null",
+        })
+      );
+      expect(resNull.status).toBe(400);
+      expect((await resNull.json()).error).toContain("expected a JSON object");
+
+      const resArray = await handleFileByIdPut(
+        new Request(`http://localhost/api/files/${TEST_FILE_ID}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(["item1", "item2"]),
+        })
+      );
+      expect(resArray.status).toBe(400);
+      expect((await resArray.json()).error).toContain("expected a JSON object");
+    });
+
+    it("PUT /api/files/:id rejects non-string title with 400", async () => {
+      const res = await handleFileByIdPut(
+        new Request(`http://localhost/api/files/${TEST_FILE_ID}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: 12345, expectedVersion: 3 }),
+        })
+      );
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe("Invalid title: must be a string");
+    });
+
+    it("PUT /api/files/:id strictly rejects stripping encryption from an encrypted file without supplying replacement content", async () => {
+      mockFindFirst.mockResolvedValueOnce(
+        buildFileRecord({
+          id: TEST_FILE_ID,
+          isEncrypted: true,
+          content: "encrypted-ciphertext-data",
+          encryptionMetadata: {
+            version: 1,
+            algorithm: "AES-GCM-256",
+            keyId: "master-v1",
+            salt: "salt",
+            iv: "iv",
+            kdfIterations: 600000,
+          },
+        })
+      );
+
+      const res = await handleFileByIdPut(
+        new Request(`http://localhost/api/files/${TEST_FILE_ID}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            isEncrypted: false,
+            expectedVersion: 3,
+          }),
+        })
+      );
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe(
+        "Cannot remove encryption from a file without supplying replacement plaintext content"
+      );
+    });
+
+    it("DELETE /api/files/:id strictly validates expectedVersion against non-integer / unsafe integers", async () => {
+      const resFloat = await handleFileByIdDelete(
+        new Request(`http://localhost/api/files/${TEST_FILE_ID}?expectedVersion=3.14`, {
+          method: "DELETE",
+        })
+      );
+      expect(resFloat.status).toBe(428);
+
+      const resUnsafe = await handleFileByIdDelete(
+        new Request(
+          `http://localhost/api/files/${TEST_FILE_ID}?expectedVersion=99999999999999999999999999999999`,
+          { method: "DELETE" }
+        )
+      );
+      expect(resUnsafe.status).toBe(428);
     });
   });
 });

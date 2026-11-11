@@ -14,7 +14,7 @@ import { concurrencyManager } from './concurrency-manager';
 import { sessionKeyStore } from './session-key-store';
 import { conflictResolver } from './conflict-resolver';
 import { validateMarkdownSyntaxIntegrity } from './syntax-validator';
-import { generateEncryptedETagSync } from './etag-generator';
+import { generateEncryptedETag } from './etag-generator';
 import { sanitizeLogValue } from './log-sanitizer';
 import { SyncCryptoGateway } from './sync-crypto-gateway';
 
@@ -24,6 +24,7 @@ import {
     type FileSyncResult,
     type ConflictCallback,
 } from './sync-manager.types';
+import { getRpcClientFetch } from '@/client/rpc-client';
 
 export {
     MAX_QUARANTINED_CONFLICTS,
@@ -330,7 +331,7 @@ export class SyncEncryptedConflictStore {
 
                 if (!mergeResult.success || !mergeResult.content || !syntaxResult.isValid) {
                     if (this.conflictCallback) {
-                        const localEtag = conflict.localEnvelope.ciphertext ? generateEncryptedETagSync(conflict.localEnvelope) : '';
+                        const localEtag = conflict.localEnvelope.ciphertext ? await generateEncryptedETag(conflict.localEnvelope) : '';
                         const resolution = await this.conflictCallback({
                             fileId,
                             localContent: localText,
@@ -381,9 +382,9 @@ export class SyncEncryptedConflictStore {
                     ...newMetadata,
                     ciphertext: ciphertextBase64,
                 });
-                const newEtag = generateEncryptedETagSync(serializedEnvelope);
+                const newEtag = await generateEncryptedETag(serializedEnvelope);
 
-                const res = await fetch(`/api/files/${fileId}`, {
+                const res = await (getRpcClientFetch() ?? globalThis.fetch)(`/api/files/${fileId}`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',

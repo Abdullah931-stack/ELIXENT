@@ -2,8 +2,11 @@
  * ETag Generator for Sync System
  * 
  * Generates Strong ETags using SHA-256 hash for reliable change detection.
- * Used both client-side and server-side for consistency.
+ * Standard Web Crypto API implementation suitable for browser and universal runtimes.
+ * Server-only synchronous generators (using Node.js crypto) reside in etag-generator.server.ts.
  */
+
+import type { EncryptedEnvelope } from './types/vault';
 
 /**
  * Normalizes Markdown source text to LF line endings and Unicode NFC format.
@@ -18,8 +21,6 @@ export function normalizeMarkdownSource(content: string | null | undefined): str
         .replace(/\r/g, '\n')
         .normalize('NFC');
 }
-
-import type { EncryptedEnvelope } from './types/vault';
 
 /**
  * Deterministic canonical property order for EncryptedEnvelope serialization.
@@ -53,30 +54,26 @@ export function serializeEncryptedEnvelope(envelope: EncryptedEnvelope | string)
     return JSON.stringify(envelope, CANONICAL_ENVELOPE_KEYS);
 }
 
-/**
- * Generate a Strong ETag for a serialized EncryptedEnvelope JSON.
- * Formula: ETag = SHA-256(Serialized EncryptedEnvelope JSON)[0..32]
- */
-export function generateEncryptedETagSync(envelope: EncryptedEnvelope | string): string {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const crypto = require('crypto');
-    const serialized = serializeEncryptedEnvelope(envelope);
-    return crypto.createHash('sha256').update(serialized).digest('hex').substring(0, 32);
+function getSubtleCrypto(): SubtleCrypto {
+    const subtle = (typeof globalThis !== 'undefined' && globalThis.crypto?.subtle)
+        || (typeof crypto !== 'undefined' && crypto.subtle);
+    if (!subtle) {
+        throw new Error('Web Crypto API (crypto.subtle) is not available in the current environment');
+    }
+    return subtle;
 }
 
 /**
- * Generate a Strong ETag for a serialized EncryptedEnvelope JSON asynchronously.
+ * Generate a Strong ETag for a serialized EncryptedEnvelope JSON asynchronously using Web Crypto.
  */
 export async function generateEncryptedETag(envelope: EncryptedEnvelope | string): Promise<string> {
     const serialized = serializeEncryptedEnvelope(envelope);
-    if (typeof crypto !== 'undefined' && crypto.subtle) {
-        const encoder = new TextEncoder();
-        const data = encoder.encode(serialized);
-        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 32);
-    }
-    return generateEncryptedETagSync(envelope);
+    const subtle = getSubtleCrypto();
+    const encoder = new TextEncoder();
+    const data = encoder.encode(serialized);
+    const hashBuffer = await subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 32);
 }
 
 /**
@@ -104,53 +101,14 @@ export async function generateETag(content: {
     const normalizedContent = normalizeMarkdownSource(content.content);
     const dataToHash = `${content.id}${normalizedContent}${updatedAtStr}`;
 
-    // Use Web Crypto API for browser environment
-    if (typeof crypto !== 'undefined' && crypto.subtle) {
-        const encoder = new TextEncoder();
-        const data = encoder.encode(dataToHash);
-        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-        return hashHex.substring(0, 32);
-    }
-
-    // Fallback for Node.js environment (server-side)
-    return generateETagSync(content);
+    const subtle = getSubtleCrypto();
+    const encoder = new TextEncoder();
+    const data = encoder.encode(dataToHash);
+    const hashBuffer = await subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    return hashHex.substring(0, 32);
 }
-
-/**
- * Generate ETag synchronously (for server-side use with Node.js crypto)
- */
-export function generateETagSync(content: {
-    id: string;
-    content: string;
-    updatedAt: Date | number;
-    isEncrypted?: boolean;
-    envelope?: EncryptedEnvelope | string;
-}): string {
-    if (content.isEncrypted && (content.envelope || content.content)) {
-        return generateEncryptedETagSync(content.envelope || content.content);
-    }
-
-    // Dynamic import to avoid bundling issues
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const crypto = require('crypto');
-
-    const updatedAtStr = content.updatedAt instanceof Date
-        ? content.updatedAt.toISOString()
-        : new Date(content.updatedAt).toISOString();
-
-    const normalizedContent = normalizeMarkdownSource(content.content);
-    const dataToHash = `${content.id}${normalizedContent}${updatedAtStr}`;
-
-    const hash = crypto
-        .createHash('sha256')
-        .update(dataToHash)
-        .digest('hex');
-
-    return hash.substring(0, 32);
-}
-
 
 /**
  * Validate ETag format

@@ -17,7 +17,7 @@ import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup"
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { randomUUID } from "crypto";
 import { conflictResolver } from "@/lib/sync/conflict-resolver";
-import { generateETagSync } from "@/lib/sync/etag-generator";
+import { generateETagSync } from "@/lib/sync/etag-generator.server";
 import { updateFileContent } from "@/server/actions/files";
 
 const TEST_USER_ID = "66666666-6666-6666-6666-666666666666";

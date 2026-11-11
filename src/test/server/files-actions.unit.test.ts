@@ -154,6 +154,13 @@ describe("Decoupled Files & Folders Actions (Wave 3.1)", () => {
             expect(result.data?.title).toBe("Untitled Document");
         });
 
+        it("defaults whitespace-only title to 'Untitled Document'", async () => {
+            const result = await createFile("     \t\n   ");
+
+            expect(result.success).toBe(true);
+            expect(result.data?.title).toBe("Untitled Document");
+        });
+
         it("creates a folder when isFolder is true", async () => {
             const result = await createFile("Projects", null, true);
 
@@ -537,6 +544,71 @@ describe("Decoupled Files & Folders Actions (Wave 3.1)", () => {
             expect(result.success).toBe(false);
             expect(result.status).toBe("error");
             expect(result.error).toContain("Encrypted files require client-side re-encryption");
+        });
+
+        it("strictly rejects empty object {} or partial override when copying encrypted file", async () => {
+            mockDbFindFirst.mockResolvedValueOnce({
+                id: "enc_file_1",
+                userId: mockUser.id,
+                title: "Secret.md",
+                isEncrypted: true,
+                isFolder: false,
+                deletedAt: null,
+            });
+
+            const resultEmpty = await copyFile("enc_file_1", null, 0, {} as any);
+            expect(resultEmpty.success).toBe(false);
+            expect(resultEmpty.status).toBe("error");
+            expect(resultEmpty.error).toContain("Encrypted files require client-side re-encryption");
+
+            // Partial override missing content
+            mockDbFindFirst.mockResolvedValueOnce({
+                id: "enc_file_1",
+                userId: mockUser.id,
+                title: "Secret.md",
+                isEncrypted: true,
+                isFolder: false,
+                deletedAt: null,
+            });
+
+            const resultMissingContent = await copyFile("enc_file_1", null, 0, {
+                newFileId: "550e8400-e29b-41d4-a716-446655440000",
+                encryptionMetadata: {
+                    version: 1,
+                    algorithm: "AES-GCM-256",
+                    keyId: "master-v1",
+                    salt: "salt",
+                    iv: "iv",
+                    kdfIterations: 600000,
+                },
+            });
+            expect(resultMissingContent.success).toBe(false);
+            expect(resultMissingContent.status).toBe("error");
+
+            // Partial override missing iv
+            mockDbFindFirst.mockResolvedValueOnce({
+                id: "enc_file_1",
+                userId: mockUser.id,
+                title: "Secret.md",
+                isEncrypted: true,
+                isFolder: false,
+                deletedAt: null,
+            });
+
+            const resultMissingIv = await copyFile("enc_file_1", null, 0, {
+                newFileId: "550e8400-e29b-41d4-a716-446655440000",
+                content: "ciphertext",
+                encryptionMetadata: {
+                    version: 1,
+                    algorithm: "AES-GCM-256",
+                    keyId: "master-v1",
+                    salt: "salt",
+                    iv: "",
+                    kdfIterations: 600000,
+                },
+            });
+            expect(resultMissingIv.success).toBe(false);
+            expect(resultMissingIv.status).toBe("error");
         });
 
         it("prohibits copying a folder into itself", async () => {

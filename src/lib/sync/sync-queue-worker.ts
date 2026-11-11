@@ -22,6 +22,7 @@ import {
     type ConflictCallback,
     type FileSyncResult,
 } from './sync-manager.types';
+import { getRpcClientFetch } from '@/client/rpc-client';
 
 export interface ServerConflictPayload {
     content?: string;
@@ -215,7 +216,7 @@ export class SyncQueueWorker {
 
                 const url = this.apiBaseUrl ? `${this.apiBaseUrl}/api/files/${op.fileId}` : `/api/files/${op.fileId}`;
                 const response = await withBackoff(async () => {
-                    return fetch(url, {
+                    return (getRpcClientFetch() ?? globalThis.fetch)(url, {
                         method: 'PUT',
                         headers: reqHeaders,
                         body: JSON.stringify({
@@ -462,7 +463,7 @@ export class SyncQueueWorker {
 
                 const url = this.apiBaseUrl ? `${this.apiBaseUrl}/api/files/${file.id}` : `/api/files/${file.id}`;
                 const response = await withBackoff(async () => {
-                    return fetch(url, {
+                    return (getRpcClientFetch() ?? globalThis.fetch)(url, {
                         method: 'PUT',
                         headers: reqHeaders,
                         body: JSON.stringify({
