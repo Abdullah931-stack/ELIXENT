@@ -234,9 +234,9 @@ describe("Decoupled Auth Actions (src/server/actions/auth-actions.ts)", () => {
             });
         });
 
-        it("anchors callback URL to VITE_APP_URL when configured", async () => {
+        it("prioritizes APP_URL over VITE_APP_URL for callback URL", async () => {
+            process.env.APP_URL = "https://canonical.auth.elixent.com";
             process.env.VITE_APP_URL = "https://vite.auth.elixent.com";
-            process.env.APP_URL = "https://app.auth.elixent.com";
             delete process.env.NEXT_PUBLIC_APP_URL;
 
             mockSignInWithOAuth.mockResolvedValueOnce({
@@ -249,14 +249,14 @@ describe("Decoupled Auth Actions (src/server/actions/auth-actions.ts)", () => {
             expect(mockSignInWithOAuth).toHaveBeenCalledWith({
                 provider: "google",
                 options: {
-                    redirectTo: "https://vite.auth.elixent.com/auth/callback?redirectTo=%2Feditor",
+                    redirectTo: "https://canonical.auth.elixent.com/auth/callback?redirectTo=%2Feditor",
                 },
             });
         });
 
-        it("falls back to APP_URL when VITE_APP_URL is not set", async () => {
-            delete process.env.VITE_APP_URL;
-            process.env.APP_URL = "https://canonical.auth.elixent.com";
+        it("falls back to VITE_APP_URL when APP_URL is not set", async () => {
+            delete process.env.APP_URL;
+            process.env.VITE_APP_URL = "https://vite.auth.elixent.com";
             delete process.env.NEXT_PUBLIC_APP_URL;
 
             mockSignInWithOAuth.mockResolvedValueOnce({
@@ -269,7 +269,7 @@ describe("Decoupled Auth Actions (src/server/actions/auth-actions.ts)", () => {
             expect(mockSignInWithOAuth).toHaveBeenCalledWith({
                 provider: "google",
                 options: {
-                    redirectTo: "https://canonical.auth.elixent.com/auth/callback?redirectTo=%2Fworkspace",
+                    redirectTo: "https://vite.auth.elixent.com/auth/callback?redirectTo=%2Fworkspace",
                 },
             });
         });
@@ -322,6 +322,24 @@ describe("Decoupled Auth Actions (src/server/actions/auth-actions.ts)", () => {
 
             expect(mockSupabaseSignOut).toHaveBeenCalledTimes(1);
             expect(result).toEqual({ success: true, redirectUrl: "/" });
+        });
+
+        it("wipes prefixed __Host-sb-* and __Secure-sb-* cookies on signOut", async () => {
+            const cookieStore = createInMemoryCookieStore([
+                { name: "__Host-sb-access-token", value: "jwt-token" },
+                { name: "__Secure-sb-refresh-token", value: "refresh-token" },
+                { name: "other_cookie", value: "keep-me" },
+            ]);
+
+            const result = await runWithServerRequestContext(
+                { cookies: cookieStore, headers: new Headers() },
+                async () => signOut()
+            );
+
+            expect(result).toEqual({ success: true, redirectUrl: "/" });
+            expect(cookieStore.getAll()).toEqual([
+                { name: "other_cookie", value: "keep-me" },
+            ]);
         });
     });
 

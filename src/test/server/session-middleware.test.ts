@@ -6,7 +6,9 @@
  *    - OAuth code redirection on `/` and `/login` (307 to `/auth/callback` preserving query params and cookies).
  *    - Fast-Path Cookie Gate (`TD-12`): `getUser()` bypassed on public routes and on `/login` when no `sb-*` cookie exists.
  *    - Watchdog timeout (`AbortSignal.timeout(2500)`) and offline network error handling with `console.warn`.
- *    - Protected route gating (`/workspace`, `/account`, `/dashboard`): 401 JSON for `Accept: application/json` or `/api/*`, 307 redirect for page navigations.
+ *    - Protected route gating (`/workspace`, `/account`, `/dashboard`): 401 JSON for mutations (`POST`/`PUT`/`PATCH`/`DELETE`), `Accept: application/json`, or `/api/*`; 303 See Other redirect for safe page navigations (`GET`/`HEAD`).
+ *    - Static asset fast-path (`/assets/*`, `/favicon.ico`, `/robots.txt`, non-API static extensions) bypassing `createServerClient` and cookie cloning.
+ *    - Credential Fail-Fast (`DEF-A04`): placeholder fallback restricted strictly to test runtimes.
  *    - Authenticated user visiting `/login` redirected to `/dashboard` (307).
  *    - Cookie serialization and `Set-Cookie` header generation on redirects, 401, and 200 responses.
  *    - Web standard Set-Cookie response header serialization and incoming cookie parsing.
@@ -17,8 +19,9 @@
  *    - Direct intercept and short-circuit on unauthorized access, OAuth redirection, and logged-in user visits to `/login`.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
+import { createServerClient } from "@supabase/ssr";
 import {
   handleSessionProxy,
   sessionMiddleware,
@@ -58,12 +61,28 @@ vi.mock("@supabase/ssr", () => ({
 }));
 
 describe("Hono Web-Standard Session Middleware (src/server/middleware/session-middleware.ts)", () => {
+  const originalEnvSnapshot = { ...process.env };
+
+  function restoreProcessEnv(): void {
+    for (const key of Object.keys(process.env)) {
+      if (!(key in originalEnvSnapshot)) {
+        delete process.env[key];
+      }
+    }
+    Object.assign(process.env, originalEnvSnapshot);
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
+    restoreProcessEnv();
     mockState.setCookiesOnCreate = false;
     mockState.mockCookiesToSet = [];
     process.env.VITE_SUPABASE_URL = "https://mock-supabase.co";
     process.env.VITE_SUPABASE_ANON_KEY = "mock-anon-key";
+  });
+
+  afterEach(() => {
+    restoreProcessEnv();
   });
 
   describe("handleSessionProxy — Standalone Web Standard Handler", () => {
@@ -219,7 +238,7 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
               message: expect.stringContaining("watchdog timeout"),
             })
           );
-          expect(res.status).toBe(307);
+          expect(res.status).toBe(303);
           expect(res.headers.get("location")).toBe(
             "https://lugx.app/login?redirectTo=%2Fworkspace"
           );
@@ -242,7 +261,7 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
           "[Proxy] supabase.auth.getUser error (network/offline):",
           expect.any(Error)
         );
-        expect(res.status).toBe(307);
+        expect(res.status).toBe(303);
         expect(res.headers.get("location")).toBe(
           "https://lugx.app/login?redirectTo=%2Fworkspace"
         );
@@ -263,7 +282,7 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
           const req = new Request(`https://lugx.app${protectedPath}`);
           const res = await handleSessionProxy(req);
 
-          expect(res.status).toBe(307);
+          expect(res.status).toBe(303);
           expect(res.headers.get("location")).toBe(
             `https://lugx.app/login?redirectTo=${encodeURIComponent(protectedPath)}`
           );
@@ -281,7 +300,7 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
         );
         const res = await handleSessionProxy(req);
 
-        expect(res.status).toBe(307);
+        expect(res.status).toBe(303);
         expect(res.headers.get("location")).toBe(
           "https://lugx.app/login?redirectTo=%2Fworkspace%2Feditor%2Fdoc-99%3Ftab%3Drecent%26view%3Dsplit"
         );
@@ -322,7 +341,7 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
         expect(body).toEqual({ error: "Unauthorized" });
       });
 
-      it("redirects unauthenticated HTML navigation requests on protected subpaths to login (307)", async () => {
+      it("redirects unauthenticated HTML navigation requests on protected subpaths to login (303)", async () => {
         mockState.getUser.mockResolvedValueOnce({
           data: { user: null },
           error: null,
@@ -333,11 +352,11 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
         });
         const res = await handleSessionProxy(req);
 
-        expect(res.status).toBe(307);
+        expect(res.status).toBe(303);
       });
 
       describe("RFC 9110 Content Negotiation & Next.js Action Header Purge Matrix", () => {
-        it("redirects unauthenticated request carrying legacy Next.js 'next-action' header to login when Accept is HTML (purged next-action behavior)", async () => {
+        it("redirects unauthenticated GET request carrying legacy Next.js 'next-action' header to login with 303 when Accept is HTML", async () => {
           mockState.getUser.mockResolvedValueOnce({
             data: { user: null },
             error: null,
@@ -351,8 +370,8 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
           });
           const res = await handleSessionProxy(req);
 
-          // With next-action purged, content negotiation falls through to standard page navigation redirect
-          expect(res.status).toBe(307);
+          // With next-action purged, safe GET content negotiation falls through to 303 page navigation redirect
+          expect(res.status).toBe(303);
           expect(res.headers.get("location")).toBe(
             "https://lugx.app/login?redirectTo=%2Fworkspace"
           );
@@ -391,22 +410,22 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
           },
           {
             accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            expectedStatus: 307,
+            expectedStatus: 303,
             desc: "standard browser HTML Accept header",
           },
           {
             accept: "*/*",
-            expectedStatus: 307,
+            expectedStatus: 303,
             desc: "wildcard Accept header without explicit json",
           },
           {
             accept: "text/plain",
-            expectedStatus: 307,
+            expectedStatus: 303,
             desc: "text/plain non-json Accept header",
           },
           {
             accept: "",
-            expectedStatus: 307,
+            expectedStatus: 303,
             desc: "empty string Accept header",
           },
         ])(
@@ -496,7 +515,7 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
         const req = new Request("https://lugx.app/workspace");
         const res = await handleSessionProxy(req);
 
-        expect(res.status).toBe(307);
+        expect(res.status).toBe(303);
         const setCookie = res.headers.get("set-cookie");
         expect(setCookie).toContain("sb-refresh-token=new_ref_token");
         expect(setCookie).toContain("Max-Age=3600");
@@ -754,7 +773,7 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
       const res = await app.request("https://lugx.app/workspace");
 
       expect(downstreamSpy).not.toHaveBeenCalled();
-      expect(res.status).toBe(307);
+      expect(res.status).toBe(303);
       expect(res.headers.get("location")).toBe(
         "https://lugx.app/login?redirectTo=%2Fworkspace"
       );
@@ -817,7 +836,7 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
       expect(res.headers.get("location")).toBe("https://lugx.app/dashboard");
     });
 
-    it("short-circuits downstream handlers and redirects unauthenticated request carrying next-action to /login when Accept is HTML", async () => {
+    it("short-circuits downstream handlers and returns 401 JSON for unauthenticated POST mutation even when Accept is text/html and next-action is set", async () => {
       const downstreamSpy = vi.fn((c) => c.text("secret-page"));
       const app = new Hono();
       app.use("*", sessionMiddleware);
@@ -837,10 +856,9 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
       });
 
       expect(downstreamSpy).not.toHaveBeenCalled();
-      expect(res.status).toBe(307);
-      expect(res.headers.get("location")).toBe(
-        "https://lugx.app/login?redirectTo=%2Fworkspace"
-      );
+      expect(res.status).toBe(401);
+      expect(res.headers.get("Content-Type")).toBe("application/json");
+      expect(await res.json()).toEqual({ error: "Unauthorized" });
     });
 
     it("short-circuits downstream handlers and returns 401 JSON for unauthenticated request on protected route carrying next-action with Accept: application/json", async () => {
@@ -867,6 +885,355 @@ describe("Hono Web-Standard Session Middleware (src/server/middleware/session-mi
       expect(res.headers.get("Content-Type")).toBe("application/json");
       const body = await res.json();
       expect(body).toEqual({ error: "Unauthorized" });
+    });
+  });
+
+  describe("DEF-A05: RFC 9110 Mutations, 303 Navigation & Static Asset Fast-Path", () => {
+    it.each([
+      ["POST", undefined],
+      ["POST", "text/html,application/xhtml+xml"],
+      ["PUT", undefined],
+      ["PUT", "*/*"],
+      ["PATCH", undefined],
+      ["PATCH", "text/html"],
+      ["DELETE", undefined],
+      ["DELETE", "text/plain"],
+    ] as const)(
+      "returns 401 JSON for unauthenticated %s mutation on /workspace (Accept=%s) without redirecting",
+      async (method, accept) => {
+        mockState.getUser.mockResolvedValueOnce({
+          data: { user: null },
+          error: null,
+        });
+        mockState.setCookiesOnCreate = true;
+        mockState.mockCookiesToSet = [
+          { name: "sb-cleared", value: "", options: { path: "/", maxAge: 0 } },
+        ];
+
+        const req = new Request("https://lugx.app/workspace", {
+          method,
+          headers: accept ? { accept } : {},
+        });
+        const res = await handleSessionProxy(req);
+
+        expect(res.status).toBe(401);
+        expect(res.headers.get("Content-Type")).toBe("application/json");
+        expect(res.headers.get("location")).toBeNull();
+        expect(res.headers.get("set-cookie")).toContain("sb-cleared=; Max-Age=0; Path=/");
+        expect(await res.json()).toEqual({ error: "Unauthorized" });
+      }
+    );
+
+    it.each(["GET", "HEAD"] as const)(
+      "redirects unauthenticated safe %s HTML navigation on /workspace using 303 See Other",
+      async (method) => {
+        mockState.getUser.mockResolvedValueOnce({
+          data: { user: null },
+          error: null,
+        });
+
+        const req = new Request("https://lugx.app/workspace?view=split", {
+          method,
+          headers: { accept: "text/html,application/xhtml+xml" },
+        });
+        const res = await handleSessionProxy(req);
+
+        expect(res.status).toBe(303);
+        expect(res.headers.get("location")).toBe(
+          "https://lugx.app/login?redirectTo=%2Fworkspace%3Fview%3Dsplit"
+        );
+      }
+    );
+
+    it.each([
+      "/assets/index-abc123.js",
+      "/assets/styles/main.css",
+      "/favicon.ico",
+      "/robots.txt",
+      "/public/logo.png",
+      "/images/illustration.webp",
+      "/fonts/font.woff2",
+      "/@vite/client",
+    ])(
+      "bypasses Supabase client initialization, auth lookup, and production env fail-fast for public static asset %s",
+      async (assetPath) => {
+        process.env.NODE_ENV = "production";
+        delete process.env.VITEST;
+        delete process.env.VITE_SUPABASE_URL;
+        delete process.env.VITE_SUPABASE_ANON_KEY;
+
+        const res = await handleSessionProxy(
+          new Request(`https://lugx.app${assetPath}`, {
+            headers: { cookie: "sb-access-token=abc" },
+          })
+        );
+
+        expect(res.status).toBe(200);
+        expect(createServerClient).not.toHaveBeenCalled();
+        expect(mockState.getUser).not.toHaveBeenCalled();
+      }
+    );
+
+    it("passes public static asset requests through sessionMiddleware to downstream handlers without creating a Supabase client", async () => {
+      const downstreamSpy = vi.fn((c) => c.text("asset-bytes"));
+      const app = new Hono();
+      app.use("*", sessionMiddleware);
+      app.get("/assets/logo.png", downstreamSpy);
+
+      const res = await app.request("https://lugx.app/assets/logo.png");
+
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("asset-bytes");
+      expect(downstreamSpy).toHaveBeenCalledTimes(1);
+      expect(createServerClient).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      "/workspace/evil.png",
+      "/workspace/logo.png",
+      "/workspace/nested/icon.SVG",
+      "/dashboard/font.woff2",
+      "/account/avatar.jpg",
+    ])(
+      "CRITICAL SECURITY INVARIANT: never bypasses authentication for protected route %s even if ending with static extension",
+      async (protectedAssetPath) => {
+        mockState.getUser.mockResolvedValueOnce({
+          data: { user: null },
+          error: null,
+        });
+
+        const res = await handleSessionProxy(
+          new Request(`https://lugx.app${protectedAssetPath}`)
+        );
+
+        // Safe browser navigation to protected path redirected to login with 303
+        expect(res.status).toBe(303);
+        expect(res.headers.get("location")).toBe(
+          `https://lugx.app/login?redirectTo=${encodeURIComponent(protectedAssetPath)}`
+        );
+      }
+    );
+
+    it("returns 204 No Content with CORS preflight headers for OPTIONS requests on protected routes rather than redirecting to login", async () => {
+      const req = new Request("https://lugx.app/workspace", {
+        method: "OPTIONS",
+      });
+      const res = await handleSessionProxy(req);
+
+      expect(res.status).toBe(204);
+      expect(res.headers.get("Access-Control-Allow-Methods")).toContain("OPTIONS");
+      expect(res.headers.get("Location")).toBeNull();
+    });
+
+    it.each([
+      "/api/files/icon.png",
+      "/api/files/foo.js",
+      "/api/assets/main.css",
+    ])(
+      "does NOT bypass Supabase initialization or credential checks for API path %s",
+      async (apiPath) => {
+        const res = await handleSessionProxy(
+          new Request(`https://lugx.app${apiPath}`)
+        );
+        expect(res.status).toBe(200);
+        expect(createServerClient).toHaveBeenCalledTimes(1);
+
+        process.env.NODE_ENV = "production";
+        delete process.env.VITEST;
+        delete process.env.VITE_SUPABASE_URL;
+        delete process.env.VITE_SUPABASE_ANON_KEY;
+
+        await expect(
+          handleSessionProxy(new Request(`https://lugx.app${apiPath}`))
+        ).rejects.toThrow(/\[Session Middleware\] Missing required Supabase credentials/);
+      }
+    );
+  });
+
+  describe("DEF-A04: Supabase Credential Fail-Fast & Scoped Test Placeholders", () => {
+    it("allows placeholder fallback when NODE_ENV=test even if VITEST is unset", async () => {
+      process.env.NODE_ENV = "test";
+      delete process.env.VITEST;
+      delete process.env.VITE_SUPABASE_URL;
+      delete process.env.VITE_SUPABASE_ANON_KEY;
+
+      const res = await handleSessionProxy(new Request("https://lugx.app/"));
+
+      expect(res.status).toBe(200);
+      expect(createServerClient).toHaveBeenCalledWith(
+        "https://placeholder.supabase.co",
+        "placeholder-anon-key",
+        expect.any(Object)
+      );
+    });
+
+    it("allows placeholder fallback when VITEST=true even if NODE_ENV=production", async () => {
+      process.env.NODE_ENV = "production";
+      process.env.VITEST = "true";
+      delete process.env.VITE_SUPABASE_URL;
+      delete process.env.VITE_SUPABASE_ANON_KEY;
+
+      const res = await handleSessionProxy(new Request("https://lugx.app/"));
+
+      expect(res.status).toBe(200);
+      expect(createServerClient).toHaveBeenCalledWith(
+        "https://placeholder.supabase.co",
+        "placeholder-anon-key",
+        expect.any(Object)
+      );
+    });
+
+    it.each([
+      ["production", undefined, undefined, /VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY/],
+      ["production", "", "", /VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY/],
+      ["production", "   ", "   ", /VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY/],
+      ["production", "https://real.supabase.co", undefined, /VITE_SUPABASE_ANON_KEY/],
+      ["production", undefined, "real-key", /VITE_SUPABASE_URL/],
+      ["development", undefined, undefined, /VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY/],
+      ["development", "https://real.supabase.co", "   ", /VITE_SUPABASE_ANON_KEY/],
+      ["development", "", "real-key", /VITE_SUPABASE_URL/],
+    ] as const)(
+      "throws fail-fast error in %s runtime when url=%s key=%s and VITEST is unset",
+      async (nodeEnv, url, key, expectedPattern) => {
+        process.env.NODE_ENV = nodeEnv;
+        delete process.env.VITEST;
+
+        if (url === undefined) delete process.env.VITE_SUPABASE_URL;
+        else process.env.VITE_SUPABASE_URL = url;
+
+        if (key === undefined) delete process.env.VITE_SUPABASE_ANON_KEY;
+        else process.env.VITE_SUPABASE_ANON_KEY = key;
+
+        await expect(
+          handleSessionProxy(new Request("https://lugx.app/"))
+        ).rejects.toThrow(expectedPattern);
+        expect(createServerClient).not.toHaveBeenCalled();
+      }
+    );
+
+    it("treats VITEST='false' with missing credentials in production as non-test and fails fast", async () => {
+      process.env.NODE_ENV = "production";
+      process.env.VITEST = "false";
+      delete process.env.VITE_SUPABASE_URL;
+      delete process.env.VITE_SUPABASE_ANON_KEY;
+
+      await expect(
+        handleSessionProxy(new Request("https://lugx.app/api/files/icon.png"))
+      ).rejects.toThrow(/\[Session Middleware\] Missing required Supabase credentials/);
+      expect(createServerClient).not.toHaveBeenCalled();
+    });
+
+    it.each(["production", "development"] as const)(
+      "succeeds in %s runtime when valid VITE_SUPABASE_* credentials exist",
+      async (nodeEnv) => {
+        process.env.NODE_ENV = nodeEnv;
+        delete process.env.VITEST;
+        process.env.VITE_SUPABASE_URL = "https://real-prod.supabase.co";
+        process.env.VITE_SUPABASE_ANON_KEY = "real-prod-anon-key";
+
+        const res = await handleSessionProxy(new Request("https://lugx.app/"));
+
+        expect(res.status).toBe(200);
+        expect(createServerClient).toHaveBeenCalledWith(
+          "https://real-prod.supabase.co",
+          "real-prod-anon-key",
+          expect.any(Object)
+        );
+      }
+    );
+  });
+
+  describe("Cookie Mutation Suppression (clearPendingAuthCookieMutations)", () => {
+    it("suppresses trailing bare empty Set-Cookie headers when clearPendingAuthCookieMutations is invoked", async () => {
+      const { clearPendingAuthCookieMutations } = await import(
+        "@/server/middleware/session-middleware"
+      );
+
+      const downstreamHandler = vi.fn(async (c) => {
+        clearPendingAuthCookieMutations();
+        return c.json({ success: true });
+      });
+
+      const app = new Hono();
+      app.use("*", sessionMiddleware);
+      app.post("/test-logout", downstreamHandler);
+
+      mockState.setCookiesOnCreate = true;
+      mockState.mockCookiesToSet = [
+        {
+          name: "sb-access-token",
+          value: "",
+          options: { maxAge: 0, path: "/" },
+        },
+      ];
+
+      const res = await app.request("https://lugx.app/test-logout", {
+        method: "POST",
+      });
+
+      expect(res.status).toBe(200);
+      const setCookie = res.headers.get("set-cookie") ?? "";
+      expect(setCookie).not.toContain("sb-access-token");
+    });
+  });
+
+  describe("Pure Route Guard Module (src/lib/auth/route-guard.ts)", () => {
+    it("normalizes request pathnames collapsing duplicate slashes and decoding percent-encoding safely", async () => {
+      const { normalizeRequestPathname } = await import("@/lib/auth/route-guard");
+
+      expect(normalizeRequestPathname("//workspace")).toBe("/workspace");
+      expect(normalizeRequestPathname("///workspace///editor")).toBe("/workspace/editor");
+      expect(normalizeRequestPathname("/workspace%2Fsub")).toBe("/workspace/sub");
+      // Malformed percent-encoding should not throw:
+      expect(normalizeRequestPathname("/workspace%zz")).toBe("/workspace%zz");
+      expect(normalizeRequestPathname("")).toBe("/");
+      expect(normalizeRequestPathname("https://example.com/workspace?tab=1#hash")).toBe("/workspace");
+    });
+
+    it("evaluates isProtectedAppPath with case insensitivity and trailing slashes", async () => {
+      const { isProtectedAppPath } = await import("@/lib/auth/route-guard");
+
+      expect(isProtectedAppPath("/workspace")).toBe(true);
+      expect(isProtectedAppPath("/workspace/")).toBe(true);
+      expect(isProtectedAppPath("/WORKSPACE/doc")).toBe(true);
+      expect(isProtectedAppPath("/dashboard")).toBe(true);
+      expect(isProtectedAppPath("/account")).toBe(true);
+      expect(isProtectedAppPath("/account/billing")).toBe(true);
+      expect(isProtectedAppPath("/workspaces")).toBe(false);
+      expect(isProtectedAppPath("/accountant")).toBe(false);
+      expect(isProtectedAppPath("/login")).toBe(false);
+      expect(isProtectedAppPath("/")).toBe(false);
+    });
+
+    it("evaluates isPublicStaticAssetPath maintaining critical security invariant", async () => {
+      const { isPublicStaticAssetPath } = await import("@/lib/auth/route-guard");
+
+      // Critical guarded paths must NEVER be bypassed even with static extensions:
+      expect(isPublicStaticAssetPath("/workspace/evil.png")).toBe(false);
+      expect(isPublicStaticAssetPath("/dashboard/font.woff2")).toBe(false);
+      expect(isPublicStaticAssetPath("/account/logo.svg")).toBe(false);
+      expect(isPublicStaticAssetPath("/api/data.json")).toBe(false);
+      expect(isPublicStaticAssetPath("/auth/callback/script.js")).toBe(false);
+
+      // Public static assets must return true:
+      expect(isPublicStaticAssetPath("/favicon.ico")).toBe(true);
+      expect(isPublicStaticAssetPath("/robots.txt")).toBe(true);
+      expect(isPublicStaticAssetPath("/assets/bundle.js")).toBe(true);
+      expect(isPublicStaticAssetPath("/@vite/client")).toBe(true);
+      expect(isPublicStaticAssetPath("/images/banner.png")).toBe(true);
+    });
+
+    it("evaluates isSupabaseAuthCookieName across prefix variants", async () => {
+      const { isSupabaseAuthCookieName } = await import("@/lib/auth/route-guard");
+
+      expect(isSupabaseAuthCookieName("sb-access-token")).toBe(true);
+      expect(isSupabaseAuthCookieName("sb-refresh-token")).toBe(true);
+      expect(isSupabaseAuthCookieName("__Host-sb-access-token")).toBe(true);
+      expect(isSupabaseAuthCookieName("__Secure-sb-access-token")).toBe(true);
+      expect(isSupabaseAuthCookieName("__host-sb-token")).toBe(true);
+      expect(isSupabaseAuthCookieName("theme")).toBe(false);
+      expect(isSupabaseAuthCookieName("sb")).toBe(false);
+      expect(isSupabaseAuthCookieName("not-sb-token")).toBe(false);
     });
   });
 });

@@ -21,6 +21,7 @@ import * as schema from "@/server/db/schema";
 import { eq, desc, sql } from "drizzle-orm";
 import type { TierName } from "@/config/tiers.config";
 import { stripe } from "@/lib/stripe";
+import { resolveAppUrl, resolveSameOriginAppUrl } from "@/lib/config/app-url";
 import { executeStripeDualWrite } from "@/lib/metering/lua-scripts";
 import {
     reduceSubscriptionState,
@@ -466,14 +467,13 @@ export class BillingService {
             throw new Error("No Stripe customer found for this account. Please subscribe first.");
         }
 
-        const appUrl =
-            process.env.VITE_APP_URL ||
-            process.env.APP_URL ||
-            process.env.NEXT_PUBLIC_APP_URL ||
-            "http://localhost:3000";
+        const trimmedReturnUrl = returnUrl?.trim();
+        const resolvedReturnUrl = !trimmedReturnUrl
+            ? resolveAppUrl("/account")
+            : resolveSameOriginAppUrl(trimmedReturnUrl);
         const session = await stripe.billingPortal.sessions.create({
             customer: user.stripeCustomerId,
-            return_url: returnUrl || `${appUrl}/account`,
+            return_url: resolvedReturnUrl,
         });
 
         return { url: session.url };

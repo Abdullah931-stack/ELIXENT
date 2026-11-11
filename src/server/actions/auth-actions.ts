@@ -5,6 +5,8 @@ import { requireAuthenticatedUser } from "@/server/auth/session";
 import { eq, sql } from "drizzle-orm";
 import { resolveSafeRedirectPath } from "@/lib/auth/safe-redirect";
 import { authRateLimiter } from "@/lib/rate-limit";
+import { resolveAppUrl } from "@/lib/config/app-url";
+import { isSupabaseAuthCookieName } from "@/lib/auth/route-guard";
 
 /**
  * Sign in with Google OAuth
@@ -28,8 +30,7 @@ export async function signInWithGoogle(redirectTo?: string): Promise<
     const supabase = await createClient();
 
     const safeRedirect = resolveSafeRedirectPath(redirectTo, "/dashboard");
-    const appUrl = process.env.VITE_APP_URL || process.env.APP_URL || "http://localhost:3000";
-    const callbackUrl = new URL("/auth/callback", appUrl);
+    const callbackUrl = new URL(resolveAppUrl("/auth/callback"));
     callbackUrl.searchParams.set("redirectTo", safeRedirect);
 
     const { data, error } = await supabase.auth.signInWithOAuth({
@@ -61,7 +62,7 @@ export async function signOut(): Promise<{ success: true; redirectUrl: string }>
     const { cookies: cookieStore } = await resolveCookiesAndHeaders();
     const allCookies = cookieStore.getAll();
     for (const cookie of allCookies) {
-        if (cookie.name.startsWith("sb-")) {
+        if (isSupabaseAuthCookieName(cookie.name)) {
             cookieStore.delete(cookie.name);
         }
     }

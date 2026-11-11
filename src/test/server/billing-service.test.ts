@@ -468,9 +468,9 @@ describe("BillingService (Phase 12 Domain Logic)", () => {
             process.env = originalEnv;
         });
 
-        it("prioritizes VITE_APP_URL over APP_URL and NEXT_PUBLIC_APP_URL for return_url", async () => {
-            process.env.VITE_APP_URL = "https://vite.portal.elixent.com";
+        it("prioritizes APP_URL over VITE_APP_URL and ignores NEXT_PUBLIC_APP_URL for return_url", async () => {
             process.env.APP_URL = "https://app.portal.elixent.com";
+            process.env.VITE_APP_URL = "https://vite.portal.elixent.com";
             process.env.NEXT_PUBLIC_APP_URL = "https://legacy.portal.elixent.com";
 
             mockGlobalDb.select.mockReturnValueOnce({
@@ -490,7 +490,7 @@ describe("BillingService (Phase 12 Domain Logic)", () => {
             expect(result).toEqual({ url: "https://billing.stripe.com/p/session_portal_123" });
             expect(mockBillingPortalSessionsCreate).toHaveBeenCalledWith({
                 customer: "cus_portal_123",
-                return_url: "https://vite.portal.elixent.com/account",
+                return_url: "https://app.portal.elixent.com/account",
             });
         });
 
@@ -520,9 +520,10 @@ describe("BillingService (Phase 12 Domain Logic)", () => {
             });
         });
 
-        it("falls back to NEXT_PUBLIC_APP_URL for backward compatibility when VITE_APP_URL and APP_URL are absent", async () => {
-            delete process.env.VITE_APP_URL;
+        it("strictly ignores NEXT_PUBLIC_APP_URL (falls back to http://localhost:3000 in non-production and fails closed in production)", async () => {
+            process.env.NODE_ENV = "test";
             delete process.env.APP_URL;
+            delete process.env.VITE_APP_URL;
             process.env.NEXT_PUBLIC_APP_URL = "https://legacy.portal.elixent.com";
 
             mockGlobalDb.select.mockReturnValueOnce({
@@ -542,8 +543,24 @@ describe("BillingService (Phase 12 Domain Logic)", () => {
             expect(result.url).toBe("https://billing.stripe.com/p/session_legacy");
             expect(mockBillingPortalSessionsCreate).toHaveBeenCalledWith({
                 customer: "cus_portal_legacy",
-                return_url: "https://legacy.portal.elixent.com/account",
+                return_url: "http://localhost:3000/account",
             });
+
+            process.env.NODE_ENV = "production";
+            mockGlobalDb.select.mockReturnValueOnce({
+                from: () => ({
+                    where: () => ({
+                        limit: () => Promise.resolve([{ stripeCustomerId: "cus_portal_legacy" }]),
+                    }),
+                }),
+            } as any);
+
+            await expect(
+                BillingService.createCustomerPortalSession("user-1")
+            ).rejects.toThrow(
+                "APP_URL (or VITE_APP_URL) must be configured with an https:// URL in production."
+            );
+            expect(mockBillingPortalSessionsCreate).toHaveBeenCalledTimes(1);
         });
 
         it("falls back to http://localhost:3000 when all URL environment variables are absent", async () => {
@@ -572,7 +589,7 @@ describe("BillingService (Phase 12 Domain Logic)", () => {
             });
         });
 
-        it("uses explicit custom returnUrl parameter when provided", async () => {
+        it("uses explicit custom returnUrl parameter when provided (same origin)", async () => {
             process.env.VITE_APP_URL = "https://vite.portal.elixent.com";
 
             mockGlobalDb.select.mockReturnValueOnce({
@@ -589,14 +606,35 @@ describe("BillingService (Phase 12 Domain Logic)", () => {
 
             const result = await BillingService.createCustomerPortalSession(
                 "user-1",
-                "https://custom.elixent.com/settings/billing"
+                "https://vite.portal.elixent.com/settings/billing"
             );
 
             expect(result.url).toBe("https://billing.stripe.com/p/session_custom");
             expect(mockBillingPortalSessionsCreate).toHaveBeenCalledWith({
                 customer: "cus_portal_custom",
-                return_url: "https://custom.elixent.com/settings/billing",
+                return_url: "https://vite.portal.elixent.com/settings/billing",
             });
+        });
+
+        it("strictly rejects cross-origin returnUrl in createCustomerPortalSession (FIND-08)", async () => {
+            process.env.VITE_APP_URL = "https://vite.portal.elixent.com";
+
+            mockGlobalDb.select.mockReturnValueOnce({
+                from: () => ({
+                    where: () => ({
+                        limit: () => Promise.resolve([{ stripeCustomerId: "cus_portal_custom" }]),
+                    }),
+                }),
+            } as any);
+
+            await expect(
+                BillingService.createCustomerPortalSession(
+                    "user-1",
+                    "https://custom.elixent.com/settings/billing"
+                )
+            ).rejects.toThrow(/Cross-origin app URL rejected/);
+
+            expect(mockBillingPortalSessionsCreate).not.toHaveBeenCalled();
         });
 
         it("throws when user record is not found in database", async () => {

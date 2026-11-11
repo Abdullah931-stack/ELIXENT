@@ -2,10 +2,100 @@ import { createServerClient } from "@supabase/ssr";
 import { createMiddleware } from "hono/factory";
 import {
   runWithServerRequestContext,
+  getActiveRequestContext,
   type ServerRequestContext,
   type ServerCookieStore,
   type ServerCookieRecord,
 } from "@/server/context/request-context";
+import {
+  isProtectedAppPath,
+  isPublicStaticAssetPath,
+  isSupabaseAuthCookieName,
+  normalizeRequestPathname,
+} from "@/lib/auth/route-guard";
+
+const TEST_PLACEHOLDER_SUPABASE_URL = "https://placeholder.supabase.co";
+const TEST_PLACEHOLDER_SUPABASE_ANON_KEY = "placeholder-anon-key";
+
+const activeMutatedCookiesMap = new WeakMap<
+  ServerRequestContext,
+  Map<string, ServerCookieRecord>
+>();
+
+/**
+ * Suppresses pending auth cookie mutations in the active request context.
+ * Used during sign-out or cookie clearing to avoid re-appending bare empty/attribute cookies.
+ */
+export function clearPendingAuthCookieMutations(
+  ctx?: ServerRequestContext | null
+): void {
+  const activeCtx = ctx ?? getActiveRequestContext();
+  if (!activeCtx) {
+    return;
+  }
+  const mutated = activeMutatedCookiesMap.get(activeCtx);
+  if (!mutated) {
+    return;
+  }
+  for (const name of Array.from(mutated.keys())) {
+    if (isSupabaseAuthCookieName(name)) {
+      mutated.delete(name);
+    }
+  }
+}
+
+function isTruthyEnvFlag(value: string | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized !== "" && normalized !== "false" && normalized !== "0";
+}
+
+function readNonEmptyEnv(value: string | undefined): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function isTestRuntime(): boolean {
+  if (typeof process === "undefined") {
+    return false;
+  }
+  return (
+    process.env?.NODE_ENV === "test" || isTruthyEnvFlag(process.env?.VITEST)
+  );
+}
+
+function resolveMiddlewareSupabaseCredentials(): {
+  supabaseUrl: string;
+  supabaseAnonKey: string;
+} {
+  const env = typeof process !== "undefined" ? process.env : undefined;
+  const supabaseUrl = readNonEmptyEnv(env?.VITE_SUPABASE_URL);
+  const supabaseAnonKey = readNonEmptyEnv(env?.VITE_SUPABASE_ANON_KEY);
+
+  if (isTestRuntime()) {
+    return {
+      supabaseUrl: supabaseUrl ?? TEST_PLACEHOLDER_SUPABASE_URL,
+      supabaseAnonKey:
+        supabaseAnonKey ?? TEST_PLACEHOLDER_SUPABASE_ANON_KEY,
+    };
+  }
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    const missingVars: string[] = [];
+    if (!supabaseUrl) missingVars.push("VITE_SUPABASE_URL");
+    if (!supabaseAnonKey) missingVars.push("VITE_SUPABASE_ANON_KEY");
+    throw new Error(
+      `[Session Middleware] Missing required Supabase credentials in non-test runtime: ${missingVars.join(", ")}. Placeholder fallback is restricted strictly to test environments.`
+    );
+  }
+
+  return { supabaseUrl, supabaseAnonKey };
+}
 
 /**
  * Cookie serialization helper producing standard Set-Cookie header strings.
@@ -103,15 +193,16 @@ function applyCookiesToResponse(
 }
 
 /**
- * Creates a 307 redirect response with mutated cookies applied.
+ * Creates a redirect response (303 See Other or 307 Temporary Redirect) with mutated cookies applied.
  */
 function createRedirectResponse(
   url: URL | string,
-  mutatedCookies: Map<string, ServerCookieRecord>
+  mutatedCookies: Map<string, ServerCookieRecord>,
+  status: 303 | 307 = 303
 ): Response {
   const destination = typeof url === "string" ? url : url.toString();
   const response = new Response(null, {
-    status: 307,
+    status,
     headers: {
       Location: destination,
     },
@@ -144,17 +235,23 @@ function createCookieStore(
 
 /**
  * Core session evaluation logic enforcing route authentication and session refresh invariants.
- * Returns an early Response (307 redirect or 401 unauthorized) or null if request is allowed to proceed.
+ * Returns an early Response (303/307 redirect, 401 unauthorized, or 204 options) or null if request is allowed to proceed.
  */
 async function evaluateSession(
   request: Request,
   incomingCookies: Map<string, string>,
   mutatedCookies: Map<string, ServerCookieRecord>
 ): Promise<Response | null> {
-  const supabaseUrl =
-    process.env.VITE_SUPABASE_URL || "https://placeholder.supabase.co";
-  const supabaseAnonKey =
-    process.env.VITE_SUPABASE_ANON_KEY || "placeholder-anon-key";
+  const parsedUrl = new URL(request.url);
+  const pathname = normalizeRequestPathname(parsedUrl.pathname);
+
+  // Bypass static asset requests on non-guarded paths before env validation, client creation, or cookie cloning
+  if (isPublicStaticAssetPath(pathname)) {
+    return null;
+  }
+
+  const { supabaseUrl, supabaseAnonKey } =
+    resolveMiddlewareSupabaseCredentials();
 
   const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
     cookies: {
@@ -172,20 +269,16 @@ async function evaluateSession(
     },
   });
 
-  const parsedUrl = new URL(request.url);
-  const pathname = parsedUrl.pathname;
-
   // Intercept OAuth callback codes strictly if they land on root or login landing paths (LUGX-140)
   const isOAuthLandingCandidate = pathname === "/" || pathname === "/login";
   if (parsedUrl.searchParams.has("code") && isOAuthLandingCandidate) {
     const url = new URL(request.url);
     url.pathname = "/auth/callback";
-    return createRedirectResponse(url, mutatedCookies);
+    return createRedirectResponse(url, mutatedCookies, 307);
   }
 
   // Protected routes - require authentication
-  const protectedPaths = ["/workspace", "/account", "/dashboard"];
-  const isProtectedPath = protectedPaths.some((path) => pathname.startsWith(path));
+  const isProtectedPath = isProtectedAppPath(pathname);
   const isLoginPath = pathname === "/login";
 
   const allCookieNames = new Set([
@@ -193,8 +286,23 @@ async function evaluateSession(
     ...mutatedCookies.keys(),
   ]);
   const hasAuthCookies = Array.from(allCookieNames).some((name) =>
-    name.startsWith("sb-")
+    isSupabaseAuthCookieName(name)
   );
+
+  const method = request.method.toUpperCase();
+
+  // Prevent OPTIONS preflight requests from triggering auth lookups or redirecting to /login via 303.
+  // Return standard 204 No Content with CORS preflight allowance headers.
+  if (method === "OPTIONS" && isProtectedPath) {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Methods": "GET, HEAD, POST, PUT, DELETE, PATCH, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+        "Access-Control-Max-Age": "86400",
+      },
+    });
+  }
 
   // Fast-Path: Bypass expensive getUser() network call on public non-auth routes (e.g. "/", public assets)
   // and on /login when no auth cookies exist.
@@ -229,12 +337,14 @@ async function evaluateSession(
     }
   }
 
-  // Enforce RFC 9110 Web content negotiation: return 401 JSON for Accept: application/json or /api/* requests
-  const isJsonOrApi =
-    Boolean(request.headers.get("accept")?.includes("application/json")) ||
-    pathname.startsWith("/api/");
-
   if (isProtectedPath && !user) {
+    const isMutationMethod = method !== "GET" && method !== "HEAD";
+    const acceptHeader = request.headers.get("accept")?.toLowerCase() ?? "";
+    const isJsonOrApi =
+      isMutationMethod ||
+      acceptHeader.includes("application/json") ||
+      pathname.startsWith("/api/");
+
     if (isJsonOrApi) {
       const res = new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
@@ -243,13 +353,13 @@ async function evaluateSession(
       return applyCookiesToResponse(res, mutatedCookies);
     }
 
-    // Redirect to login for page navigation
+    // Redirect to login for safe page navigation (303 See Other)
     const redirectTarget = `${pathname}${parsedUrl.search}`;
     const url = new URL(request.url);
     url.pathname = "/login";
     url.search = "";
     url.searchParams.set("redirectTo", redirectTarget);
-    return createRedirectResponse(url, mutatedCookies);
+    return createRedirectResponse(url, mutatedCookies, 303);
   }
 
   // If user is logged in and tries to access login page, redirect to dashboard
@@ -257,7 +367,7 @@ async function evaluateSession(
     const url = new URL(request.url);
     url.pathname = "/dashboard";
     url.search = "";
-    return createRedirectResponse(url, mutatedCookies);
+    return createRedirectResponse(url, mutatedCookies, 307);
   }
 
   return null;
@@ -268,6 +378,11 @@ async function evaluateSession(
  * Evaluates session state and route access invariants for pure Request / Response consumers.
  */
 export async function handleSessionProxy(request: Request): Promise<Response> {
+  const pathname = normalizeRequestPathname(new URL(request.url).pathname);
+  if (isPublicStaticAssetPath(pathname)) {
+    return new Response(null, { status: 200 });
+  }
+
   const incomingCookies = parseIncomingCookies(request);
   const mutatedCookies = new Map<string, ServerCookieRecord>();
   const cookieStore = createCookieStore(incomingCookies, mutatedCookies);
@@ -277,6 +392,7 @@ export async function handleSessionProxy(request: Request): Promise<Response> {
   };
 
   return await runWithServerRequestContext(serverContext, async () => {
+    activeMutatedCookiesMap.set(serverContext, mutatedCookies);
     const earlyResponse = await evaluateSession(request, incomingCookies, mutatedCookies);
     if (earlyResponse) {
       return earlyResponse;
@@ -291,6 +407,12 @@ export async function handleSessionProxy(request: Request): Promise<Response> {
  */
 export const sessionMiddleware = createMiddleware(async (c, next) => {
   const request = c.req.raw;
+  const pathname = normalizeRequestPathname(new URL(request.url).pathname);
+  if (isPublicStaticAssetPath(pathname)) {
+    await next();
+    return;
+  }
+
   const incomingCookies = parseIncomingCookies(request);
   const mutatedCookies = new Map<string, ServerCookieRecord>();
   const cookieStore = createCookieStore(incomingCookies, mutatedCookies);
@@ -301,6 +423,7 @@ export const sessionMiddleware = createMiddleware(async (c, next) => {
 
   let earlyResponse: Response | null = null;
   await runWithServerRequestContext(serverContext, async () => {
+    activeMutatedCookiesMap.set(serverContext, mutatedCookies);
     earlyResponse = await evaluateSession(request, incomingCookies, mutatedCookies);
     if (!earlyResponse) {
       await next();
@@ -312,7 +435,16 @@ export const sessionMiddleware = createMiddleware(async (c, next) => {
   }
 
   if (c.res && c.res.headers) {
+    const existingSetCookie = c.res.headers.get("set-cookie") || "";
     for (const cookie of mutatedCookies.values()) {
+      // Avoid re-appending bare empty/deleted cookies if already deleted in response headers
+      if (
+        isSupabaseAuthCookieName(cookie.name) &&
+        (!cookie.value || cookie.options?.maxAge === 0) &&
+        existingSetCookie.includes(`${cookie.name}=;`)
+      ) {
+        continue;
+      }
       c.res.headers.append(
         "Set-Cookie",
         serializeCookie(cookie.name, cookie.value, cookie.options)

@@ -894,7 +894,23 @@ describe("OAuth Auth Callback Route Module (src/server/routes/auth-callback.rout
     expect(setCookieHeader).toContain("pkce_verifier=; Max-Age=0; Path=/");
   });
 
-  it("falls back to request origin when VITE_APP_URL is absent, strictly ignoring NEXT_PUBLIC_APP_URL", async () => {
+  it("enforces APP_URL > VITE_APP_URL precedence over request origin, ignoring NEXT_PUBLIC_APP_URL", async () => {
+    process.env.APP_URL = "https://canonical.elixent.app";
+    process.env.VITE_APP_URL = "https://vite.elixent.app";
+    process.env.NEXT_PUBLIC_APP_URL = "https://legacy-ignored.elixent.app";
+
+    const res = await authCallbackRoutes.request(
+      "https://auth-origin.elixent.app/?code=oauth_123&redirectTo=/dashboard"
+    );
+
+    expect(res.status).toBe(307);
+    expect(res.headers.get("Location")).toBe(
+      "https://canonical.elixent.app/dashboard"
+    );
+  });
+
+  it("falls back to request origin in non-production when APP_URL and VITE_APP_URL are absent, strictly ignoring NEXT_PUBLIC_APP_URL", async () => {
+    delete process.env.APP_URL;
     delete process.env.VITE_APP_URL;
     process.env.NEXT_PUBLIC_APP_URL = "https://legacy-ignored.elixent.app";
 
@@ -908,7 +924,20 @@ describe("OAuth Auth Callback Route Module (src/server/routes/auth-callback.rout
     );
   });
 
+  it("refuses unverified request origin and fails fast in production when APP_URL and VITE_APP_URL are absent", async () => {
+    process.env.NODE_ENV = "production";
+    delete process.env.APP_URL;
+    delete process.env.VITE_APP_URL;
+
+    await expect(
+      handleAuthCallbackGet(
+        new Request("https://spoofed-origin.elixent.app/?code=oauth_123&redirectTo=/dashboard")
+      )
+    ).rejects.toThrow(/APP_URL \(or VITE_APP_URL\) must be configured with an https:\/\/ URL in production/);
+  });
+
   it("continues with 307 redirect to safeRedirectPath even if syncUserToDatabase throws", async () => {
+    process.env.APP_URL = "https://elixent.app";
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mockSyncUserToDatabase.mockRejectedValueOnce(
       new Error("Transient Neon DB error")
@@ -930,6 +959,7 @@ describe("OAuth Auth Callback Route Module (src/server/routes/auth-callback.rout
   });
 
   it("executes directly inside an active ServerRequestContext when bound via runWithServerRequestContext", async () => {
+    process.env.APP_URL = "https://elixent.app";
     const store = createInMemoryCookieStore();
     const ctx: ServerRequestContext = {
       cookies: store,
@@ -1188,6 +1218,44 @@ describe("E2E Auth Route Module (src/server/routes/e2e-auth.routes.ts)", () => {
       expect(setCookie).toContain("sb-access-token=; Max-Age=0; Path=/");
       expect(setCookie).toContain("sb-refresh-token=; Max-Age=0; Path=/");
       expect(setCookie).not.toContain("theme=;");
+    });
+  });
+
+  describe("Application URL Hardening (src/lib/config/app-url.ts / FIND-08)", () => {
+    it("rejects path traversal attempts in resolveAppUrl", async () => {
+      const { resolveAppUrl } = await import("@/lib/config/app-url");
+      process.env.APP_URL = "https://canonical.elixent.com";
+
+      expect(() => resolveAppUrl("/../admin")).toThrow(/Refusing path traversal/);
+      expect(() => resolveAppUrl("../admin")).toThrow(/Refusing path traversal/);
+      expect(() => resolveAppUrl("/workspace/../admin")).toThrow(/Refusing path traversal/);
+    });
+
+    it("evaluates resolveSameOriginAppUrl allowing same-origin absolute and relative URLs and rejecting cross-origin", async () => {
+      const { resolveSameOriginAppUrl } = await import("@/lib/config/app-url");
+      process.env.APP_URL = "https://canonical.elixent.com";
+
+      // Relative paths
+      expect(resolveSameOriginAppUrl("/dashboard")).toBe("https://canonical.elixent.com/dashboard");
+      expect(resolveSameOriginAppUrl("account")).toBe("https://canonical.elixent.com/account");
+
+      // Same-origin absolute URL
+      expect(resolveSameOriginAppUrl("https://canonical.elixent.com/billing")).toBe(
+        "https://canonical.elixent.com/billing"
+      );
+
+      // Cross-origin absolute URL rejected
+      expect(() => resolveSameOriginAppUrl("https://evil.com/phish")).toThrow(
+        /Cross-origin app URL rejected/
+      );
+
+      // Protocol-relative rejected
+      expect(() => resolveSameOriginAppUrl("//evil.com/phish")).toThrow(
+        /Refusing protocol-relative app URL/
+      );
+
+      // Path traversal rejected
+      expect(() => resolveSameOriginAppUrl("/../secret")).toThrow(/Refusing path traversal/);
     });
   });
 });

@@ -74,7 +74,7 @@ describe("Web-Standard Session Proxy (handleSessionProxy)", () => {
             const req = new Request("https://lugx.app/workspace");
             const res = await handleSessionProxy(req);
 
-            expect(res.status).toBe(307);
+            expect(res.status).toBe(303);
             expect(res.headers.get("location")).toBe("https://lugx.app/login?redirectTo=%2Fworkspace");
         });
 
@@ -84,7 +84,7 @@ describe("Web-Standard Session Proxy (handleSessionProxy)", () => {
             const req = new Request("https://lugx.app/workspace/editor/doc-99?tab=recent&view=split");
             const res = await handleSessionProxy(req);
 
-            expect(res.status).toBe(307);
+            expect(res.status).toBe(303);
             expect(res.headers.get("location")).toBe(
                 "https://lugx.app/login?redirectTo=%2Fworkspace%2Feditor%2Fdoc-99%3Ftab%3Drecent%26view%3Dsplit"
             );
@@ -96,7 +96,7 @@ describe("Web-Standard Session Proxy (handleSessionProxy)", () => {
             const req = new Request("https://lugx.app/dashboard");
             const res = await handleSessionProxy(req);
 
-            expect(res.status).toBe(307);
+            expect(res.status).toBe(303);
             expect(res.headers.get("location")).toBe("https://lugx.app/login?redirectTo=%2Fdashboard");
         });
 
@@ -106,7 +106,7 @@ describe("Web-Standard Session Proxy (handleSessionProxy)", () => {
             const req = new Request("https://lugx.app/account");
             const res = await handleSessionProxy(req);
 
-            expect(res.status).toBe(307);
+            expect(res.status).toBe(303);
             expect(res.headers.get("location")).toBe("https://lugx.app/login?redirectTo=%2Faccount");
         });
     });
@@ -184,7 +184,7 @@ describe("Web-Standard Session Proxy (handleSessionProxy)", () => {
             const req = new Request("https://lugx.app/workspace");
             const res = await handleSessionProxy(req);
 
-            expect(res.status).toBe(307);
+            expect(res.status).toBe(303);
             expect(res.headers.get("location")).toBe("https://lugx.app/login?redirectTo=%2Fworkspace");
             // Verify that cookies set on supabaseResponse (e.g. session tokens or deletion directives) are preserved on redirect
             expect(res.headers.get("set-cookie")).toContain("sb-access-token=test-token");
@@ -202,7 +202,7 @@ describe("Web-Standard Session Proxy (handleSessionProxy)", () => {
                 "[Proxy] supabase.auth.getUser error (network/offline):",
                 expect.any(Error)
             );
-            expect(res.status).toBe(307);
+            expect(res.status).toBe(303);
             expect(res.headers.get("location")).toBe("https://lugx.app/login?redirectTo=%2Fworkspace");
 
             warnSpy.mockRestore();
@@ -229,7 +229,7 @@ describe("Web-Standard Session Proxy (handleSessionProxy)", () => {
                         message: expect.stringContaining("watchdog timeout"),
                     })
                 );
-                expect(res.status).toBe(307);
+                expect(res.status).toBe(303);
                 expect(res.headers.get("location")).toBe("https://lugx.app/login?redirectTo=%2Fworkspace");
             } finally {
                 vi.useRealTimers();

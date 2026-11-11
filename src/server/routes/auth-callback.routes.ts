@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { createClient } from "@/lib/supabase/server";
 import { syncUserToDatabase } from "@/server/actions/auth-actions";
 import { resolveSafeRedirectPath } from "@/lib/auth/safe-redirect";
+import { resolveAppUrl } from "@/lib/config/app-url";
 import {
   getActiveRequestContext,
   resolveCookiesAndHeaders,
@@ -144,8 +145,19 @@ export async function handleAuthCallbackGet(
     "/dashboard"
   );
 
-  // Enforce trusted origin: never trust spoofable x-forwarded-host headers blindly
-  const trustedOrigin = process.env.VITE_APP_URL || origin;
+  const hasConfiguredAppUrl = Boolean(
+    process.env.APP_URL?.trim() || process.env.VITE_APP_URL?.trim()
+  );
+  const resolveCallbackUrl = (path: string): URL => {
+    if (
+      hasConfiguredAppUrl ||
+      process.env.NODE_ENV === "production" ||
+      (!origin.startsWith("http://") && !origin.startsWith("https://"))
+    ) {
+      return new URL(resolveAppUrl(path));
+    }
+    return new URL(path, origin);
+  };
 
   const standaloneMutatedCookies = new Map<string, ServerCookieRecord>();
 
@@ -165,7 +177,7 @@ export async function handleAuthCallbackGet(
         }
 
         return buildRedirectResponse(
-          new URL(safeRedirectPath, trustedOrigin),
+          resolveCallbackUrl(safeRedirectPath),
           standaloneMutatedCookies
         );
       }
@@ -177,7 +189,7 @@ export async function handleAuthCallbackGet(
     }
 
     return buildRedirectResponse(
-      new URL("/login?error=auth_failed", trustedOrigin),
+      resolveCallbackUrl("/login?error=auth_failed"),
       standaloneMutatedCookies
     );
   };

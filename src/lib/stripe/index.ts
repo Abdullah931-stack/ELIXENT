@@ -6,6 +6,7 @@
  */
 
 import Stripe from 'stripe';
+import { resolveAppUrl } from '@/lib/config/app-url';
 
 // Initialize Stripe instance with secret key or build-safe placeholder for static analysis
 export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder', {
@@ -76,16 +77,9 @@ export async function createCheckoutSession(
     tier: 'pro' | 'ultra'
 ): Promise<Stripe.Checkout.Session> {
     ensureStripeSecretKey();
+    const successUrl = resolveAppUrl('/dashboard?session_id={CHECKOUT_SESSION_ID}');
+    const cancelUrl = resolveAppUrl('/account');
     try {
-        let appUrl =
-            process.env.VITE_APP_URL ||
-            process.env.APP_URL ||
-            process.env.NEXT_PUBLIC_APP_URL ||
-            'http://localhost:3000';
-        if (appUrl.includes('localhost') && appUrl.startsWith('https://')) {
-            appUrl = appUrl.replace('https://', 'http://');
-        }
-
         const session = await stripe.checkout.sessions.create({
             customer: customerId,
             mode: 'subscription',
@@ -96,8 +90,8 @@ export async function createCheckoutSession(
                     quantity: 1,
                 },
             ],
-            success_url: `${appUrl}/dashboard?session_id={CHECKOUT_SESSION_ID}`,
-            cancel_url: `${appUrl}/account`,
+            success_url: successUrl,
+            cancel_url: cancelUrl,
             metadata: {
                 userId,
                 tier,
