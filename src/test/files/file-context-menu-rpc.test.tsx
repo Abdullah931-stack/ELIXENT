@@ -341,4 +341,142 @@ describe("FileContextMenu RPC Operations", () => {
             expect(mockOnClose).toHaveBeenCalledTimes(1);
         });
     });
+
+    describe("5. RPC Rejection & Failure Resilience", () => {
+        it("handles renameFile RPC rejection gracefully with alert and without crashing", async () => {
+            mockRenameFile.mockRejectedValueOnce(new Error("Network connection dropped"));
+
+            render(
+                <FileContextMenu
+                    isOpen={true}
+                    onClose={mockOnClose}
+                    fileId="file-rejection"
+                    fileName="old.md"
+                    isFolder={false}
+                    onRefresh={mockOnRefresh}
+                />
+            );
+
+            fireEvent.click(screen.getByText("إعادة التسمية"));
+            const input = screen.getByDisplayValue("old.md");
+            fireEvent.change(input, { target: { value: "failed-rename.md" } });
+            fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+            await waitFor(() => {
+                expect(window.alert).toHaveBeenCalledWith("Failed to rename: Network connection dropped");
+            });
+
+            expect(mockOnRefresh).not.toHaveBeenCalled();
+            expect(mockOnClose).not.toHaveBeenCalled();
+        });
+
+        it("handles deleteFile RPC rejection gracefully with alert and without crashing", async () => {
+            mockDeleteFile.mockRejectedValueOnce(new Error("Timeout waiting for server response"));
+
+            render(
+                <FileContextMenu
+                    isOpen={true}
+                    onClose={mockOnClose}
+                    fileId="file-del-reject"
+                    fileName="doomed.md"
+                    isFolder={false}
+                    onRefresh={mockOnRefresh}
+                />
+            );
+
+            fireEvent.click(screen.getByText("حذف"));
+
+            await waitFor(() => {
+                expect(window.alert).toHaveBeenCalledWith("Failed to delete: Timeout waiting for server response");
+            });
+
+            expect(mockOnRefresh).not.toHaveBeenCalled();
+            expect(mockOnClose).not.toHaveBeenCalled();
+        });
+
+        it("handles restoreFile RPC rejection gracefully with alert and without crashing", async () => {
+            mockRestoreFile.mockRejectedValueOnce(new Error("Transaction aborted"));
+
+            render(
+                <FileContextMenu
+                    isOpen={true}
+                    onClose={mockOnClose}
+                    fileId="file-restore-reject"
+                    fileName="recycled.md"
+                    isFolder={false}
+                    isDeleted={true}
+                    onRefresh={mockOnRefresh}
+                />
+            );
+
+            fireEvent.click(screen.getByText("استعادة"));
+
+            await waitFor(() => {
+                expect(window.alert).toHaveBeenCalledWith("Failed to restore: Transaction aborted");
+            });
+
+            expect(mockOnRefresh).not.toHaveBeenCalled();
+            expect(mockOnClose).not.toHaveBeenCalled();
+        });
+
+        it("handles copyFile RPC rejection gracefully with alert and without crashing", async () => {
+            mockCopyFile.mockRejectedValueOnce(new Error("Storage quota exceeded"));
+
+            render(
+                <FileContextMenu
+                    isOpen={true}
+                    onClose={mockOnClose}
+                    fileId="file-copy-reject"
+                    fileName="sample.md"
+                    isFolder={false}
+                    onRefresh={mockOnRefresh}
+                />
+            );
+
+            fireEvent.click(screen.getByText("نسخ"));
+
+            await waitFor(() => {
+                expect(screen.getByText('نسخ "sample.md" إلى...')).toBeDefined();
+            });
+
+            fireEvent.click(screen.getByText("Root (No folder)"));
+
+            await waitFor(() => {
+                expect(window.alert).toHaveBeenCalledWith("Failed to copy: Storage quota exceeded");
+            });
+
+            expect(mockOnRefresh).not.toHaveBeenCalled();
+            expect(mockOnClose).not.toHaveBeenCalled();
+        });
+
+        it("handles moveFile RPC rejection gracefully with alert and without crashing", async () => {
+            mockMoveFile.mockRejectedValueOnce(new Error("Hierarchy cycle constraint"));
+
+            render(
+                <FileContextMenu
+                    isOpen={true}
+                    onClose={mockOnClose}
+                    fileId="file-move-reject"
+                    fileName="sample.md"
+                    isFolder={false}
+                    onRefresh={mockOnRefresh}
+                />
+            );
+
+            fireEvent.click(screen.getByText("نقل"));
+
+            await waitFor(() => {
+                expect(screen.getByText('نقل "sample.md" إلى...')).toBeDefined();
+            });
+
+            fireEvent.click(screen.getByText("Root (No folder)"));
+
+            await waitFor(() => {
+                expect(window.alert).toHaveBeenCalledWith("Failed to move: Hierarchy cycle constraint");
+            });
+
+            expect(mockOnRefresh).not.toHaveBeenCalled();
+            expect(mockOnClose).not.toHaveBeenCalled();
+        });
+    });
 });

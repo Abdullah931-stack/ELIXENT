@@ -4,28 +4,29 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Sidebar } from "../../components/layout/sidebar";
 import { indexedDBManager } from "../../lib/sync/indexeddb";
-import { importFile } from "../../server/actions/import-file";
-import { getUserFiles } from "@/server/actions/files";
+import { importFile, getUserFiles } from "@/client/rpc-client";
 import { sessionKeyStore } from "../../lib/sync/session-key-store";
 import { cryptoWorkerBridge } from "../../lib/sync/crypto-worker-bridge";
 import { parseFileContent } from "../../lib/parsers/text-parser";
 
-// Mock server actions at module boundary (Contract/Unit test)
-vi.mock("../../server/actions/import-file", () => ({
-    importFile: vi.fn(),
-}));
-vi.mock("@/server/actions/files", () => ({
+// Mock typed RPC client directly at module boundary (Contract/Unit test)
+vi.mock("@/client/rpc-client", () => ({
     getUserFiles: vi.fn(),
     getDeletedFiles: vi.fn(),
+    createFile: vi.fn(),
+    moveFile: vi.fn(),
+    importFile: vi.fn(),
+    deleteFile: vi.fn(),
+    restoreFile: vi.fn(),
+    renameFile: vi.fn(),
+    copyFile: vi.fn(),
+    getFile: vi.fn(),
+    toggleFileEncryption: vi.fn(),
+    getUserVaultProfile: vi.fn().mockResolvedValue({ success: false, data: null }),
+    createUserVaultProfile: vi.fn(),
+    updateVaultPassword: vi.fn(),
+    updateVaultRecoveryEnvelope: vi.fn(),
 }));
-vi.mock("@/client/rpc-client", async () => {
-    const fileOps = await import("@/server/actions/files");
-    const importFileMod = await import("../../server/actions/import-file");
-    return {
-        ...fileOps,
-        ...importFileMod,
-    };
-});
 vi.mock("../../lib/parsers/text-parser", () => ({
     parseFileContent: vi.fn(),
 }));

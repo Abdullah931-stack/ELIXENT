@@ -8,6 +8,7 @@ import { broadcastCrossTabEvent } from "@/lib/sync/cross-tab-sync";
 import { unwrapMasterKeyWithWebAuthnPrf, checkWebAuthnSupportStatus, createWebAuthnPrfEnvelope } from "@/lib/sync/webauthn-prf";
 import { unwrapMasterKeyWithPin, wrapMasterKeyWithPin, generateSalt } from "@/lib/sync/encryption";
 import { DeviceTrustEnvelope, DeviceTrustType, UserVaultProfile } from "@/lib/sync/types/vault";
+import type { VaultProfileRecord } from "@/types/rpc-contracts";
 import { AAD } from "@/lib/crypto/aad";
 import { normalizePassword, deriveProofOfPossession } from "@/lib/crypto/key-derivation";
 import { adaptiveUnwrapRecoverySeed } from "@/lib/vault/recovery";
@@ -122,6 +123,22 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
 
     if (!isOpen) return null;
 
+    function mapRecordToVaultProfile(record: VaultProfileRecord): UserVaultProfile {
+        return {
+            userId: record.userId,
+            encryptedMasterKey: record.encryptedMasterKey,
+            recoveryEncryptedMasterKey: record.recoveryEncryptedMasterKey,
+            keySalt: record.keySalt,
+            recoverySalt: record.recoverySalt,
+            kdfIterations: record.kdfIterations,
+            keyVersion: record.keyVersion,
+            deviceTrustEpoch: record.deviceTrustEpoch,
+            allowAIOnEncryptedFiles: record.allowAIOnEncryptedFiles,
+            createdAt: record.createdAt instanceof Date ? record.createdAt : new Date(record.createdAt),
+            updatedAt: record.updatedAt instanceof Date ? record.updatedAt : new Date(record.updatedAt),
+        };
+    }
+
     /**
      * Resolves the user vault profile:
      * Tries local IndexedDB cache first (offline-first), falls back to server if not cached.
@@ -129,22 +146,27 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
     async function resolveVaultProfile(): Promise<UserVaultProfile | null> {
         // 1. Check local IndexedDB cache
         try {
-            const cached = await indexedDBManager.getCachedVaultProfile();
+            const cached = await indexedDBManager.getCachedVaultProfile<UserVaultProfile>(userId);
             if (cached) return cached;
-        } catch {
-            // Fall through to server
+        } catch (cacheErr) {
+            console.warn("[VaultUnlockModal] Failed to read cached vault profile:", cacheErr);
         }
 
         // 2. Fetch from server
-        const res = await getUserVaultProfile();
-        if (res.success && res.data) {
-            // Cache locally for offline resilience
-            try {
-                await indexedDBManager.saveCachedVaultProfile(res.data as unknown as UserVaultProfile);
-            } catch {
-                // Ignore cache errors
+        try {
+            const res = await getUserVaultProfile();
+            if (res.success && res.data) {
+                const profile = mapRecordToVaultProfile(res.data);
+                // Cache locally for offline resilience
+                try {
+                    await indexedDBManager.saveCachedVaultProfile(profile, userId);
+                } catch (saveErr) {
+                    console.warn("[VaultUnlockModal] Failed to cache vault profile:", saveErr);
+                }
+                return profile;
             }
-            return res.data as unknown as UserVaultProfile;
+        } catch (serverErr) {
+            console.warn("[VaultUnlockModal] Failed to fetch vault profile from server:", serverErr);
         }
 
         return null;
@@ -456,7 +478,7 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
                     ...profile,
                     recoveryEncryptedMasterKey: newRecoveryPayload,
                     updatedAt: new Date()
-                }).catch(idbErr => {
+                }, userId).catch(idbErr => {
                     console.warn("[VaultUnlockModal] Local IDB recovery migration cache deferred:", idbErr);
                 });
 
@@ -553,7 +575,7 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
                         keySalt: payload.keySalt,
                         kdfIterations: payload.kdfIterations,
                         updatedAt: new Date(),
-                    });
+                    }, userId);
                 }
             } catch (idbErr) {
                 console.warn("[VaultUnlockModal] Local IDB cache update deferred:", idbErr);

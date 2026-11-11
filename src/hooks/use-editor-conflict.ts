@@ -18,7 +18,13 @@
 
 import { useState, useRef, useCallback, useEffect, useLayoutEffect } from "react";
 import type { EditorAdapter } from "@/components/editor/markdown/types";
-import { updateFileContent, toggleFileEncryption, renameFile, deleteFile } from "@/client/rpc-client";
+import {
+    updateFileContent,
+    toggleFileEncryption,
+    renameFile,
+    deleteFile,
+    type FileOpResult,
+} from "@/client/rpc-client";
 import type { FileEncryptionMetadata } from "@/types/storage-payload";
 import type { SyncConflict, IDBFile } from "@/lib/sync/idb-types";
 import type { ConflictResolutionPayload } from "@/components/sync/conflict-dialog";
@@ -589,17 +595,22 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
                     const targetExpectedVersion = serverVersion.version ?? optsRef.current.getVersion();
                     const targetExpectedETag = serverVersion.etag || undefined;
 
-                    const pushRes = isEncrypted
-                        ? await toggleFileEncryption(fileId, true, mergedContentToSend, mergedMetaToSend, {
-                              expectedVersion: targetExpectedVersion,
-                              expectedETag: targetExpectedETag,
-                          })
-                        : await updateFileContent(fileId, mergedContentToSend, {
-                              expectedVersion: targetExpectedVersion,
-                              expectedETag: targetExpectedETag,
-                          });
+                    let pushRes: FileOpResult | null = null;
+                    try {
+                        pushRes = isEncrypted
+                            ? await toggleFileEncryption(fileId, true, mergedContentToSend, mergedMetaToSend, {
+                                  expectedVersion: targetExpectedVersion,
+                                  expectedETag: targetExpectedETag,
+                              })
+                            : await updateFileContent(fileId, mergedContentToSend, {
+                                  expectedVersion: targetExpectedVersion,
+                                  expectedETag: targetExpectedETag,
+                              });
+                    } catch (pushErr) {
+                        console.error("[useEditorConflict] Network error pushing auto-merge:", pushErr);
+                    }
 
-                    if (pushRes.success && pushRes.version) {
+                    if (pushRes && pushRes.success && pushRes.version) {
                         const newVersion = pushRes.version;
                         const newEtag = pushRes.etag || null;
 
@@ -685,8 +696,18 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
             try {
                 if (resolution.strategy === "delete") {
                     if (confirm("هل أنت متأكد من تأكيد حذف الملف؟")) {
-                        await deleteFile(fileId);
-                        if (optsRef.current.onNavigate) optsRef.current.onNavigate("/workspace");
+                        try {
+                            const delRes = await deleteFile(fileId);
+                            if (delRes && delRes.success) {
+                                if (optsRef.current.onNavigate) optsRef.current.onNavigate("/workspace");
+                            } else {
+                                console.error("[useEditorConflict] deleteFile failed:", delRes?.error);
+                                optsRef.current.setError(delRes?.error || "Failed to delete file");
+                            }
+                        } catch (delErr) {
+                            console.error("[useEditorConflict] Network error during deleteFile:", delErr);
+                            optsRef.current.setError(delErr instanceof Error ? delErr.message : "Failed to delete file");
+                        }
                     }
                     setIsResolvingConflict(false);
                     isResolvingConflictRef.current = false;
@@ -719,17 +740,26 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
                 const targetExpectedVersion = currentConflict.serverVersion.version;
                 const targetExpectedETag = currentConflict.serverVersion.etag || undefined;
 
-                const saveRes = isEncrypted
-                    ? await toggleFileEncryption(fileId, true, contentToSend, metaToSend, {
-                          expectedVersion: targetExpectedVersion,
-                          expectedETag: targetExpectedETag,
-                      })
-                    : await updateFileContent(fileId, contentToSend, {
-                          expectedVersion: targetExpectedVersion,
-                          expectedETag: targetExpectedETag,
-                      });
+                let saveRes: FileOpResult | null = null;
+                try {
+                    saveRes = isEncrypted
+                        ? await toggleFileEncryption(fileId, true, contentToSend, metaToSend, {
+                              expectedVersion: targetExpectedVersion,
+                              expectedETag: targetExpectedETag,
+                          })
+                        : await updateFileContent(fileId, contentToSend, {
+                              expectedVersion: targetExpectedVersion,
+                              expectedETag: targetExpectedETag,
+                          });
+                } catch (saveErr) {
+                    console.error("[useEditorConflict] Network error saving conflict resolution:", saveErr);
+                    optsRef.current.setError(saveErr instanceof Error ? saveErr.message : "Network error resolving conflict");
+                    setIsResolvingConflict(false);
+                    isResolvingConflictRef.current = false;
+                    return;
+                }
 
-                if (saveRes.success && saveRes.version) {
+                if (saveRes && saveRes.success && saveRes.version) {
                     optsRef.current.setVersion(saveRes.version);
                     optsRef.current.setEtag(saveRes.etag || null);
                     optsRef.current.incrementEditorGeneration();
@@ -753,7 +783,14 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
 
                         if (resolution.title && resolution.title !== optsRef.current.getTitle()) {
                             optsRef.current.setTitle(resolution.title);
-                            await renameFile(fileId, resolution.title);
+                            try {
+                                const renameRes = await renameFile(fileId, resolution.title);
+                                if (renameRes && !renameRes.success) {
+                                    console.error("[useEditorConflict] renameFile failed:", renameRes.error);
+                                }
+                            } catch (renameErr) {
+                                console.error("[useEditorConflict] Network error during renameFile:", renameErr);
+                            }
                         }
 
                         if (optsRef.current.isSyncInitialized()) {
@@ -778,7 +815,14 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
 
                         if (resolution.title && resolution.title !== optsRef.current.getTitle()) {
                             optsRef.current.setTitle(resolution.title);
-                            await renameFile(fileId, resolution.title);
+                            try {
+                                const renameRes = await renameFile(fileId, resolution.title);
+                                if (renameRes && !renameRes.success) {
+                                    console.error("[useEditorConflict] renameFile failed:", renameRes.error);
+                                }
+                            } catch (renameErr) {
+                                console.error("[useEditorConflict] Network error during renameFile:", renameErr);
+                            }
                         }
 
                         let liveContentToSave = liveNow;

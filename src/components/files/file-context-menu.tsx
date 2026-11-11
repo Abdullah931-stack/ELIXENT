@@ -82,12 +82,20 @@ export function FileContextMenu({
 
     // Restore a soft-deleted item (tombstone)
     async function handleRestore() {
-        const result = await restoreFile(fileId);
-        if (result.success) {
-            onRefresh?.();
-            onClose();
-        } else {
-            alert(result.error || "Failed to restore");
+        setIsTransforming(true);
+        try {
+            const result = await restoreFile(fileId);
+            if (result.success) {
+                onRefresh?.();
+                onClose();
+            } else {
+                alert(result.error || "Failed to restore");
+            }
+        } catch (err: unknown) {
+            console.error("[FileContextMenu] Restore error:", err);
+            alert("Failed to restore: " + ((err as Error)?.message || "Unknown error"));
+        } finally {
+            setIsTransforming(false);
         }
     }
 
@@ -97,7 +105,10 @@ export function FileContextMenu({
             ? "Are you sure you want to delete this folder and all its contents?"
             : "Are you sure you want to delete this file?";
 
-        if (confirm(confirmMessage)) {
+        if (!confirm(confirmMessage)) return;
+
+        setIsTransforming(true);
+        try {
             const result = await deleteFile(fileId);
             if (result.success) {
                 onRefresh?.();
@@ -105,6 +116,11 @@ export function FileContextMenu({
             } else {
                 alert(result.error || "Failed to delete");
             }
+        } catch (err: unknown) {
+            console.error("[FileContextMenu] Delete error:", err);
+            alert("Failed to delete: " + ((err as Error)?.message || "Unknown error"));
+        } finally {
+            setIsTransforming(false);
         }
     }
 
@@ -119,13 +135,21 @@ export function FileContextMenu({
             setIsRenaming(false);
             return;
         }
-        const result = await renameFile(fileId, newName.trim());
-        if (result.success) {
-            onRefresh?.();
-            setIsRenaming(false);
-            onClose();
-        } else {
-            alert(result.error || "Failed to rename");
+        setIsTransforming(true);
+        try {
+            const result = await renameFile(fileId, newName.trim());
+            if (result.success) {
+                onRefresh?.();
+                setIsRenaming(false);
+                onClose();
+            } else {
+                alert(result.error || "Failed to rename");
+            }
+        } catch (err: unknown) {
+            console.error("[FileContextMenu] Rename error:", err);
+            alert("Failed to rename: " + ((err as Error)?.message || "Unknown error"));
+        } finally {
+            setIsTransforming(false);
         }
     }
 
@@ -226,12 +250,20 @@ export function FileContextMenu({
             return;
         }
 
-        const result = await copyFile(fileId, targetFolderId);
-        if (result.success) {
-            onRefresh?.();
-            onClose();
-        } else {
-            alert(result.error || "Failed to copy");
+        setIsTransforming(true);
+        try {
+            const result = await copyFile(fileId, targetFolderId);
+            if (result.success) {
+                onRefresh?.();
+                onClose();
+            } else {
+                alert(result.error || "Failed to copy");
+            }
+        } catch (err: unknown) {
+            console.error("[FileContextMenu] Copy error:", err);
+            alert("Failed to copy: " + ((err as Error)?.message || "Unknown error"));
+        } finally {
+            setIsTransforming(false);
         }
     }
 
@@ -240,60 +272,73 @@ export function FileContextMenu({
     }
 
     async function handleMoveToFolder(targetFolderId: string | null) {
-        const result = await moveFile(fileId, targetFolderId);
-        if (result.success) {
-            onRefresh?.();
-            onClose();
-        } else {
-            alert(result.error || "Failed to move");
+        setIsTransforming(true);
+        try {
+            const result = await moveFile(fileId, targetFolderId);
+            if (result.success) {
+                onRefresh?.();
+                onClose();
+            } else {
+                alert(result.error || "Failed to move");
+            }
+        } catch (err: unknown) {
+            console.error("[FileContextMenu] Move error:", err);
+            alert("Failed to move: " + ((err as Error)?.message || "Unknown error"));
+        } finally {
+            setIsTransforming(false);
         }
     }
 
     // --- Dynamic File Conversion Engine (Offline-First) ---
 
     async function handleEncryptClick() {
-        const effectiveUid = await resolveEffectiveUserId();
-        if (effectiveUid) {
-            try {
-                await indexedDBManager.init(effectiveUid);
-            } catch (initErr) {
-                console.warn("[FileContextMenu] IndexedDB init deferred:", initErr);
-            }
-        }
-
-        // 1. Check if user vault profile exists locally or remotely
-        let profile = null;
         try {
-            profile = await indexedDBManager.getCachedVaultProfile(effectiveUid);
-        } catch (idbErr) {
-            console.warn("[FileContextMenu] Cached vault profile lookup deferred to server:", idbErr);
-        }
-
-        if (!profile) {
-            try {
-                const res = await getUserVaultProfile();
-                if (res.success && res.data) {
-                    profile = res.data;
-                    await indexedDBManager.saveCachedVaultProfile(res.data, effectiveUid).catch(() => {});
+            const effectiveUid = await resolveEffectiveUserId();
+            if (effectiveUid) {
+                try {
+                    await indexedDBManager.init(effectiveUid);
+                } catch (initErr) {
+                    console.warn("[FileContextMenu] IndexedDB init deferred:", initErr);
                 }
-            } catch {
-                // Offline fallback
             }
-        }
 
-        if (!profile) {
-            setShowCreateVault(true);
-            return;
-        }
+            // 1. Check if user vault profile exists locally or remotely
+            let profile = null;
+            try {
+                profile = await indexedDBManager.getCachedVaultProfile(effectiveUid);
+            } catch (idbErr) {
+                console.warn("[FileContextMenu] Cached vault profile lookup deferred to server:", idbErr);
+            }
 
-        // 2. Check if vault is unlocked
-        if (!sessionKeyStore.hasMasterKey()) {
-            setShowUnlockVault(true);
-            return;
-        }
+            if (!profile) {
+                try {
+                    const res = await getUserVaultProfile();
+                    if (res.success && res.data) {
+                        profile = res.data;
+                        await indexedDBManager.saveCachedVaultProfile(res.data, effectiveUid).catch(() => {});
+                    }
+                } catch {
+                    // Offline fallback
+                }
+            }
 
-        // 3. Vault is unlocked: perform encryption
-        await executeFileEncryption();
+            if (!profile) {
+                setShowCreateVault(true);
+                return;
+            }
+
+            // 2. Check if vault is unlocked
+            if (!sessionKeyStore.hasMasterKey()) {
+                setShowUnlockVault(true);
+                return;
+            }
+
+            // 3. Vault is unlocked: perform encryption
+            await executeFileEncryption();
+        } catch (err: unknown) {
+            console.error("[FileContextMenu] Handle encrypt error:", err);
+            alert("فشل بدء التشفير: " + ((err as Error)?.message || "خطأ غير معروف"));
+        }
     }
 
     async function executeFileEncryption() {
@@ -412,17 +457,22 @@ export function FileContextMenu({
     }
 
     async function handleDecryptClick() {
-        const effectiveUid = await resolveEffectiveUserId();
-        if (effectiveUid) {
-            await indexedDBManager.init(effectiveUid);
-        }
+        try {
+            const effectiveUid = await resolveEffectiveUserId();
+            if (effectiveUid) {
+                await indexedDBManager.init(effectiveUid);
+            }
 
-        if (!sessionKeyStore.hasMasterKey()) {
-            setShowUnlockVault(true);
-            return;
-        }
+            if (!sessionKeyStore.hasMasterKey()) {
+                setShowUnlockVault(true);
+                return;
+            }
 
-        await executeFileDecryption();
+            await executeFileDecryption();
+        } catch (err: unknown) {
+            console.error("[FileContextMenu] Handle decrypt error:", err);
+            alert("فشل بدء فك التشفير: " + ((err as Error)?.message || "خطأ غير معروف"));
+        }
     }
 
     async function executeFileDecryption() {
@@ -567,7 +617,8 @@ export function FileContextMenu({
                 ) : (
                     <button
                         onClick={handleRename}
-                        className="w-full px-3 py-2 text-right text-sm text-zinc-300 hover:bg-zinc-800 flex items-center gap-2 transition-colors cursor-pointer"
+                        disabled={isTransforming}
+                        className="w-full px-3 py-2 text-right text-sm text-zinc-300 hover:bg-zinc-800 flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <Edit3 className="w-4 h-4" />
                         <span>إعادة التسمية</span>
@@ -581,7 +632,7 @@ export function FileContextMenu({
                             <button
                                 onClick={handleDecryptClick}
                                 disabled={isTransforming}
-                                className="w-full px-3 py-2 text-right text-sm text-indigo-400 hover:bg-zinc-800 flex items-center gap-2 transition-colors cursor-pointer"
+                                className="w-full px-3 py-2 text-right text-sm text-indigo-400 hover:bg-zinc-800 flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 {isTransforming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Unlock className="w-4 h-4" />}
                                 <span>فك تشفير الملف</span>
@@ -590,7 +641,7 @@ export function FileContextMenu({
                             <button
                                 onClick={handleEncryptClick}
                                 disabled={isTransforming}
-                                className="w-full px-3 py-2 text-right text-sm text-amber-400 hover:bg-zinc-800 flex items-center gap-2 transition-colors cursor-pointer"
+                                className="w-full px-3 py-2 text-right text-sm text-amber-400 hover:bg-zinc-800 flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 {isTransforming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
                                 <span>تشفير الملف 🔒</span>
@@ -603,7 +654,8 @@ export function FileContextMenu({
                 {isDeleted && (
                     <button
                         onClick={handleRestore}
-                        className="w-full px-3 py-2 text-right text-sm text-indigo-400 hover:bg-zinc-800 flex items-center gap-2 transition-colors cursor-pointer"
+                        disabled={isTransforming}
+                        className="w-full px-3 py-2 text-right text-sm text-indigo-400 hover:bg-zinc-800 flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <RotateCcw className="w-4 h-4" />
                         <span>استعادة</span>
@@ -614,7 +666,8 @@ export function FileContextMenu({
                 {!isDeleted && (
                     <button
                         onClick={handleDelete}
-                        className="w-full px-3 py-2 text-right text-sm text-red-400 hover:bg-zinc-800 flex items-center gap-2 transition-colors cursor-pointer"
+                        disabled={isTransforming}
+                        className="w-full px-3 py-2 text-right text-sm text-red-400 hover:bg-zinc-800 flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <Trash2 className="w-4 h-4" />
                         <span>حذف</span>
@@ -626,7 +679,8 @@ export function FileContextMenu({
                     <>
                         <button
                             onClick={handleCopyClick}
-                            className="w-full px-3 py-2 text-right text-sm text-zinc-300 hover:bg-zinc-800 flex items-center gap-2 transition-colors cursor-pointer"
+                            disabled={isTransforming}
+                            className="w-full px-3 py-2 text-right text-sm text-zinc-300 hover:bg-zinc-800 flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             <Copy className="w-4 h-4" />
                             <span>نسخ</span>
@@ -634,7 +688,8 @@ export function FileContextMenu({
 
                         <button
                             onClick={handleMoveClick}
-                            className="w-full px-3 py-2 text-right text-sm text-zinc-300 hover:bg-zinc-800 flex items-center gap-2 transition-colors cursor-pointer"
+                            disabled={isTransforming}
+                            className="w-full px-3 py-2 text-right text-sm text-zinc-300 hover:bg-zinc-800 flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             <FolderInput className="w-4 h-4" />
                             <span>نقل</span>

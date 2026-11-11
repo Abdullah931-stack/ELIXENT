@@ -423,15 +423,19 @@ export function useEditorOrchestrator({
                     etag: localFile.etag || fileEtagRef.current,
                 };
             } else {
-                const remoteRes = await getFile(fileId);
-                if (remoteRes.success && remoteRes.data) {
-                    pending = {
-                        content: remoteRes.data.content || "",
-                        metadata: remoteRes.data.encryptionMetadata || fileEncryptionMetadataRef.current,
-                        title: remoteRes.data.title || title,
-                        version: remoteRes.data.version || fileVersionRef.current,
-                        etag: remoteRes.data.etag || fileEtagRef.current,
-                    };
+                try {
+                    const remoteRes = await getFile(fileId);
+                    if (remoteRes && remoteRes.success && remoteRes.data) {
+                        pending = {
+                            content: remoteRes.data.content || "",
+                            metadata: remoteRes.data.encryptionMetadata || fileEncryptionMetadataRef.current,
+                            title: remoteRes.data.title || title,
+                            version: remoteRes.data.version || fileVersionRef.current,
+                            etag: remoteRes.data.etag || fileEtagRef.current,
+                        };
+                    }
+                } catch (fetchErr) {
+                    console.error("[Orchestrator] Failed to fetch remote file in handleVaultUnlocked:", fetchErr);
                 }
             }
         }
@@ -991,10 +995,15 @@ export function useEditorOrchestrator({
                 }
 
                 // Step 2: background authoritative fetch + reconciliation.
-                const result = await getFile(fileId);
+                let result: Awaited<ReturnType<typeof getFile>> | null = null;
+                try {
+                    result = await getFile(fileId);
+                } catch (fetchErr) {
+                    console.warn("[Orchestrator] Authoritative getFile failed with network error:", fetchErr);
+                }
                 if (cancelled) return;
 
-                if (!(result.success && result.data)) {
+                if (!result || !(result.success && result.data)) {
                     const localNow = await sh?.loadLocal(fileId);
                     if (!localNow && !isDirtyRef.current) {
                         loadFailureRef.current = true;
@@ -1386,7 +1395,16 @@ export function useEditorOrchestrator({
     const handleTitleChange = useCallback(
         async (newTitle: string) => {
             setTitle(newTitle);
-            await renameFile(fileId, newTitle);
+            try {
+                const res = await renameFile(fileId, newTitle);
+                if (res && !res.success) {
+                    console.error("[Orchestrator] Failed to rename file:", res.error);
+                    setError(res.error || "Failed to rename file");
+                }
+            } catch (err) {
+                console.error("[Orchestrator] Network error renaming file:", err);
+                setError(err instanceof Error ? err.message : "Network error renaming file");
+            }
         },
         [fileId]
     );
@@ -1394,8 +1412,18 @@ export function useEditorOrchestrator({
     // Delete File
     const handleDeleteFile = useCallback(async () => {
         if (confirm("Are you sure you want to delete this document?")) {
-            await deleteFile(fileId);
-            if (onNavigate) onNavigate("/workspace");
+            try {
+                const res = await deleteFile(fileId);
+                if (res && res.success) {
+                    if (onNavigate) onNavigate("/workspace");
+                } else {
+                    console.error("[Orchestrator] Failed to delete file:", res?.error);
+                    setError(res?.error || "Failed to delete file");
+                }
+            } catch (err) {
+                console.error("[Orchestrator] Network error deleting file:", err);
+                setError(err instanceof Error ? err.message : "Network error deleting file");
+            }
         }
     }, [fileId, onNavigate]);
 

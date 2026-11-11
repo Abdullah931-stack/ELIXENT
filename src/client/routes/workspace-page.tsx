@@ -27,6 +27,8 @@ export default function WorkspacePage() {
     const [loading, setLoading] = useState(true);
     const [user, setUser] = useState<{ id: string } | null>(null);
     const [files, setFiles] = useState<WorkspaceFileItem[]>([]);
+    const [creationError, setCreationError] = useState<string | null>(null);
+    const [isCreating, setIsCreating] = useState(false);
 
     useEffect(() => {
         let isMounted = true;
@@ -39,9 +41,18 @@ export default function WorkspacePage() {
                     return;
                 }
                 setUser(authUser);
-                const filesResult = await getRootFiles();
-                if (!isMounted) return;
-                setFiles(filesResult?.data || []);
+                try {
+                    const filesResult = await getRootFiles();
+                    if (!isMounted) return;
+                    if (filesResult && filesResult.success) {
+                        setFiles(filesResult.data || []);
+                    } else {
+                        console.warn("[Workspace] getRootFiles returned unsuccessful result:", filesResult?.error);
+                        setFiles(filesResult?.data || []);
+                    }
+                } catch (err) {
+                    console.error("[Workspace] Network error fetching root files:", err);
+                }
                 setLoading(false);
             } catch {
                 if (isMounted) {
@@ -56,9 +67,24 @@ export default function WorkspacePage() {
     }, []);
 
     const triggerCreateDocument = async () => {
-        const result = await createFile("Untitled Document", null, false);
-        if (result.success && result.data) {
-            navigateTo(`/workspace/editor/${result.data.id}`);
+        if (isCreating) return;
+        setIsCreating(true);
+        setCreationError(null);
+        try {
+            const result = await createFile("Untitled Document", null, false);
+            if (result && result.success && result.data) {
+                navigateTo(`/workspace/editor/${result.data.id}`);
+            } else {
+                const msg = result?.error || "Failed to create document";
+                console.error("[Workspace] createFile returned error:", msg);
+                setCreationError(msg);
+            }
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : "Network error creating document";
+            console.error("[Workspace] createFile network error:", msg);
+            setCreationError(msg);
+        } finally {
+            setIsCreating(false);
         }
     };
 
@@ -90,12 +116,25 @@ export default function WorkspacePage() {
                     </div>
 
                     <form onSubmit={handleCreateSubmit}>
-                        <Button type="submit" variant="ai" className="gap-2">
+                        <Button type="submit" variant="ai" className="gap-2" disabled={isCreating}>
                             <Plus className="w-4 h-4" />
                             New Document
                         </Button>
                     </form>
                 </div>
+
+                {creationError && (
+                    <div className="mb-6 p-3 rounded-lg border border-red-500/30 bg-red-500/10 text-red-400 text-sm flex items-center justify-between">
+                        <span>{creationError}</span>
+                        <button
+                            type="button"
+                            onClick={() => setCreationError(null)}
+                            className="text-xs text-red-300 hover:text-white"
+                        >
+                            Dismiss
+                        </button>
+                    </div>
+                )}
 
                 {/* Files Grid */}
                 {files.length === 0 ? (
@@ -110,7 +149,7 @@ export default function WorkspacePage() {
                             Create your first document to get started
                         </p>
                         <form onSubmit={handleCreateSubmit}>
-                            <Button type="submit" variant="primary" className="gap-2">
+                            <Button type="submit" variant="primary" className="gap-2" disabled={isCreating}>
                                 <Plus className="w-4 h-4" />
                                 Create Document
                             </Button>

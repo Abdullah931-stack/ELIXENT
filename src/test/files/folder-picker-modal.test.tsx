@@ -264,6 +264,75 @@ describe("FolderPickerModal Component", () => {
             expect(screen.getByText("No folders available. Create a folder first.")).toBeDefined();
         });
 
+        it("recovers cleanly and resets loading state when getUserFiles throws an exception / rejects", async () => {
+            mockGetUserFiles.mockRejectedValueOnce(new Error("Network timeout during folder retrieval"));
+
+            render(
+                <FolderPickerModal
+                    isOpen={true}
+                    onClose={mockOnClose}
+                    onSelect={mockOnSelect}
+                    title="Exception Recovery"
+                />
+            );
+
+            await waitFor(() => {
+                expect(screen.queryByText("Loading...")).toBeNull();
+            });
+
+            expect(screen.getByText("Network timeout during folder retrieval")).toBeDefined();
+            expect(screen.getByText("Root (No folder)")).toBeDefined();
+            expect(screen.getByText("No folders available. Create a folder first.")).toBeDefined();
+        });
+
+        it("displays error message when getUserFiles returns success: false with specific error", async () => {
+            mockGetUserFiles.mockResolvedValueOnce({
+                success: false,
+                error: "Database read quota exceeded",
+                data: null,
+            });
+
+            render(
+                <FolderPickerModal
+                    isOpen={true}
+                    onClose={mockOnClose}
+                    onSelect={mockOnSelect}
+                    title="Quota Error"
+                />
+            );
+
+            await waitFor(() => {
+                expect(screen.queryByText("Loading...")).toBeNull();
+            });
+
+            expect(screen.getByText("Database read quota exceeded")).toBeDefined();
+        });
+
+        it("handles asynchronous onSelect failure without crashing and presents error message", async () => {
+            mockOnSelect.mockRejectedValueOnce(new Error("RPC moveFile failed during folder selection"));
+
+            render(
+                <FolderPickerModal
+                    isOpen={true}
+                    onClose={mockOnClose}
+                    onSelect={mockOnSelect}
+                    title="Async Action Error"
+                />
+            );
+
+            await waitFor(() => {
+                expect(screen.getByText("Archive")).toBeDefined();
+            });
+
+            fireEvent.click(screen.getByText("Archive"));
+
+            await waitFor(() => {
+                expect(screen.getByText("RPC moveFile failed during folder selection")).toBeDefined();
+            });
+
+            expect(mockOnClose).not.toHaveBeenCalled();
+        });
+
         it("safely cleans up isMounted reference on unmount while RPC call is unresolved", async () => {
             let resolveRpc: (val: any) => void;
             const rpcPromise = new Promise((res) => {

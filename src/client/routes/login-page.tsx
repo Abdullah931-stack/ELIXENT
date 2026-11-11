@@ -55,10 +55,28 @@ export default function LoginPage(props?: {
         };
     }, [redirectTo]);
 
+    const [signInError, setSignInError] = useState<string | null>(null);
+    const [isSigningIn, setIsSigningIn] = useState(false);
+
     const triggerGoogleSignIn = async () => {
-        const res = await signInWithGoogle(redirectTo);
-        if (res && "redirectUrl" in res && res.redirectUrl && typeof window !== "undefined") {
-            window.location.assign(res.redirectUrl);
+        if (isSigningIn) return;
+        setIsSigningIn(true);
+        setSignInError(null);
+        try {
+            const res = await signInWithGoogle(redirectTo);
+            if (res && res.success && "redirectUrl" in res && res.redirectUrl && typeof window !== "undefined") {
+                window.location.assign(res.redirectUrl);
+            } else if (res && !res.success) {
+                const msg = res.error || "Failed to initialize Google Sign In";
+                console.error("[Login] signInWithGoogle returned error:", msg);
+                setSignInError(msg);
+            }
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : "Network error during Google Sign In";
+            console.error("[Login] signInWithGoogle network error:", msg);
+            setSignInError(msg);
+        } finally {
+            setIsSigningIn(false);
         }
     };
 
@@ -90,9 +108,15 @@ export default function LoginPage(props?: {
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
+                        {signInError && (
+                            <div className="p-3 rounded-lg border border-red-500/30 bg-red-500/10 text-red-400 text-sm">
+                                {signInError}
+                            </div>
+                        )}
+
                         {/* Google Sign In */}
                         <form onSubmit={handleGoogleSubmit}>
-                            <Button type="submit" variant="outline" className="w-full gap-3">
+                            <Button type="submit" variant="outline" className="w-full gap-3" disabled={isSigningIn}>
                                 <svg className="w-5 h-5" viewBox="0 0 24 24">
                                     <path
                                         fill="currentColor"

@@ -4,13 +4,14 @@ import { cn } from "@/lib/utils";
 import { ChevronRight, FileText, Folder, MoreHorizontal, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { FileContextMenu } from "./file-context-menu";
+import type { WireTimestamp } from "@/types/rpc-contracts";
 
 interface FileItem {
     id: string;
     title: string;
     isFolder: boolean;
     parentFolderId: string | null;
-    updatedAt: Date;
+    updatedAt: WireTimestamp;
     isEncrypted?: boolean;
     userId?: string;
     children?: FileItem[];

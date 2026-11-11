@@ -55,21 +55,10 @@ vi.mock("@/client/navigation", () => ({
 }));
 
 const mockGetServerUser = vi.fn();
-vi.mock("@/lib/supabase/server", () => ({
-    getUser: () => mockGetServerUser(),
-}));
-
 const mockGetUserProfile = vi.fn();
 const mockSignOut = vi.fn();
-vi.mock("@/server/actions/auth-actions", () => ({
-    getUserProfile: () => mockGetUserProfile(),
-    signOut: () => mockSignOut(),
-}));
-
 const mockGetUserCreditBalance = vi.fn();
-vi.mock("@/server/services/ai-settlement-service", () => ({
-    getUserCreditBalance: (userId: string) => mockGetUserCreditBalance(userId),
-}));
+const mockGetCreditBalanceResult = vi.fn();
 
 const mockGetClientUser = vi.fn(async () => {
     const user = await mockGetServerUser();
@@ -83,16 +72,12 @@ vi.mock("@/lib/supabase/client", () => ({
     }),
 }));
 
-vi.mock("@/client/rpc-client", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("@/client/rpc-client")>();
-    return {
-        ...actual,
-        getUserProfile: () => mockGetUserProfile(),
-        signOut: () => mockSignOut(),
-        getCreditBalance: () => mockGetUserCreditBalance(),
-        getUser: () => mockGetServerUser(),
-    };
-});
+vi.mock("@/client/rpc-client", () => ({
+    getUserProfile: () => mockGetUserProfile(),
+    signOut: () => mockSignOut(),
+    getCreditBalance: () => mockGetUserCreditBalance(),
+    getCreditBalanceResult: () => mockGetCreditBalanceResult(),
+}));
 
 // ============================================================================
 // Mocks for Subcomponents used in Dashboard, Account & Editor
@@ -331,6 +316,21 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
         mockGetClientUser.mockImplementation(async () => {
             const user = await mockGetServerUser();
             return { data: { user } };
+        });
+        mockGetCreditBalanceResult.mockImplementation(async () => {
+            const raw = await mockGetUserCreditBalance();
+            if (raw !== undefined) {
+                return {
+                    success: true,
+                    balanceMicro: raw.toString(),
+                    balance: typeof raw === "bigint" ? raw : BigInt(raw),
+                };
+            }
+            return {
+                success: true,
+                balanceMicro: "10000000",
+                balance: BigInt(10000000),
+            };
         });
         mockOrchestratorData = {};
     });
@@ -672,6 +672,26 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
                 expect(screen.getByText("Welcome back, User")).toBeDefined();
             });
         });
+
+        it("does NOT redirect to /login when getCreditBalanceResult returns error status", async () => {
+            mockGetServerUser.mockResolvedValue({ id: "user-free-err" });
+            mockGetUserProfile.mockResolvedValue({
+                data: { displayName: "Alice Engineer", tier: "free" },
+            });
+            mockGetCreditBalanceResult.mockResolvedValue({
+                success: false,
+                status: "error",
+                statusCode: 500,
+                error: "Billing service unavailable",
+            });
+
+            render(<DashboardPage />);
+
+            await waitFor(() => {
+                expect(screen.getByText("Billing service unavailable")).toBeDefined();
+            });
+            expect(mockRedirect).not.toHaveBeenCalledWith("/login");
+        });
     });
 
     // ========================================================================
@@ -820,6 +840,30 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
                 const img = screen.getByAltText("Frank") as HTMLImageElement;
                 expect(img.src).toContain("https://example.com/avatar.png");
             });
+        });
+
+        it("does NOT redirect to /login when getCreditBalanceResult returns error status", async () => {
+            mockGetServerUser.mockResolvedValue({ id: "user-acc-err" });
+            mockGetUserProfile.mockResolvedValue({
+                data: {
+                    displayName: "Dana Engineer",
+                    email: "dana@example.com",
+                    tier: "free",
+                },
+            });
+            mockGetCreditBalanceResult.mockResolvedValue({
+                success: false,
+                status: "error",
+                statusCode: 500,
+                error: "Billing service unavailable",
+            });
+
+            render(<AccountPage />);
+
+            await waitFor(() => {
+                expect(screen.getByText("Billing service unavailable")).toBeDefined();
+            });
+            expect(mockRedirect).not.toHaveBeenCalledWith("/login");
         });
     });
 

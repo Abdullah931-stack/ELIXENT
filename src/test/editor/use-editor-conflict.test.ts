@@ -16,7 +16,7 @@
  * 9. Anti-echo & teardown: Ignores self-broadcasts matching currentTabId and unsubscribes on unmount.
  *
  * System Boundaries & Mock Justifications:
- * - Action handler `@/server/actions/files` is mocked: network RPCs / DB operations cannot execute in isolated jsdom tests.
+ * - RPC client `@/client/rpc-client` is mocked: network RPCs / DB operations cannot execute in isolated jsdom tests.
  * - All other modules are real: real `normalizeMarkdownSource`, real `classifyRemoteUpdate`,
  *   real `broadcastCrossTabEvent` / `subscribeCrossTabSync`, and real `sessionKeyStore`.
  */
@@ -27,7 +27,7 @@ import {
     useEditorConflict,
     type UseEditorConflictOptions,
 } from "../../hooks/use-editor-conflict";
-import { updateFileContent } from "@/server/actions/files";
+import { updateFileContent } from "@/client/rpc-client";
 import {
     getSyncChannelName,
     setActiveSyncUserId,
@@ -43,20 +43,13 @@ if (typeof window !== "undefined" && typeof window.BroadcastChannel === "undefin
     (window as unknown as { BroadcastChannel: typeof BroadcastChannel }).BroadcastChannel = globalThis.BroadcastChannel;
 }
 
-// Minimal server action boundaries: database persistence cannot execute in isolated in-memory jsdom contract tests.
-vi.mock("@/server/actions/files", () => ({
+// Minimal RPC client boundary: database persistence cannot execute in isolated in-memory jsdom contract tests.
+vi.mock("@/client/rpc-client", () => ({
     updateFileContent: vi.fn(),
     toggleFileEncryption: vi.fn(),
     renameFile: vi.fn(),
     deleteFile: vi.fn(),
 }));
-
-vi.mock("@/client/rpc-client", async () => {
-    const mockedFileOps = await import("@/server/actions/files");
-    return {
-        ...mockedFileOps,
-    };
-});
 
 const openChannels: BroadcastChannel[] = [];
 

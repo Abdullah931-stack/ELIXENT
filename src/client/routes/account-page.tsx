@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { AppLink as Link } from "@/components/ui/app-link";
 import { navigateTo } from "@/client/navigation";
-import { getUserProfile, signOut, getCreditBalance } from "@/client/rpc-client";
+import { getUserProfile, signOut, getCreditBalanceResult } from "@/client/rpc-client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { TIER_LIMITS, type TierName, getTierDisplayName } from "@/config/tiers.config";
@@ -27,7 +27,8 @@ export default function AccountPage() {
     const [loading, setLoading] = useState(true);
     const [user, setUser] = useState<{ id: string } | null>(null);
     const [profile, setProfile] = useState<NonNullable<Awaited<ReturnType<typeof getUserProfile>>["data"]> | null>(null);
-    const [balanceMicro, setBalanceMicro] = useState<bigint>(BigInt(0));
+    const [balanceMicro, setBalanceMicro] = useState<bigint | null>(null);
+    const [balanceError, setBalanceError] = useState<string | null>(null);
 
     useEffect(() => {
         let isMounted = true;
@@ -40,13 +41,36 @@ export default function AccountPage() {
                     return;
                 }
                 setUser(authUser);
-                const [profileResult, balance] = await Promise.all([
-                    getUserProfile(),
-                    getCreditBalance(),
-                ]);
-                if (!isMounted) return;
-                setProfile(profileResult?.data ?? null);
-                setBalanceMicro(balance ?? BigInt(0));
+
+                try {
+                    const [profileResult, balanceResult] = await Promise.all([
+                        getUserProfile().catch((err) => {
+                            console.error("[Account] Profile load error:", err);
+                            return null;
+                        }),
+                        getCreditBalanceResult(),
+                    ]);
+                    if (!isMounted) return;
+
+                    if (profileResult && "data" in profileResult) {
+                        setProfile(profileResult.data ?? null);
+                    }
+
+                    if (balanceResult.success) {
+                        setBalanceMicro(balanceResult.balance);
+                        setBalanceError(null);
+                    } else if (balanceResult.status === "unauthorized") {
+                        navigateTo("/login");
+                        return;
+                    } else {
+                        setBalanceError(balanceResult.error || "Unable to load credit balance");
+                    }
+                } catch (rpcErr) {
+                    console.error("[Account] RPC load error:", rpcErr);
+                    if (!isMounted) return;
+                    setBalanceError("Unable to load credit balance");
+                }
+
                 setLoading(false);
             } catch {
                 if (isMounted) {
@@ -70,10 +94,10 @@ export default function AccountPage() {
 
     const currentTier: TierName = (profile?.tier as TierName) || "free";
     const limits = TIER_LIMITS[currentTier] || TIER_LIMITS.free;
-    const currentCredits = Number(balanceMicro / MICRO_PER_CREDIT);
+    const currentCredits = balanceMicro !== null ? Number(balanceMicro / MICRO_PER_CREDIT) : 0;
     const tierCredits = limits.creditsDisplay;
     const percentageRemaining =
-        tierCredits > 0
+        tierCredits > 0 && balanceMicro !== null
             ? Math.min(Math.max(0, Math.round((currentCredits / tierCredits) * 100)), 100)
             : 0;
 
@@ -105,7 +129,11 @@ export default function AccountPage() {
                         <form
                             onSubmit={async (e) => {
                                 e.preventDefault();
-                                await signOut();
+                                try {
+                                    await signOut();
+                                } catch (err) {
+                                    console.error("[Account] signOut error:", err);
+                                }
                                 try {
                                     const supabase = createClient();
                                     await supabase.auth.signOut();
@@ -229,19 +257,52 @@ export default function AccountPage() {
                                 <div>
                                     <div className="flex justify-between text-sm mb-1.5">
                                         <span className="text-zinc-400">Current Balance</span>
-                                        <span className="text-zinc-200 font-medium font-mono">
-                                            {currentCredits.toLocaleString()} / {tierCredits.toLocaleString()} Credits
-                                        </span>
+                                        {balanceError ? (
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs text-amber-400 font-mono">
+                                                    {balanceError}
+                                                </span>
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={async () => {
+                                                        try {
+                                                            const res = await getCreditBalanceResult();
+                                                            if (res.success) {
+                                                                setBalanceMicro(res.balance);
+                                                                setBalanceError(null);
+                                                            } else if (res.status === "unauthorized") {
+                                                                navigateTo("/login");
+                                                            } else {
+                                                                setBalanceError(res.error || "Unable to load credit balance");
+                                                            }
+                                                        } catch {
+                                                            setBalanceError("Unable to load credit balance");
+                                                        }
+                                                    }}
+                                                    className="text-xs text-indigo-400 hover:text-indigo-300 h-6 px-1.5"
+                                                >
+                                                    Retry
+                                                </Button>
+                                            </div>
+                                        ) : (
+                                            <span className="text-zinc-200 font-medium font-mono">
+                                                {currentCredits.toLocaleString()} / {tierCredits.toLocaleString()} Credits
+                                            </span>
+                                        )}
                                     </div>
                                     <div className="h-2.5 bg-zinc-800 rounded-full overflow-hidden">
                                         <div
                                             className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-300"
-                                            style={{ width: `${percentageRemaining}%` }}
+                                            style={{ width: `${balanceError ? 0 : percentageRemaining}%` }}
                                         />
                                     </div>
                                     <div className="flex justify-between text-xs text-zinc-500 mt-2">
                                         <span>Allocation resets each monthly billing cycle</span>
-                                        <span className="font-mono">{percentageRemaining}% remaining</span>
+                                        <span className="font-mono">
+                                            {balanceError ? "Unavailable" : `${percentageRemaining}% remaining`}
+                                        </span>
                                     </div>
                                 </div>
                             </div>

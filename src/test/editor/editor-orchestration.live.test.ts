@@ -11,7 +11,7 @@
  *  - `@/lib/sync` IndexedDB/SyncManager — browser-local boundary, not the
  *    system under test here.
  */
-import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -141,6 +141,12 @@ async function getFileRow() {
     return row;
 }
 
+beforeAll(async () => {
+    // Pre-warm Hono loopback app after hoisted mocks so cold Vite module
+    // transform/initialization does not distort initial hook hydration timing.
+    await import("@/server/app");
+}, 60_000);
+
 afterAll(async () => {
     await cleanupTestUsers([USER_ID]);
 });
@@ -165,7 +171,10 @@ describe("LIVE: editor orchestration single-writer path on isolated branch", () 
     it("initializes from the REAL database row (title/version/etag)", async () => {
         const { result } = renderOrchestrator();
 
-        await waitFor(() => expect(result.current.title).toBe("Test Note"));
+        await waitFor(
+            () => expect(result.current.title).toBe("Test Note"),
+            { timeout: 8000 }
+        );
         expect(result.current.serverVersion).toBe(1);
         expect(result.current.serverEtag).toBe("etag-v1");
         expect(result.current.isDirty).toBe(false);

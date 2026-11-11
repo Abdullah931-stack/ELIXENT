@@ -15,22 +15,31 @@ import { useEditorOrchestrator } from "../../hooks/use-editor-orchestrator";
 import { sessionKeyStore } from "../../lib/sync/session-key-store";
 import { SyncCryptoGateway } from "../../lib/sync/sync-crypto-gateway";
 import { AAD, AADValidationError } from "../../lib/crypto/aad";
-import * as fileOps from "@/server/actions/files";
+import * as fileOps from "@/client/rpc-client";
 import type { EditorAdapter } from "../../components/editor/markdown/types";
 
-// Mock dependencies
-vi.mock("@/server/actions/files", () => ({
+// Mock typed RPC client directly at module boundary
+vi.mock("@/client/rpc-client", () => ({
     getFile: vi.fn(),
     updateFileContent: vi.fn(),
     toggleFileEncryption: vi.fn(),
     renameFile: vi.fn(),
     deleteFile: vi.fn(),
-}));
-
-vi.mock("../../server/actions/vault-actions", () => ({
     getUserVaultProfile: vi.fn().mockResolvedValue({
         success: true,
-        data: { allowAIOnEncryptedFiles: false },
+        data: {
+            userId: "user-123",
+            encryptedMasterKey: "mock-key",
+            recoveryEncryptedMasterKey: "mock-recovery",
+            keySalt: "salt",
+            recoverySalt: "rec-salt",
+            kdfIterations: 600000,
+            keyVersion: 1,
+            deviceTrustEpoch: 1,
+            allowAIOnEncryptedFiles: false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+        },
     }),
 }));
 

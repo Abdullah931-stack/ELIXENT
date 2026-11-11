@@ -51,6 +51,7 @@ const {
   mockGetClientUser,
   mockGetUserProfile,
   mockGetCreditBalance,
+  mockGetCreditBalanceResult,
   mockSignOut,
   mockSignInWithGoogle,
   mockGetRootFiles,
@@ -64,6 +65,7 @@ const {
   mockGetClientUser: vi.fn(),
   mockGetUserProfile: vi.fn(),
   mockGetCreditBalance: vi.fn(),
+  mockGetCreditBalanceResult: vi.fn(),
   mockSignOut: vi.fn(),
   mockSignInWithGoogle: vi.fn(),
   mockGetRootFiles: vi.fn(),
@@ -104,6 +106,7 @@ vi.mock("@/lib/supabase/client", () => ({
 vi.mock("@/client/rpc-client", () => ({
   getUserProfile: () => mockGetUserProfile(),
   getCreditBalance: () => mockGetCreditBalance(),
+  getCreditBalanceResult: () => mockGetCreditBalanceResult(),
   signOut: () => mockSignOut(),
   signInWithGoogle: (...args: any[]) => mockSignInWithGoogle(...args),
   getRootFiles: () => mockGetRootFiles(),
@@ -200,6 +203,11 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
   beforeEach(() => {
     vi.clearAllMocks();
     setMockUser(null);
+    mockGetCreditBalanceResult.mockResolvedValue({
+      success: true,
+      balanceMicro: "10000000",
+      balance: BigInt(10000000),
+    });
   });
 
   afterEach(() => {
@@ -313,6 +321,11 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
       });
       // 500,000,000 micro-credits = 500 credits (Pro allocation is 1,000 credits -> 50%)
       mockGetCreditBalance.mockResolvedValue(BigInt(500_000_000));
+      mockGetCreditBalanceResult.mockResolvedValue({
+        success: true,
+        balanceMicro: "500000000",
+        balance: BigInt(500_000_000),
+      });
 
       render(<DashboardPage />);
 
@@ -330,12 +343,38 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
         data: { displayName: "User", tier: "pro" },
       });
       mockGetCreditBalance.mockResolvedValue(BigInt(1_000_000_000));
+      mockGetCreditBalanceResult.mockResolvedValue({
+        success: true,
+        balanceMicro: "1000000000",
+        balance: BigInt(1_000_000_000),
+      });
 
       render(<DashboardPage searchParams={{ session_id: "cs_test_success_123" }} />);
 
       await waitFor(() => {
         expect(screen.getByText(/Payment Successful!/i)).toBeTruthy();
       });
+    });
+
+    it("does NOT redirect to /login when getCreditBalanceResult returns error status", async () => {
+      setMockUser({ id: "user-abc", email: "test@lugx.ai" });
+      mockGetUserProfile.mockResolvedValue({
+        success: true,
+        data: { displayName: "User", tier: "pro" },
+      });
+      mockGetCreditBalanceResult.mockResolvedValue({
+        success: false,
+        status: "error",
+        statusCode: 500,
+        error: "Billing service unavailable",
+      });
+
+      render(<DashboardPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Billing service unavailable/i)).toBeTruthy();
+      });
+      expect(mockNavigateTo).not.toHaveBeenCalledWith("/login");
     });
   });
 
@@ -383,6 +422,27 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
         expect(screen.getByTestId("upgrade-btn-pro")).toBeTruthy();
       });
       expect(screen.getByTestId("upgrade-btn-ultra")).toBeTruthy();
+    });
+
+    it("does NOT redirect to /login when getCreditBalanceResult returns error status", async () => {
+      setMockUser({ id: "user-xyz", email: "grace@navy.mil" });
+      mockGetUserProfile.mockResolvedValue({
+        success: true,
+        data: { displayName: "Grace Hopper", email: "grace@navy.mil", tier: "free" },
+      });
+      mockGetCreditBalanceResult.mockResolvedValue({
+        success: false,
+        status: "error",
+        statusCode: 500,
+        error: "Billing service unavailable",
+      });
+
+      render(<AccountPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Billing service unavailable/i)).toBeTruthy();
+      });
+      expect(mockNavigateTo).not.toHaveBeenCalledWith("/login");
     });
   });
 

@@ -14,9 +14,9 @@
  *    - VaultSecurityCard fetches user vault state via RPC `getUserVaultProfile()`.
  *    - Toggles AI processing on encrypted files via RPC `updateVaultAISetting(allow)`.
  *    - Revokes all trusted device envelopes via RPC `revokeAllTrustedDevices()`.
- * 3. Client Hook RPC Orchestration:
- *    - useEditorOrchestrator loads document via RPC `getFile(fileId)`.
- *    - useEditorConflict executes conditioned conflict resolution via RPC `updateFileContent()`.
+ * 3. Client Hook RPC Orchestration & Genuine Facade Wiring:
+ *    - getFile dispatches RPC POST /api/rpc/files/get without server-action-only headers.
+ *    - updateFileContent executes conditioned conflict resolution via RPC POST /api/rpc/files/update-content.
  */
 
 import React from "react";
@@ -24,8 +24,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Sidebar } from "@/components/layout/sidebar";
 import { VaultSecurityCard } from "@/components/vault/vault-security-card";
+import type {
+    FileRecord,
+    FileOpResult,
+    VaultProfileRecord,
+    VaultActionResult,
+} from "@/types/rpc-contracts";
 
-// Hoisted mock RPC implementations
+// Hoisted mock RPC implementations for UI-mounted component tests
 const {
     mockGetUserFiles,
     mockGetDeletedFiles,
@@ -34,8 +40,6 @@ const {
     mockGetUserVaultProfile,
     mockRevokeAllTrustedDevices,
     mockUpdateVaultAISetting,
-    mockGetFile,
-    mockUpdateFileContent,
 } = vi.hoisted(() => ({
     mockGetUserFiles: vi.fn(),
     mockGetDeletedFiles: vi.fn(),
@@ -44,21 +48,22 @@ const {
     mockGetUserVaultProfile: vi.fn(),
     mockRevokeAllTrustedDevices: vi.fn(),
     mockUpdateVaultAISetting: vi.fn(),
-    mockGetFile: vi.fn(),
-    mockUpdateFileContent: vi.fn(),
 }));
 
-vi.mock("@/client/rpc-client", () => ({
-    getUserFiles: (...args: any[]) => mockGetUserFiles(...args),
-    getDeletedFiles: (...args: any[]) => mockGetDeletedFiles(...args),
-    createFile: (...args: any[]) => mockCreateFile(...args),
-    moveFile: (...args: any[]) => mockMoveFile(...args),
-    getUserVaultProfile: (...args: any[]) => mockGetUserVaultProfile(...args),
-    revokeAllTrustedDevices: (...args: any[]) => mockRevokeAllTrustedDevices(...args),
-    updateVaultAISetting: (...args: any[]) => mockUpdateVaultAISetting(...args),
-    getFile: (...args: any[]) => mockGetFile(...args),
-    updateFileContent: (...args: any[]) => mockUpdateFileContent(...args),
-}));
+// Mock component-level facades while preserving genuine getFile / updateFileContent
+vi.mock("@/client/rpc-client", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@/client/rpc-client")>();
+    return {
+        ...actual,
+        getUserFiles: (...args: unknown[]) => mockGetUserFiles(...args),
+        getDeletedFiles: (...args: unknown[]) => mockGetDeletedFiles(...args),
+        createFile: (...args: unknown[]) => mockCreateFile(...args),
+        moveFile: (...args: unknown[]) => mockMoveFile(...args),
+        getUserVaultProfile: (...args: unknown[]) => mockGetUserVaultProfile(...args),
+        revokeAllTrustedDevices: (...args: unknown[]) => mockRevokeAllTrustedDevices(...args),
+        updateVaultAISetting: (...args: unknown[]) => mockUpdateVaultAISetting(...args),
+    };
+});
 
 vi.mock("@/lib/supabase/client", () => ({
     createClient: () => ({
@@ -95,25 +100,42 @@ describe("Client UI & Hooks Hono RPC Integration", () => {
 
     describe("1. Sidebar Component Integration", () => {
         it("fetches user files on mount via RPC getUserFiles and displays them", async () => {
+            const nowIso = new Date().toISOString();
             mockGetUserFiles.mockResolvedValueOnce({
                 success: true,
                 data: [
                     {
                         id: "file-101",
+                        userId: "test-user-uuid",
                         title: "Overview.md",
+                        content: "# Overview",
                         isFolder: false,
                         parentFolderId: null,
-                        updatedAt: new Date("2026-01-01"),
+                        isEncrypted: false,
+                        encryptionMetadata: null,
+                        etag: "w-etag-101",
+                        version: 1,
+                        deletedAt: null,
+                        createdAt: nowIso,
+                        updatedAt: nowIso,
                     },
                     {
                         id: "folder-101",
+                        userId: "test-user-uuid",
                         title: "Specifications",
+                        content: null,
                         isFolder: true,
                         parentFolderId: null,
-                        updatedAt: new Date("2026-01-01"),
+                        isEncrypted: false,
+                        encryptionMetadata: null,
+                        etag: "w-etag-folder",
+                        version: 1,
+                        deletedAt: null,
+                        createdAt: nowIso,
+                        updatedAt: nowIso,
                     },
                 ],
-            });
+            } satisfies FileOpResult<FileRecord[]>);
 
             render(<Sidebar userId="test-user-uuid" />);
 
@@ -127,14 +149,29 @@ describe("Client UI & Hooks Hono RPC Integration", () => {
         });
 
         it("dispatches RPC createFile when user clicks 'New File'", async () => {
+            const nowIso = new Date().toISOString();
             mockGetUserFiles.mockResolvedValue({
                 success: true,
                 data: [],
-            });
+            } satisfies FileOpResult<FileRecord[]>);
             mockCreateFile.mockResolvedValueOnce({
                 success: true,
-                data: { id: "new-doc-id", title: "My New Document", isFolder: false },
-            });
+                data: {
+                    id: "new-doc-id",
+                    userId: "test-user-uuid",
+                    title: "My New Document",
+                    content: "",
+                    isFolder: false,
+                    parentFolderId: null,
+                    isEncrypted: false,
+                    encryptionMetadata: null,
+                    etag: "w-etag-new",
+                    version: 1,
+                    deletedAt: null,
+                    createdAt: nowIso,
+                    updatedAt: nowIso,
+                },
+            } satisfies FileOpResult<FileRecord>);
 
             render(<Sidebar userId="test-user-uuid" />);
 
@@ -155,15 +192,30 @@ describe("Client UI & Hooks Hono RPC Integration", () => {
         });
 
         it("dispatches RPC createFile with isFolder=true when user clicks '+ New Folder'", async () => {
+            const nowIso = new Date().toISOString();
             vi.spyOn(window, "prompt").mockReturnValueOnce("Project Folder");
             mockGetUserFiles.mockResolvedValue({
                 success: true,
                 data: [],
-            });
+            } satisfies FileOpResult<FileRecord[]>);
             mockCreateFile.mockResolvedValueOnce({
                 success: true,
-                data: { id: "new-folder-id", title: "Project Folder", isFolder: true },
-            });
+                data: {
+                    id: "new-folder-id",
+                    userId: "test-user-uuid",
+                    title: "Project Folder",
+                    content: null,
+                    isFolder: true,
+                    parentFolderId: null,
+                    isEncrypted: false,
+                    encryptionMetadata: null,
+                    etag: "w-etag-folder-new",
+                    version: 1,
+                    deletedAt: null,
+                    createdAt: nowIso,
+                    updatedAt: nowIso,
+                },
+            } satisfies FileOpResult<FileRecord>);
 
             const { container } = render(<Sidebar userId="test-user-uuid" />);
 
@@ -185,23 +237,31 @@ describe("Client UI & Hooks Hono RPC Integration", () => {
         });
 
         it("loads deleted files via RPC getDeletedFiles when switching to Trash view", async () => {
+            const nowIso = new Date().toISOString();
             mockGetUserFiles.mockResolvedValue({
                 success: true,
                 data: [],
-            });
+            } satisfies FileOpResult<FileRecord[]>);
             mockGetDeletedFiles.mockResolvedValueOnce({
                 success: true,
                 data: [
                     {
                         id: "recycled-1",
+                        userId: "test-user-uuid",
                         title: "old-archive.md",
+                        content: "# Old Archive",
                         isFolder: false,
                         parentFolderId: null,
-                        updatedAt: new Date(),
-                        deletedAt: new Date(),
+                        isEncrypted: false,
+                        encryptionMetadata: null,
+                        etag: "w-etag-recycled",
+                        version: 1,
+                        deletedAt: nowIso,
+                        createdAt: nowIso,
+                        updatedAt: nowIso,
                     },
                 ],
-            });
+            } satisfies FileOpResult<FileRecord[]>);
 
             render(<Sidebar userId="test-user-uuid" />);
 
@@ -224,14 +284,23 @@ describe("Client UI & Hooks Hono RPC Integration", () => {
 
     describe("2. Vault Security UI Integration", () => {
         it("fetches vault profile via RPC getUserVaultProfile and displays enabled AI state", async () => {
+            const nowIso = new Date().toISOString();
             mockGetUserVaultProfile.mockResolvedValueOnce({
                 success: true,
                 data: {
                     userId: "test-user-uuid",
+                    encryptedMasterKey: "mock-key",
+                    recoveryEncryptedMasterKey: "mock-recovery",
+                    keySalt: "salt",
+                    recoverySalt: "rec-salt",
+                    kdfIterations: 600000,
+                    keyVersion: 1,
                     deviceTrustEpoch: 1,
                     allowAIOnEncryptedFiles: true,
+                    createdAt: nowIso,
+                    updatedAt: nowIso,
                 },
-            });
+            } satisfies VaultActionResult<VaultProfileRecord>);
 
             render(<VaultSecurityCard userId="test-user-uuid" />);
 
@@ -243,18 +312,27 @@ describe("Client UI & Hooks Hono RPC Integration", () => {
         });
 
         it("dispatches RPC revokeAllTrustedDevices when user confirms device trust revocation", async () => {
+            const nowIso = new Date().toISOString();
             mockGetUserVaultProfile.mockResolvedValue({
                 success: true,
                 data: {
                     userId: "test-user-uuid",
+                    encryptedMasterKey: "mock-key",
+                    recoveryEncryptedMasterKey: "mock-recovery",
+                    keySalt: "salt",
+                    recoverySalt: "rec-salt",
+                    kdfIterations: 600000,
+                    keyVersion: 1,
                     deviceTrustEpoch: 2,
                     allowAIOnEncryptedFiles: false,
+                    createdAt: nowIso,
+                    updatedAt: nowIso,
                 },
-            });
+            } satisfies VaultActionResult<VaultProfileRecord>);
             mockRevokeAllTrustedDevices.mockResolvedValueOnce({
                 success: true,
-                data: { deviceTrustEpoch: 3 },
-            });
+                data: { newEpoch: 3 },
+            } satisfies VaultActionResult<{ newEpoch: number }>);
 
             render(<VaultSecurityCard userId="test-user-uuid" />);
 
@@ -279,18 +357,27 @@ describe("Client UI & Hooks Hono RPC Integration", () => {
         });
 
         it("dispatches RPC updateVaultAISetting when user toggles AI on encrypted notes", async () => {
+            const nowIso = new Date().toISOString();
             mockGetUserVaultProfile.mockResolvedValue({
                 success: true,
                 data: {
                     userId: "test-user-uuid",
+                    encryptedMasterKey: "mock-key",
+                    recoveryEncryptedMasterKey: "mock-recovery",
+                    keySalt: "salt",
+                    recoverySalt: "rec-salt",
+                    kdfIterations: 600000,
+                    keyVersion: 1,
                     deviceTrustEpoch: 1,
                     allowAIOnEncryptedFiles: false,
+                    createdAt: nowIso,
+                    updatedAt: nowIso,
                 },
-            });
+            } satisfies VaultActionResult<VaultProfileRecord>);
             mockUpdateVaultAISetting.mockResolvedValueOnce({
                 success: true,
                 data: { allowAIOnEncryptedFiles: true },
-            });
+            } satisfies VaultActionResult<{ allowAIOnEncryptedFiles: boolean }>);
 
             render(<VaultSecurityCard userId="test-user-uuid" />);
 
@@ -310,47 +397,101 @@ describe("Client UI & Hooks Hono RPC Integration", () => {
     });
 
     describe("3. Client Hooks & Facade Direct Wiring", () => {
-        it("verifies RPC facade delegates correctly without server-action-only headers", async () => {
-            mockGetFile.mockResolvedValueOnce({
-                success: true,
-                data: {
-                    id: "doc-test",
-                    title: "Test File",
-                    content: "# Hello World",
-                    version: 1,
-                    etag: "w-etag-1",
-                    isEncrypted: false,
-                },
+        it("verifies genuine getFile facade dispatches to /api/rpc/files/get without server-action-only headers", async () => {
+            const capturedRequests: Array<{ url: string; method: string; body?: unknown }> = [];
+            const mockFetch: typeof fetch = vi.fn(async (input, init) => {
+                const url = typeof input === "string" ? input : (input as Request).url;
+                const method = init?.method ?? "GET";
+                const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+                capturedRequests.push({ url, method, body });
+
+                return new Response(
+                    JSON.stringify({
+                        success: true,
+                        data: {
+                            id: "doc-test",
+                            userId: "test-user-uuid",
+                            title: "Test File",
+                            content: "# Hello World",
+                            version: 1,
+                            etag: "w-etag-1",
+                            isFolder: false,
+                            parentFolderId: null,
+                            isEncrypted: false,
+                            encryptionMetadata: null,
+                            deletedAt: null,
+                            createdAt: new Date().toISOString(),
+                            updatedAt: new Date().toISOString(),
+                        },
+                    }),
+                    { status: 200, headers: { "Content-Type": "application/json" } }
+                );
             });
 
-            const { getFile } = await import("@/client/rpc-client");
-            const result = await getFile("doc-test");
+            const { getFile, setRpcClientFetch } = await import("@/client/rpc-client");
+            setRpcClientFetch(mockFetch);
 
-            expect(mockGetFile).toHaveBeenCalledWith("doc-test");
-            expect(result.success).toBe(true);
-            expect(result.data?.content).toBe("# Hello World");
+            try {
+                const result = await getFile("doc-test");
+
+                expect(capturedRequests).toHaveLength(1);
+                expect(capturedRequests[0].url).toContain("/api/rpc/files/get");
+                expect(capturedRequests[0].method).toBe("POST");
+                expect(capturedRequests[0].body).toEqual({ fileId: "doc-test" });
+
+                expect(result.success).toBe(true);
+                expect(result.data?.content).toBe("# Hello World");
+                expect(result.data?.id).toBe("doc-test");
+            } finally {
+                setRpcClientFetch(undefined);
+            }
         });
 
-        it("verifies updateFileContent sends conditioned expectedVersion and etag through RPC", async () => {
-            mockUpdateFileContent.mockResolvedValueOnce({
-                success: true,
-                version: 2,
-                etag: "w-etag-2",
+        it("verifies genuine updateFileContent sends conditioned expectedVersion and etag through RPC", async () => {
+            const capturedRequests: Array<{ url: string; method: string; body?: unknown }> = [];
+            const mockFetch: typeof fetch = vi.fn(async (input, init) => {
+                const url = typeof input === "string" ? input : (input as Request).url;
+                const method = init?.method ?? "GET";
+                const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+                capturedRequests.push({ url, method, body });
+
+                return new Response(
+                    JSON.stringify({
+                        success: true,
+                        version: 2,
+                        etag: "w-etag-2",
+                    }),
+                    { status: 200, headers: { "Content-Type": "application/json" } }
+                );
             });
 
-            const { updateFileContent } = await import("@/client/rpc-client");
-            const result = await updateFileContent("doc-test", "# Updated Content", {
-                expectedVersion: 1,
-                expectedETag: "w-etag-1",
-            });
+            const { updateFileContent, setRpcClientFetch } = await import("@/client/rpc-client");
+            setRpcClientFetch(mockFetch);
 
-            expect(mockUpdateFileContent).toHaveBeenCalledWith(
-                "doc-test",
-                "# Updated Content",
-                { expectedVersion: 1, expectedETag: "w-etag-1" }
-            );
-            expect(result.success).toBe(true);
-            expect(result.version).toBe(2);
+            try {
+                const result = await updateFileContent("doc-test", "# Updated Content", {
+                    expectedVersion: 1,
+                    expectedETag: "w-etag-1",
+                });
+
+                expect(capturedRequests).toHaveLength(1);
+                expect(capturedRequests[0].url).toContain("/api/rpc/files/update-content");
+                expect(capturedRequests[0].method).toBe("POST");
+                expect(capturedRequests[0].body).toEqual({
+                    fileId: "doc-test",
+                    content: "# Updated Content",
+                    options: {
+                        expectedVersion: 1,
+                        expectedETag: "w-etag-1",
+                    },
+                });
+
+                expect(result.success).toBe(true);
+                expect(result.version).toBe(2);
+                expect(result.etag).toBe("w-etag-2");
+            } finally {
+                setRpcClientFetch(undefined);
+            }
         });
     });
 });

@@ -31,14 +31,15 @@ import { FileContextMenu } from "@/components/files/file-context-menu";
 import { PdfImportModeDialog, PdfExtractionMode } from "@/components/layout/pdf-import-mode-dialog";
 import { PdfCorruptedFontDialog } from "@/components/layout/pdf-corrupted-font-dialog";
 import { isOcrPackageInstalled } from "@/lib/parsers/pdf-ocr-engine";
+import type { WireTimestamp } from "@/types/rpc-contracts";
 
 interface FileItem {
     id: string;
     title: string;
     isFolder: boolean;
     parentFolderId: string | null;
-    updatedAt: Date;
-    deletedAt: Date | null;
+    updatedAt: WireTimestamp;
+    deletedAt: WireTimestamp | null;
     isEncrypted?: boolean;
     userId?: string;
 }
@@ -106,6 +107,8 @@ export function Sidebar({ userId }: SidebarProps = {}) {
                 const { buildFileTree } = await import('@/lib/utils/file-tree');
                 const treeData = buildFileTree(result.data);
                 setFiles(treeData);
+            } else if (!result.success) {
+                console.warn("[Sidebar] Failed to load files:", result.error);
             }
         } catch (error) {
             console.error("Failed to load files:", error);
@@ -120,6 +123,8 @@ export function Sidebar({ userId }: SidebarProps = {}) {
             const result = await getDeletedFiles();
             if (result.success && result.data) {
                 setDeletedFiles(result.data);
+            } else if (!result.success) {
+                console.warn("[Sidebar] Failed to load deleted files:", result.error);
             }
         } catch (error) {
             console.error("Failed to load deleted files:", error);
@@ -135,7 +140,7 @@ export function Sidebar({ userId }: SidebarProps = {}) {
                     title: "Moved Successfully",
                     description: "File has been moved to the new location",
                 });
-                loadFiles(); // Refresh file list
+                await loadFiles(); // Refresh file list
             } else {
                 toast({
                     title: "Move Failed",
@@ -143,10 +148,11 @@ export function Sidebar({ userId }: SidebarProps = {}) {
                     variant: "destructive",
                 });
             }
-        } catch (_error) {
+        } catch (error) {
+            console.error("Failed to move file:", error);
             toast({
                 title: "Move Error",
-                description: "An error occurred while moving the file",
+                description: error instanceof Error ? error.message : "An error occurred while moving the file",
                 variant: "destructive",
             });
         }
@@ -154,21 +160,51 @@ export function Sidebar({ userId }: SidebarProps = {}) {
 
     async function handleCreateFile() {
         const title = prompt("Enter file name:");
-        if (!title) return;
+        if (!title || !title.trim()) return;
 
-        const result = await createFile(title, null, false);
-        if (result.success) {
-            loadFiles();
+        try {
+            const result = await createFile(title.trim(), null, false);
+            if (result.success) {
+                await loadFiles();
+            } else {
+                toast({
+                    title: "Create File Failed",
+                    description: result.error || "Failed to create file",
+                    variant: "destructive",
+                });
+            }
+        } catch (error) {
+            console.error("Failed to create file:", error);
+            toast({
+                title: "Create File Error",
+                description: error instanceof Error ? error.message : "An error occurred while creating the file",
+                variant: "destructive",
+            });
         }
     }
 
     async function handleCreateFolder() {
         const title = prompt("Enter folder name:");
-        if (!title) return;
+        if (!title || !title.trim()) return;
 
-        const result = await createFile(title, null, true);
-        if (result.success) {
-            loadFiles();
+        try {
+            const result = await createFile(title.trim(), null, true);
+            if (result.success) {
+                await loadFiles();
+            } else {
+                toast({
+                    title: "Create Folder Failed",
+                    description: result.error || "Failed to create folder",
+                    variant: "destructive",
+                });
+            }
+        } catch (error) {
+            console.error("Failed to create folder:", error);
+            toast({
+                title: "Create Folder Error",
+                description: error instanceof Error ? error.message : "An error occurred while creating the folder",
+                variant: "destructive",
+            });
         }
     }
 
@@ -852,7 +888,7 @@ function TrashFileRow({
     );
 }
 
-function formatDate(date: Date): string {
+function formatDate(date: WireTimestamp): string {
     const now = new Date();
     const diffMs = now.getTime() - new Date(date).getTime();
     const diffDays = Math.floor(diffMs / 86400000);

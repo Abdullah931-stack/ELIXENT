@@ -23,7 +23,7 @@
 import 'fake-indexeddb/auto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { validateMarkdownSyntaxIntegrity } from '@/lib/sync/syntax-validator';
-import { generateEncryptedETagSync, generateETagSync } from '@/lib/sync/etag-generator';
+import { generateEncryptedETagSync, generateETagSync } from '@/lib/sync/etag-generator.server';
 import { sessionKeyStore } from '@/lib/sync/session-key-store';
 import { cryptoWorkerBridge } from '@/lib/sync/crypto-worker-bridge';
 import { createIndexedDBManager, type IndexedDBManager } from '@/lib/sync/indexeddb';

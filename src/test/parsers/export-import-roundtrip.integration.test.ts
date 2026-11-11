@@ -17,7 +17,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { exportContent } from "@/lib/exporters";
 import { importFile } from "@/server/actions/import-file";
 import { validateFileBuffer } from "@/lib/parsers/file-validator";
-import { normalizeMarkdownSource, generateETagSync } from "@/lib/sync/etag-generator";
+import { normalizeMarkdownSource, generateETagSync } from "@/lib/sync/etag-generator.server";
 
 const TEST_USER_ID = "20202020-2020-2020-2020-202020202020";
 

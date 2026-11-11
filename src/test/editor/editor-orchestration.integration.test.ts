@@ -17,24 +17,17 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { EditorAdapter } from "@/components/editor/markdown/types";
 import { useEditorOrchestrator } from "@/hooks/use-editor-orchestrator";
 import { sessionKeyStore } from "@/lib/sync/session-key-store";
-import * as fileOps from "@/server/actions/files";
+import * as fileOps from "@/client/rpc-client";
 
-// Mock server actions
-vi.mock("@/server/actions/files", () => ({
+// Mock typed RPC client directly at module boundary
+vi.mock("@/client/rpc-client", () => ({
     getFile: vi.fn(),
     updateFileContent: vi.fn(),
     toggleFileEncryption: vi.fn(),
     renameFile: vi.fn(),
     deleteFile: vi.fn(),
+    getUserVaultProfile: vi.fn().mockResolvedValue({ success: false, data: null }),
 }));
-
-vi.mock("@/client/rpc-client", async () => {
-    const mockedFileOps = await import("@/server/actions/files");
-    return {
-        ...mockedFileOps,
-        getUserVaultProfile: vi.fn().mockResolvedValue({ success: false, data: null }),
-    };
-});
 
 // Manual-callback Agent SSE consumer mock
 import type { StreamHandlerOptions } from "@/lib/ai/stream-handler";
