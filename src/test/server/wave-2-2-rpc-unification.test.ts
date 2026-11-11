@@ -2,10 +2,10 @@
  * Wave 2.2 Integration & Architectural Invariant Test Suite
  *
  * Verifies:
- * 1. Unified Hono RPC Client Typing & Dynamic Action Bridge (`src/client/rpc-client.ts`):
+ * 1. Unified Hono RPC Client Typing & Transport Injection (`src/client/rpc-client.ts`):
  *    - `createElixentRpcClient` factory instantiation with true Hono typing `hc<AppType>`.
- *    - `setRpcClientFetch` transport state toggling and cached client invalidation.
- *    - `isVitestBridgeActive` dynamic status across Vitest and custom HTTP transport modes.
+ *    - `setRpcClientFetch` / `getRpcClientFetch` transport override and restoration.
+ *    - Confirmation that legacy `isVitestBridgeActive` is removed from `src/client/rpc-client.ts`.
  *    - Custom fetch routing through typed facades (`createFile`, `getCreditBalance`, `signOut`).
  * 2. DEF-11: Cookie Invalidation & Invariant Enforcement (`src/server/routes/rpc.routes.ts`):
  *    - `hono/cookie` `deleteCookie` adoption with `expires: new Date(0)`.
@@ -31,7 +31,7 @@ import {
 import {
   createElixentRpcClient,
   setRpcClientFetch,
-  isVitestBridgeActive,
+  getRpcClientFetch,
   createFile,
   getCreditBalance,
   signOut as clientSignOut,
@@ -121,10 +121,11 @@ vi.mock("@/server/db", () => {
 
 describe("Wave 2.2 Integration & Architectural Invariants", () => {
   const TEST_USER = { id: "user-w22-test", email: "test-w22@elixent.ai" };
+  const defaultTransportFetch = getRpcClientFetch();
 
   beforeEach(() => {
     vi.clearAllMocks();
-    setRpcClientFetch(undefined);
+    setRpcClientFetch(defaultTransportFetch);
     mockUpdateSetCalls.length = 0;
     mockGetUser.mockResolvedValue(TEST_USER);
     mockFileLimit.mockResolvedValue({
@@ -137,7 +138,7 @@ describe("Wave 2.2 Integration & Architectural Invariants", () => {
   });
 
   afterEach(() => {
-    setRpcClientFetch(undefined);
+    setRpcClientFetch(defaultTransportFetch);
   });
 
   // ==========================================================================
@@ -156,18 +157,20 @@ describe("Wave 2.2 Integration & Architectural Invariants", () => {
       expect(client.api.rpc.billing).toBeDefined();
     });
 
-    it("toggles isVitestBridgeActive state when setRpcClientFetch is used", () => {
-      // In vitest environment without custom fetch -> bridge is active
-      expect(isVitestBridgeActive()).toBe(true);
+    it("confirms isVitestBridgeActive is purged and supports setRpcClientFetch override and restoration", async () => {
+      const rpcClientMod = await import("@/client/rpc-client");
+      expect("isVitestBridgeActive" in rpcClientMod).toBe(false);
+      expect(typeof defaultTransportFetch).toBe("function");
+      expect(getRpcClientFetch()).toBe(defaultTransportFetch);
 
-      // Injected custom fetch -> bridge becomes inactive (HTTP mode)
+      // Injected custom fetch overrides the active transport
       const dummyFetch: typeof fetch = vi.fn();
       setRpcClientFetch(dummyFetch);
-      expect(isVitestBridgeActive()).toBe(false);
+      expect(getRpcClientFetch()).toBe(dummyFetch);
 
-      // Resetting custom fetch -> bridge becomes active again
-      setRpcClientFetch(undefined);
-      expect(isVitestBridgeActive()).toBe(true);
+      // Restoring default loopback transport cleanly clears custom override
+      setRpcClientFetch(defaultTransportFetch);
+      expect(getRpcClientFetch()).toBe(defaultTransportFetch);
     });
 
     it("dispatches typed HTTP requests via custom fetch when bridge is deactivated", async () => {
@@ -262,7 +265,7 @@ describe("Wave 2.2 Integration & Architectural Invariants", () => {
   // ==========================================================================
 
   describe("2. DEF-11: Cookie Invalidation Invariant (POST /api/rpc/auth/sign-out)", () => {
-    it("deletes all sb-* cookies with expires: new Date(0), Path=/, HttpOnly, and SameSite=Lax", async () => {
+    it("deletes all sb-* cookies with RFC 6265 dual deletion (HttpOnly + non-HttpOnly), expires: new Date(0), Path=/, and SameSite=Lax", async () => {
       const cookieHeader = [
         "sb-access-token=access_jwt_123",
         "sb-refresh-token=refresh_jwt_456",
@@ -284,18 +287,25 @@ describe("Wave 2.2 Integration & Architectural Invariants", () => {
       expect(mockServerSignOut).toHaveBeenCalledTimes(1);
 
       const setCookieHeaders = res.headers.getSetCookie();
-      expect(setCookieHeaders.length).toBe(5);
+      expect(setCookieHeaders.length).toBe(10);
 
+      const expectedSbCookies = [
+        "sb-access-token",
+        "sb-refresh-token",
+        "sb-auth-token-code-verifier",
+        "sb-chunked.0",
+        "sb-chunked.1",
+      ];
       const deletedCookieNames = setCookieHeaders.map((c) => c.split("=")[0].trim());
-      expect(deletedCookieNames).toEqual(
-        expect.arrayContaining([
-          "sb-access-token",
-          "sb-refresh-token",
-          "sb-auth-token-code-verifier",
-          "sb-chunked.0",
-          "sb-chunked.1",
-        ])
-      );
+      expect(deletedCookieNames).toEqual(expect.arrayContaining(expectedSbCookies));
+
+      // Verify dual deletion (1 HttpOnly + 1 client-accessible non-HttpOnly) per sb-* cookie
+      for (const name of expectedSbCookies) {
+        const cookieHeaders = setCookieHeaders.filter((c) => c.startsWith(`${name}=`));
+        expect(cookieHeaders).toHaveLength(2);
+        expect(cookieHeaders.filter((c) => c.includes("HttpOnly"))).toHaveLength(1);
+        expect(cookieHeaders.filter((c) => !c.includes("HttpOnly"))).toHaveLength(1);
+      }
 
       // Verify that non-sb-* cookies are preserved
       expect(deletedCookieNames).not.toContain("user_theme");
@@ -306,7 +316,6 @@ describe("Wave 2.2 Integration & Architectural Invariants", () => {
         expect(cookieStr).toContain("Max-Age=0");
         expect(cookieStr).toContain("Expires=Thu, 01 Jan 1970 00:00:00 GMT");
         expect(cookieStr).toContain("Path=/");
-        expect(cookieStr).toContain("HttpOnly");
         expect(cookieStr).toMatch(/SameSite=Lax/i);
       }
     });
@@ -337,7 +346,7 @@ describe("Wave 2.2 Integration & Architectural Invariants", () => {
       expect(resMalformed.headers.getSetCookie()).toHaveLength(0);
     });
 
-    it("deletes cookie when cookie name is exactly 'sb-' prefix boundary", async () => {
+    it("deletes cookie when cookie name is exactly 'sb-' prefix boundary using dual deletion", async () => {
       const res = await rpcRoutes.request("/auth/sign-out", {
         method: "POST",
         headers: { Cookie: "sb-=some_token_boundary; valid=true" },
@@ -345,8 +354,10 @@ describe("Wave 2.2 Integration & Architectural Invariants", () => {
 
       expect(res.status).toBe(200);
       const setCookies = res.headers.getSetCookie();
-      expect(setCookies).toHaveLength(1);
-      expect(setCookies[0].startsWith("sb-=")).toBe(true);
+      expect(setCookies).toHaveLength(2);
+      expect(setCookies.every((c) => c.startsWith("sb-="))).toBe(true);
+      expect(setCookies.filter((c) => c.includes("HttpOnly"))).toHaveLength(1);
+      expect(setCookies.filter((c) => !c.includes("HttpOnly"))).toHaveLength(1);
     });
   });
 
@@ -355,8 +366,9 @@ describe("Wave 2.2 Integration & Architectural Invariants", () => {
   // ==========================================================================
 
   describe("3. Simplified RouteParams & Parameter Precedence in filesApiRoutes", () => {
+    const TARGET_FILE_ID = "550e8400-e29b-41d4-a716-446655440888";
     const mockFileRecord = {
-      id: "target-file-888",
+      id: TARGET_FILE_ID,
       userId: TEST_USER.id,
       title: "Target File",
       content: "Sample content",
@@ -374,13 +386,13 @@ describe("Wave 2.2 Integration & Architectural Invariants", () => {
     it("resolves file ID using flat Hono context `{ id }`", async () => {
       mockFindFirst.mockResolvedValueOnce(mockFileRecord);
 
-      const context: RouteParams = { id: "target-file-888" };
+      const context: RouteParams = { id: TARGET_FILE_ID };
       const req = new Request("http://localhost/api/files/ignored-path");
       const res = await handleFileByIdGet(req, context);
 
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.id).toBe("target-file-888");
+      expect(body.id).toBe(TARGET_FILE_ID);
       expect(mockFindFirst).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.anything(),
@@ -391,48 +403,48 @@ describe("Wave 2.2 Integration & Architectural Invariants", () => {
     it("resolves file ID using nested context `{ params: { id } }` for compatibility", async () => {
       mockFindFirst.mockResolvedValueOnce(mockFileRecord);
 
-      const context: RouteParams = { params: { id: "target-file-888" } };
+      const context: RouteParams = { params: { id: TARGET_FILE_ID } };
       const req = new Request("http://localhost/api/files/ignored-path");
       const res = await handleFileByIdGet(req, context);
 
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.id).toBe("target-file-888");
+      expect(body.id).toBe(TARGET_FILE_ID);
     });
 
     it("resolves file ID using direct string context", async () => {
       mockFindFirst.mockResolvedValueOnce(mockFileRecord);
 
       const req = new Request("http://localhost/api/files/ignored-path");
-      const res = await handleFileByIdGet(req, "target-file-888" as any);
+      const res = await handleFileByIdGet(req, TARGET_FILE_ID as any);
 
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.id).toBe("target-file-888");
+      expect(body.id).toBe(TARGET_FILE_ID);
     });
 
     it("falls back to URL pathname extraction when context is omitted or empty", async () => {
       mockFindFirst.mockResolvedValueOnce(mockFileRecord);
 
-      // Context omitted -> extracts target-file-888 from path
-      const req = new Request("http://localhost/api/files/target-file-888");
+      // Context omitted -> extracts file ID from path
+      const req = new Request(`http://localhost/api/files/${TARGET_FILE_ID}`);
       const res = await handleFileByIdGet(req);
 
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.id).toBe("target-file-888");
+      expect(body.id).toBe(TARGET_FILE_ID);
     });
 
     it("routes GET /:id through filesApiRoutes Hono dispatcher and binds params", async () => {
       mockFindFirst.mockResolvedValueOnce(mockFileRecord);
 
-      const res = await filesApiRoutes.request("http://localhost/target-file-888", {
+      const res = await filesApiRoutes.request(`http://localhost/${TARGET_FILE_ID}`, {
         method: "GET",
       });
 
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.id).toBe("target-file-888");
+      expect(body.id).toBe(TARGET_FILE_ID);
     });
 
     it("routes PUT /:id through filesApiRoutes Hono dispatcher and executes update", async () => {
@@ -447,7 +459,7 @@ describe("Wave 2.2 Integration & Architectural Invariants", () => {
         },
       ]);
 
-      const res = await filesApiRoutes.request("http://localhost/target-file-888", {
+      const res = await filesApiRoutes.request(`http://localhost/${TARGET_FILE_ID}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -461,7 +473,7 @@ describe("Wave 2.2 Integration & Architectural Invariants", () => {
 
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.id).toBe("target-file-888");
+      expect(body.id).toBe(TARGET_FILE_ID);
       expect(body.version).toBe(2);
       expect(body.etag).toBe("etag_new_2");
     });
@@ -475,7 +487,7 @@ describe("Wave 2.2 Integration & Architectural Invariants", () => {
         },
       ]);
 
-      const res = await filesApiRoutes.request("http://localhost/target-file-888", {
+      const res = await filesApiRoutes.request(`http://localhost/${TARGET_FILE_ID}`, {
         method: "DELETE",
         headers: {
           "If-Match": 'W/"etag_888"',
@@ -485,7 +497,77 @@ describe("Wave 2.2 Integration & Architectural Invariants", () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.success).toBe(true);
-      expect(body.id).toBe("target-file-888");
+      expect(body.id).toBe(TARGET_FILE_ID);
+    });
+
+    it("executes handleFileByIdPut directly with RouteParams context for handler parity", async () => {
+      mockFindFirst.mockResolvedValueOnce(mockFileRecord);
+      mockUpdateReturning.mockResolvedValueOnce([
+        {
+          ...mockFileRecord,
+          content: "Direct PUT content",
+          version: 2,
+          etag: "etag_direct_2",
+          updatedAt: new Date(),
+        },
+      ]);
+
+      const req = new Request(`http://localhost/api/files/${TARGET_FILE_ID}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "If-Match": 'W/"etag_888"',
+        },
+        body: JSON.stringify({
+          content: "Direct PUT content",
+          expectedVersion: 1,
+        }),
+      });
+
+      const res = await handleFileByIdPut(req, { id: TARGET_FILE_ID });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.id).toBe(TARGET_FILE_ID);
+      expect(body.version).toBe(2);
+      expect(body.etag).toBe("etag_direct_2");
+    });
+
+    it("executes handleFileByIdDelete directly with RouteParams context for handler parity", async () => {
+      mockFindFirst.mockResolvedValueOnce(mockFileRecord);
+      mockUpdateReturning.mockResolvedValueOnce([
+        {
+          ...mockFileRecord,
+          deletedAt: new Date(),
+        },
+      ]);
+
+      const req = new Request(`http://localhost/api/files/${TARGET_FILE_ID}`, {
+        method: "DELETE",
+        headers: {
+          "If-Match": 'W/"etag_888"',
+        },
+      });
+
+      const res = await handleFileByIdDelete(req, { id: TARGET_FILE_ID });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.success).toBe(true);
+      expect(body.id).toBe(TARGET_FILE_ID);
+    });
+
+    it("verifies filesApiRoutes is an instance of Hono and can be mounted onto parent Hono router", async () => {
+      expect(filesApiRoutes).toBeInstanceOf(Hono);
+
+      mockFindFirst.mockResolvedValueOnce(mockFileRecord);
+
+      const parentApp = new Hono().route("/api/files", filesApiRoutes);
+      const res = await parentApp.request(`http://localhost/api/files/${TARGET_FILE_ID}`, {
+        method: "GET",
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.id).toBe(TARGET_FILE_ID);
     });
   });
 });

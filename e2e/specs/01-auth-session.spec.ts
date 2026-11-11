@@ -43,8 +43,21 @@ test.describe("Scenario 1: Authentication & Session Lifecycle", () => {
         await page.waitForURL("/", { timeout: 15000 });
 
         // Attempting to visit /workspace after logout must redirect to /login
-        await page.goto("/workspace");
+        const workspaceNavResponse = await page.goto("/workspace");
         await page.waitForLoadState("domcontentloaded");
         await expect(page).toHaveURL(/\/login/);
+
+        // Strengthened Assertion (FIND-01): Assert that the initial server response is HTTP 303 See Other
+        // and redirect location header contains ?redirectTo=%2Fworkspace
+        const redirectRequest = workspaceNavResponse?.request().redirectedFrom();
+        if (redirectRequest) {
+            const redirectResponse = await redirectRequest.response();
+            expect(redirectResponse?.status()).toBe(303);
+            expect(redirectResponse?.headers()["location"]).toContain("?redirectTo=%2Fworkspace");
+        } else {
+            const directCheck = await page.request.get("/workspace", { maxRedirects: 0 });
+            expect(directCheck.status()).toBe(303);
+            expect(directCheck.headers()["location"]).toContain("?redirectTo=%2Fworkspace");
+        }
     });
 });

@@ -11,7 +11,8 @@
  *   2. Zero URL-encoded whitespace/parentheses (%20, %28, %29); standard Markdown
  *      angle bracket paths `<...>` must be used instead.
  *   3. Zero dummy/placeholder link destinations (e.g. `url`).
- *   4. Proper isolation: skips fenced code blocks and inline code spans.
+ *   4. Zero non-portable local 'file://' URIs or OS drive-letter paths.
+ *   5. Proper isolation: skips fenced code blocks and inline code spans.
  *
  * Usage:
  *   node scripts/check-markdown-links.mjs
@@ -159,7 +160,33 @@ function runLinkCheck() {
 
         checkedLocal++;
 
-        // 3. Reject Windows-style backslashes in markdown paths
+        // 3. Reject non-portable 'file://' URIs (forbidden by DOCUMENTATION_GUIDELINES.md §8)
+        if (/^file:/i.test(dest)) {
+          violations.push({
+            file: relFile,
+            line: lineIndex + 1,
+            text: linkText,
+            dest,
+            reason:
+              "Absolute 'file://' URI is forbidden per DOCUMENTATION_GUIDELINES.md section 8. Use a repository-relative path ('./' or '../').",
+          });
+          continue;
+        }
+
+        // 4. Reject Windows drive-letter paths (e.g., D:\... or d:/...)
+        if (/^[a-zA-Z]:/.test(dest)) {
+          violations.push({
+            file: relFile,
+            line: lineIndex + 1,
+            text: linkText,
+            dest,
+            reason:
+              "Windows drive-letter absolute path detected in link destination. Use a repository-relative path ('./' or '../').",
+          });
+          continue;
+        }
+
+        // 5. Reject Windows-style backslashes in markdown paths
         if (dest.includes("\\")) {
           violations.push({
             file: relFile,
@@ -171,7 +198,7 @@ function runLinkCheck() {
           continue;
         }
 
-        // 4. Reject URL-encoded characters in markdown paths (%20, %28, %29)
+        // 6. Reject URL-encoded characters in markdown paths (%20, %28, %29)
         if (dest.includes("%20") || dest.includes("%28") || dest.includes("%29")) {
           violations.push({
             file: relFile,
@@ -183,7 +210,7 @@ function runLinkCheck() {
           continue;
         }
 
-        // 5. Reject dummy placeholder destinations
+        // 7. Reject dummy placeholder destinations
         if (dest === "url" || dest === "placeholder") {
           violations.push({
             file: relFile,
@@ -195,7 +222,7 @@ function runLinkCheck() {
           continue;
         }
 
-        // 6. Separate target path from hash anchor and query parameters
+        // 8. Separate target path from hash anchor and query parameters
         const [cleanPathWithQuery] = dest.split("#");
         const [targetPath] = cleanPathWithQuery.split("?");
         if (!targetPath) {
@@ -203,7 +230,7 @@ function runLinkCheck() {
           continue;
         }
 
-        // 7. Resolve local file/directory path
+        // 9. Resolve local file/directory path
         let resolvedTarget;
         if (targetPath.startsWith("/")) {
           resolvedTarget = path.join(ROOT, targetPath);
@@ -211,7 +238,7 @@ function runLinkCheck() {
           resolvedTarget = path.resolve(path.dirname(absFile), targetPath);
         }
 
-        // 8. Prevent path traversal outside repository root
+        // 10. Prevent path traversal outside repository root
         const relToRoot = path.relative(ROOT, resolvedTarget);
         if (relToRoot.startsWith("..") || path.isAbsolute(relToRoot)) {
           violations.push({
