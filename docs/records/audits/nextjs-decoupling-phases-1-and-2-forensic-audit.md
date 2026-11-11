@@ -58,14 +58,14 @@ The audit identified **8 technical findings**, categorized by severity, exact so
 
 | Defect ID | Affected Module & File | Verified Line Range | Engineering Classification | Final Severity | Wave 3 Verification Status |
 | :---: | :--- | :---: | :--- | :---: | :--- |
-| **DEF-A01** | [`src/client/rpc-client.ts`](file:///d:/Projects/ELIXENT/src/client/rpc-client.ts) | **75–81, 136–148, 202–604** | Architectural Regression / In-Test Surrogation | **CRITICAL** | **True Positive (Architectural Shim)**: Circumvents Hono RPC in all Vitest runs via dynamic specifiers, masking wire serialization and validation defects. |
-| **DEF-A02** | [`vite.config.ts`](file:///d:/Projects/ELIXENT/vite.config.ts) | **204–257** | Compiler Guard Logical Defect | **HIGH** | **True Positive (Compiler Guard Gap)**: Boundary guard exhibits 5 logical bypasses permitting client imports of server code. |
-| **DEF-A03** | [`src/lib/stripe/index.ts`](file:///d:/Projects/ELIXENT/src/lib/stripe/index.ts)<br>[`src/server/services/billing-service.ts`](file:///d:/Projects/ELIXENT/src/server/services/billing-service.ts) | **80–88, 99–100** (Stripe)<br>**469–477** (Billing) | Code Smell / Operational Fragility | **MEDIUM** | **Contextual / Code Smell**: Substring match on localhost, double slash (`//dashboard`), and silent localhost fallback in production. |
-| **DEF-A04** | [`src/lib/supabase/client.ts`](file:///d:/Projects/ELIXENT/src/lib/supabase/client.ts)<br>[`src/lib/supabase/server.ts`](file:///d:/Projects/ELIXENT/src/lib/supabase/server.ts) | **4–20** (Client)<br>**8–9, 30–60** (Server) | Violation of Fail-Closed Principle | **MEDIUM** | **Contextual**: Necessary for hermetic unit testing, but dangerous as an unconditioned fallback in production cloud runtimes. |
-| **DEF-A05** | [`src/server/middleware/session-middleware.ts`](file:///d:/Projects/ELIXENT/src/server/middleware/session-middleware.ts)<br>[`src/server/app.ts`](file:///d:/Projects/ELIXENT/src/server/app.ts) | **232–253, 304–307** (Mid)<br>**12** (App) | RFC Non-Compliance / Resource Waste | **LOW** | **Theoretical Gap / Low Operational Impact**: UI routes do not receive POST; missing static matcher wastes allocations on static assets. |
-| **DEF-A06** | [`src/server/routes/rpc.routes.ts`](file:///d:/Projects/ELIXENT/src/server/routes/rpc.routes.ts) | **383–397** | Session Teardown Defect | **MEDIUM** | **True Positive (Session Teardown Gap)**: Enforcing `httpOnly: true` and root path fails to evict client-set browser cookies (RFC 6265). |
-| **DEF-A07** | [`src/types/rpc-contracts.ts`](file:///d:/Projects/ELIXENT/src/types/rpc-contracts.ts) | **34–36, 60** | Wire Serialization Inconsistency | **MEDIUM** | **True Positive (Type-Wire Divergence)**: Leaking `Date` and `bigint` into JSON contracts contradicts wire behavior and client runtime expectations. |
-| **DEF-A08** | [`src/server/routes/files-api.routes.ts`](file:///d:/Projects/ELIXENT/src/server/routes/files-api.routes.ts) | **48–65, 863–867** | Route Parameter Fallback Hazard | **LOW** | **True Positive (Edge Case)**: Trailing slash URL fallback extracts `"files"` as fileId when invoked without route context. |
+| **DEF-A01** | [`src/client/rpc-client.ts`](../../../src/client/rpc-client.ts) | **75–81, 136–148, 202–604** | Architectural Regression / In-Test Surrogation | **CRITICAL** | **True Positive (Architectural Shim)**: Circumvents Hono RPC in all Vitest runs via dynamic specifiers, masking wire serialization and validation defects. |
+| **DEF-A02** | [`vite.config.ts`](../../../vite.config.ts) | **204–257** | Compiler Guard Logical Defect | **HIGH** | **True Positive (Compiler Guard Gap)**: Boundary guard exhibits 5 logical bypasses permitting client imports of server code. |
+| **DEF-A03** | [`src/lib/stripe/index.ts`](../../../src/lib/stripe/index.ts)<br>[`src/server/services/billing-service.ts`](../../../src/server/services/billing-service.ts) | **80–88, 99–100** (Stripe)<br>**469–477** (Billing) | Code Smell / Operational Fragility | **MEDIUM** | **Contextual / Code Smell**: Substring match on localhost, double slash (`//dashboard`), and silent localhost fallback in production. |
+| **DEF-A04** | [`src/lib/supabase/client.ts`](../../../src/lib/supabase/client.ts)<br>[`src/lib/supabase/server.ts`](../../../src/lib/supabase/server.ts) | **4–20** (Client)<br>**8–9, 30–60** (Server) | Violation of Fail-Closed Principle | **MEDIUM** | **Contextual**: Necessary for hermetic unit testing, but dangerous as an unconditioned fallback in production cloud runtimes. |
+| **DEF-A05** | [`src/server/middleware/session-middleware.ts`](../../../src/server/middleware/session-middleware.ts)<br>[`src/server/app.ts`](../../../src/server/app.ts) | **232–253, 304–307** (Mid)<br>**12** (App) | RFC Non-Compliance / Resource Waste | **LOW** | **Theoretical Gap / Low Operational Impact**: UI routes do not receive POST; missing static matcher wastes allocations on static assets. |
+| **DEF-A06** | [`src/server/routes/rpc.routes.ts`](../../../src/server/routes/rpc.routes.ts) | **383–397** | Session Teardown Defect | **MEDIUM** | **True Positive (Session Teardown Gap)**: Enforcing `httpOnly: true` and root path fails to evict client-set browser cookies (RFC 6265). |
+| **DEF-A07** | [`src/types/rpc-contracts.ts`](../../../src/types/rpc-contracts.ts) | **34–36, 60** | Wire Serialization Inconsistency | **MEDIUM** | **True Positive (Type-Wire Divergence)**: Leaking `Date` and `bigint` into JSON contracts contradicts wire behavior and client runtime expectations. |
+| **DEF-A08** | [`src/server/routes/files-api.routes.ts`](../../../src/server/routes/files-api.routes.ts) | **48–65, 863–867** | Route Parameter Fallback Hazard | **LOW** | **True Positive (Edge Case)**: Trailing slash URL fallback extracts `"files"` as fileId when invoked without route context. |
 
 ---
 
@@ -73,7 +73,7 @@ The audit identified **8 technical findings**, categorized by severity, exact so
 
 ### 3.1. DEF-A01: Architectural Regression & Test Surrogation in `src/client/rpc-client.ts`
 
-- **Affected File:** [`src/client/rpc-client.ts`](file:///d:/Projects/ELIXENT/src/client/rpc-client.ts)
+- **Affected File:** [`src/client/rpc-client.ts`](../../../src/client/rpc-client.ts)
 - **Verified Source Lines:**
   - Lines `75–81`: `isVitestBridgeActive()` implementation:
     ```typescript
@@ -120,7 +120,7 @@ The audit identified **8 technical findings**, categorized by severity, exact so
 
 ### 3.2. DEF-A02: Fail-Closed Boundary Guard Logical Bypasses in `vite.config.ts`
 
-- **Affected File:** [`vite.config.ts`](file:///d:/Projects/ELIXENT/vite.config.ts)
+- **Affected File:** [`vite.config.ts`](../../../vite.config.ts)
 - **Verified Source Lines:** Lines `204–257` (`clientServerBoundaryGuardPlugin`):
   - Lines `226–227`: Importer plane check:
     ```typescript
@@ -153,9 +153,9 @@ The audit identified **8 technical findings**, categorized by severity, exact so
 ### 3.3. DEF-A03: Stripe URL Protocol Downgrade, Double Slash & Disparity
 
 - **Affected Files:**
-  - [`src/lib/stripe/index.ts`](file:///d:/Projects/ELIXENT/src/lib/stripe/index.ts) (Lines `80–88`, `99–100`)
-  - [`src/server/services/billing-service.ts`](file:///d:/Projects/ELIXENT/src/server/services/billing-service.ts) (Lines `469–477`)
-  - Test Suite: [`src/test/server/stripe-index.test.ts`](file:///d:/Projects/ELIXENT/src/test/server/stripe-index.test.ts) (Lines `112–129`)
+  - [`src/lib/stripe/index.ts`](../../../src/lib/stripe/index.ts) (Lines `80–88`, `99–100`)
+  - [`src/server/services/billing-service.ts`](../../../src/server/services/billing-service.ts) (Lines `469–477`)
+  - Test Suite: [`src/test/server/stripe-index.test.ts`](../../../src/test/server/stripe-index.test.ts) (Lines `112–129`)
 - **Verified Code Citation:**
   ```typescript
   // src/lib/stripe/index.ts:80-87
@@ -186,8 +186,8 @@ The audit identified **8 technical findings**, categorized by severity, exact so
 ### 3.4. DEF-A04: Unconditional Silent Fallback to `placeholder.supabase.co`
 
 - **Affected Files:**
-  - Client: [`src/lib/supabase/client.ts`](file:///d:/Projects/ELIXENT/src/lib/supabase/client.ts) (Lines `4–20`)
-  - Server: [`src/lib/supabase/server.ts`](file:///d:/Projects/ELIXENT/src/lib/supabase/server.ts) (Lines `8–9`, `30–60`)
+  - Client: [`src/lib/supabase/client.ts`](../../../src/lib/supabase/client.ts) (Lines `4–20`)
+  - Server: [`src/lib/supabase/server.ts`](../../../src/lib/supabase/server.ts) (Lines `8–9`, `30–60`)
 - **Verified Code Citation:**
   ```typescript
   // src/lib/supabase/client.ts:15-20
@@ -214,8 +214,8 @@ The audit identified **8 technical findings**, categorized by severity, exact so
 ### 3.5. DEF-A05: RFC 9110 Method Inversion & Missing Static Asset Bypass in Middleware
 
 - **Affected Files:**
-  - [`src/server/middleware/session-middleware.ts`](file:///d:/Projects/ELIXENT/src/server/middleware/session-middleware.ts) (Lines `232–253`, `304–307`)
-  - [`src/server/app.ts`](file:///d:/Projects/ELIXENT/src/server/app.ts) (Line `12`)
+  - [`src/server/middleware/session-middleware.ts`](../../../src/server/middleware/session-middleware.ts) (Lines `232–253`, `304–307`)
+  - [`src/server/app.ts`](../../../src/server/app.ts) (Line `12`)
 - **Verified Code Citation:**
   ```typescript
   // src/server/middleware/session-middleware.ts:233-250
@@ -260,7 +260,7 @@ The audit identified **8 technical findings**, categorized by severity, exact so
 
 ### 3.6. DEF-A06: Incomplete Cookie Teardown & RFC 6265 Non-Compliance in `rpc.routes.ts`
 
-- **Affected File:** [`src/server/routes/rpc.routes.ts`](file:///d:/Projects/ELIXENT/src/server/routes/rpc.routes.ts) (Lines `383–397`)
+- **Affected File:** [`src/server/routes/rpc.routes.ts`](../../../src/server/routes/rpc.routes.ts) (Lines `383–397`)
 - **Verified Code Citation:**
   ```typescript
   .post("/auth/sign-out", async (c) => {
@@ -291,8 +291,8 @@ The audit identified **8 technical findings**, categorized by severity, exact so
 ### 3.7. DEF-A07: Date & BigInt Wire Serialization Gaps in `src/types/rpc-contracts.ts`
 
 - **Affected Files:**
-  - [`src/types/rpc-contracts.ts`](file:///d:/Projects/ELIXENT/src/types/rpc-contracts.ts) (Lines `34–36`, `49–50`, `60`)
-  - [`src/server/routes/rpc.routes.ts`](file:///d:/Projects/ELIXENT/src/server/routes/rpc.routes.ts) (Line `430`)
+  - [`src/types/rpc-contracts.ts`](../../../src/types/rpc-contracts.ts) (Lines `34–36`, `49–50`, `60`)
+  - [`src/server/routes/rpc.routes.ts`](../../../src/server/routes/rpc.routes.ts) (Line `430`)
 - **Verified Code Citation:**
   ```typescript
   // src/types/rpc-contracts.ts:34-36
@@ -318,7 +318,7 @@ The audit identified **8 technical findings**, categorized by severity, exact so
 
 ### 3.8. DEF-A08: Trailing Slash File Identifier Fallback Hazard in `files-api.routes.ts`
 
-- **Affected File:** [`src/server/routes/files-api.routes.ts`](file:///d:/Projects/ELIXENT/src/server/routes/files-api.routes.ts) (Lines `48–65`, `863–867`)
+- **Affected File:** [`src/server/routes/files-api.routes.ts`](../../../src/server/routes/files-api.routes.ts) (Lines `48–65`, `863–867`)
 - **Verified Code Citation:**
   ```typescript
   function resolveFileId(

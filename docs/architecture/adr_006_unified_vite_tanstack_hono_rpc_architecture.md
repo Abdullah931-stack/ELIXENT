@@ -4,7 +4,7 @@
 | :--- | :--- |
 | **ADR Identifier** | `ADR-006` (`ELIXENT-ADR-006`) |
 | **Classification** | `STANDALONE ARCHITECTURAL DECISION RECORD (ADR)` |
-| **Version & Status** | `v1.0 — Accepted` |
+| **Version & Status** | `v1.1 — Accepted & Hardened (Phase 2.5 Boundary & RPC Amendment)` |
 | **Supersedes / Amends** | Amends Cloud Runtime Framework specification in [01_architecture_vision_and_adrs.md](./01_architecture_vision_and_adrs.md) (§1.1 & §2) |
 | **Governing Execution Plan** | [elixent-framework-migration-execution-plan.md](../records/plans/elixent-framework-migration-execution-plan.md) (`ELIXENT-FRAMEWORK-MIGRATION-PLAN-v1.1`) |
 | **Affected Repository Scope** | `src/server/**`, `src/client/**`, `src/hooks/**`, `src/components/**`, `vite.config.ts`, `playwright.config.ts`, `vitest*.config.mts` |
@@ -74,7 +74,7 @@ flowchart LR
    - Migrate all 8 REST/SSE API routes (`src/app/api/**`) and `/auth/callback` into modular Hono routers under `src/server/routes/*.routes.ts` using standard Web `Request`, `Response`, and `ReadableStream` APIs without Next.js response compression buffering (`Chunk Buffering`).
    - Decouple all 7 modules in `src/server/actions/*.ts` from `"use server"`, `next/cache`, `next/headers`, and `next/navigation`, and mount them (alongside `/api/rpc/billing/credit-balance`) on `src/server/routes/rpc.routes.ts` validated via `@hono/zod-validator` and exported as `export type AppType = typeof app` from `src/server/app.ts`.
 3. **Zero-Cost Injectable Transport Seam (`CustomFetchFn` in `src/client/rpc-client.ts`):**
-   - Expose `createElixentRpcClient(baseUrl = "", customFetch?: typeof fetch)` wrapping `hc<AppType>(baseUrl, { fetch: customFetch ?? globalThis.fetch })`.
+   - Expose `createElixentRpcClient(baseUrl = "", customFetch?: typeof fetch)` and `setRpcClientFetch` / `getRpcClientFetch` wrapping `hc<AppType>(baseUrl, { fetch: customFetch ?? activeFetch ?? globalThis.fetch })` cleanly with zero runtime server imports (only type-erased `import type { AppType }`). All 26 exported RPC facades route deterministically through `getRpcClient().api.rpc...`; in-memory `Vitest` loopback routing (`vitestLoopbackFetch`) is injected externally from `vitest.setup.ts` (`DEF-A01`).
    - Preserve $100\%$ of existing domain logic in `src/core/**` and `src/lib/**` (`0%` modification across `23,250+` lines) and $100\%$ of component logic in `src/components/**` (`9,293` lines), achieving **`87.0%` zero-rewrite codebase portability** with only **`13.0%` mechanical transport adaptation**.
 
 ## 3. Evaluated Alternatives & Rejection Rationales
@@ -105,5 +105,5 @@ The following variable-isolated benchmarks hold database (`PostgreSQL`), cache (
 ## 5. Consequences, Invariants & Migration Trigger
 
 1. **Elimination of SSE Chunk Buffering:** Streaming agent updates and `Multi-Hunk Ghost` previews from `POST /api/agent/stream` (`src/server/routes/agent.routes.ts`) pass directly over Web `ReadableStream` without Next.js compression layer buffering.
-2. **Complete Removal of Legacy Next.js Artifacts (Completed & Verified in Phase 6):** `src/app/**`, `src/proxy.ts`, `src/server/empty.ts`, `next.config.ts`, `import "server-only"`, and the `next` / `eslint-config-next` packages have been permanently removed from the repository, with 100% of test suites and CI pipelines aligned to pure Web-standard primitives.
+2. **Complete Removal of Legacy Next.js Artifacts & Hermetic Client/Server Boundary (`DEF-A01`, `DEF-A02`):** `src/app/**`, `src/proxy.ts`, `src/server/empty.ts`, `next.config.ts`, `import "server-only"`, and the `next` / `eslint-config-next` packages are permanently removed. In `Phase 2.5`, split dynamic path bridges and Vitest loopback loaders were purged from `src/client/rpc-client.ts`, and `vite.config.ts` enforces zero-bypass isolation via canonical path anchoring (`isWithinDirectory`), `transform`-phase `@vite-ignore`/dynamic server import scanning in `clientServerBoundaryGuardPlugin`, and Vite 6 `environments.client.define["process.env"] = {}` (strictly isolated from SSR dev middleware and `Vitest`).
 3. **Migration Trigger (When to Revisit):** Revisit the pure SPA presentation model only if future public-facing marketing or community template pages require dynamic per-request server-side HTML rendering (`SSR`) for search-engine crawlers that cannot be satisfied by build-time static pre-rendering (`Vite SSG`).

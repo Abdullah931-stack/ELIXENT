@@ -126,6 +126,14 @@ export function reduceSubscriptionState(
 export function isTerminalSubscriptionStatus(status: SubscriptionStatus): boolean;
 ```
 
+#### Application Return URL Hardening (`src/lib/config/app-url.ts` / Phase 2.5)
+Checkout (`createCheckoutSession` in `src/lib/stripe/index.ts`) and Billing Portal (`BillingService.createCustomerPortalSession` in `src/server/services/billing-service.ts`) construct return/success/cancel URLs exclusively via `getAppBaseUrl()` and `resolveAppUrl(path?)`:
+- **Environment Precedence:** `APP_URL` > `VITE_APP_URL` (legacy `NEXT_PUBLIC_APP_URL` removed); defaults to `http://localhost:3000` (matching `src/lib/config/app-url.ts#L8`) solely in non-production environments when both variables are unset.
+- **Production HTTPS Fail-Fast:** Throws if `NODE_ENV === "production"` and no trusted base URL is configured, or if a non-HTTPS base URL is supplied.
+- **Loopback HTTP Restriction:** Non-production `http:` origins are restricted strictly to exact loopback hosts (`localhost`, `127.0.0.1`, `[::1]`).
+- **Redirect & Template Safety:** Rejects backslashes, `//` protocol-relative paths, explicit schemes, ASCII control characters, and cross-origin resolution escapes while preserving literal Stripe `{CHECKOUT_SESSION_ID}` substitution tokens via sentinel encoding/restoration.
+- **Same-Origin Return URL Enforcement (`resolveSameOriginAppUrl`):** Billing portal sessions (`BillingService.createCustomerPortalSession`) validate caller-supplied `returnUrl` parameters via `resolveSameOriginAppUrl(inputUrl)`. This strictly enforces that return targets match the canonical application base URL origin and HTTPS security policy, rejecting cross-origin open redirects, protocol downgrades, credentials, and directory traversal escapes while cleanly resolving relative paths.
+
 **Core Invariants:**
 - **Terminal State Freeze:** Subscriptions in terminal `canceled` or `incomplete_expired` state freeze out-of-order or replayed `customer.subscription.updated` events with `action: 'ignored_stale'`.
 - **Payment Privilege Coupling:** Only genuine `active` and `trialing` statuses retain paid tiers. Unpaid checkouts fail-closed with `action: 'noop'`.

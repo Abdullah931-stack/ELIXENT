@@ -20,7 +20,7 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-140%20Suites%20·%202540%2F2540%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 2540 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-143%20Suites%20·%202937%2F2937%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 2937 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-21%20Suites%20·%20105%2F105%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 105 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
@@ -143,7 +143,7 @@ _For the full comparative trade-off matrix, complexity analysis, and quantitativ
 | **Styling & Design System**   | Tailwind CSS 4 · Radix UI Primitives · Lucide Icons          | Dark Glassmorphism, tailored typography, and accessible UI controls                                          |
 | **Markdown Editor & Bidi**    | Standalone CodeMirror 6 (`MarkdownEditor` & `EditorAdapter`) | Live AST preview decorations, line-level Bidi isolation, LTR code block lock                                 |
 | **Database & ORM**            | PostgreSQL (Neon Cloud / Local) · Drizzle ORM                | Smart Hybrid DB Client (`neon-http` / `pg.Pool`), Migrations 0001–0010 (`src/lib/db/migrations/`)            |
-| **Authentication & Proxy**    | Supabase Auth SSR · Hono Session Middleware (`src/server/middleware/session-middleware.ts`) | Deep-link preservation, session renewal, and protected route gating                                          |
+| **Authentication & Proxy**    | Supabase Auth SSR · Hono Session Middleware (`src/server/middleware/session-middleware.ts`) | Static fast-path bypass, test-only placeholders, `401` mutations / `303` navs, RFC 6265 dual sign-out clear, 2500ms watchdog |
 | **Offline Synchronization**   | Custom Engine · IndexedDB (`textai_db_${userId}`)            | 3-Way Merge, ETag optimistic locks (HTTP 412), Bounded Queue, GC, DLQ                                        |
 | **AI LLM Engine**             | Google Gemini SDK (`@google/generative-ai`)                  | NDJSON streaming, 2-phase quota reservation, 3-state circuit breaker                                         |
 | **Client-Side Cryptography**  | Web Crypto API · Web Workers · BIP-39 · WebAuthn PRF         | PBKDF2-SHA256 600K worker, AES-GCM-256, hardware biometric trust, memory wiping                              |
@@ -163,7 +163,7 @@ lugx/
 │       └── cron.yml               # Scheduled maintenance workflow (Daily 03:00 UTC & Quota sweepers)
 ├── docs/                          # Comprehensive technical documentation & governance
 │   ├── README.md                  # Master structural map and documentation index
-│   ├── CHANGELOG.md               # Versioned engineering changelog (Elixent v0.1.0 to v0.17.0; archived LUGX v1.0.0–v1.46.3)
+│   ├── CHANGELOG.md               # Versioned engineering changelog (Elixent v0.1.0 to v0.20.1; archived LUGX v1.0.0–v1.46.3)
 │   ├── TECHNICAL_DEBT_REGISTER.md # Living register of accepted debts and resolution history
 │   ├── DOCUMENTATION_GUIDELINES.md# Rules for authoring, linking, and updating documentation
 │   ├── Plans/                     # Active technical execution plans (ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md)
@@ -180,7 +180,7 @@ lugx/
 │   │   ├── main.tsx               # Client DOM entrypoint (StrictMode mount, QueryClient, TanStack RouterProvider)
 │   │   ├── navigation.ts          # Unified navigation adapter (SPA router vs window.location fallback)
 │   │   ├── router.tsx             # Type-safe TanStack route tree & query client provider
-│   │   ├── rpc-client.ts          # Transport-injectable typed Hono RPC client (hc<AppType>)
+│   │   ├── rpc-client.ts          # Transport-injectable typed Hono RPC client (hc<AppType>; zero server imports)
 │   │   └── styles/globals.css     # Client design tokens, Dark Glassmorphism, and Tailwind utilities
 │   ├── components/                # Modular React UI components
 │   │   ├── editor/                # Toolbar, direction menu, search-replace, streaming ghost widget
@@ -192,6 +192,7 @@ lugx/
 │   ├── hooks/                     # Custom React hooks (useSync, useEditorOrchestrator, useAIStream, useVault)
 │   ├── lib/
 │   │   ├── ai/                    # Vercel AI SDK v7 gateway client, stream handler, and key rotation
+│   │   ├── config/                # Centralized fail-fast app URL resolution & SSRF/redirect guards (app-url.ts)
 │   │   ├── db/                    # Drizzle schema, Smart Hybrid Client, and transactional runner
 │   │   │   └── migrations/        # Versioned Drizzle SQL migrations (0001–0010)
 │   │   ├── exporters/             # Pure Markdown and Plain Text file export strategies
@@ -219,9 +220,9 @@ lugx/
 │   │   ├── infrastructure/        # Rate limiting, cron jobs, log sanitizer, and DB health tests
 │   │   ├── api/                   # REST route handlers and Stripe webhook live tests
 │   │   └── ...                    # Root harness (test-db.ts, test-db-guard.ts, db.setup.ts, load-test-env.ts)
-│   └── types/                     # Shared TypeScript interfaces and ambient declarations
+│   └── types/                     # Shared zero-dependency RPC wire DTOs (rpc-contracts.ts) and ambient declarations
 ├── index.html                     # Vite 6 SPA HTML entrypoint
-├── vite.config.ts                 # Vite 6 build configuration & proxy mapping
+├── vite.config.ts                 # Vite 6 Environments config, fail-closed client/server boundary guard & Hono dev proxy
 ├── vitest.config.mts              # Default unit/contract test runner (isolated, fast feedback)
 ├── vitest.constants.mts           # Single source of truth for LIVE test suite registration
 ├── vitest.live.config.mts         # LIVE integration test runner (isolated Neon test branch)
@@ -310,7 +311,7 @@ npm run start
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 140 | 2540 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 143 | 2937 | 100% ✅ |
 | **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 105 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
@@ -325,7 +326,7 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).               |
 
 ```bash
-# Execute unit/contract test suites (140 test files, 2540 tests)
+# Execute unit/contract test suites (143 test files, 2937 tests)
 npm run test
 
 # Execute live database integration test suites on isolated Neon branch (21 test files, 105 tests)
@@ -769,7 +770,7 @@ To connect the autonomous agent core with the human editor, Elixent Phase 11 int
 - **Architectural Agent Chat Panel (`src/components/agent/chat-panel.tsx`):** Slide-out workspace drawer displaying real-time 7-stage graph execution progress, accordion-based ATMS master decision ledger viewer (`selectionRationale`, `evaluatedAlternatives`), active ghost hunk review controls, and session lifecycle management.
 - **Human-in-the-Loop Clarification Gate (`src/components/agent/hitl-question-card.tsx`):** Renders diagnostic question batches emitted by Stage 6 interrupts (`pure_interrupt_node`) with real-time `ClarificationResponseSchema` validation before stateless graph resumption via `POST /api/agent/stream`.
 - **Incremental Sync Contract & 412 Elimination (`src/hooks/use-editor-orchestrator.ts` & `src/hooks/use-ai-stream.ts`):** Replaces legacy client-side `commitAIFileOperation` with an immediate local IndexedDB write (`localRevision += 1`) and debounced server autosave via `useEditorAutosave` (800ms–1000ms), coalescing rapid ghost hunk acceptances into a single server save and eliminating self-inflicted 412 conflicts.
-- **Real-Time Credit Balance Presentation (`src/client/routes/dashboard-page.tsx` & `src/client/routes/account-page.tsx`):** Replaced legacy word-count quota displays with server-authoritative micro-credit balance tracking via `getUserCreditBalance(user.id)` and tier visual progress indicators.
+- **Real-Time Credit Balance Presentation (`src/client/routes/dashboard-page.tsx` & `src/client/routes/account-page.tsx`):** Replaced legacy word-count quota displays with server-authoritative micro-credit balance tracking via `getCreditBalance()` (`@/client/rpc-client` -> `GET /api/rpc/billing/credit-balance`) and tier visual progress indicators.
 - **Final Purge of Legacy 5-Operation Modules & Full Test Migration (Phase 12 / `v0.12.0`):** Permanently deleted all 7 legacy 5-operation modules (`api/ai/stream/route.ts`, `pending-operation-store.ts`, `preview-buffer.ts`, `prompts.ts`, `quota-settlement-reducer.ts`, `ai-commit.ts`, `ai-ops.ts`), cleaned `models.config.json`, `tiers.config.ts`, `ai/client.ts`, and `ai-contracts.ts`, and migrated all unit, live, and E2E test suites to `/api/agent/stream`, `ai-settlement-service.ts`, and `MultiHunkGhostState`.
 
 ---
@@ -779,7 +780,7 @@ To connect the autonomous agent core with the human editor, Elixent Phase 11 int
 | Security Domain                  | Technical Implementation                                                        | Security Property Enforced                                                                                                                                                                                       |
 | -------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | **Content Model Security**       | Pure UTF-8 Markdown strings & AST token decorations                             | Zero HTML storage, zero `dangerouslySetInnerHTML`, total elimination of stored XSS vectors.                                                                                                                      |
-| **Authentication & Proxy**       | Hono Session Middleware (`src/server/middleware/session-middleware.ts`) with Supabase SSR | Route protection on `/workspace`, `/dashboard`, `/account` with Fast-Path public route bypass, 2500ms AbortSignal watchdog timeout against Chromium socket exhaustion (TD-12), and deep-link query preservation. |
+| **Authentication & Proxy**       | Hono Session Middleware (`src/server/middleware/session-middleware.ts`) with Supabase SSR | Protected routes (`/workspace`, `/dashboard`, `/account`), non-`/api/` static fast-path, test-only placeholders, `401` mutations / `303` navs, RFC 6265 dual `sb-*` sign-out clearing, 2500ms AbortSignal watchdog |
 | **Brute-Force & Rate Limiting**  | Sliding window rate limiting on Upstash Redis                                   | Per-user and per-endpoint sliding window limits on Auth, Sync, and AI routes.                                                                                                                                    |
 | **Distributed Tracing**          | `X-Correlation-ID` UUID v4 header propagation with CRLF sanitization (`[^\w-]`) | Eliminates HTTP response splitting, header injection, and isolates distributed incidents.                                                                                                                        |
 | **Telemetry & Log Sanitization** | Denylist pattern masking with token-boundary regex (`(^                         | [^a-zA-Z0-9_])`)                                                                                                                                                                                                 | Eliminates false positives while guaranteeing zero plaintext secret, PIN, or seed leakage. |

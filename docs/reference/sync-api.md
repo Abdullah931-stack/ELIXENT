@@ -266,6 +266,7 @@ Error bodies are structured JSON produced by the handlers; all error responses i
 
 | Status | Actual response body | Trigger |
 |--------|----------------------|---------|
+| 400 | `{ "error": "Invalid or missing file ID", "correlationId": "<uuid>" }` | Empty/whitespace ID, dot segments (`.` / `..`), embedded `/` or `\`, multi-segment `/api/files/:id/extra`, malformed `%`-encoding, or reserved route segments (`api`, `files`, `sync`, `upload`) (`resolveFileId`) |
 | 400 | `{ "error": "Encrypted files require valid encryptionMetadata with an IV", "correlationId": "<uuid>" }` | PUT on encrypted file without valid `encryptionMetadata.iv` |
 | 400 | `{ "error": "<validation message>", "correlationId": "<uuid>" }` | Invalid request parameters or updating a folder's content |
 | 401 | `{ "error": "Authentication required", "correlationId": "<uuid>" }` | Missing/expired server session |
@@ -527,7 +528,7 @@ The sync system implements a deterministic Three-Way Merge protocol to resolve c
 
 ## Zero-Knowledge Vault Server Actions & Hono RPC Endpoints
 
-> **Architecture Note:** As part of the Web-Standard Framework Migration (Phase 3 & Phase 4), all server actions in `src/server/actions/*` are fully decoupled from Next.js runtime dependencies, stripped of transitional `"use server"` directives, and mounted as end-to-end typed Hono RPC routes under `/api/rpc/*` (`src/server/routes/rpc.routes.ts`). All client hooks (`useEditorOrchestrator`, `useEditorConflict`, `useSync`) and UI components (`Sidebar`, `FileContextMenu`, `FolderPickerModal`, `FileTreeItem`, and Vault modals) invoke file and vault operations exclusively via `@/client/rpc-client` (`hc<AppType>`), with internal navigation routed through `AppLink` (`src/components/ui/app-link.tsx`). All `"use client"` directives have been permanently stripped.
+> **Architecture Note:** All server actions in `src/server/actions/*` are decoupled from Next.js runtime dependencies and mounted as end-to-end typed Hono RPC routes under `/api/rpc/*` (`src/server/routes/rpc.routes.ts`). All client hooks (`useEditorOrchestrator`, `useEditorConflict`, `useSync`), routes, and UI components (`Sidebar`, `FileContextMenu`, `FolderPickerModal`, `FileTreeItem`, Vault modals) invoke operations exclusively via `@/client/rpc-client` (`hc<AppType>` with zero server imports or dynamic loopback loaders; Vitest injects `vitestLoopbackFetch` externally in `vitest.setup.ts`). Wire DTOs (`src/types/rpc-contracts.ts`) model JSON-serialized dates via `WireTimestamp` (`string | Date`) and `UserProfileRecord.creditBalanceMicro` as a decimal `string`. Internal navigation routes through `AppLink` (`src/components/ui/app-link.tsx`).
 
 ### 1. `toggleFileEncryption` (`src/server/actions/files.ts`, RPC: `POST /api/rpc/files/toggle-encryption`)
 Converts a file between plaintext and encrypted states:

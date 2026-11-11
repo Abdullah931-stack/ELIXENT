@@ -205,8 +205,8 @@ When a payment or subscription renewal event is received in `src/server/routes/s
 
 In Phase 11, user-facing quota displays were migrated from legacy word-count metrics to the server-authoritative micro-credit architecture:
 
-- **Dashboard (`src/client/routes/dashboard-page.tsx`):** Calls `getUserCreditBalance(user.id)` to fetch the authoritative `creditBalanceMicro` and displays available credits alongside a percentage progress bar derived from `TIER_LIMITS[tier].creditsDisplay`.
-- **Account (`src/client/routes/account-page.tsx`):** Replaces legacy `getRemainingQuota` displays with real-time micro-credit balance visualization, breakdown by tier, and direct Stripe top-up / upgrade actions.
+- **Dashboard (`src/client/routes/dashboard-page.tsx`):** Calls `getCreditBalance()` from `@/client/rpc-client` (`GET /api/rpc/billing/credit-balance`, backed server-side by `getUserCreditBalance(user.id)`) to fetch the authoritative `creditBalanceMicro` as a decimal string converted to `bigint` and displays available credits alongside a percentage progress bar derived from `TIER_LIMITS[tier].creditsDisplay`.
+- **Account (`src/client/routes/account-page.tsx`):** Fetches the live micro-credit balance via `getCreditBalance()` from `@/client/rpc-client` (`GET /api/rpc/billing/credit-balance`), replacing legacy `getRemainingQuota` word counters with tier breakdown and direct Stripe top-up / upgrade actions.
 
 ## 6. Standard Verification and Acceptance Criteria (Verification & Acceptance Criteria)
 

@@ -240,5 +240,5 @@ Phase 11 completes the end-to-end integration of the autonomous architectural ag
 - **Incremental Sync Contract (412 Elimination):** Ghost hunk acceptance writes directly to local IndexedDB (`localRevision += 1`) and notifies `useEditorAutosave`, coalescing multiple rapid hunk acceptances into a single debounced server save (800ms–1000ms) with matching `expectedVersion`, permanently eliminating self-inflicted 412 Precondition Failed conflicts.
 
 ### 9.4 Real-Time Micro-Credit Balance Presentation
-- **Server-Authoritative Ledger:** Dashboard (`src/client/routes/dashboard-page.tsx`) and Account (`src/client/routes/account-page.tsx`) pages read live balances via `getUserCreditBalance(user.id)` from `src/server/services/ai-settlement-service.ts`.
+- **Server-Authoritative Ledger:** Dashboard (`src/client/routes/dashboard-page.tsx`) and Account (`src/client/routes/account-page.tsx`) pages read live balances via `getCreditBalance()` from `@/client/rpc-client`, invoking `GET /api/rpc/billing/credit-balance` backed server-side by `getUserCreditBalance(user.id)` in `src/server/services/ai-settlement-service.ts`.
 - **Percentage Available Indicator:** Renders visual progress bar comparing `currentCredits` against `TIER_LIMITS[tier].creditsDisplay`.

@@ -4,6 +4,57 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.20.2] - 2026-11-11 (Phase 2.6: Post-Audit Architectural, Security & Contract Remediation)
+
+### Core Server Security & URL Hardening (`FIND-01`, `FIND-04`, `FIND-08`)
+- **Unified Route Navigation & Cookie Guard (`FIND-01`, `FIND-04`):** Extracted `src/lib/auth/route-guard.ts` exporting pure path normalization, protected route checking, public asset classification, and Supabase auth cookie identification. Replaced regex/substring heuristics in `session-middleware.ts` to block path traversal and case-insensitive bypasses, redirect unauthenticated `GET`/`HEAD` with `303 See Other`, return `401` JSON on mutations/API, and suppress naked cookie appending on sign-out via `clearPendingAuthCookieMutations`.
+- **Fail-Safe App URL & Return URL Resolution (`FIND-08`):** Hardened `resolveAppUrl` against directory traversal escapes, added `resolveSameOriginAppUrl` to validate customer portal return URLs against canonical base URL, and enforced `APP_URL` > `VITE_APP_URL` precedence across auth callbacks and Stripe checkout.
+
+### File API, Sync Crypto Separation & Encryption Hardening (`FIND-03`, `FIND-06`, `FIND-09`)
+- **Dual-Plane Crypto Boundary Separation (`FIND-03`):** Extracted `src/lib/sync/etag-generator.server.ts` for Node `node:crypto` synchronous operations (`generateETagSync`, `generateEncryptedETagSync`), while `etag-generator.ts` and `sync/index.ts` use pure Web Crypto (`crypto.subtle`), eradicating bundler crypto leaks in client bundles.
+- **Encrypted Copy & Create Invariants (`FIND-06`):** Hardened `copyFile` to require non-empty encrypted content and valid encryption metadata when copying encrypted records, and prevented empty-whitespace file titles in `createFile`.
+- **REST Path Resolution & Type Coercion Hardening (`FIND-09`):** Hardened `resolveFileId` in `files-api.routes.ts` before rate limiting, rejecting null bodies, arrays, unencrypted PUT overrides without replacement content, and non-integer DELETE query parameters.
+
+### Vite AST Bundler Boundary & Hono RPC Router (`FIND-01`, `FIND-02`, `FIND-07`, `FIND-10`)
+- **AST-Based Bundler Boundary Guard (`FIND-02`):** Enhanced `clientServerBoundaryGuardPlugin` in `vite.config.ts` using Acorn AST parsing to detect all `ImportExpression` nodes and server imports in client bundles, with fail-closed load hooks.
+- **Dev Proxy Navigation Guard (`FIND-01`):** Routed dev proxy navigation requests through `isGuardedPageNavigation` with preserved redirect status (303) and cookies.
+- **Pure RPC Contracts & BigInt Eradication (`FIND-07`):** Aligned Zod schemas in `rpc-contracts.ts` and `rpc.routes.ts`, returning pure JSON DTOs with decimal-string balances (`creditBalanceMicro: string`) and eliminating all BigInt serialization crashes.
+- **Complete Router Test Coverage (`FIND-10`):** Extended `app-dispatcher.test.ts` to test all 7 server routers (including `/api/rpc`).
+
+### UI Resilience, Unified Transport & E2E Verification (`FIND-05`, `FIND-07`)
+- **Unified RPC Client Fetch Transport (`FIND-07`):** Unified all fetch sites in `stream-handler.ts`, `upgrade-button.tsx`, `sync-pull-engine.ts`, `sync-queue-worker.ts`, and `sync-encrypted-conflict-store.ts` through `(getRpcClientFetch() ?? globalThis.fetch)`.
+- **Client Route Error Resilience (`FIND-07`):** Added `getCreditBalanceResult()` in `rpc-client.ts`; protected dashboard and account pages from kicking users out on transient 5xx/network errors.
+- **Real Loopback Integration Wiring (`FIND-05`):** Replaced circular mock assertions in `ui-rpc-integration.test.tsx` with genuine loopback integration testing in `ui-rpc-wiring.integration.test.ts`.
+- **Playwright E2E 303 Verification (`FIND-01`):** Verified HTTP 303 redirects and session lifecycle in `e2e/specs/01-auth-session.spec.ts`.
+
+### Baseline Verification
+- **Verification Baseline:** 143 unit suites (2,937 passing tests), 21 live suites (105 passing tests on Neon branch `ep-dark-queen-ahbapy5k-pooler`), 14 E2E specs (15 journeys), 0 TS errors, 0 ESLint errors/warnings.
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/nextjs-decoupling/phase-02-6-remediation-of-p1-p2-p25-audit-findings.md`](./records/closures/nextjs-decoupling/phase-02-6-remediation-of-p1-p2-p25-audit-findings.md).
+
+---
+
+## [0.20.1] - 2026-11-11 (Phase 2.5: Purge Vitest Bridge, Fix Boundary Leaks & Harden RPC Architecture)
+
+### Client-Server Boundary & RPC Transport Purification (`DEF-A01`, `DEF-A02`)
+- **Purged In-Process Vitest Bridge from `src/client/rpc-client.ts` (`DEF-A01`):** Permanently deleted `isVitestBridgeActive()`, `vitestLoopbackFetch`, `@vite-ignore` dynamic loaders, and all 7 split dynamic path expressions (`"@" + "/server/..."`). Routed all 26 exported facades exclusively through `getRpcClient().api.rpc...` (`hc<AppType>`) with Zod/error normalization (`parseRpcResult`) and exposed `getRpcClientFetch()`.
+- **Externalized Test Transport & Suite Decoupling (`DEF-A01`):** Relocated lazy `vitestLoopbackFetch` injection into `vitest.setup.ts` (`rpcMod.setRpcClientFetch(vitestLoopbackFetch)`), decoupled 7 legacy unit/integration suites onto `@/client/rpc-client`, realigned `rpc-client.test.ts` & `wave-2-2-rpc-unification.test.ts`, and pre-warmed `@/server/app` in `editor-orchestration.live.test.ts`.
+- **Rebuilt Fail-Closed Vite Boundary Guard (`DEF-A02`):** Hardened `clientServerBoundaryGuardPlugin` in `vite.config.ts` with canonical `path.resolve` + lowercase normalization (`toCanonicalPosix`), query/hash & `/@fs/` stripping, alias traversal blocking, exact project-root `isWithinDirectory` anchors, and `transform`-phase `esbuild` + `scanDynamicImportsInJs` checks banning `@vite-ignore` and non-literal/dynamic server imports (zero exemptions).
+- **Vite 6 Environment Isolation & Types (`DEF-A02`):** Scoped `process.env: {}` suppression strictly to `environments.client.define` and `optimizeDeps.esbuildOptions.define` (omitted under `VITEST` / `mode === "test"`, preserving SSR dev middleware), and added `"types": ["vite/client", "node"]` to `tsconfig.json`.
+
+### Security, Authentication & URL Hardening (`DEF-A03` – `DEF-A06`, `DEF-A08`)
+- **Centralized Fail-Fast URL Resolver (`DEF-A03`):** Added `src/lib/config/app-url.ts` (`getAppBaseUrl`, `resolveAppUrl`) enforcing `APP_URL` > `VITE_APP_URL` precedence, Fail-Fast production HTTPS validation, loopback-only (`localhost`, `127.0.0.1`, `[::1]`) non-prod HTTP downgrade, open-redirect blocking, and literal `{CHECKOUT_SESSION_ID}` token preservation in `src/lib/stripe/index.ts` and `src/server/services/billing-service.ts`.
+- **Test-Only Supabase Placeholders (`DEF-A04`):** Restricted placeholder credentials strictly to verified test runtimes in `src/lib/supabase/client.ts`, `src/lib/supabase/server.ts`, and `src/server/middleware/session-middleware.ts`, and propagated `createClient()` configuration failures cleanly out of `getUser()` and `getSession()`.
+- **RFC 9110 Middleware Gating & Static Fast-Path (`DEF-A05`):** Upgraded `session-middleware.ts` to bypass non-`/api/` static assets (`isStaticAssetPath`) before env/Supabase/cookie cloning, reject unauthenticated protected mutations (`POST`/`PUT`/`PATCH`/`DELETE`), `Accept: application/json`, and `/api/*` with `401 Unauthorized` JSON, and redirect unauthenticated safe `GET`/`HEAD` navigations with `303 See Other`.
+- **RFC 6265 Dual Sign-Out Cookie Clearing (`DEF-A06`):** Hardened `POST /api/rpc/auth/sign-out` in `src/server/routes/rpc.routes.ts` to clear validated Supabase auth cookies (`isSupabaseAuthCookie`) across both `httpOnly: true` and `httpOnly: false`, host-only and valid non-localhost/non-IP domain scopes (`resolveCookieDomain`), honoring `__Host-` `Domain` omission and derived `Secure` attributes.
+- **Path Validation Guard in File API (`DEF-A08`):** Hardened `resolveFileId` (`normalizeFileId`) in `src/server/routes/files-api.routes.ts` to reject empty IDs, dot segments (`.`/`..`), embedded slashes/backslashes, trailing segments, malformed `%`-encoding, and reserved route names (`api`, `files`, `sync`, `upload`) with HTTP `400`.
+
+### Wire Contracts & Closure Verification (`DEF-A07`)
+- **Wire Serialization Types (`DEF-A07`):** Added `WireTimestamp` (`string | Date`) and `UserProfileRecord.creditBalanceMicro: string` in `src/types/rpc-contracts.ts`, aligned `GET /api/rpc/auth/profile` BigInt decimal-string serialization in `rpc.routes.ts`, and updated `FileItem` types in `sidebar.tsx` and `file-tree-item.tsx`.
+- **Verification Baseline:** `140` unit/contract suites (`2,745` passing tests), `21` live suites (`105` passing tests on Neon branch `ep-dark-queen-ahbapy5k-pooler`), `14` E2E specs (`15` journeys), `0` TS errors, `0` ESLint errors, Vite 6 production build green (`2,196` modules).
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/nextjs-decoupling/phase-02-5-purge-vitest-bridge-fix-boundary-leaks-and-harden-rpc.md`](./records/closures/nextjs-decoupling/phase-02-5-purge-vitest-bridge-fix-boundary-leaks-and-harden-rpc.md).
+
+---
+
 ## [0.20.0] - 2026-11-10 (Phase 2: Purge Next.js Middleware Relics, Turbopack Facades & Unify Hono RPC Contracts)
 
 ### Session Middleware Purification & RFC 9110 Content Negotiation
@@ -16,7 +67,7 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 ### Turbopack Facade Eradication & Server Action Purification
 - **Purged `signOut(FormData)` Overload (DEF-08):** Removed Next.js `<form action={signOut}>` `FormData` overload and internal branching from `src/server/actions/auth-actions.ts`. Established a single pure signature returning `Promise<{ success: true; redirectUrl: string }>`. Aligned `auth-signout.test.ts` and `auth-actions.unit.test.ts`.
 - **Permanently Deleted `file-ops.ts` Facade (DEF-07):** Removed the legacy Turbopack workaround facade `src/server/actions/file-ops.ts`.
-- **Repointed All 15 Callers:** Re-pointed all 11 unit/mock test suites and all 4 live database integration suites (`cross-user-ownership.test.ts`, `conflict-resolution.integration.test.ts`, `vault-sync.live.test.ts`, `multi-system-lifecycle.live.test.ts`) directly to `@/server/actions/files` and `@/server/actions/folders`.
+- **Repointed All 15 Callers (erratum: 8 unit + 7 live suites):** Re-pointed all 8 unit/mock test suites and all 7 live database integration suites (`cross-user-ownership.test.ts`, `conflict-resolution.integration.test.ts`, `vault-sync.live.test.ts`, `multi-system-lifecycle.live.test.ts`, etc.) directly to `@/server/actions/files` and `@/server/actions/folders`.
 - **Cleaned Residual Next.js JSDocs & Branding:** Replaced `Next.js after()` mentions with `scheduleAfterResponse() (ADR-007 ALS)` in `agent.routes.ts` and `agent-stream-route.test.ts`. Updated JSDoc headers across `import-file.ts`, `vault-actions.ts`, `webhook-dedupe.ts`, and `correlation.ts` to Hono RPC terminology. Updated server entrypoint banner branding from `LUGX` to `ELIXENT`.
 
 ### Shared RPC Contract Extraction & End-to-End Typed Client

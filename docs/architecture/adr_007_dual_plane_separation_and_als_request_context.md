@@ -4,7 +4,7 @@
 | :--- | :--- |
 | **ADR Identifier** | `ADR-007` (`ELIXENT-ADR-007`) |
 | **Classification** | `STANDALONE ARCHITECTURAL DECISION RECORD (ADR)` |
-| **Version & Status** | `v1.0 — Accepted` |
+| **Version & Status** | `v1.1 — Accepted & Hardened (Phase 2.5 Middleware & Wire Contract Amendment)` |
 | **Supersedes / Amends** | Extends [03_workspace_ast_editor_and_vault_integration.md](./03_workspace_ast_editor_and_vault_integration.md) and [04_credit_metering_and_settlement_architecture.md](./04_credit_metering_and_settlement_architecture.md) |
 | **Governing Execution Plan** | [elixent-framework-migration-execution-plan.md](../records/plans/elixent-framework-migration-execution-plan.md) (`ELIXENT-FRAMEWORK-MIGRATION-PLAN-v1.1`) |
 | **Affected Repository Scope** | `src/server/context/request-context.ts`, `src/server/middleware/session-middleware.ts`, `src/lib/supabase/server.ts`, `src/server/routes/rpc.routes.ts`, `src/core/workspace/provider.ts` |
@@ -30,9 +30,11 @@ Following the adoption of **`Vite 6 SPA + TanStack Router + Hono RPC`** in [ADR-
 2. **Zero-Signature-Change Resolution (`resolveCookiesAndHeaders` & `scheduleAfterResponse`):**
    - `src/lib/supabase/server.ts` and `src/server/actions/auth-actions.ts` call `resolveCookiesAndHeaders()` to access the request's cookies and headers without taking a framework context parameter.
    - `src/server/routes/agent.routes.ts` calls `scheduleAfterResponse(task)` from `src/server/context/request-context.ts` to execute `flushPendingSettlementsToPostgres(user.id)` non-blockingly after the SSE stream closes, exposing a registerable test listener (`onScheduleAfterResponse`) for deterministic unit test verification.
-3. **Preservation of Edge Proxy Security Invariants in `sessionMiddleware`:**
-   - Preserve OAuth landing code interception (`/?code=...` and `/login?code=...` forwarding `307` to `/auth/callback` with `Set-Cookie` propagation).
-   - Preserve the **Fast-Path Cookie Gate (`TD-12`)**: bypass `supabase.auth.getUser()` on public non-auth routes and on `/login` when no `sb-*` cookie is present.
+3. **Preservation & Hardening of Edge Proxy Security Invariants in `sessionMiddleware` (`DEF-A04`, `DEF-A05`):**
+   - Preserve OAuth landing code interception (`/?code=...` and `/login?code=...` forwarding `307` to `/auth/callback` with `Set-Cookie` propagation) and logged-in `/login` `307` redirection to `/dashboard`.
+   - Short-circuit non-`/api/` static assets (`isStaticAssetPath(pathname)`) via `next()` before env validation, Supabase instantiation, or cookie cloning, while preserving the **Fast-Path Cookie Gate (`TD-12`)** bypassing `supabase.auth.getUser()` on public routes and unauthenticated `/login`.
+   - Enforce RFC 9110 unauthenticated gating on protected paths (`/workspace`, `/account`, `/dashboard`): mutations (`method !== "GET" && method !== "HEAD" && method !== "OPTIONS"`), `Accept: application/json`, and `/api/*` fail closed with `401 Unauthorized` JSON, while safe `GET`/`HEAD` HTML navigations redirect with `303 See Other`.
+   - Restrict placeholder Supabase credentials strictly to verified test runtimes (`NODE_ENV === "test"` or truthy `VITEST`) so production/dev misconfigurations fail fast cleanly in `sessionMiddleware` and `supabase/server.ts`.
    - Preserve the **`AbortSignal.timeout(2500)`** watchdog race around `supabase.auth.getUser()`.
 
 ### 2.2. Strict Dual-Plane Contract Separation (`ICloudControlPlane` vs. `IWorkspaceProvider`)
@@ -88,5 +90,5 @@ flowchart TB
 
 ## 5. Consequences, Invariants & Future Migration Trigger
 
-1. **Zero Server-Only Imports in Client Route Views:** By exposing `/api/rpc/billing/credit-balance` on the Hono RPC control plane (`src/server/routes/rpc.routes.ts`) and `getCreditBalance()` in `src/client/rpc-client.ts`, client views (`dashboard-page.tsx`, `account-page.tsx`) never import `@/server/services/ai-settlement-service` or `@/lib/supabase/server`.
+1. **Zero Server-Only Imports & Typed JSON Wire Contracts:** By exposing `/api/rpc/billing/credit-balance` and `/api/rpc/auth/profile` on the Hono RPC control plane (`src/server/routes/rpc.routes.ts`) alongside `getCreditBalance()` and `getUserProfile()` in `src/client/rpc-client.ts`, client views (`dashboard-page.tsx`, `account-page.tsx`) and components (`Sidebar`, `FileTreeItem`) never import server modules and consume ISO/Date `WireTimestamp` values and decimal-string `creditBalanceMicro: string` payloads safely over standard JSON (`DEF-A07`).
 2. **Migration Trigger (When to Activate the Desktop Workspace Provider):** When the `Electron Desktop` milestone is initiated after completing the 6-phase web framework migration, implement `DesktopLocalFsWorkspaceProvider` and pass a routing `CustomFetchFn` into `createElixentRpcClient(baseUrl, customFetch)` that dispatches workspace operations over `Electron IPC / MessagePort` while forwarding all `ICloudControlPlane` endpoints over `HTTPS` to the cloud `Hono` server.
