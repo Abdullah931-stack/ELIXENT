@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { ExternalLink, Loader2 } from 'lucide-react';
+import { getRpcClientFetch } from '@/client/rpc-client';
 
 interface UpgradeButtonProps {
     tier: 'pro' | 'ultra';
@@ -24,7 +25,8 @@ export function UpgradeButton({ tier, currentTier, disabled = false }: UpgradeBu
             setLoading(true);
 
             // Call API to create checkout session
-            const response = await fetch('/api/stripe/create-checkout', {
+            const activeFetch = getRpcClientFetch() ?? globalThis.fetch;
+            const response = await activeFetch('/api/stripe/create-checkout', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

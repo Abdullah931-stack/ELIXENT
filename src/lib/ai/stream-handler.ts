@@ -2,6 +2,7 @@ import {
     parseAgentStreamPayload,
     type AgentStreamRequestPayload,
 } from '@/core/agent/stream-payload';
+import { getRpcClientFetch } from '@/client/rpc-client';
 
 export type { AgentStreamRequestPayload };
 
@@ -428,7 +429,8 @@ export async function consumeAgentStream(options: StreamHandlerOptions): Promise
     try {
         const requestPayload = buildRequestPayload(options);
 
-        const response = await fetch(AGENT_STREAM_ENDPOINT, {
+        const activeFetch = getRpcClientFetch() ?? globalThis.fetch;
+        const response = await activeFetch(AGENT_STREAM_ENDPOINT, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

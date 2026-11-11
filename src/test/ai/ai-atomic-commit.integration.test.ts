@@ -21,7 +21,7 @@ import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import { randomUUID } from "crypto";
-import { generateETagSync } from "@/lib/sync/etag-generator";
+import { generateETagSync } from "@/lib/sync/etag-generator.server";
 import { updateFileContent } from "@/server/actions/files";
 import {
     reserveAIQuota,

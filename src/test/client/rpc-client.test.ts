@@ -2,29 +2,34 @@
  * Comprehensive Unit & Integration Test Suite for Typed RPC Client (`src/client/rpc-client.ts`)
  *
  * Verifies:
- * 1. Factory & Transport State Management:
+ * 1. Factory, Transport State Management & DEF-A01 Purge Invariants:
  *    - `createElixentRpcClient`: returns typed Hono client with custom or default fetch.
- *    - `setRpcClientFetch`: properly updates active transport and invalidates cached defaultClient.
- *    - `isVitestBridgeActive`: returns true in Vitest when no customFetch is active; returns false when customFetch is injected.
- * 2. Deterministic Vitest Action Bridge (Direct Action Invocations):
- *    - When bridge is active, all facades dynamically import and invoke the corresponding server actions directly.
- *    - Files, Folders, Import, Vault, Auth, and Billing actions verified.
- *    - `getCreditBalance`: parses BigInt, returns 0n on unauthenticated session.
- * 3. Injected Custom HTTP Transport (Hono RPC Protocol Dispatch):
- *    - When customFetch is injected, facade calls route via `client.api.rpc...` with proper HTTP methods and JSON/query payloads.
- *    - HTTP method matching: GET vs POST.
- *    - JSON serialization and deserialization.
- *    - `getCreditBalance`: converts JSON stringified balanceMicro to native BigInt; handles 401/error status by returning 0n.
- * 4. End-to-End Loopback Integration (In-Memory HTTP Bridge to Hono app):
- *    - Injects `app.fetch` as the HTTP transport and executes full typed RPC journeys through Hono middleware, routing, and validation.
+ *    - `setRpcClientFetch` / `getRpcClientFetch`: updates active transport, invalidates cached defaultClient,
+ *      and falls back to `globalThis.fetch` when cleared (`undefined`).
+ *    - DEF-A01 Regression: confirms `isVitestBridgeActive` is removed and `src/client/rpc-client.ts` contains
+ *      zero runtime server imports, zero split dynamic paths, and zero `@vite-ignore` directives.
+ * 2. In-Memory Loopback Integration via `vitestLoopbackFetch` (`vitest.setup.ts` -> Hono `app.fetch`):
+ *    - All 26 facades route through Hono HTTP `app.fetch` -> `rpc.routes.ts` (Zod validation + HTTP JSON serialization).
+ *    - Malformed payloads fail at Hono's `zValidator` HTTP boundary without invoking server actions.
+ *    - `getCreditBalance`: parses `BigInt(balanceMicro)` on 200 and returns `0n` on HTTP 401.
+ * 3. Injected Custom HTTP Transport (Hono RPC Protocol Dispatch & Error Handling):
+ *    - Routes facades via `client.api.rpc...` with proper HTTP methods and JSON payloads.
+ *    - Handles non-OK HTTP responses (4xx JSON, 400 ZodError JSON, 500 plain text) cleanly.
+ * 4. End-to-End Loopback Wire Round-Trips (`createElixentRpcClient` + `vitestLoopbackFetch`).
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { app } from "@/server/app";
+import { vitestLoopbackFetch } from "../../../vitest.setup";
 import {
   createElixentRpcClient,
   setRpcClientFetch,
-  isVitestBridgeActive,
+  getRpcClientFetch,
+  resolveRpcFetch,
+  getRpcClient,
+  getBaseUrl,
+  parseRpcResult,
   createFile,
   updateFileContent,
   toggleFileEncryption,
@@ -51,10 +56,11 @@ import {
   getUserProfile,
   updateUserProfile,
   getCreditBalance,
+  getCreditBalanceResult,
 } from "@/client/rpc-client";
 
 // ---------------------------------------------------------------------------
-// Hoisted Mock State for Server Actions
+// Hoisted Mock State for Server Boundaries (Verified Behind Hono app.fetch)
 // ---------------------------------------------------------------------------
 
 const {
@@ -171,18 +177,19 @@ vi.mock("@/lib/supabase/server", () => ({
 describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    setRpcClientFetch(undefined);
+    setRpcClientFetch(vitestLoopbackFetch);
   });
 
   afterEach(() => {
-    setRpcClientFetch(undefined);
+    vi.unstubAllGlobals();
+    setRpcClientFetch(vitestLoopbackFetch);
   });
 
   // ==========================================================================
-  // Client Factory & Vitest Bridge Invariants
+  // Factory, Transport Invariants & DEF-A01 Purge Regression
   // ==========================================================================
 
-  describe("Factory & Bridge Invariants", () => {
+  describe("Factory, Transport Invariants & DEF-A01 Purge", () => {
     it("creates a typed RPC client instance with default options", () => {
       const client = createElixentRpcClient();
       expect(client).toBeDefined();
@@ -206,36 +213,162 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
       expect(calledUrl).toContain("https://api.elixent.app/api/rpc/files/list");
     });
 
-    it("manages isVitestBridgeActive state based on activeCustomFetch", () => {
-      expect(isVitestBridgeActive()).toBe(true);
+    it("registers vitestLoopbackFetch by default in Vitest and restores it cleanly", () => {
+      expect(getRpcClientFetch()).toBe(vitestLoopbackFetch);
 
       const dummyFetch = vi.fn() as unknown as typeof fetch;
       setRpcClientFetch(dummyFetch);
-      expect(isVitestBridgeActive()).toBe(false);
+      expect(getRpcClientFetch()).toBe(dummyFetch);
+
+      setRpcClientFetch(vitestLoopbackFetch);
+      expect(getRpcClientFetch()).toBe(vitestLoopbackFetch);
+    });
+
+    it("falls back to globalThis.fetch when custom fetch is cleared via setRpcClientFetch(undefined)", async () => {
+      const mockGlobalFetch = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ success: true, data: { id: "f_global" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+      vi.stubGlobal("fetch", mockGlobalFetch);
+      setRpcClientFetch(undefined);
+
+      expect(getRpcClientFetch()).toBeUndefined();
+      const result = await createFile("Browser.md", null, false);
+
+      expect(result).toEqual({ success: true, data: { id: "f_global" } });
+      expect(mockGlobalFetch).toHaveBeenCalledTimes(1);
+      expect(mockGlobalFetch.mock.calls[0][0].toString()).toContain("/api/rpc/files/create");
+    });
+
+    it("resolves active transport or globalThis.fetch fallback via resolveRpcFetch", () => {
+      expect(resolveRpcFetch()).toBe(vitestLoopbackFetch);
+
+      const customFetch = vi.fn() as unknown as typeof fetch;
+      setRpcClientFetch(customFetch);
+      expect(resolveRpcFetch()).toBe(customFetch);
 
       setRpcClientFetch(undefined);
-      expect(isVitestBridgeActive()).toBe(true);
+      expect(resolveRpcFetch()).toBe(globalThis.fetch);
+    });
+
+    it("honors VITE_APP_URL in getBaseUrl and falls back to window.location.origin or http://localhost:3000", () => {
+      const origEnv = process.env.VITE_APP_URL;
+
+      try {
+        process.env.VITE_APP_URL = "https://custom.elixent.io";
+        expect(getBaseUrl()).toBe("https://custom.elixent.io");
+
+        delete process.env.VITE_APP_URL;
+        const expectedWindowOrigin =
+          typeof window !== "undefined" && window.location?.origin && window.location.origin !== "null"
+            ? window.location.origin
+            : "http://localhost:3000";
+        expect(getBaseUrl()).toBe(expectedWindowOrigin);
+      } finally {
+        if (origEnv !== undefined) {
+          process.env.VITE_APP_URL = origEnv;
+        } else {
+          delete process.env.VITE_APP_URL;
+        }
+      }
+    });
+
+    it("caches client instance by (baseUrl, activeCustomFetch) and invalidates upon setRpcClientFetch", () => {
+      const client1 = getRpcClient();
+      const client2 = getRpcClient();
+      expect(client1).toBe(client2);
+
+      const dummyFetch1 = vi.fn() as unknown as typeof fetch;
+      setRpcClientFetch(dummyFetch1);
+      const client3 = getRpcClient();
+      expect(client3).not.toBe(client1);
+
+      const client4 = getRpcClient();
+      expect(client4).toBe(client3);
+
+      setRpcClientFetch(undefined);
+      const client5 = getRpcClient();
+      expect(client5).not.toBe(client3);
+    });
+
+    it("DEF-A01 regression: purges isVitestBridgeActive, dynamic server imports, and @vite-ignore from src/client/rpc-client.ts", async () => {
+      const rpcClientMod = await import("@/client/rpc-client");
+      expect((rpcClientMod as Record<string, unknown>).isVitestBridgeActive).toBeUndefined();
+
+      const expectedExports = [
+        "createElixentRpcClient",
+        "setRpcClientFetch",
+        "getRpcClientFetch",
+        "resolveRpcFetch",
+        "getRpcClient",
+        "getBaseUrl",
+        "parseRpcResult",
+        "createFile",
+        "updateFileContent",
+        "toggleFileEncryption",
+        "renameFile",
+        "deleteFile",
+        "restoreFile",
+        "copyFile",
+        "moveFile",
+        "importFile",
+        "getFile",
+        "getUserFiles",
+        "getRootFiles",
+        "getDeletedFiles",
+        "getFolderChildren",
+        "getUserVaultProfile",
+        "createUserVaultProfile",
+        "updateVaultPassword",
+        "updateVaultRecoveryEnvelope",
+        "revokeAllTrustedDevices",
+        "updateVaultAISetting",
+        "signInWithGoogle",
+        "signOut",
+        "syncUserToDatabase",
+        "getUserProfile",
+        "updateUserProfile",
+        "getCreditBalance",
+        "getCreditBalanceResult",
+      ];
+      for (const exportName of expectedExports) {
+        expect(typeof (rpcClientMod as Record<string, unknown>)[exportName]).toBe("function");
+      }
+
+      const rpcClientPath = path.resolve(process.cwd(), "src/client/rpc-client.ts");
+      const source = fs.readFileSync(rpcClientPath, "utf-8");
+
+      expect(source).not.toContain("isVitestBridgeActive");
+      expect(source).not.toContain("vitestLoopbackFetch");
+      expect(source).not.toContain("server/actions");
+      expect(source).not.toContain("server/services");
+      expect(source).not.toContain("supabase/server");
+      expect(source).not.toContain("@vite-ignore");
+      expect(source).not.toMatch(/["']@["']\s*\+/);
+      expect(source).not.toMatch(/\bimport\s*\(/);
+
+      // Only allowed server reference is the erased `import type { AppType } from "@/server/app";`
+      const serverMentionLines = source
+        .split(/\r?\n/)
+        .filter((line) => line.includes("@/server") || line.includes("server/"));
+      expect(serverMentionLines).toEqual([
+        'import type { AppType } from "@/server/app";',
+      ]);
     });
   });
 
   // ==========================================================================
-  // In-Memory Loopback Integration (Standard app.fetch Transport)
+  // In-Memory Loopback Integration (vitestLoopbackFetch -> Hono app.fetch)
   // ==========================================================================
 
-  describe("In-Memory Loopback Integration (Standard app.fetch Transport)", () => {
+  describe("In-Memory Loopback Integration (vitestLoopbackFetch -> Hono app.fetch)", () => {
     beforeEach(() => {
       mockServerGetUser.mockResolvedValue({ id: "usr_loopback", email: "loopback@elixent.app" });
-
-      // Wire typed RPC client custom fetch directly to the master Hono app.fetch
-      setRpcClientFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const urlStr = input instanceof URL ? input.toString() : typeof input === "string" ? input : input.url;
-        const absoluteUrl = urlStr.startsWith("http") ? urlStr : `http://localhost${urlStr}`;
-        const req = new Request(absoluteUrl, init);
-        return app.fetch(req);
-      });
     });
 
-    it("delegates files operations through RPC loopback transport", async () => {
+    it("routes files operations through Hono HTTP app.fetch and rpc.routes.ts", async () => {
       mockServerCreateFile.mockResolvedValueOnce({ success: true, data: { id: "f_1" } });
       mockServerUpdateFileContent.mockResolvedValueOnce({ success: true, version: 2 });
       mockServerToggleFileEncryption.mockResolvedValueOnce({ success: true });
@@ -286,7 +419,24 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
       expect(mockServerGetDeletedFiles).toHaveBeenCalledTimes(1);
     });
 
-    it("delegates folder and import operations through RPC loopback transport", async () => {
+    it("enforces Hono Zod validation at HTTP boundary in loopback mode before server actions run", async () => {
+      const invalidCreate = await createFile(undefined as unknown as string, null, false);
+      expect(invalidCreate.success).toBe(false);
+      expect(typeof invalidCreate.error).toBe("string");
+      expect(mockServerCreateFile).not.toHaveBeenCalled();
+
+      const invalidImport = await importFile(
+        "malware.exe",
+        "binary",
+        "exe" as unknown as "txt",
+        null
+      );
+      expect(invalidImport.success).toBe(false);
+      expect(typeof invalidImport.error).toBe("string");
+      expect(mockServerImportFile).not.toHaveBeenCalled();
+    });
+
+    it("routes folder and import operations through Hono HTTP loopback transport", async () => {
       mockServerMoveFile.mockResolvedValueOnce({ success: true });
       mockServerGetFolderChildren.mockResolvedValueOnce({ success: true, data: [] });
       mockServerImportFile.mockResolvedValueOnce({ success: true, fileId: "f_imp_1" });
@@ -301,7 +451,7 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
       expect(mockServerImportFile).toHaveBeenCalledWith("notes.txt", "Sample", "txt", null, undefined);
     });
 
-    it("delegates vault operations through RPC loopback transport", async () => {
+    it("routes vault operations through Hono HTTP loopback transport", async () => {
       mockServerGetUserVaultProfile.mockResolvedValueOnce({ success: true, data: null });
       mockServerCreateUserVaultProfile.mockResolvedValueOnce({ success: true });
       mockServerUpdateVaultPassword.mockResolvedValueOnce({ success: true });
@@ -341,11 +491,14 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
       expect(mockServerUpdateVaultAISetting).toHaveBeenCalledWith(false);
     });
 
-    it("delegates auth operations through RPC loopback transport", async () => {
+    it("routes auth operations through Hono HTTP loopback transport including BigInt JSON serialization", async () => {
       mockServerSignInWithGoogle.mockResolvedValueOnce({ success: true, redirectUrl: "/auth" });
       mockServerSignOut.mockResolvedValueOnce({ success: true, redirectUrl: "/" });
       mockServerSyncUserToDatabase.mockResolvedValueOnce({ success: true });
-      mockServerGetUserProfile.mockResolvedValueOnce({ success: true, data: { id: "usr_1" } });
+      mockServerGetUserProfile.mockResolvedValueOnce({
+        success: true,
+        data: { id: "usr_1", creditBalanceMicro: BigInt(999) },
+      });
       mockServerUpdateUserProfile.mockResolvedValueOnce({ success: true });
 
       await signInWithGoogle("/editor");
@@ -358,14 +511,18 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
       await syncUserToDatabase();
       expect(mockServerSyncUserToDatabase).toHaveBeenCalledTimes(1);
 
-      await getUserProfile();
+      const profileRes = await getUserProfile();
+      expect(profileRes).toEqual({
+        success: true,
+        data: { id: "usr_1", creditBalanceMicro: "999" },
+      });
       expect(mockServerGetUserProfile).toHaveBeenCalledTimes(1);
 
       await updateUserProfile({ displayName: "Elixent User" });
       expect(mockServerUpdateUserProfile).toHaveBeenCalledWith({ displayName: "Elixent User" });
     });
 
-    it("delegates getCreditBalance to getUser + getUserCreditBalance via loopback", async () => {
+    it("routes getCreditBalance through Hono /api/rpc/billing/credit-balance in loopback mode", async () => {
       mockServerGetUser.mockResolvedValueOnce({ id: "usr_active_credit" });
       mockServerGetUserCreditBalance.mockResolvedValueOnce(BigInt(88000000));
 
@@ -374,7 +531,7 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
       expect(mockServerGetUserCreditBalance).toHaveBeenCalledWith("usr_active_credit");
     });
 
-    it("returns 0n from getCreditBalance when session is missing in loopback mode", async () => {
+    it("returns 0n from getCreditBalance when Hono returns HTTP 401 for missing session", async () => {
       mockServerGetUser.mockResolvedValueOnce(null);
 
       const balance = await getCreditBalance();
@@ -507,24 +664,171 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
       expect(reqUrl.toString()).toContain("/api/rpc/auth/sign-out");
       expect(reqInit?.method).toBe("POST");
     });
+
+    it("handles HTTP 413 JSON errors and HTTP 500 plain-text errors gracefully without crashing JSON parsing", async () => {
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: false, error: "File exceeds maximum size limit (10MB)" }),
+          {
+            status: 413,
+            headers: { "Content-Type": "application/json" },
+          }
+        )
+      );
+      const tooLarge = await importFile("huge.txt", "x", "txt", null);
+      expect(tooLarge).toEqual({
+        success: false,
+        error: "File exceeds maximum size limit (10MB)",
+      });
+
+      mockFetch.mockResolvedValueOnce(
+        new Response("Internal Server Error", {
+          status: 500,
+          headers: { "Content-Type": "text/plain" },
+        })
+      );
+      const serverErr = await getFile("f_broken");
+      expect(serverErr).toEqual({
+        success: false,
+        error: "Internal Server Error",
+      });
+    });
+
+    it("handles network failures and stream reading rejections in parseRpcResult returning statusCode: 0", async () => {
+      const networkFailure = Promise.reject(new Error("Failed to fetch"));
+      const result1 = await parseRpcResult(networkFailure);
+      expect(result1).toEqual({
+        success: false,
+        error: "Failed to fetch",
+        statusCode: 0,
+      });
+
+      const badResponse = {
+        ok: true,
+        status: 200,
+        text: () => Promise.reject(new Error("Body stream corrupted")),
+      };
+      const result2 = await parseRpcResult(badResponse);
+      expect(result2).toEqual({
+        success: false,
+        error: "Body stream corrupted",
+        statusCode: 0,
+      });
+    });
+
+    it("surfaces network disconnect cleanly through RPC facade without unhandled promise rejection", async () => {
+      mockFetch.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+      const result = await createFile("Offline.md", null, false);
+      expect(result).toEqual({
+        success: false,
+        error: "Failed to fetch",
+        statusCode: 0,
+      });
+    });
+
+    it("routes getCreditBalanceResult and returns success: true, balanceMicro, and balance on HTTP 200", async () => {
+      const result = await getCreditBalanceResult();
+      expect(result).toEqual({
+        success: true,
+        balanceMicro: "150000000000",
+        balance: BigInt("150000000000"),
+      });
+    });
+
+    it("supports nested data.creditBalanceMicro in getCreditBalanceResult on HTTP 200", async () => {
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            success: true,
+            data: { creditBalanceMicro: "42000000000" },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        )
+      );
+
+      const result = await getCreditBalanceResult();
+      expect(result).toEqual({
+        success: true,
+        balanceMicro: "42000000000",
+        balance: BigInt("42000000000"),
+      });
+    });
+
+    it("returns unauthorized status from getCreditBalanceResult when response is HTTP 401", async () => {
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ success: false, error: "Unauthorized" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+
+      const result = await getCreditBalanceResult();
+      expect(result).toEqual({
+        success: false,
+        status: "unauthorized",
+        statusCode: 401,
+        error: "Unauthorized",
+      });
+    });
+
+    it("returns error status from getCreditBalanceResult when response is HTTP 500", async () => {
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ success: false, error: "Database outage" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+
+      const result = await getCreditBalanceResult();
+      expect(result).toEqual({
+        success: false,
+        status: "error",
+        statusCode: 500,
+        error: "Database outage",
+      });
+    });
+
+    it("returns error status with statusCode: 0 from getCreditBalanceResult when network request throws", async () => {
+      mockFetch.mockRejectedValueOnce(new Error("Connection reset by peer"));
+
+      const result = await getCreditBalanceResult();
+      expect(result).toEqual({
+        success: false,
+        status: "error",
+        statusCode: 0,
+        error: "Connection reset by peer",
+      });
+    });
+
+    it("throws Error from getCreditBalance when server responds with HTTP >= 500", async () => {
+      mockFetch.mockResolvedValueOnce(
+        new Response("Server Error", {
+          status: 500,
+          headers: { "Content-Type": "text/plain" },
+        })
+      );
+
+      await expect(getCreditBalance()).rejects.toThrow("Server Error");
+    });
+
+    it("throws Error from getCreditBalance when network request fails", async () => {
+      mockFetch.mockRejectedValueOnce(new Error("Network connection lost"));
+
+      await expect(getCreditBalance()).rejects.toThrow("Network connection lost");
+    });
   });
 
   // ==========================================================================
-  // End-to-End Loopback Integration (In-Memory HTTP Bridge to Hono app)
+  // End-to-End Loopback Integration (In-Memory HTTP Bridge via vitestLoopbackFetch)
   // ==========================================================================
 
-  describe("End-to-End Loopback Integration (app.fetch Wire)", () => {
+  describe("End-to-End Loopback Integration (vitestLoopbackFetch Wire)", () => {
     beforeEach(() => {
       mockServerGetUser.mockResolvedValue({ id: "usr_loopback", email: "loopback@elixent.app" });
-
-      // Wire typed RPC client custom fetch directly to the master Hono app.fetch
-      setRpcClientFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const urlStr = input instanceof URL ? input.toString() : typeof input === "string" ? input : input.url;
-        // Prefix with origin if relative URL
-        const absoluteUrl = urlStr.startsWith("http") ? urlStr : `http://localhost${urlStr}`;
-        const req = new Request(absoluteUrl, init);
-        return app.fetch(req);
-      });
+      setRpcClientFetch(vitestLoopbackFetch);
     });
 
     it("executes full RPC round-trip for createFile through Hono routing and Zod validation", async () => {
@@ -545,7 +849,7 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
       expect(mockServerCreateFile).toHaveBeenCalledWith("Architecture Design.md", null, false);
     });
 
-    it("executes full RPC round-trip for vault profile through app.fetch", async () => {
+    it("executes full RPC round-trip for vault profile through vitestLoopbackFetch", async () => {
       const mockProfile = {
         success: true,
         data: {
@@ -569,6 +873,31 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
 
       expect(balance).toBe(BigInt(500000000));
       expect(mockServerGetUserCreditBalance).toHaveBeenCalledWith("usr_loopback");
+    });
+
+    it("executes full RPC round-trip for getCreditBalanceResult in loopback mode", async () => {
+      mockServerGetUserCreditBalance.mockResolvedValueOnce(BigInt(990000000));
+
+      const result = await getCreditBalanceResult();
+      expect(result).toEqual({
+        success: true,
+        balanceMicro: "990000000",
+        balance: BigInt(990000000),
+      });
+      expect(mockServerGetUserCreditBalance).toHaveBeenCalledWith("usr_loopback");
+    });
+
+    it("executes getCreditBalanceResult in loopback mode returning unauthorized status when unauthenticated", async () => {
+      mockServerGetUser.mockResolvedValueOnce(null);
+
+      const result = await getCreditBalanceResult();
+      expect(result).toEqual({
+        success: false,
+        status: "unauthorized",
+        statusCode: 401,
+        error: "Unauthorized",
+      });
+      expect(mockServerGetUserCreditBalance).not.toHaveBeenCalled();
     });
   });
 });

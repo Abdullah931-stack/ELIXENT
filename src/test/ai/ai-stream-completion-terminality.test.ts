@@ -18,6 +18,7 @@ import {
     FIRST_CHUNK_TIMEOUT_MS,
     MAX_STREAM_DURATION_MS,
 } from '@/lib/ai/stream-handler';
+import { setRpcClientFetch } from '@/client/rpc-client';
 
 const BASE_PAYLOAD = {
     threadId: 'thread-term-1',
@@ -53,9 +54,11 @@ function stalledResponse(): Response {
 describe('Agent Stream Completion Terminality (Wave 11.1)', () => {
     beforeEach(() => {
         vi.restoreAllMocks();
+        setRpcClientFetch(undefined);
     });
 
     afterEach(() => {
+        setRpcClientFetch(undefined);
         vi.useRealTimers();
         vi.unstubAllGlobals();
     });
@@ -181,5 +184,70 @@ describe('Agent Stream Completion Terminality (Wave 11.1)', () => {
         expect(onDone).not.toHaveBeenCalled();
 
         await expect(pending).resolves.toBeUndefined();
+    });
+
+    it('dispatches stream requests through custom fetch registered via setRpcClientFetch', async () => {
+        const customFetch = vi.fn(async () =>
+            ndjsonResponse([
+                JSON.stringify({ type: 'start', sessionId: 's-custom', threadId: 'thread-term-1', operationId: 'op-custom' }),
+                JSON.stringify({ type: 'update', chunk: { node: 'document_writer_node', text: 'custom fetch response' } }),
+                JSON.stringify({ type: 'done', threadId: 'thread-term-1', operationId: 'op-custom' }),
+            ])
+        );
+
+        setRpcClientFetch(customFetch as unknown as typeof fetch);
+
+        const onUpdate = vi.fn();
+        const onDone = vi.fn();
+        const onError = vi.fn();
+
+        await consumeAgentStream({
+            ...BASE_PAYLOAD,
+            onUpdate,
+            onDone,
+            onError,
+        });
+
+        expect(customFetch).toHaveBeenCalledTimes(1);
+        expect(customFetch).toHaveBeenCalledWith(
+            '/api/agent/stream',
+            expect.objectContaining({
+                method: 'POST',
+                headers: expect.objectContaining({
+                    'Content-Type': 'application/json',
+                    Accept: 'text/event-stream',
+                }),
+            })
+        );
+        expect(onUpdate).toHaveBeenCalledWith(
+            expect.objectContaining({
+                chunk: { node: 'document_writer_node', text: 'custom fetch response' },
+            })
+        );
+        expect(onDone).toHaveBeenCalledTimes(1);
+        expect(onError).not.toHaveBeenCalled();
+    });
+
+    it('falls back to global fetch when no custom fetch is registered', async () => {
+        setRpcClientFetch(undefined);
+        const globalFetchSpy = vi.fn(async () =>
+            ndjsonResponse([
+                JSON.stringify({ type: 'start', sessionId: 's-global', threadId: 'thread-term-1', operationId: 'op-global' }),
+                JSON.stringify({ type: 'done', threadId: 'thread-term-1', operationId: 'op-global' }),
+            ])
+        );
+        vi.stubGlobal('fetch', globalFetchSpy);
+
+        const onDone = vi.fn();
+        const onError = vi.fn();
+        await consumeAgentStream({
+            ...BASE_PAYLOAD,
+            onDone,
+            onError,
+        });
+
+        expect(globalFetchSpy).toHaveBeenCalledTimes(1);
+        expect(onDone).toHaveBeenCalledTimes(1);
+        expect(onError).not.toHaveBeenCalled();
     });
 });
