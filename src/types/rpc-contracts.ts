@@ -11,6 +11,13 @@ import { z } from "zod";
 // Shared Domain & Contract Types (Zero Node/DB/DOM Dependencies)
 // ============================================================================
 
+/**
+ * Wire-serialized timestamp representation.
+ * Over HTTP JSON (`c.json`), PostgreSQL/Drizzle `Date` values serialize to
+ * ISO 8601 strings; in-process server or test callers may still pass `Date`.
+ */
+export type WireTimestamp = string | Date;
+
 export interface FileEncryptionMetadata {
   version: number;
   algorithm: string;
@@ -31,9 +38,9 @@ export interface FileRecord {
   encryptionMetadata: FileEncryptionMetadata | null;
   etag: string | null;
   version: number | null;
-  deletedAt: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
+  deletedAt: WireTimestamp | null;
+  createdAt: WireTimestamp;
+  updatedAt: WireTimestamp;
 }
 
 export interface VaultProfileRecord {
@@ -44,10 +51,10 @@ export interface VaultProfileRecord {
   recoverySalt: string;
   kdfIterations: number;
   keyVersion: number;
-  deviceTrustEpoch: number;
-  allowAIOnEncryptedFiles: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+  deviceTrustEpoch?: number;
+  allowAIOnEncryptedFiles?: boolean;
+  createdAt: WireTimestamp;
+  updatedAt: WireTimestamp;
 }
 
 export interface UserProfileRecord {
@@ -57,9 +64,10 @@ export interface UserProfileRecord {
   avatarUrl: string | null;
   tier: "free" | "pro" | "ultra";
   stripeCustomerId: string | null;
-  creditBalanceMicro: bigint;
-  createdAt: Date;
-  updatedAt: Date;
+  /** Decimal string serialization of `bigint` micro-credits over JSON wire. */
+  creditBalanceMicro: string;
+  createdAt: WireTimestamp;
+  updatedAt: WireTimestamp;
 }
 
 export interface FileOpResult<T = FileRecord> {
@@ -113,8 +121,6 @@ export interface ImportFileResult {
     version: number;
     etag: string;
   };
-  fileId?: string;
-  file?: FileRecord;
   error?: string;
 }
 
@@ -157,14 +163,19 @@ export interface UpdateVaultRecoveryEnvelopeInput {
 // Shared Zod Validation Schemas
 // ============================================================================
 
-export const encryptionMetadataSchema = z.object({
-  version: z.number(),
-  algorithm: z.string(),
-  keyId: z.string(),
-  salt: z.string(),
-  iv: z.string(),
-  kdfIterations: z.number().optional(),
-});
+export const uuidStringSchema = z.string().uuid();
+export const trimmedTitleSchema = z.string().trim().min(1).max(500);
+
+export const encryptionMetadataSchema = z
+  .object({
+    version: z.number().int().positive(),
+    algorithm: z.string().min(1),
+    keyId: z.string().min(1),
+    salt: z.string().min(1),
+    iv: z.string().min(1),
+    kdfIterations: z.number().int().min(600_000).optional(),
+  })
+  .strict();
 
 export const updateFileOptionsSchema = z.object({
   expectedVersion: z.number().optional(),
@@ -177,11 +188,22 @@ export const deleteFileOptionsSchema = z.object({
   expectedETag: z.string().optional(),
 });
 
-export const encryptedOverrideSchema = z.object({
-  newFileId: z.string().optional(),
-  content: z.string().optional(),
-  encryptionMetadata: encryptionMetadataSchema.nullable().optional(),
-});
+export const encryptedOverrideSchema = z
+  .object({
+    newFileId: z.string().optional(),
+    content: z.string().optional(),
+    encryptionMetadata: encryptionMetadataSchema.nullable().optional(),
+  })
+  .strict()
+  .pipe(
+    z
+      .object({
+        newFileId: uuidStringSchema,
+        content: z.string().min(1),
+        encryptionMetadata: encryptionMetadataSchema,
+      })
+      .strict()
+  );
 
 export const importEncryptionSchema = z.object({
   isEncrypted: z.boolean().optional(),

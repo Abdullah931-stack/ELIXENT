@@ -35,6 +35,8 @@ import {
 } from "@/server/actions/auth-actions";
 import { getUserCreditBalance } from "@/server/services/ai-settlement-service";
 import { getUser } from "@/lib/supabase/server";
+import { getAppBaseUrl } from "@/lib/config/app-url";
+import { clearPendingAuthCookieMutations } from "@/server/middleware/session-middleware";
 import {
   encryptionMetadataSchema,
   updateFileOptionsSchema,
@@ -44,6 +46,7 @@ import {
   createVaultProfileSchema,
   updateVaultPasswordSchema,
   updateVaultRecoveryEnvelopeSchema,
+  trimmedTitleSchema,
   type UpdateFileOptions,
   type DeleteFileOptions,
   type ImportEncryptionOptions,
@@ -52,6 +55,164 @@ import {
   type UpdateVaultRecoveryEnvelopeInput,
   type FileEncryptionMetadata,
 } from "@/types/rpc-contracts";
+
+const VALID_COOKIE_NAME_REGEX = /^[\w!#$%&'*.^`|~+-]+$/;
+const IPV4_HOST_REGEX = /^(?:\d{1,3}\.){3}\d{1,3}$/;
+const DNS_HOSTNAME_REGEX =
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+
+function isSupabaseAuthCookie(name: string): boolean {
+  const unprefixedName = name.replace(/^__(?:host|secure)-/i, "");
+  return unprefixedName.startsWith("sb-");
+}
+
+function isSecureCookieContext(c: {
+  req: { url: string; header: (name: string) => string | undefined };
+}): boolean {
+  if (process.env.NODE_ENV === "production") {
+    return true;
+  }
+  const forwardedProto = c.req
+    .header("x-forwarded-proto")
+    ?.split(",")[0]
+    ?.trim()
+    .toLowerCase();
+  if (forwardedProto === "https") {
+    return true;
+  }
+  return c.req.url.trim().toLowerCase().startsWith("https://");
+}
+
+function normalizeCookieDomainCandidate(
+  rawCandidate: string | undefined,
+  allowLeadingDot: boolean
+): string | undefined {
+  if (!rawCandidate) {
+    return undefined;
+  }
+
+  let host = rawCandidate.trim().toLowerCase();
+  if (!host) {
+    return undefined;
+  }
+
+  // RFC 6265 §5.2.3: strip optional single leading dot on configured domains
+  if (allowLeadingDot && host.startsWith(".")) {
+    host = host.slice(1);
+  }
+
+  // Never emit Domain attribute for IPv6 literals ([::1], [::1]:3000, ::1)
+  if (host.startsWith("[") || (host.match(/:/g)?.length ?? 0) > 1) {
+    return undefined;
+  }
+
+  // Strip optional port suffix cleanly (e.g. app.elixent.com:3000 -> app.elixent.com)
+  const portSeparatorIdx = host.indexOf(":");
+  if (portSeparatorIdx !== -1) {
+    const portPart = host.slice(portSeparatorIdx + 1);
+    if (!/^\d+$/.test(portPart)) {
+      return undefined;
+    }
+    host = host.slice(0, portSeparatorIdx);
+  }
+
+  // Strip optional trailing root dot
+  if (host.endsWith(".")) {
+    host = host.slice(0, -1);
+  }
+
+  if (!host || host === "localhost" || host.endsWith(".localhost")) {
+    return undefined;
+  }
+
+  if (IPV4_HOST_REGEX.test(host) || !DNS_HOSTNAME_REGEX.test(host)) {
+    return undefined;
+  }
+
+  // Reject numeric TLD labels (e.g. non-standard IPv4 notation)
+  const tld = host.slice(host.lastIndexOf(".") + 1);
+  if (/^\d+$/.test(tld)) {
+    return undefined;
+  }
+
+  return host;
+}
+
+function resolveCookieDomain(c: {
+  req: { url: string; header: (name: string) => string | undefined };
+}): string | undefined {
+  const envDomain = process.env.COOKIE_DOMAIN?.trim();
+  if (envDomain) {
+    return normalizeCookieDomainCandidate(envDomain, true);
+  }
+
+  try {
+    const appBaseUrl = getAppBaseUrl();
+    const appHost = new URL(appBaseUrl).host;
+    const appCandidate = normalizeCookieDomainCandidate(appHost, false);
+    if (appCandidate) {
+      return appCandidate;
+    }
+  } catch {
+    // getAppBaseUrl may throw in production if unconfigured; continue fallback
+  }
+
+  const headerHost = c.req.header("host")?.trim();
+  let urlHost: string | undefined;
+  try {
+    urlHost = new URL(c.req.url).host;
+  } catch {
+    urlHost = undefined;
+  }
+
+  const directCandidate = normalizeCookieDomainCandidate(
+    headerHost || urlHost,
+    false
+  );
+  if (directCandidate) {
+    return directCandidate;
+  }
+
+  // Never trust arbitrary untrusted x-forwarded-host in production without validation.
+  const isProduction = process.env.NODE_ENV === "production";
+  const forwardedHost = c.req
+    .header("x-forwarded-host")
+    ?.split(",")[0]
+    ?.trim();
+  if (!isProduction && forwardedHost) {
+    return normalizeCookieDomainCandidate(forwardedHost, false);
+  }
+
+  return undefined;
+}
+
+const toggleFileEncryptionSchema = z.object({
+  fileId: z.string(),
+  isEncrypted: z.boolean(),
+  content: z.string(),
+  encryptionMetadata: encryptionMetadataSchema.nullable().optional(),
+  options: updateFileOptionsSchema.optional(),
+});
+
+type ToggleFileEncryptionInput = z.infer<typeof toggleFileEncryptionSchema>;
+
+async function handleToggleFileEncryption(input: ToggleFileEncryptionInput) {
+  return await toggleFileEncryption(
+    input.fileId,
+    input.isEncrypted,
+    input.content,
+    (input.encryptionMetadata ?? null) as FileEncryptionMetadata | null,
+    input.options as UpdateFileOptions
+  );
+}
+
+const fileIdQueryOrBodySchema = z.object({
+  fileId: z.string(),
+});
+
+async function handleGetFile(fileId: string) {
+  return await getFile(fileId);
+}
 
 export const rpcRoutes = new Hono()
   // -------------------------------------------------------------
@@ -62,7 +223,7 @@ export const rpcRoutes = new Hono()
     zValidator(
       "json",
       z.object({
-        title: z.string(),
+        title: trimmedTitleSchema,
         parentFolderId: z.string().nullable().optional(),
         isFolder: z.boolean().optional(),
       })
@@ -91,49 +252,19 @@ export const rpcRoutes = new Hono()
   )
   .post(
     "/files/toggle-encryption",
-    zValidator(
-      "json",
-      z.object({
-        fileId: z.string(),
-        isEncrypted: z.boolean(),
-        content: z.string(),
-        encryptionMetadata: encryptionMetadataSchema.nullable().optional(),
-        options: updateFileOptionsSchema.optional(),
-      })
-    ),
+    zValidator("json", toggleFileEncryptionSchema),
     async (c) => {
-      const { fileId, isEncrypted, content, encryptionMetadata, options } = c.req.valid("json");
-      const result = await toggleFileEncryption(
-        fileId,
-        isEncrypted,
-        content,
-        (encryptionMetadata ?? null) as FileEncryptionMetadata | null,
-        options as UpdateFileOptions
-      );
+      const input = c.req.valid("json");
+      const result = await handleToggleFileEncryption(input);
       return c.json(result);
     }
   )
   .post(
     "/files/encryption",
-    zValidator(
-      "json",
-      z.object({
-        fileId: z.string(),
-        isEncrypted: z.boolean(),
-        content: z.string(),
-        encryptionMetadata: encryptionMetadataSchema.nullable().optional(),
-        options: updateFileOptionsSchema.optional(),
-      })
-    ),
+    zValidator("json", toggleFileEncryptionSchema),
     async (c) => {
-      const { fileId, isEncrypted, content, encryptionMetadata, options } = c.req.valid("json");
-      const result = await toggleFileEncryption(
-        fileId,
-        isEncrypted,
-        content,
-        (encryptionMetadata ?? null) as FileEncryptionMetadata | null,
-        options as UpdateFileOptions
-      );
+      const input = c.req.valid("json");
+      const result = await handleToggleFileEncryption(input);
       return c.json(result);
     }
   )
@@ -252,34 +383,35 @@ export const rpcRoutes = new Hono()
         parentFolderId ?? null,
         encryption as ImportEncryptionOptions
       );
+      if (
+        "creditBalanceMicro" in result &&
+        (result as { creditBalanceMicro?: unknown }).creditBalanceMicro !== undefined
+      ) {
+        return c.json({
+          ...result,
+          creditBalanceMicro: String(
+            (result as { creditBalanceMicro?: unknown }).creditBalanceMicro
+          ),
+        });
+      }
       return c.json(result);
     }
   )
   .post(
     "/files/get",
-    zValidator(
-      "json",
-      z.object({
-        fileId: z.string(),
-      })
-    ),
+    zValidator("json", fileIdQueryOrBodySchema),
     async (c) => {
       const { fileId } = c.req.valid("json");
-      const result = await getFile(fileId);
+      const result = await handleGetFile(fileId);
       return c.json(result);
     }
   )
   .get(
     "/files/get",
-    zValidator(
-      "query",
-      z.object({
-        fileId: z.string(),
-      })
-    ),
+    zValidator("query", fileIdQueryOrBodySchema),
     async (c) => {
       const { fileId } = c.req.valid("query");
-      const result = await getFile(fileId);
+      const result = await handleGetFile(fileId);
       return c.json(result);
     }
   )
@@ -382,14 +514,55 @@ export const rpcRoutes = new Hono()
   )
   .post("/auth/sign-out", async (c) => {
     await signOut();
+    clearPendingAuthCookieMutations();
     const cookies = getCookie(c);
+    const secure = isSecureCookieContext(c);
+    const cookieDomain = resolveCookieDomain(c);
+    const expires = new Date(0);
+
     for (const name of Object.keys(cookies)) {
-      if (name.startsWith("sb-")) {
+      if (!isSupabaseAuthCookie(name) || !VALID_COOKIE_NAME_REGEX.test(name)) {
+        continue;
+      }
+
+      const isHostPrefixed = /^__host-/i.test(name);
+      const isSecurePrefixed = /^__secure-/i.test(name);
+      const effectiveSecure = secure || isHostPrefixed || isSecurePrefixed;
+
+      // Host-only dual deletion (clears HttpOnly server cookies and JS-accessible cookies)
+      deleteCookie(c, name, {
+        path: "/",
+        httpOnly: true,
+        sameSite: "Lax",
+        secure: effectiveSecure,
+        expires,
+      });
+      deleteCookie(c, name, {
+        path: "/",
+        httpOnly: false,
+        sameSite: "Lax",
+        secure: effectiveSecure,
+        expires,
+      });
+
+      // Domain-scoped dual deletion when an eligible hostname is resolved.
+      // RFC 6265 §4.1.2.5 forbids a Domain attribute on __Host- cookies.
+      if (cookieDomain && !isHostPrefixed) {
         deleteCookie(c, name, {
           path: "/",
+          domain: cookieDomain,
           httpOnly: true,
           sameSite: "Lax",
-          expires: new Date(0),
+          secure: effectiveSecure,
+          expires,
+        });
+        deleteCookie(c, name, {
+          path: "/",
+          domain: cookieDomain,
+          httpOnly: false,
+          sameSite: "Lax",
+          secure: effectiveSecure,
+          expires,
         });
       }
     }
@@ -401,7 +574,24 @@ export const rpcRoutes = new Hono()
   })
   .get("/auth/profile", async (c) => {
     const result = await getUserProfile();
-    return c.json(result);
+    if (result.success && result.data) {
+      const { creditBalanceMicro, ...rest } = result.data;
+      const serializedCreditBalance =
+        creditBalanceMicro !== undefined && creditBalanceMicro !== null
+          ? String(creditBalanceMicro)
+          : "0";
+      return c.json({
+        success: true as const,
+        data: {
+          ...rest,
+          creditBalanceMicro: serializedCreditBalance,
+        },
+      });
+    }
+    return c.json({
+      success: false as const,
+      error: result.error ?? "Failed to retrieve user profile",
+    });
   })
   .post(
     "/auth/update-profile",
@@ -429,3 +619,5 @@ export const rpcRoutes = new Hono()
     const balance = await getUserCreditBalance(user.id);
     return c.json({ success: true as const, balanceMicro: balance.toString() }, 200);
   });
+
+export type AppType = typeof rpcRoutes;

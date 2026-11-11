@@ -27,7 +27,7 @@
  *    - `POST /vault/update-ai-setting`: boolean setting validation.
  * 4. Auth RPC Endpoints:
  *    - `POST /auth/sign-in-google`: optional redirectTo payload.
- *    - `POST /auth/sign-out`: cookie wiping verification (Set-Cookie headers for sb-* cookies).
+ *    - `POST /auth/sign-out`: RFC 6265 dual cookie deletion (HttpOnly + client-readable, Secure in prod/HTTPS, Domain handling).
  *    - `POST /auth/sync-user`: database user sync.
  *    - `GET /auth/profile`: user profile retrieval.
  *    - `POST /auth/update-profile`: displayName update.
@@ -35,7 +35,7 @@
  *    - `GET /billing/credit-balance`: 401 unauthenticated vs 200 authenticated balance in micro-units.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 import { rpcRoutes } from "@/server/routes/rpc.routes";
 import { app } from "@/server/app";
@@ -156,9 +156,25 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 describe("Wave 3.2 Hono RPC Routes (src/server/routes/rpc.routes.ts)", () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalCookieDomain = process.env.COOKIE_DOMAIN;
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetUser.mockResolvedValue({ id: "usr_rpc_test", email: "tester@elixent.app" });
+  });
+
+  afterEach(() => {
+    if (originalNodeEnv === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = originalNodeEnv;
+    }
+    if (originalCookieDomain === undefined) {
+      delete process.env.COOKIE_DOMAIN;
+    } else {
+      process.env.COOKIE_DOMAIN = originalCookieDomain;
+    }
   });
 
   // ==========================================================================
@@ -332,6 +348,58 @@ describe("Wave 3.2 Hono RPC Routes (src/server/routes/rpc.routes.ts)", () => {
       );
     });
 
+    it("verifies /files/encryption and /files/toggle-encryption function identically", async () => {
+      const payload = {
+        fileId: "f_parity_1",
+        isEncrypted: true,
+        content: "encrypted-content-sample",
+        encryptionMetadata: {
+          version: 1,
+          algorithm: "AES-GCM-256",
+          keyId: "key-1",
+          salt: "salt-1",
+          iv: "iv-1",
+          kdfIterations: 600000,
+        },
+        options: { expectedVersion: 3 },
+      };
+
+      mockToggleFileEncryption.mockResolvedValue({ success: true, version: 4 });
+
+      const toggleRes = await rpcRoutes.request("/files/toggle-encryption", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const aliasRes = await rpcRoutes.request("/files/encryption", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      expect(toggleRes.status).toBe(200);
+      expect(aliasRes.status).toBe(200);
+      expect(await toggleRes.json()).toEqual(await aliasRes.json());
+      expect(mockToggleFileEncryption).toHaveBeenCalledTimes(2);
+      expect(mockToggleFileEncryption).toHaveBeenNthCalledWith(
+        1,
+        "f_parity_1",
+        true,
+        "encrypted-content-sample",
+        payload.encryptionMetadata,
+        { expectedVersion: 3 }
+      );
+      expect(mockToggleFileEncryption).toHaveBeenNthCalledWith(
+        2,
+        "f_parity_1",
+        true,
+        "encrypted-content-sample",
+        payload.encryptionMetadata,
+        { expectedVersion: 3 }
+      );
+    });
+
     it("POST /files/rename: validates newTitle and delegates to renameFile", async () => {
       mockRenameFile.mockResolvedValueOnce({ success: true });
 
@@ -382,7 +450,7 @@ describe("Wave 3.2 Hono RPC Routes (src/server/routes/rpc.routes.ts)", () => {
 
     it("POST /files/copy: delegates file duplication with encryptedOverride", async () => {
       const override = {
-        newFileId: "f_copy_target",
+        newFileId: "550e8400-e29b-41d4-a716-446655440000",
         content: "new_ciphertext",
         encryptionMetadata: {
           version: 1,
@@ -506,6 +574,32 @@ describe("Wave 3.2 Hono RPC Routes (src/server/routes/rpc.routes.ts)", () => {
 
       expect(res.status).toBe(200);
       expect(mockGetFile).toHaveBeenCalledWith("f_query_1");
+    });
+
+    it("verifies POST /files/get and GET /files/get function identically", async () => {
+      const mockResult = {
+        success: true,
+        data: { id: "f_identical_1", title: "Note.md", content: "# Content" },
+      };
+      mockGetFile.mockResolvedValue(mockResult);
+
+      const postRes = await rpcRoutes.request("/files/get", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileId: "f_identical_1" }),
+      });
+
+      const getRes = await rpcRoutes.request("/files/get?fileId=f_identical_1", {
+        method: "GET",
+      });
+
+      expect(postRes.status).toBe(200);
+      expect(getRes.status).toBe(200);
+      expect(await postRes.json()).toEqual(mockResult);
+      expect(await getRes.json()).toEqual(mockResult);
+      expect(mockGetFile).toHaveBeenCalledTimes(2);
+      expect(mockGetFile).toHaveBeenNthCalledWith(1, "f_identical_1");
+      expect(mockGetFile).toHaveBeenNthCalledWith(2, "f_identical_1");
     });
 
     it("GET /files/get: rejects missing query parameter with 400 Bad Request", async () => {
@@ -678,10 +772,11 @@ describe("Wave 3.2 Hono RPC Routes (src/server/routes/rpc.routes.ts)", () => {
       expect(mockSignInWithGoogle).toHaveBeenCalledWith("/workspace");
     });
 
-    it("POST /auth/sign-out: executes signOut and appends Set-Cookie headers wiping only sb-* cookies", async () => {
+    it("POST /auth/sign-out: executes signOut and issues RFC 6265 dual cookie deletions (HttpOnly + non-HttpOnly) strictly for sb-* auth cookies", async () => {
       mockSignOut.mockResolvedValueOnce({ success: true, redirectUrl: "/" });
 
-      const incomingCookie = "sb-access-token=xyz123; app_theme=dark; sb-refresh-token=abc999; other_id=456";
+      const incomingCookie =
+        "sb-access-token=xyz123; sb-proj-auth-token=proj_tok; sb-proj-auth-token.0=chunk0; app_theme=dark; sb-refresh-token=abc999; other_id=456; session_marker=active; session=abc; app-auth-token=auth78";
 
       const res = await rpcRoutes.request("/auth/sign-out", {
         method: "POST",
@@ -695,22 +790,38 @@ describe("Wave 3.2 Hono RPC Routes (src/server/routes/rpc.routes.ts)", () => {
       expect(json).toEqual({ success: true, redirectUrl: "/" });
       expect(mockSignOut).toHaveBeenCalledTimes(1);
 
-      // Inspect Set-Cookie headers
+      // Default localhost test request emits 2 host-only Set-Cookie headers per sb-* cookie (HttpOnly + non-HttpOnly)
       const setCookieHeaders = res.headers.getSetCookie();
-      expect(setCookieHeaders.length).toBe(2);
+      expect(setCookieHeaders.length).toBe(8);
 
-      // Verify that only sb-access-token and sb-refresh-token are wiped
+      const expectedClearedCookies = [
+        "sb-access-token",
+        "sb-proj-auth-token",
+        "sb-proj-auth-token.0",
+        "sb-refresh-token",
+      ];
+
       const wipedNames = setCookieHeaders.map((c) => c.split("=")[0]);
-      expect(wipedNames).toContain("sb-access-token");
-      expect(wipedNames).toContain("sb-refresh-token");
+      for (const name of expectedClearedCookies) {
+        const headersForCookie = setCookieHeaders.filter((c) => c.startsWith(`${name}=`));
+        expect(headersForCookie).toHaveLength(2);
+        expect(headersForCookie.filter((c) => c.includes("HttpOnly"))).toHaveLength(1);
+        expect(headersForCookie.filter((c) => !c.includes("HttpOnly"))).toHaveLength(1);
+      }
       expect(wipedNames).not.toContain("app_theme");
       expect(wipedNames).not.toContain("other_id");
+      expect(wipedNames).not.toContain("session_marker");
+      expect(wipedNames).not.toContain("session");
+      expect(wipedNames).not.toContain("app-auth-token");
 
-      // Verify header flags: Max-Age=0 and 1970 expiration
+      // Verify standardized RFC 6265 attributes (no Domain or Secure on HTTP localhost in test env)
       for (const cookie of setCookieHeaders) {
         expect(cookie).toContain("Max-Age=0");
         expect(cookie).toContain("Expires=Thu, 01 Jan 1970 00:00:00 GMT");
-        expect(cookie).toContain("HttpOnly");
+        expect(cookie).toContain("Path=/");
+        expect(cookie).toContain("SameSite=Lax");
+        expect(cookie).not.toContain("Domain=");
+        expect(cookie).not.toContain("Secure");
       }
     });
 
@@ -720,13 +831,173 @@ describe("Wave 3.2 Hono RPC Routes (src/server/routes/rpc.routes.ts)", () => {
       const res = await rpcRoutes.request("/auth/sign-out", {
         method: "POST",
         headers: {
-          Cookie: "theme=dark; guest_id=anon1",
+          Cookie:
+            "theme=dark; guest_id=anon1; session=abc; session_marker=active; analytics_id=anon-999; sidebar_prefs=compact",
         },
       });
 
       expect(res.status).toBe(200);
       const setCookieHeaders = res.headers.getSetCookie();
       expect(setCookieHeaders.length).toBe(0);
+    });
+
+    it("POST /auth/sign-out: sets Secure attribute when NODE_ENV=production or X-Forwarded-Proto=https", async () => {
+      mockSignOut.mockResolvedValue({ success: true, redirectUrl: "/" });
+
+      process.env.NODE_ENV = "production";
+      const prodRes = await rpcRoutes.request("/auth/sign-out", {
+        method: "POST",
+        headers: {
+          Cookie: "sb-access-token=prod_tok",
+        },
+      });
+      const prodHeaders = prodRes.headers.getSetCookie();
+      expect(prodHeaders).toHaveLength(2);
+      for (const header of prodHeaders) {
+        expect(header).toContain("Secure");
+        expect(header).toContain("Max-Age=0");
+      }
+      expect(prodHeaders.some((h) => h.includes("HttpOnly"))).toBe(true);
+      expect(prodHeaders.some((h) => !h.includes("HttpOnly"))).toBe(true);
+
+      process.env.NODE_ENV = "test";
+      const httpsProxyRes = await rpcRoutes.request("/auth/sign-out", {
+        method: "POST",
+        headers: {
+          Cookie: "sb-access-token=proxy_tok",
+          "X-Forwarded-Proto": "https",
+        },
+      });
+      const proxyHeaders = httpsProxyRes.headers.getSetCookie();
+      expect(proxyHeaders).toHaveLength(2);
+      for (const header of proxyHeaders) {
+        expect(header).toContain("Secure");
+      }
+    });
+
+    it("POST /auth/sign-out: emits both host-only and domain-scoped dual deletions for configured COOKIE_DOMAIN and public request hosts, while omitting Domain for localhost and raw IPs", async () => {
+      mockSignOut.mockResolvedValue({ success: true, redirectUrl: "/" });
+
+      // 1. Explicit COOKIE_DOMAIN (leading dot normalized per RFC 6265 §5.2.3)
+      process.env.COOKIE_DOMAIN = ".elixent.com";
+      const envDomainRes = await rpcRoutes.request("/auth/sign-out", {
+        method: "POST",
+        headers: {
+          Cookie: "sb-access-token=tok1",
+        },
+      });
+      const envDomainHeaders = envDomainRes.headers.getSetCookie();
+      expect(envDomainHeaders).toHaveLength(4);
+      const hostOnlyHeaders = envDomainHeaders.filter((h) => !h.includes("Domain="));
+      const scopedHeaders = envDomainHeaders.filter((h) => h.includes("Domain=elixent.com"));
+      expect(hostOnlyHeaders).toHaveLength(2);
+      expect(scopedHeaders).toHaveLength(2);
+      expect(hostOnlyHeaders.some((h) => h.includes("HttpOnly"))).toBe(true);
+      expect(hostOnlyHeaders.some((h) => !h.includes("HttpOnly"))).toBe(true);
+      expect(scopedHeaders.some((h) => h.includes("HttpOnly"))).toBe(true);
+      expect(scopedHeaders.some((h) => !h.includes("HttpOnly"))).toBe(true);
+
+      // 2. Host/X-Forwarded-Host header and HTTPS URL derivation with port stripped
+      delete process.env.COOKIE_DOMAIN;
+      const forwardedRes = await rpcRoutes.request("/auth/sign-out", {
+        method: "POST",
+        headers: {
+          Cookie: "sb-access-token=tok2",
+          "X-Forwarded-Host": "app.elixent.com:3000, internal-proxy",
+        },
+      });
+      const forwardedHeaders = forwardedRes.headers.getSetCookie();
+      expect(forwardedHeaders).toHaveLength(4);
+      expect(forwardedHeaders.filter((h) => !h.includes("Domain="))).toHaveLength(2);
+      expect(forwardedHeaders.filter((h) => h.includes("Domain=app.elixent.com"))).toHaveLength(2);
+
+      const httpsUrlRes = await rpcRoutes.request("https://portal.elixent.com:8443/auth/sign-out", {
+        method: "POST",
+        headers: {
+          Cookie: "sb-access-token=tok3",
+        },
+      });
+      const httpsUrlHeaders = httpsUrlRes.headers.getSetCookie();
+      expect(httpsUrlHeaders).toHaveLength(4);
+      expect(httpsUrlHeaders.filter((h) => h.includes("Domain=portal.elixent.com"))).toHaveLength(2);
+      for (const h of httpsUrlHeaders) {
+        expect(h).toContain("Secure");
+      }
+
+      // 3. RFC 6265 prohibition: never emit Domain for localhost, 127.0.0.1, [::1], or raw IPv4
+      const disallowedTargets = [
+        "http://localhost:3000/auth/sign-out",
+        "http://127.0.0.1:8787/auth/sign-out",
+        "http://[::1]:3000/auth/sign-out",
+        "http://192.168.1.50/auth/sign-out",
+      ];
+      for (const targetUrl of disallowedTargets) {
+        const res = await rpcRoutes.request(targetUrl, {
+          method: "POST",
+          headers: { Cookie: "sb-access-token=tok_local" },
+        });
+        const headers = res.headers.getSetCookie();
+        expect(headers).toHaveLength(2);
+        for (const h of headers) {
+          expect(h).not.toContain("Domain=");
+        }
+      }
+
+      // 4. __Host- and __Secure- prefix compliance per RFC 6265 §4.1.2.5 / Hono cookie serialization
+      process.env.COOKIE_DOMAIN = "elixent.com";
+      const prefixedRes = await rpcRoutes.request("/auth/sign-out", {
+        method: "POST",
+        headers: {
+          Cookie: "__Host-sb-token=host_tok; __Secure-sb-token=sec_tok",
+        },
+      });
+      expect(prefixedRes.status).toBe(200);
+      const prefixedHeaders = prefixedRes.headers.getSetCookie();
+      const hostPrefixed = prefixedHeaders.filter((h) => h.startsWith("__Host-sb-token="));
+      const securePrefixed = prefixedHeaders.filter((h) => h.startsWith("__Secure-sb-token="));
+      expect(hostPrefixed).toHaveLength(2);
+      for (const h of hostPrefixed) {
+        expect(h).toContain("Secure");
+        expect(h).toContain("Path=/");
+        expect(h).not.toContain("Domain=");
+      }
+      expect(securePrefixed).toHaveLength(4);
+      for (const h of securePrefixed) {
+        expect(h).toContain("Secure");
+      }
+    });
+
+    it("POST /api/rpc/auth/sign-out through app with sessionMiddleware clears cookies cleanly without duplicates", async () => {
+      mockSignOut.mockResolvedValueOnce({ success: true, redirectUrl: "/" });
+
+      const incomingCookie = "sb-access-token=access_123; sb-refresh-token=refresh_456";
+      const res = await app.request("http://localhost/api/rpc/auth/sign-out", {
+        method: "POST",
+        headers: {
+          Cookie: incomingCookie,
+        },
+      });
+
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json).toEqual({ success: true, redirectUrl: "/" });
+      expect(mockSignOut).toHaveBeenCalledTimes(1);
+
+      const setCookieHeaders = res.headers.getSetCookie();
+      // Exactly 4 headers: 2 per sb-* cookie (HttpOnly + non-HttpOnly) on localhost
+      expect(setCookieHeaders).toHaveLength(4);
+
+      // Verify no duplicate empty trailing headers or conflicting Set-Cookie
+      const accessCookies = setCookieHeaders.filter((h) => h.startsWith("sb-access-token="));
+      const refreshCookies = setCookieHeaders.filter((h) => h.startsWith("sb-refresh-token="));
+      expect(accessCookies).toHaveLength(2);
+      expect(refreshCookies).toHaveLength(2);
+
+      for (const h of setCookieHeaders) {
+        expect(h).toContain("Max-Age=0");
+        expect(h).toContain("Expires=Thu, 01 Jan 1970 00:00:00 GMT");
+        expect(h).toContain("Path=/");
+      }
     });
 
     it("POST /auth/sync-user: delegates to syncUserToDatabase", async () => {
@@ -745,6 +1016,112 @@ describe("Wave 3.2 Hono RPC Routes (src/server/routes/rpc.routes.ts)", () => {
 
       expect(res.status).toBe(200);
       expect(mockGetUserProfile).toHaveBeenCalledTimes(1);
+    });
+
+    it("GET /auth/profile: serializes BigInt creditBalanceMicro to string and Date timestamps to ISO strings without TypeError", async () => {
+      const createdAt = new Date("2026-11-10T09:00:00.000Z");
+      const updatedAt = new Date("2026-11-10T10:30:00.000Z");
+      mockGetUserProfile.mockResolvedValueOnce({
+        success: true,
+        data: {
+          id: "usr_bigint_1",
+          email: "pilot@elixent.app",
+          displayName: "Elixent Pilot",
+          avatarUrl: null,
+          tier: "pro",
+          stripeCustomerId: "cus_123",
+          creditBalanceMicro: BigInt("9007199254740993123"),
+          createdAt,
+          updatedAt,
+        },
+      });
+
+      const res = await rpcRoutes.request("/auth/profile", { method: "GET" });
+
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json).toEqual({
+        success: true,
+        data: {
+          id: "usr_bigint_1",
+          email: "pilot@elixent.app",
+          displayName: "Elixent Pilot",
+          avatarUrl: null,
+          tier: "pro",
+          stripeCustomerId: "cus_123",
+          creditBalanceMicro: "9007199254740993123",
+          createdAt: createdAt.toISOString(),
+          updatedAt: updatedAt.toISOString(),
+        },
+      });
+      expect(typeof json.data.creditBalanceMicro).toBe("string");
+    });
+
+    it("GET /files/get & GET /vault/profile: serialize Date fields to ISO 8601 WireTimestamp strings", async () => {
+      const createdAt = new Date("2026-11-10T08:00:00.000Z");
+      const updatedAt = new Date("2026-11-10T09:15:00.000Z");
+      mockGetFile.mockResolvedValueOnce({
+        success: true,
+        data: {
+          id: "f_wire_1",
+          userId: "usr_1",
+          title: "Wire.md",
+          content: "hello",
+          parentFolderId: null,
+          isFolder: false,
+          isEncrypted: false,
+          encryptionMetadata: null,
+          etag: "e1",
+          version: 1,
+          deletedAt: null,
+          createdAt,
+          updatedAt,
+        },
+      });
+      mockGetUserVaultProfile.mockResolvedValueOnce({
+        success: true,
+        data: {
+          userId: "usr_1",
+          encryptedMasterKey: "emk",
+          recoveryEncryptedMasterKey: "remk",
+          keySalt: "s1",
+          recoverySalt: "s2",
+          kdfIterations: 600000,
+          keyVersion: 1,
+          deviceTrustEpoch: 1,
+          allowAIOnEncryptedFiles: false,
+          createdAt,
+          updatedAt,
+        },
+      });
+
+      const fileRes = await rpcRoutes.request("/files/get?fileId=f_wire_1", { method: "GET" });
+      const fileJson = await fileRes.json();
+      expect(fileRes.status).toBe(200);
+      expect(fileJson.data.createdAt).toBe(createdAt.toISOString());
+      expect(fileJson.data.updatedAt).toBe(updatedAt.toISOString());
+      expect(fileJson.data.deletedAt).toBeNull();
+
+      const vaultRes = await rpcRoutes.request("/vault/profile", { method: "GET" });
+      const vaultJson = await vaultRes.json();
+      expect(vaultRes.status).toBe(200);
+      expect(vaultJson.data.createdAt).toBe(createdAt.toISOString());
+      expect(vaultJson.data.updatedAt).toBe(updatedAt.toISOString());
+    });
+
+    it("GET /auth/profile: propagates failure payload when unauthenticated or missing profile", async () => {
+      mockGetUserProfile.mockResolvedValueOnce({
+        success: false,
+        error: "Not authenticated",
+      });
+
+      const res = await rpcRoutes.request("/auth/profile", { method: "GET" });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        success: false,
+        error: "Not authenticated",
+      });
     });
 
     it("POST /auth/update-profile: validates displayName and delegates to updateUserProfile", async () => {

@@ -471,7 +471,7 @@ describe("Master Hono Application Dispatcher (src/server/app.ts)", () => {
       expect(defaultApp).toBe(app);
     });
 
-    it("registers all 6 functional sub-router paths and wildcard middleware", () => {
+    it("registers all 7 functional sub-router paths and wildcard middleware", () => {
       const routes = app.routes;
       const registeredPaths = routes.map((r) => r.path);
 
@@ -484,6 +484,7 @@ describe("Master Hono Application Dispatcher (src/server/app.ts)", () => {
       const hasStripePath = registeredPaths.some((p) => p.startsWith("/api/stripe"));
       const hasCronPath = registeredPaths.some((p) => p.startsWith("/api/cron"));
       const hasE2EAuthPath = registeredPaths.some((p) => p.startsWith("/api/test/e2e-auth"));
+      const hasRpcPath = registeredPaths.some((p) => p.startsWith("/api/rpc"));
       const hasAuthCallbackPath = registeredPaths.some((p) => p.startsWith("/auth/callback"));
 
       expect(hasAgentPath).toBe(true);
@@ -491,6 +492,7 @@ describe("Master Hono Application Dispatcher (src/server/app.ts)", () => {
       expect(hasStripePath).toBe(true);
       expect(hasCronPath).toBe(true);
       expect(hasE2EAuthPath).toBe(true);
+      expect(hasRpcPath).toBe(true);
       expect(hasAuthCallbackPath).toBe(true);
     });
   });
@@ -568,7 +570,7 @@ describe("Master Hono Application Dispatcher (src/server/app.ts)", () => {
       mockGetUser.mockResolvedValueOnce(null);
 
       const res = await app.request("http://localhost/dashboard");
-      expect(res.status).toBe(307);
+      expect(res.status).toBe(303);
       expect(res.headers.get("location")).toContain("/login?redirectTo=%2Fdashboard");
     });
 
@@ -707,7 +709,7 @@ describe("Master Hono Application Dispatcher (src/server/app.ts)", () => {
       it("dispatches GET /api/files/:id -> extracts :id parameter and returns 200 with ETag header", async () => {
         const now = new Date("2026-11-01T00:00:00Z");
         mockDbFindFirst.mockResolvedValueOnce({
-          id: "doc-target-abc-123",
+          id: "a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d",
           userId: "user-app-001",
           title: "Architecture SSoT",
           content: "# System Spec",
@@ -721,19 +723,19 @@ describe("Master Hono Application Dispatcher (src/server/app.ts)", () => {
           deletedAt: null,
         });
 
-        const res = await app.request("http://localhost/api/files/doc-target-abc-123");
+        const res = await app.request("http://localhost/api/files/a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d");
         expect(res.status).toBe(200);
         expect(res.headers.get("etag")).toBe('"etag_spec_hash_v1"');
 
         const body = await res.json();
-        expect(body.id).toBe("doc-target-abc-123");
+        expect(body.id).toBe("a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d");
         expect(body.title).toBe("Architecture SSoT");
       });
 
       it("dispatches GET /api/files/:id -> returns 304 Not Modified when If-None-Match matches", async () => {
         const now = new Date("2026-11-01T00:00:00Z");
         mockDbFindFirst.mockResolvedValueOnce({
-          id: "doc-target-abc-123",
+          id: "a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d",
           userId: "user-app-001",
           title: "Architecture SSoT",
           content: "# System Spec",
@@ -747,7 +749,7 @@ describe("Master Hono Application Dispatcher (src/server/app.ts)", () => {
           deletedAt: null,
         });
 
-        const res = await app.request("http://localhost/api/files/doc-target-abc-123", {
+        const res = await app.request("http://localhost/api/files/a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d", {
           headers: { "If-None-Match": '"etag_spec_hash_v1"' },
         });
 
@@ -758,7 +760,7 @@ describe("Master Hono Application Dispatcher (src/server/app.ts)", () => {
       it("dispatches PUT /api/files/:id -> extracts :id parameter and updates file", async () => {
         const now = new Date("2026-11-02T00:00:00Z");
         mockDbFindFirst.mockResolvedValueOnce({
-          id: "doc-target-abc-123",
+          id: "a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d",
           userId: "user-app-001",
           title: "Spec Updated",
           content: "# Old Spec",
@@ -774,7 +776,7 @@ describe("Master Hono Application Dispatcher (src/server/app.ts)", () => {
 
         mockDbUpdateReturning.mockResolvedValueOnce([
           {
-            id: "doc-target-abc-123",
+            id: "a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d",
             userId: "user-app-001",
             title: "Spec Updated",
             content: "# Updated Spec",
@@ -789,7 +791,7 @@ describe("Master Hono Application Dispatcher (src/server/app.ts)", () => {
           },
         ]);
 
-        const res = await app.request("http://localhost/api/files/doc-target-abc-123", {
+        const res = await app.request("http://localhost/api/files/a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d", {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
@@ -811,7 +813,7 @@ describe("Master Hono Application Dispatcher (src/server/app.ts)", () => {
       it("dispatches DELETE /api/files/:id -> extracts :id parameter and soft-deletes file", async () => {
         const now = new Date("2026-11-02T00:00:00Z");
         mockDbFindFirst.mockResolvedValueOnce({
-          id: "doc-target-abc-123",
+          id: "a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d",
           userId: "user-app-001",
           title: "Spec",
           content: "# Spec",
@@ -827,7 +829,7 @@ describe("Master Hono Application Dispatcher (src/server/app.ts)", () => {
 
         mockDbUpdateReturning.mockResolvedValueOnce([
           {
-            id: "doc-target-abc-123",
+            id: "a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d",
             userId: "user-app-001",
             title: "Spec",
             content: "# Spec",
@@ -843,7 +845,7 @@ describe("Master Hono Application Dispatcher (src/server/app.ts)", () => {
         ]);
 
         const res = await app.request(
-          "http://localhost/api/files/doc-target-abc-123?expectedVersion=2",
+          "http://localhost/api/files/a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d?expectedVersion=2",
           {
             method: "DELETE",
             headers: { "If-Match": '"etag_v2"' },
@@ -853,7 +855,7 @@ describe("Master Hono Application Dispatcher (src/server/app.ts)", () => {
         expect(res.status).toBe(200);
         const data = await res.json();
         expect(data.success).toBe(true);
-        expect(data.id).toBe("doc-target-abc-123");
+        expect(data.id).toBe("a1b2c3d4-e5f6-4a1b-8c2d-3e4f5a6b7c8d");
         expect(data.version).toBe(3);
       });
 
