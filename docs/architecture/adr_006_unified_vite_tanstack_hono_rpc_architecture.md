@@ -4,7 +4,7 @@
 | :--- | :--- |
 | **ADR Identifier** | `ADR-006` (`ELIXENT-ADR-006`) |
 | **Classification** | `STANDALONE ARCHITECTURAL DECISION RECORD (ADR)` |
-| **Version & Status** | `v1.1 — Accepted & Hardened (Phase 2.5 Boundary & RPC Amendment)` |
+| **Version & Status** | `v1.2 — Accepted & Hardened (Phase 2.5 Boundary/RPC & Phase 3 Native SPA Routing Amendments)` |
 | **Supersedes / Amends** | Amends Cloud Runtime Framework specification in [01_architecture_vision_and_adrs.md](./01_architecture_vision_and_adrs.md) (§1.1 & §2) |
 | **Governing Execution Plan** | [elixent-framework-migration-execution-plan.md](../records/plans/elixent-framework-migration-execution-plan.md) (`ELIXENT-FRAMEWORK-MIGRATION-PLAN-v1.1`) |
 | **Affected Repository Scope** | `src/server/**`, `src/client/**`, `src/hooks/**`, `src/components/**`, `vite.config.ts`, `playwright.config.ts`, `vitest*.config.mts` |
@@ -69,6 +69,7 @@ flowchart LR
 1. **Unified Presentation & Routing Layer (`Vite 6 + React 19 + TanStack Router`):**
    - Build the frontend as a pure Single-Page Application (`index.html`, `vite.config.ts`, `src/client/main.tsx`, `src/client/router.tsx`, `src/client/routes/**`).
    - Eliminate all `"use client"` directives (`30` files) and all `next/link`, `next/image`, and `next/navigation` imports.
+   - In `Phase 3`, configure typed `validateSearch` schemas (`LoginSearch`, `DashboardSearch`), a root `notFoundComponent`, and `registerRouter(router)` inside `src/client/router.tsx` while keeping route views (`src/client/routes/**`) strictly decoupled from importing `router.tsx` (`DEF-13`), resolving query parameters via `useSearch({ strict: false })` (with `window.location.search` fallback), direct `<Button type="button" onClick>` triggers, and `<AppLink to="...">` navigation.
    - Unify the build bundler and test module resolver around `Vite 6` and `Vitest`, removing `src/server/empty.ts` and the `'server-only'` alias.
 2. **Unified Web-Standard Transport & End-to-End Typed RPC Layer (`Hono + hc<AppType>`):**
    - Migrate all 8 REST/SSE API routes (`src/app/api/**`) and `/auth/callback` into modular Hono routers under `src/server/routes/*.routes.ts` using standard Web `Request`, `Response`, and `ReadableStream` APIs without Next.js response compression buffering (`Chunk Buffering`).

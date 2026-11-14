@@ -141,7 +141,7 @@ To guarantee high cohesion and single-responsibility isolation, file and directo
  - `src/test/vault/vault-import.integration.test.ts`: Integration test verifying direct client-encrypted vault import pipeline.
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 145 unit suites (2972 tests) · 21 live suites (105 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 146 unit suites (3007 tests) · 21 live suites (105 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ---

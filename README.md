@@ -20,7 +20,7 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-145%20Suites%20·%202972%2F2972%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 2972 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-146%20Suites%20·%203007%2F3007%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 3007 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-21%20Suites%20·%20105%2F105%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 105 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
@@ -163,7 +163,7 @@ lugx/
 │       └── cron.yml               # Scheduled maintenance workflow (Daily 03:00 UTC & Quota sweepers)
 ├── docs/                          # Comprehensive technical documentation & governance
 │   ├── README.md                  # Master structural map and documentation index
-│   ├── CHANGELOG.md               # Versioned engineering changelog (Elixent v0.1.0 to v0.20.5; archived LUGX v1.0.0–v1.46.3)
+│   ├── CHANGELOG.md               # Versioned engineering changelog (Elixent v0.1.0 to v0.21.0; archived LUGX v1.0.0–v1.46.3)
 │   ├── TECHNICAL_DEBT_REGISTER.md # Living register of accepted debts and resolution history
 │   ├── DOCUMENTATION_GUIDELINES.md# Rules for authoring, linking, and updating documentation
 │   ├── Plans/                     # Active technical execution plans (ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md)
@@ -179,7 +179,7 @@ lugx/
 │   │   ├── routes/                # 5 canonical route views (home, login, dashboard, editor, account) + workspace layout
 │   │   ├── main.tsx               # Client DOM entrypoint (StrictMode mount, QueryClient, TanStack RouterProvider)
 │   │   ├── navigation.ts          # Unified navigation adapter (SPA router vs window.location fallback)
-│   │   ├── router.tsx             # Type-safe TanStack route tree & query client provider
+│   │   ├── router.tsx             # Type-safe TanStack route tree, validateSearch schemas, 404 boundary & registerRouter(router)
 │   │   ├── rpc-client.ts          # Transport-injectable typed Hono RPC client (hc<AppType>; zero server imports)
 │   │   └── styles/globals.css     # Client design tokens, Dark Glassmorphism, and Tailwind utilities
 │   ├── components/                # Modular React UI components
@@ -210,7 +210,7 @@ lugx/
 │   │   └── services/              # AI settlement, credit metering, and background sweepers
 │   ├── test/                      # Centralized test suite partitioned into domain subdirectories
 │   │   ├── ai/                    # Gemini AI client, NDJSON streaming, and quota settlement tests
-│   │   ├── client/                # TanStack router tree, navigation adapter, and view parity tests
+│   │   ├── client/                # TanStack router tree, validateSearch, navigation adapter & SPA hardening tests
 │   │   ├── sync/                  # Offline-first sync, conflict resolution, and IndexedDB tests
 │   │   ├── vault/                 # Zero-Knowledge vault crypto, WebAuthn PRF, and recovery tests
 │   │   ├── parsers/               # PDF worker bridge, spatial table extractor, and Arabic normalizer tests
@@ -311,7 +311,7 @@ npm run start
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 145 | 2972 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 146 | 3007 | 100% ✅ |
 | **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 105 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
@@ -326,7 +326,7 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).               |
 
 ```bash
-# Execute unit/contract test suites (145 test files, 2972 tests)
+# Execute unit/contract test suites (146 test files, 3007 tests)
 npm run test
 
 # Execute live database integration test suites on isolated Neon branch (21 test files, 105 tests)

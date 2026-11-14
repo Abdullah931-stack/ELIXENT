@@ -4,6 +4,32 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.21.0] - 2026-11-14 (Phase 3: Replace Next.js 15 Async searchParams, Form Action Wrappers & SSR Guards with Native TanStack Router & SPA Idioms)
+
+### TanStack Router Search Validation, 404 Boundary & `AppLink` Standardization (`Sub-Agent 3.A`)
+- **Typed Route Search Schemas (`src/client/router.tsx`):** Added `LoginSearch` (`redirectTo?: string`) and `DashboardSearch` (`session_id?: string`) `validateSearch` validators on exported `loginRoute` and `dashboardRoute`, preserving non-empty strings and stripping invalid or non-string values to `undefined`. Also exported `workspaceEditorRoute` for router tree verification while preserving the strict DAG invariant (`DEF-13`) prohibiting route views from importing `router.tsx`.
+- **Root 404 Recovery Boundary (`src/client/router.tsx`):** Configured `notFoundComponent` on `rootRoute` rendering a `Page Not Found` fallback view with `<AppLink to="/">Return to Home</AppLink>`.
+- **Router Singleton Registration (`src/client/router.tsx`):** Bound `registerRouter(router)` at module initialization so imperative `navigateTo()` calls route natively through TanStack Router.
+- **Component Link & JSDoc Alignment:** Standardized `<Link href={...}>` to `<Link to={...}>` in `src/components/files/file-tree-item.tsx` and `src/components/layout/sidebar.tsx`, and updated `src/components/subscription/upgrade-button.tsx` JSDoc (`Interactive UI button for initiating Stripe subscription upgrades.`).
+
+### Client Route Views & Pure SPA Idioms (`Sub-Agent 3.B`)
+- **Purged Next.js 15 Async `searchParams` Promises:** Removed `Promise<...>` prop signatures, state hooks, and `"then" in props.searchParams` effects from `src/client/routes/login-page.tsx` and `src/client/routes/dashboard-page.tsx` in favor of synchronous props (`redirectTo`, `sessionId`, `searchParams`).
+- **Defensive `useSearch` Resolution:** Updated `LoginRouteView` and `DashboardRouteView` to read `useSearch({ strict: false })` inside a `try / catch` block with a `window.location.search` fallback when mounted outside `RouterProvider`.
+- **Replaced 5 Single-Button `<form onSubmit>` Wrappers:** Converted single-action form wrappers to direct `<Button type="button" onClick={...}>` handlers across `login-page.tsx` (Google sign-in), `dashboard-page.tsx` (sign-out), `account-page.tsx` (sign-out), and `workspace-page.tsx` (`New Document` and `Create Document`), preserving true multi-control forms (`chat-panel.tsx`, `hitl-question-card.tsx`).
+- **Exclusive Hono RPC Sign-Out:** Standardized `handleSignOut` in `dashboard-page.tsx` and `account-page.tsx` to invoke Hono RPC `signOut()` exclusively and redirect via `navigateTo("/")`, eliminating redundant `supabase.auth.signOut()` calls and removing the unused `createClient` import from `dashboard-page.tsx`.
+- **Purged Redundant SSR Guards & Standardized `to` Links:** Stripped redundant `typeof window !== "undefined"` guards from `login-page.tsx`, `dashboard-page.tsx`, `account-page.tsx`, and `editor-page.tsx` (preserving `try / catch` around `localStorage`), and updated `<Link href=...>` to `<Link to=...>` across `home-page.tsx`, `login-page.tsx`, `dashboard-page.tsx`, `account-page.tsx`, `workspace-layout.tsx`, and `workspace-page.tsx`.
+
+### Client Test Alignment & SPA Hardening Suite (`Sub-Agent 3.C`)
+- **Router Singleton Isolation (`DEF-14`):** Added `registerRouter(null)` and `delete window.__APP_ROUTER__` cleanup in `src/test/client/navigation.test.ts` plus unit tests for `registerRouter`, `getActiveRouter`, and `{ replace: true }` forwarding.
+- **Route Tree & View Parity Coverage:** Extended `src/test/client/router-tree.test.tsx` with `getActiveRouter()`, nested unmatched subpath `notFoundComponent`, and `validateSearch` tests; updated `src/test/client/route-views-parity.test.tsx` and `src/test/agent/wave-11-2-ui-and-pages.test.tsx` with `useSearch: () => ({})` mocks, synchronous `searchParams`, button assertions, and `Ctrl+Alt+D` direction persistence coverage.
+- **New Hardening Suite:** Added `src/test/client/wave-3-1-spa-hardening.test.tsx` covering `notFoundComponent`, `LoginRouteView` / `DashboardRouteView` `useSearch` + fallback precedence, exclusive Hono RPC sign-out, `WorkspacePage` concurrent creation guards, and `EditorPage` `localStorage` sanitization.
+
+### Verification Baseline
+- **Verification Baseline:** `146` unit/contract suites (`3,007` tests passing, `+1` suite / `+35` tests), `21` live suites (`105` tests on isolated Neon branch), `14` E2E specs (`15` journeys; `e2e/specs/01-auth-session.spec.ts` verified passing), `0` TS errors (`npx tsc --noEmit`), `0` ESLint errors (`npm run lint`), production build green (`vite build` + `esbuild` -> `dist/server/index.mjs`), and `0` broken internal Markdown links.
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/nextjs-decoupling/phase-03-tanstack-router-validate-search-and-pure-spa-idioms.md`](./records/closures/nextjs-decoupling/phase-03-tanstack-router-validate-search-and-pure-spa-idioms.md).
+
+---
+
 ## [0.20.6] - 2026-11-14 (Production Server Bundling & Standalone Environment Loading)
 
 ### Standalone Server Runtime & Build Pipeline
