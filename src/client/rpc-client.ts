@@ -1,4 +1,5 @@
 import { hc } from "hono/client";
+import { clearLocalClientUserId } from "@/lib/auth/client-identity";
 import type { AppType } from "@/server/app";
 import type {
   FileEncryptionMetadata,
@@ -490,6 +491,7 @@ export async function signOut(): Promise<{ success: true; redirectUrl: string }>
     const rawText = typeof res.text === "function" ? await res.text() : "";
     throw new Error(rawText.trim() || `Sign out failed with status ${res.status}`);
   }
+  clearLocalClientUserId();
   return (await res.json()) as { success: true; redirectUrl: string };
 }
 

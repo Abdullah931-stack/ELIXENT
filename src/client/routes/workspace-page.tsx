@@ -4,17 +4,9 @@ import { navigateTo } from "@/client/navigation";
 import { getRootFiles, createFile } from "@/client/rpc-client";
 import { Button } from "@/components/ui/button";
 import { Plus, FileText, Folder, Sparkles } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
-
-async function resolveAuthUser() {
-    try {
-        const supabase = createClient();
-        const { data: { user } } = await supabase.auth.getUser();
-        return user;
-    } catch {
-        return null;
-    }
-}
+import {
+    resolveLocalFirstAuthUser,
+} from "@/lib/auth/client-identity";
 
 interface WorkspaceFileItem {
     id: string;
@@ -34,7 +26,13 @@ export default function WorkspacePage() {
         let isMounted = true;
         async function loadData() {
             try {
-                const authUser = await resolveAuthUser();
+                const authUser = await resolveLocalFirstAuthUser({
+                    onSessionExpired: () => {
+                        if (isMounted) {
+                            navigateTo("/login");
+                        }
+                    },
+                });
                 if (!isMounted) return;
                 if (!authUser) {
                     navigateTo("/login");
@@ -53,10 +51,13 @@ export default function WorkspacePage() {
                 } catch (err) {
                     console.error("[Workspace] Network error fetching root files:", err);
                 }
-                setLoading(false);
             } catch {
                 if (isMounted) {
                     navigateTo("/login");
+                }
+            } finally {
+                if (isMounted) {
+                    setLoading(false);
                 }
             }
         }

@@ -12,7 +12,10 @@ import { AIToolbar } from "@/components/editor/ai-toolbar";
 import { SearchReplace } from "@/components/editor/search-replace";
 import { countWords, detectTextDirection, countCharacters } from "@/lib/utils";
 import { Loader2, AlertTriangle, Lock } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
+import {
+    resolveInitialClientUserIdSync,
+    resolveLocalFirstAuthUser,
+} from "@/lib/auth/client-identity";
 import { SyncIndicator } from "@/components/sync/sync-indicator";
 import { AIStreamStatus } from "@/components/editor/ai-stream-status";
 import { AgentChatPanel } from "@/components/agent/chat-panel";
@@ -26,7 +29,7 @@ export default function EditorPage() {
     const navigate = useAppNavigate();
     const fileId = (params?.fileId as string) || "";
 
-    const [userId, setUserId] = useState<string | null>(null);
+    const [userId, setUserId] = useState<string | null>(() => resolveInitialClientUserIdSync());
     const [isAgentPanelOpen, setIsAgentPanelOpen] = useState(false);
     const [isSearchOpen, setIsSearchOpen] = useState(false);
     const [selectedText, setSelectedText] = useState("");
@@ -152,21 +155,27 @@ export default function EditorPage() {
 
     // Fetch authenticated user ID
     useEffect(() => {
-        async function fetchUser() {
-            try {
-                const supabase = createClient();
-                const {
-                    data: { user },
-                } = await supabase.auth.getUser();
-                if (user) {
+        let isCancelled = false;
+        resolveLocalFirstAuthUser({
+            onSessionExpired: () => {
+                if (!isCancelled && (typeof navigator === "undefined" || navigator.onLine !== false)) {
+                    navigate("/login");
+                }
+            },
+        })
+            .then((user) => {
+                if (!isCancelled && user) {
                     setUserId(user.id);
                 }
-            } catch (authErr) {
-                console.warn("[Editor] fetchUser network exception:", authErr);
-            }
-        }
-        fetchUser();
-    }, []);
+            })
+            .catch((authErr) => {
+                console.warn("[Editor] resolveLocalFirstAuthUser exception:", authErr);
+            });
+
+        return () => {
+            isCancelled = true;
+        };
+    }, [navigate]);
 
     // Keyboard shortcuts (Ctrl+F for search, Escape for stopping AI generation, Ctrl+Alt+D for direction cycle)
     useEffect(() => {

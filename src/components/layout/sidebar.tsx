@@ -23,7 +23,10 @@ import { pdfWorkerBridge } from "@/lib/parsers/pdf-worker-bridge";
 import { sessionKeyStore } from "@/lib/sync/session-key-store";
 import { SyncCryptoGateway } from "@/lib/sync/sync-crypto-gateway";
 import { indexedDBManager } from "@/lib/sync/indexeddb";
-import { createClient } from "@/lib/supabase/client";
+import {
+    resolveInitialClientUserIdSync,
+    resolveLocalFirstAuthUser,
+} from "@/lib/auth/client-identity";
 import { VaultUnlockModal } from "@/components/vault";
 import { useToast } from "@/hooks/use-toast";
 import { FileTreeItem } from "@/components/files/file-tree-item";
@@ -73,7 +76,7 @@ export function Sidebar({ userId }: SidebarProps = {}) {
         remainingFiles: File[];
         isOcrInstalled: boolean;
     } | null>(null);
-    const [effectiveUserId, setEffectiveUserId] = useState<string>(userId || "");
+    const [effectiveUserId, setEffectiveUserId] = useState<string>(() => userId?.trim() || resolveInitialClientUserIdSync() || "");
     const abortControllerRef = useRef<AbortController | null>(null);
     const [deletedFiles, setDeletedFiles] = useState<FileItem[]>([]);
     const [showTrash, setShowTrash] = useState(false);
@@ -81,14 +84,15 @@ export function Sidebar({ userId }: SidebarProps = {}) {
 
     const resolveEffectiveUserId = useCallback(async (): Promise<string> => {
         if (userId && userId.trim()) return userId.trim();
+        const syncUid = resolveInitialClientUserIdSync();
+        if (syncUid && syncUid.trim()) return syncUid.trim();
         try {
-            const supabase = createClient();
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user?.id) return user.id;
+            const authUser = await resolveLocalFirstAuthUser();
+            if (authUser?.id) return authUser.id;
         } catch (err) {
             console.warn("[Sidebar] Failed to resolve auth user session:", err);
         }
-        return "";
+        return "anonymous";
     }, [userId]);
 
     useEffect(() => {

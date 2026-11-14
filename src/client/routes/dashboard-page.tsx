@@ -9,16 +9,9 @@ import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/ca
 import { FileText, Settings, LogOut, Plus, Sparkles, Coins } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/client";
-
-async function resolveAuthUser() {
-    try {
-        const supabase = createClient();
-        const { data: { user } } = await supabase.auth.getUser();
-        return user;
-    } catch {
-        return null;
-    }
-}
+import {
+    resolveLocalFirstAuthUser,
+} from "@/lib/auth/client-identity";
 
 export default function DashboardPage(props?: {
     searchParams?: Promise<{ session_id?: string }> | { session_id?: string };
@@ -56,7 +49,13 @@ export default function DashboardPage(props?: {
         let isMounted = true;
         async function loadData() {
             try {
-                const authUser = await resolveAuthUser();
+                const authUser = await resolveLocalFirstAuthUser({
+                    onSessionExpired: () => {
+                        if (isMounted) {
+                            navigateTo("/login");
+                        }
+                    },
+                });
                 if (!isMounted) return;
                 if (!authUser) {
                     navigateTo("/login");
@@ -93,11 +92,13 @@ export default function DashboardPage(props?: {
                     if (!isMounted) return;
                     setBalanceError("Unable to load credit balance");
                 }
-
-                setLoading(false);
             } catch {
                 if (isMounted) {
                     navigateTo("/login");
+                }
+            } finally {
+                if (isMounted) {
+                    setLoading(false);
                 }
             }
         }

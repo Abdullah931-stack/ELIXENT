@@ -5,35 +5,49 @@ import { navigateTo } from "@/client/navigation";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Button } from "@/components/ui/button";
 import { Settings, Home } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
-
-async function resolveAuthUser() {
-    try {
-        const supabase = createClient();
-        const { data: { user } } = await supabase.auth.getUser();
-        return user;
-    } catch {
-        return null;
-    }
-}
+import {
+    resolveInitialClientUserIdSync,
+    resolveLocalFirstAuthUser,
+} from "@/lib/auth/client-identity";
 
 export function WorkspaceLayoutRouteView() {
-    const [userId, setUserId] = useState<string | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
+    const [userId, setUserId] = useState<string | null>(() => resolveInitialClientUserIdSync());
+    const [isLoading, setIsLoading] = useState<boolean>(() => resolveInitialClientUserIdSync() === null);
 
     useEffect(() => {
-        resolveAuthUser()
-            .then((user) => {
-                if (!user) {
+        let cancelled = false;
+
+        resolveLocalFirstAuthUser({
+            onSessionExpired: () => {
+                if (!cancelled && (typeof navigator === "undefined" || navigator.onLine !== false)) {
+                    setUserId(null);
+                    setIsLoading(false);
                     navigateTo("/login");
+                }
+            },
+        })
+            .then((user) => {
+                if (cancelled) return;
+                if (!user) {
+                    if (typeof navigator === "undefined" || navigator.onLine !== false) {
+                        setIsLoading(false);
+                        navigateTo("/login");
+                    }
                     return;
                 }
                 setUserId(user.id);
                 setIsLoading(false);
             })
             .catch(() => {
-                navigateTo("/login");
+                if (!cancelled && (typeof navigator === "undefined" || navigator.onLine !== false)) {
+                    setIsLoading(false);
+                    navigateTo("/login");
+                }
             });
+
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
     if (isLoading) {

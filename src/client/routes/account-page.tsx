@@ -12,16 +12,9 @@ import { VaultSecurityCard } from "@/components/vault";
 import { OcrSettingsCard } from "@/components/layout/ocr-settings-card";
 
 import { createClient } from "@/lib/supabase/client";
-
-async function resolveAuthUser() {
-    try {
-        const supabase = createClient();
-        const { data: { user } } = await supabase.auth.getUser();
-        return user;
-    } catch {
-        return null;
-    }
-}
+import {
+    resolveLocalFirstAuthUser,
+} from "@/lib/auth/client-identity";
 
 export default function AccountPage() {
     const [loading, setLoading] = useState(true);
@@ -34,13 +27,31 @@ export default function AccountPage() {
         let isMounted = true;
         async function loadData() {
             try {
-                const authUser = await resolveAuthUser();
+                const authUser = await resolveLocalFirstAuthUser({
+                    onSessionExpired: () => {
+                        if (isMounted) {
+                            navigateTo("/login");
+                        }
+                    },
+                });
                 if (!isMounted) return;
                 if (!authUser) {
                     navigateTo("/login");
                     return;
                 }
                 setUser(authUser);
+
+                if (typeof navigator === "undefined" || navigator.onLine !== false) {
+                    try {
+                        const supabase = createClient();
+                        const { data } = await supabase.auth.getUser();
+                        if (isMounted && data?.user?.id) {
+                            setUser(data.user);
+                        }
+                    } catch {
+                        // Tolerate offline / transient network error without redirecting
+                    }
+                }
 
                 try {
                     const [profileResult, balanceResult] = await Promise.all([
@@ -70,11 +81,13 @@ export default function AccountPage() {
                     if (!isMounted) return;
                     setBalanceError("Unable to load credit balance");
                 }
-
-                setLoading(false);
             } catch {
                 if (isMounted) {
                     navigateTo("/login");
+                }
+            } finally {
+                if (isMounted) {
+                    setLoading(false);
                 }
             }
         }

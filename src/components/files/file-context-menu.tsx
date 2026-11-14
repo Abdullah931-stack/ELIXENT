@@ -14,7 +14,10 @@ import { sessionKeyStore } from "@/lib/sync/session-key-store";
 import { indexedDBManager } from "@/lib/sync/indexeddb";
 import { FolderPickerModal } from "./folder-picker-modal";
 import { CreateVaultModal, VaultUnlockModal } from "@/components/vault";
-import { createClient } from "@/lib/supabase/client";
+import {
+    resolveInitialClientUserIdSync,
+    resolveLocalFirstAuthUser,
+} from "@/lib/auth/client-identity";
 import { broadcastCrossTabEvent } from "@/lib/sync/cross-tab-sync";
 import { SyncCryptoGateway } from "@/lib/sync/sync-crypto-gateway";
 
@@ -55,29 +58,33 @@ export function FileContextMenu({
     const [showCreateVault, setShowCreateVault] = useState(false);
     const [showUnlockVault, setShowUnlockVault] = useState(false);
     const [isTransforming, setIsTransforming] = useState(false);
-    const [resolvedUid, setResolvedUid] = useState<string>(userId || "");
+    const [resolvedUid, setResolvedUid] = useState<string>(() => userId?.trim() || resolveInitialClientUserIdSync() || "");
 
     /**
      * Resolves the authenticated user ID reliably.
-     * Uses passed prop, cached state, or falls back to browser Supabase auth session.
+     * Uses passed prop, cached state, or falls back to local-first client identity.
      */
     async function resolveEffectiveUserId(): Promise<string> {
-        if (resolvedUid && resolvedUid.trim()) return resolvedUid.trim();
+        if (resolvedUid && resolvedUid.trim() && resolvedUid !== "anonymous") return resolvedUid.trim();
         if (userId && userId.trim()) {
             setResolvedUid(userId.trim());
             return userId.trim();
         }
+        const syncUid = resolveInitialClientUserIdSync();
+        if (syncUid && syncUid.trim()) {
+            setResolvedUid(syncUid.trim());
+            return syncUid.trim();
+        }
         try {
-            const supabase = createClient();
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user?.id) {
-                setResolvedUid(user.id);
-                return user.id;
+            const authUser = await resolveLocalFirstAuthUser();
+            if (authUser?.id) {
+                setResolvedUid(authUser.id);
+                return authUser.id;
             }
         } catch (err) {
             console.warn("[FileContextMenu] Failed to resolve auth user session:", err);
         }
-        return "";
+        return "anonymous";
     }
 
     // Restore a soft-deleted item (tombstone)
