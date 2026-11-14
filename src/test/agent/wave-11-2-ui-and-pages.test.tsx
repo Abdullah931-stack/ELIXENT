@@ -28,6 +28,7 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
+import { clearLocalClientUserId, persistLocalClientUserId } from "@/lib/auth/client-identity";
 
 // ============================================================================
 // Navigation & Router Mocks
@@ -296,9 +297,31 @@ import { MICRO_PER_CREDIT } from "@/lib/metering/constants";
 // Test Suite Begins
 // ============================================================================
 
+function setTestUser(user: { id: string; [key: string]: any } | null) {
+    mockGetServerUser.mockResolvedValue(user);
+    if (user?.id) {
+        persistLocalClientUserId(user.id);
+    } else {
+        clearLocalClientUserId();
+        if (typeof document !== "undefined") {
+            document.cookie = "elixent_uid=; Path=/; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
+        }
+        if (typeof window !== "undefined" && window.localStorage) {
+            window.localStorage.clear();
+        }
+    }
+}
+
 describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        clearLocalClientUserId();
+        if (typeof document !== "undefined") {
+            document.cookie = "elixent_uid=; Path=/; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
+        }
+        if (typeof window !== "undefined" && window.localStorage) {
+            window.localStorage.clear();
+        }
         mockFileIdParam = "file-arch-test-123";
         mockAdapterInstance = {
             getValue: vi.fn().mockReturnValue("# Markdown content"),
@@ -312,7 +335,7 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
             insertMarkdown: vi.fn(),
             setDirectionSettings: vi.fn(),
         };
-        mockGetServerUser.mockResolvedValue({ id: "user-client-123" });
+        setTestUser({ id: "user-client-123" });
         mockGetClientUser.mockImplementation(async () => {
             const user = await mockGetServerUser();
             return { data: { user } };
@@ -337,6 +360,13 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
 
     afterEach(() => {
         cleanup();
+        clearLocalClientUserId();
+        if (typeof document !== "undefined") {
+            document.cookie = "elixent_uid=; Path=/; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
+        }
+        if (typeof window !== "undefined" && window.localStorage) {
+            window.localStorage.clear();
+        }
     });
 
     // ========================================================================
@@ -543,7 +573,7 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
     // ========================================================================
     describe("2. DashboardPage Credit Views & Progress Metering", () => {
         it("redirects unauthenticated visitor to /login", async () => {
-            mockGetServerUser.mockResolvedValue(null);
+            setTestUser(null);
 
             render(<DashboardPage />);
             await waitFor(() => {
@@ -699,7 +729,7 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
     // ========================================================================
     describe("3. AccountPage Metered Credit Balance & Plan Comparison", () => {
         it("redirects unauthenticated visitor to /login", async () => {
-            mockGetServerUser.mockResolvedValue(null);
+            setTestUser(null);
 
             render(<AccountPage />);
             await waitFor(() => {

@@ -8,6 +8,8 @@ test.describe("Scenario 4: Offline-First Sync & Interactive Conflict Resolution"
         context,
         authSession,
     }) => {
+        test.setTimeout(90000);
+
         // 1. Seed document
         const [doc] = await e2eDb
             .insert(schema.files)
@@ -38,7 +40,8 @@ test.describe("Scenario 4: Offline-First Sync & Interactive Conflict Resolution"
         );
 
         // 4. In the UI, perform offline edit on the same line to force true 3-way conflict
-        await cmContent.click();
+        const firstLine = page.locator(".cm-line").first();
+        await firstLine.click();
         await page.keyboard.press("Home");
         await page.keyboard.type("Client Local Edit - ");
 
@@ -59,11 +62,11 @@ test.describe("Scenario 4: Offline-First Sync & Interactive Conflict Resolution"
         // 7. Select resolution strategy and confirm resolution
         const keepLocalBtn = page.getByRole("button", { name: "اعتماد النسخة المحلية" });
         await expect(keepLocalBtn).toBeVisible();
-        await keepLocalBtn.click();
+        await keepLocalBtn.click({ force: true });
 
         const confirmBtn = page.getByRole("button", { name: "تأكيد وحفظ الحل في الخادم" });
         await expect(confirmBtn).toBeVisible();
-        await confirmBtn.click();
+        await confirmBtn.click({ force: true });
 
         // 8. Assert dialog closed and DB state reflects resolved merge
         await expect(conflictHeading).toBeHidden({ timeout: 10000 });

@@ -183,4 +183,75 @@ describe("useEditorAutosave", () => {
 
         expect(onUserEdit).toHaveBeenCalledWith("typed text");
     });
+
+    describe("Window Lifecycle Listeners (pagehide and beforeunload — REQ-COND-FLUSH)", () => {
+        it("flushes dirty content immediately upon window pagehide event", async () => {
+            const { flushOnUnmount, persist, edit, advance } = setup();
+
+            edit("unsaved before pagehide");
+            expect(flushOnUnmount).not.toHaveBeenCalled();
+
+            // Trigger window pagehide (browser navigation / tab unload)
+            act(() => {
+                window.dispatchEvent(new Event("pagehide"));
+            });
+
+            expect(flushOnUnmount).toHaveBeenCalledTimes(1);
+            expect(flushOnUnmount).toHaveBeenCalledWith("unsaved before pagehide", "file-a");
+
+            // Verify the debounce timer was cancelled and does not execute later
+            await advance(DEBOUNCE_MS * 2);
+            expect(persist).not.toHaveBeenCalled();
+        });
+
+        it("flushes dirty content immediately upon window beforeunload event", async () => {
+            const { flushOnUnmount, persist, edit, advance } = setup();
+
+            edit("unsaved before beforeunload");
+            expect(flushOnUnmount).not.toHaveBeenCalled();
+
+            // Trigger window beforeunload (browser refresh / close)
+            act(() => {
+                window.dispatchEvent(new Event("beforeunload"));
+            });
+
+            expect(flushOnUnmount).toHaveBeenCalledTimes(1);
+            expect(flushOnUnmount).toHaveBeenCalledWith("unsaved before beforeunload", "file-a");
+
+            // Verify debounce timer cancellation
+            await advance(DEBOUNCE_MS * 2);
+            expect(persist).not.toHaveBeenCalled();
+        });
+
+        it("does NOT flush upon window pagehide or beforeunload when editor is clean", () => {
+            const { flushOnUnmount } = setup();
+
+            act(() => {
+                window.dispatchEvent(new Event("pagehide"));
+                window.dispatchEvent(new Event("beforeunload"));
+            });
+
+            expect(flushOnUnmount).not.toHaveBeenCalled();
+        });
+
+        it("cleans up window event listeners on hook unmount to prevent memory leaks", () => {
+            const { hook, flushOnUnmount, edit } = setup();
+
+            edit("some edit");
+            // First unmount flushes the unmount edit
+            hook.unmount();
+            expect(flushOnUnmount).toHaveBeenCalledTimes(1);
+
+            flushOnUnmount.mockClear();
+
+            // Trigger window unload events after unmount
+            act(() => {
+                window.dispatchEvent(new Event("pagehide"));
+                window.dispatchEvent(new Event("beforeunload"));
+            });
+
+            // Must not be called again after unmount
+            expect(flushOnUnmount).not.toHaveBeenCalled();
+        });
+    });
 });

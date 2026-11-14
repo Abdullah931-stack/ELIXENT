@@ -185,9 +185,22 @@ vi.mock("@/components/sync/conflict-dialog", () => ({
   ConflictDialog: () => null,
 }));
 
-function setMockUser(user: unknown) {
+import { persistLocalClientUserId, clearLocalClientUserId } from "@/lib/auth/client-identity";
+
+function setMockUser(user: any) {
   mockGetServerUser.mockResolvedValue(user);
   mockGetClientUser.mockResolvedValue({ data: { user } });
+  if (user && typeof user === "object" && typeof user.id === "string") {
+    persistLocalClientUserId(user.id);
+  } else {
+    clearLocalClientUserId();
+    if (typeof document !== "undefined") {
+      document.cookie = "elixent_uid=; Path=/; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    }
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.clear();
+    }
+  }
 }
 
 // Import views under test
@@ -202,6 +215,13 @@ import { EditorRouteView } from "@/client/routes/editor-page";
 describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearLocalClientUserId();
+    if (typeof document !== "undefined") {
+      document.cookie = "elixent_uid=; Path=/; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    }
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.clear();
+    }
     setMockUser(null);
     mockGetCreditBalanceResult.mockResolvedValue({
       success: true,
@@ -212,6 +232,13 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
 
   afterEach(() => {
     cleanup();
+    clearLocalClientUserId();
+    if (typeof document !== "undefined") {
+      document.cookie = "elixent_uid=; Path=/; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    }
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.clear();
+    }
     vi.restoreAllMocks();
   });
 

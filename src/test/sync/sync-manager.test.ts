@@ -1015,4 +1015,195 @@ describe('Sync Manager', () => {
             );
         });
     });
+
+    describe('Divergence-Gated onBeforePullConflictCheck & Dynamic Flush (REQ-COND-FLUSH)', () => {
+        let mockOnBeforePullConflictCheck: ReturnType<typeof vi.fn<(fileId: string) => boolean | Promise<boolean>>>;
+        let pullEngineWithFlush: SyncPullEngine;
+
+        beforeEach(() => {
+            mockFetch.mockReset();
+            setRpcClientFetch(null as any);
+            mockOnBeforePullConflictCheck = vi.fn<(fileId: string) => boolean | Promise<boolean>>();
+            pullEngineWithFlush = new SyncPullEngine({
+                userId: 'user-flush-123',
+                idb: mockIndexedDBManager as any,
+                rollback: mockSyncRollback as any,
+                conflictStore: { isConflicted: vi.fn().mockResolvedValue(false) } as any,
+                encryptedConflictStore: {
+                    isEncryptedConflictLocked: vi.fn().mockReturnValue(false),
+                    quarantineEncryptedConflict: vi.fn(),
+                } as any,
+                onBeforePullConflictCheck: mockOnBeforePullConflictCheck,
+            });
+            mockIndexedDBManager.getFile.mockReset();
+            mockIndexedDBManager.saveFile.mockReset();
+            mockIndexedDBManager.getDirtyFiles.mockResolvedValue([]);
+            mockIndexedDBManager.getDueOperations.mockResolvedValue([]);
+        });
+
+        it('should skip onBeforePullConflictCheck and pullFile early when local and server ETags match', async () => {
+            mockIndexedDBManager.getFile.mockResolvedValueOnce({
+                id: 'file-match',
+                etag: 'etag-identical',
+                version: 1,
+                content: '# Content',
+                isDirty: false,
+            });
+
+            const serverFile = {
+                id: 'file-match',
+                etag: 'etag-identical',
+                version: 1,
+                content: '# Content',
+                title: 'Doc',
+                parentFolderId: null,
+                updatedAt: new Date().toISOString(),
+            };
+
+            const result = await pullEngineWithFlush.pullFile(serverFile);
+
+            expect(result.success).toBe(true);
+            expect(result.action).toBe('skipped');
+            expect(mockOnBeforePullConflictCheck).not.toHaveBeenCalled();
+        });
+
+        it('should call onBeforePullConflictCheck when server ETag diverges from local ETag', async () => {
+            mockIndexedDBManager.getFile.mockResolvedValueOnce({
+                id: 'file-diverged',
+                etag: 'etag-local-v1',
+                version: 1,
+                content: '# Local Content',
+                isDirty: false,
+            });
+
+            mockOnBeforePullConflictCheck.mockResolvedValue(false);
+
+            const serverFile = {
+                id: 'file-diverged',
+                etag: 'etag-server-v2',
+                version: 2,
+                content: '# Remote Content',
+                title: 'Doc',
+                parentFolderId: null,
+                updatedAt: new Date().toISOString(),
+            };
+
+            const result = await pullEngineWithFlush.pullFile(serverFile);
+
+            expect(mockOnBeforePullConflictCheck).toHaveBeenCalledTimes(1);
+            expect(mockOnBeforePullConflictCheck).toHaveBeenCalledWith('file-diverged');
+            expect(result.success).toBe(true);
+            expect(result.action).toBe('pulled');
+        });
+
+        it('should re-read localFile from IDB when onBeforePullConflictCheck returns true and detect flushed dirty edits', async () => {
+            // First read: clean file with old ETag
+            mockIndexedDBManager.getFile.mockResolvedValueOnce({
+                id: 'file-dirty-flush',
+                etag: 'etag-v1',
+                version: 1,
+                content: 'Clean initially',
+                isDirty: false,
+            });
+
+            // onBeforePullConflictCheck returns true (dirty editor state was flushed to IDB)
+            mockOnBeforePullConflictCheck.mockResolvedValue(true);
+
+            // Second read (after flush): file is now isDirty in IDB
+            mockIndexedDBManager.getFile.mockResolvedValueOnce({
+                id: 'file-dirty-flush',
+                etag: 'etag-v1',
+                version: 1,
+                content: 'Freshly flushed dirty edits',
+                isDirty: true,
+                baseSnapshot: { content: 'Clean initially', etag: 'etag-v1', version: 1 },
+            });
+
+            const serverFile = {
+                id: 'file-dirty-flush',
+                etag: 'etag-v2-competing',
+                version: 2,
+                content: 'Server version 2',
+                title: 'Doc',
+                parentFolderId: null,
+                updatedAt: new Date().toISOString(),
+            };
+
+            const result = await pullEngineWithFlush.pullFile(serverFile);
+
+            // Re-reading verified isDirty: true, so it routes to conflict instead of overwriting
+            expect(result.success).toBe(false);
+            expect(result.action).toBe('conflict');
+            expect(mockIndexedDBManager.saveFile).not.toHaveBeenCalledWith(
+                expect.objectContaining({ content: 'Server version 2' })
+            );
+        });
+
+        it('should tolerate error/rejection in onBeforePullConflictCheck without crashing pullFile', async () => {
+            mockIndexedDBManager.getFile.mockResolvedValueOnce({
+                id: 'file-error-case',
+                etag: 'etag-v1',
+                version: 1,
+                content: 'Content',
+                isDirty: false,
+            });
+
+            mockOnBeforePullConflictCheck.mockRejectedValue(new Error('Flushing hook unmounted'));
+
+            const serverFile = {
+                id: 'file-error-case',
+                etag: 'etag-v2',
+                version: 2,
+                content: 'New Content',
+                title: 'Doc',
+                parentFolderId: null,
+                updatedAt: new Date().toISOString(),
+            };
+
+            const result = await pullEngineWithFlush.pullFile(serverFile);
+
+            expect(mockOnBeforePullConflictCheck).toHaveBeenCalledWith('file-error-case');
+            // Catches error gracefully and still successfully pulls
+            expect(result.success).toBe(true);
+            expect(result.action).toBe('pulled');
+        });
+
+        it('should pass onBeforePullConflictCheck from SyncManager.init down to its engine', async () => {
+            const checkFn = vi.fn().mockResolvedValue(false);
+            await manager.init({
+                userId: 'user-init-check',
+                onBeforePullConflictCheck: checkFn,
+            });
+
+            mockIndexedDBManager.getFile.mockResolvedValue({
+                id: 'file-through-manager',
+                etag: 'etag-old',
+                version: 1,
+                content: 'Old',
+                isDirty: false,
+            });
+
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    files: [
+                        {
+                            id: 'file-through-manager',
+                            etag: 'etag-new',
+                            version: 2,
+                            content: 'New',
+                            title: 'Doc',
+                            updatedAt: new Date().toISOString(),
+                        },
+                    ],
+                    has_more: false,
+                }),
+            });
+
+            await manager.sync();
+
+            expect(checkFn).toHaveBeenCalledWith('file-through-manager');
+        });
+    });
 });

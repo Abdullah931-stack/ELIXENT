@@ -401,4 +401,100 @@ describe('useSync hook', () => {
 
         unmount();
     });
+
+    describe('onBeforePullConflictCheck & baseSnapshot preservation (REQ-COND-FLUSH)', () => {
+        it('should forward onBeforePullConflictCheck to syncManager.init and delegate calls to caller callback', async () => {
+            const onBeforePullConflictCheck = vi.fn().mockResolvedValue(true);
+            renderHook(() => useSync({ userId: 'user-forward-test', onBeforePullConflictCheck }));
+
+            await waitFor(() =>
+                expect(mocks.syncManager.init).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        onBeforePullConflictCheck: expect.any(Function),
+                    })
+                )
+            );
+
+            const initArg = mocks.syncManager.init.mock.calls[0][0];
+            const result = await initArg.onBeforePullConflictCheck('file-forwarded');
+            expect(onBeforePullConflictCheck).toHaveBeenCalledWith('file-forwarded');
+            expect(result).toBe(true);
+        });
+
+        it('should preserve explicit file.baseSnapshot in saveLocal when target is dirty even without existing file', async () => {
+            const { result } = renderHook(() => useSync({ userId: 'user-save-local' }));
+            await waitFor(() => expect(result.current.isInitialized).toBe(true));
+
+            mocks.indexedDBManager.getFile.mockResolvedValueOnce(undefined);
+
+            const explicitBaseSnapshot = {
+                content: '# Original Baseline Content',
+                version: 1,
+                etag: 'etag-base-1',
+                title: 'Original Title',
+                parentFolderId: null,
+                isEncrypted: false,
+                encryptionMetadata: null,
+            };
+
+            await act(async () => {
+                await result.current.saveLocal({
+                    id: 'file-explicit-base',
+                    content: '# Fresh Live Edits',
+                    isDirty: true,
+                    baseSnapshot: explicitBaseSnapshot,
+                });
+            });
+
+            expect(mocks.indexedDBManager.saveFile).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    id: 'file-explicit-base',
+                    content: '# Fresh Live Edits',
+                    isDirty: true,
+                    baseSnapshot: explicitBaseSnapshot,
+                })
+            );
+        });
+
+        it('should retain existingFile.baseSnapshot when file.baseSnapshot is omitted during subsequent dirty save', async () => {
+            const { result } = renderHook(() => useSync({ userId: 'user-save-local' }));
+            await waitFor(() => expect(result.current.isInitialized).toBe(true));
+
+            const existingSnapshot = {
+                content: '# Ancient Base',
+                version: 1,
+                etag: 'etag-v1',
+                title: 'Doc',
+                parentFolderId: null,
+                isEncrypted: false,
+                encryptionMetadata: null,
+            };
+
+            mocks.indexedDBManager.getFile.mockResolvedValueOnce({
+                id: 'file-retained-base',
+                content: '# Interim edits',
+                version: 1,
+                etag: 'etag-v1',
+                isDirty: true,
+                baseSnapshot: existingSnapshot,
+            });
+
+            await act(async () => {
+                await result.current.saveLocal({
+                    id: 'file-retained-base',
+                    content: '# Latest edits',
+                    isDirty: true,
+                });
+            });
+
+            expect(mocks.indexedDBManager.saveFile).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    id: 'file-retained-base',
+                    content: '# Latest edits',
+                    isDirty: true,
+                    baseSnapshot: existingSnapshot,
+                })
+            );
+        });
+    });
 });
