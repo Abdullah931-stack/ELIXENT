@@ -1,3 +1,4 @@
+import "./env";
 import path from "node:path";
 import fs from "node:fs";
 import { serve } from "@hono/node-server";

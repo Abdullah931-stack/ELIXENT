@@ -4,6 +4,19 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.20.6] - 2026-11-14 (Production Server Bundling & Standalone Environment Loading)
+
+### Standalone Server Runtime & Build Pipeline
+- **Dedicated ESM Environment Loader:** Added `src/server/env.ts` to load `.env.local` and `.env` via `dotenv` when `NODE_ENV !== "test"` and `VITEST` is unset, preserving host-injected `process.env` precedence (no `override`) and keeping test runtimes isolated.
+- **ESM Import Ordering:** Imported `./env` as the first statement in `src/server/index.ts` so environment variables are populated before `./app` and `./middleware/session-middleware` are evaluated.
+- **Production Server Bundle (`esbuild`):** Updated `package.json` `build` script to `vite build && esbuild src/server/index.ts --bundle --platform=node --packages=external --format=esm --outfile=dist/server/index.mjs` and `start` script to `node dist/server/index.mjs`, removing the runtime dependency on `tsx`.
+- **Runtime Dependency Alignment:** Moved `dotenv` (`^17.4.2`) from `devDependencies` to `dependencies` in `package.json` (and `package-lock.json`) so production installs (`--omit=dev`) retain environment loading support.
+
+### Verification
+- Verified `npm run build` (`dist/client` + `dist/server/index.mjs`), standalone `node dist/server/index.mjs` HTTP probe (`GET /login` returning `200`), `npm run lint` (0 errors), and `npm run test` (145 suites, 2,972 tests passing).
+
+---
+
 ## [0.20.5] - 2026-11-14 (Local-First Cookie Identity Verification & Conditional React State Flushing on Conflict and Server Fetch)
 
 ### Local-First Identity Verification & Provider Seam (`REQ-LF-AUTH`)
