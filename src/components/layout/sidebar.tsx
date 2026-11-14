@@ -734,7 +734,7 @@ export function Sidebar({ userId }: SidebarProps = {}) {
                         </div>
                     )}
 
-                    <Link href="/account" className="block w-full">
+                    <Link to="/account" className="block w-full">
                         <Button
                             variant="ghost"
                             size="sm"

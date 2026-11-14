@@ -135,7 +135,7 @@ export function FileTreeItem({ file, level = 0, userId, onMove, onRefresh, onImp
 
                 {/* Title - clickable link */}
                 <Link
-                    href={file.isFolder ? `/workspace` : `/workspace/editor/${file.id}`}
+                    to={file.isFolder ? `/workspace` : `/workspace/editor/${file.id}`}
                     className="truncate flex-1"
                 >
                     {file.title}

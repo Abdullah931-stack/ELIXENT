@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { AppLink as Link } from "@/components/ui/app-link";
 import { navigateTo } from "@/client/navigation";
 import { getUserProfile, signOut, getCreditBalanceResult } from "@/client/rpc-client";
@@ -115,6 +115,15 @@ export default function AccountPage() {
             : 0;
 
 
+    const handleSignOut = async () => {
+        try {
+            await signOut();
+        } catch (err) {
+            console.error("[Account] signOut error:", err);
+        }
+        navigateTo("/");
+    };
+
     return (
         <div className="min-h-screen bg-zinc-950">
             {/* Navigation */}
@@ -122,12 +131,12 @@ export default function AccountPage() {
                 <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="flex items-center justify-between h-16">
                         <div className="flex items-center gap-4">
-                            <Link href="/dashboard">
+                            <Link to="/dashboard">
                                 <Button variant="ghost" size="icon-sm">
                                     <ArrowLeft className="w-4 h-4" />
                                 </Button>
                             </Link>
-                            <Link href="/dashboard">
+                            <Link to="/dashboard">
                                 <img
                                     src="/logo.png"
                                     alt="LUGX"
@@ -139,28 +148,10 @@ export default function AccountPage() {
                             </Link>
                         </div>
 
-                        <form
-                            onSubmit={async (e) => {
-                                e.preventDefault();
-                                try {
-                                    await signOut();
-                                } catch (err) {
-                                    console.error("[Account] signOut error:", err);
-                                }
-                                try {
-                                    const supabase = createClient();
-                                    await supabase.auth.signOut();
-                                } catch {}
-                                if (typeof window !== "undefined") {
-                                    navigateTo("/");
-                                }
-                            }}
-                        >
-                            <Button type="submit" variant="ghost" size="sm" className="gap-2">
-                                <LogOut className="w-4 h-4" />
-                                Sign Out
-                            </Button>
-                        </form>
+                        <Button type="button" onClick={handleSignOut} variant="ghost" size="sm" className="gap-2">
+                            <LogOut className="w-4 h-4" />
+                            Sign Out
+                        </Button>
                     </div>
                 </div>
             </nav>

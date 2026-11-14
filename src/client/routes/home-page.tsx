@@ -11,7 +11,7 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             {/* Logo */}
-            <Link href="/" className="flex items-center gap-2">
+            <Link to="/" className="flex items-center gap-2">
               <img
                 src="/logo.png"
                 alt="LUGX"
@@ -25,13 +25,13 @@ export default function HomePage() {
             {/* Nav Links */}
             <div className="hidden md:flex items-center gap-6">
               <Link
-                href="#features"
+                to="#features"
                 className="text-zinc-400 hover:text-zinc-50 text-sm transition-colors"
               >
                 Features
               </Link>
               <Link
-                href="#pricing"
+                to="#pricing"
                 className="text-zinc-400 hover:text-zinc-50 text-sm transition-colors"
               >
                 Pricing
@@ -40,12 +40,12 @@ export default function HomePage() {
 
             {/* Auth Buttons */}
             <div className="flex items-center gap-3">
-              <Link href="/login">
+              <Link to="/login">
                 <Button variant="ghost" size="sm">
                   Sign In
                 </Button>
               </Link>
-              <Link href="/login">
+              <Link to="/login">
                 <Button variant="primary" size="sm">
                   Get Started
                 </Button>
@@ -76,13 +76,13 @@ export default function HomePage() {
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link href="/login">
+            <Link to="/login">
               <Button variant="primary" size="xl" className="gap-2">
                 Start Writing Free
                 <ArrowRight className="w-5 h-5" />
               </Button>
             </Link>
-            <Link href="#features">
+            <Link to="#features">
               <Button variant="outline" size="xl">
                 Explore Features
               </Button>
@@ -215,7 +215,7 @@ export default function HomePage() {
                     Cloud storage
                   </li>
                 </ul>
-                <Link href="/login" className="block mt-6">
+                <Link to="/login" className="block mt-6">
                   <Button variant="outline" className="w-full">
                     Start Free
                   </Button>
@@ -256,7 +256,7 @@ export default function HomePage() {
                     Advanced AI models
                   </li>
                 </ul>
-                <Link href="/login" className="block mt-6">
+                <Link to="/login" className="block mt-6">
                   <Button variant="primary" className="w-full">
                     Upgrade to Pro
                   </Button>
@@ -299,7 +299,7 @@ export default function HomePage() {
                     Premium AI models
                   </li>
                 </ul>
-                <Link href="/login" className="block mt-6">
+                <Link to="/login" className="block mt-6">
                   <Button variant="outline" className="w-full">
                     Go Ultra
                   </Button>

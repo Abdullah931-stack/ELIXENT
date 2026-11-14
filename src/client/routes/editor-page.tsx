@@ -36,24 +36,22 @@ export default function EditorPage() {
     const [editorMode, setEditorMode] = useState<EditorMode>("live");
     const [adapter, setAdapter] = useState<EditorAdapter | null>(null);
     const [directionSettings, setDirectionSettings] = useState<DirectionSettings>(() => {
-        if (typeof window !== "undefined") {
-            try {
-                const saved = localStorage.getItem("lugx_editor_direction_pref");
-                if (saved) {
-                    const parsed = JSON.parse(saved);
-                    if (parsed && typeof parsed === "object") {
-                        return {
-                            mode: ["auto", "rtl", "ltr"].includes(parsed.mode) ? parsed.mode : "auto",
-                            lockCodeBlocksLTR:
-                                typeof parsed.lockCodeBlocksLTR === "boolean"
-                                    ? parsed.lockCodeBlocksLTR
-                                    : true,
-                        };
-                    }
+        try {
+            const saved = localStorage.getItem("lugx_editor_direction_pref");
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                if (parsed && typeof parsed === "object") {
+                    return {
+                        mode: ["auto", "rtl", "ltr"].includes(parsed.mode) ? parsed.mode : "auto",
+                        lockCodeBlocksLTR:
+                            typeof parsed.lockCodeBlocksLTR === "boolean"
+                                ? parsed.lockCodeBlocksLTR
+                                : true,
+                    };
                 }
-            } catch {
-                // Ignore localStorage errors (e.g. privacy mode / SSR)
             }
+        } catch {
+            // Ignore localStorage errors (e.g. privacy mode)
         }
         return {
             mode: "auto",
@@ -88,13 +86,11 @@ export default function EditorPage() {
     // Resilient return-to-workspace handler guaranteeing navigation across client/fatal states
     const handleReturnToWorkspace = useCallback(() => {
         navigate("/workspace");
-        if (typeof window !== "undefined") {
-            setTimeout(() => {
-                if (window.location.pathname.startsWith("/workspace/editor")) {
-                    window.location.assign("/workspace");
-                }
-            }, 400);
-        }
+        setTimeout(() => {
+            if (window.location.pathname.startsWith("/workspace/editor")) {
+                window.location.assign("/workspace");
+            }
+        }, 400);
     }, [navigate]);
 
     // Centralized Editor Orchestrator

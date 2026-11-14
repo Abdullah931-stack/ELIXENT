@@ -1,7 +1,7 @@
 /**
  * Upgrade Button Component
  * 
- * Client component for handling subscription upgrades via Stripe.
+ * Interactive UI button for initiating Stripe subscription upgrades.
  */
 
 import { useState } from 'react';

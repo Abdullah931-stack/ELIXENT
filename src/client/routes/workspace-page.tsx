@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { AppLink as Link } from "@/components/ui/app-link";
 import { navigateTo } from "@/client/navigation";
 import { getRootFiles, createFile } from "@/client/rpc-client";
@@ -89,11 +89,6 @@ export default function WorkspacePage() {
         }
     };
 
-    const handleCreateSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        await triggerCreateDocument();
-    };
-
     if (loading || !user) {
         return (
             <div className="p-6">
@@ -116,12 +111,10 @@ export default function WorkspacePage() {
                         </p>
                     </div>
 
-                    <form onSubmit={handleCreateSubmit}>
-                        <Button type="submit" variant="ai" className="gap-2" disabled={isCreating}>
-                            <Plus className="w-4 h-4" />
-                            New Document
-                        </Button>
-                    </form>
+                    <Button type="button" onClick={triggerCreateDocument} variant="ai" className="gap-2" disabled={isCreating}>
+                        <Plus className="w-4 h-4" />
+                        New Document
+                    </Button>
                 </div>
 
                 {creationError && (
@@ -149,19 +142,17 @@ export default function WorkspacePage() {
                         <p className="text-zinc-500 text-sm mb-6">
                             Create your first document to get started
                         </p>
-                        <form onSubmit={handleCreateSubmit}>
-                            <Button type="submit" variant="primary" className="gap-2" disabled={isCreating}>
-                                <Plus className="w-4 h-4" />
-                                Create Document
-                            </Button>
-                        </form>
+                        <Button type="button" onClick={triggerCreateDocument} variant="primary" className="gap-2" disabled={isCreating}>
+                            <Plus className="w-4 h-4" />
+                            Create Document
+                        </Button>
                     </div>
                 ) : (
                     <div className="grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                         {files.map((file) => (
                             <Link
                                 key={file.id}
-                                href={file.isFolder ? `/workspace` : `/workspace/editor/${file.id}`}
+                                to={file.isFolder ? `/workspace` : `/workspace/editor/${file.id}`}
                                 className="group block"
                             >
                                 <div className="p-4 rounded-lg border border-zinc-800 bg-zinc-900/30 hover:bg-zinc-900/50 hover:border-zinc-700 transition-all">

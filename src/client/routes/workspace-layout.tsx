@@ -67,7 +67,7 @@ export function WorkspaceLayoutRouteView() {
             <div className="flex-1 flex flex-col overflow-hidden">
                 {/* Top Bar */}
                 <header className="h-14 border-b border-zinc-800/50 bg-zinc-950 flex items-center justify-between px-4 flex-shrink-0">
-                    <Link href="/dashboard" className="flex items-center gap-2">
+                    <Link to="/dashboard" className="flex items-center gap-2">
                         <img
                             src="/logo.png"
                             alt="LUGX"
@@ -80,12 +80,12 @@ export function WorkspaceLayoutRouteView() {
 
                     <div className="flex items-center gap-2">
                         <Button asChild variant="ghost" size="icon-sm">
-                            <Link href="/dashboard">
+                            <Link to="/dashboard">
                                 <Home className="w-4 h-4" />
                             </Link>
                         </Button>
                         <Button asChild variant="ghost" size="icon-sm">
-                            <Link href="/account">
+                            <Link to="/account">
                                 <Settings className="w-4 h-4" />
                             </Link>
                         </Button>

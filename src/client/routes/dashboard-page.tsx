@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
+import { useSearch } from "@tanstack/react-router";
 import { AppLink as Link } from "@/components/ui/app-link";
 import { navigateTo } from "@/client/navigation";
 import { getUserProfile, signOut, getCreditBalanceResult } from "@/client/rpc-client";
@@ -8,35 +9,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FileText, Settings, LogOut, Plus, Sparkles, Coins } from "lucide-react";
 
-import { createClient } from "@/lib/supabase/client";
 import {
     resolveLocalFirstAuthUser,
 } from "@/lib/auth/client-identity";
 
 export default function DashboardPage(props?: {
-    searchParams?: Promise<{ session_id?: string }> | { session_id?: string };
     sessionId?: string;
+    searchParams?: { session_id?: string };
 }) {
-    const [resolvedSessionId, setResolvedSessionId] = useState<string | undefined>(props?.sessionId);
-
-    useEffect(() => {
-        if (props?.sessionId) {
-            setResolvedSessionId(props.sessionId);
-        } else if (props?.searchParams) {
-            if ("then" in props.searchParams && typeof props.searchParams.then === "function") {
-                props.searchParams.then((sp) => setResolvedSessionId(sp?.session_id));
-            } else {
-                setResolvedSessionId((props.searchParams as { session_id?: string }).session_id);
-            }
-        }
-    }, [props?.searchParams, props?.sessionId]);
-
-    const sessionId =
-        props?.sessionId ||
-        (props?.searchParams && !("then" in props.searchParams)
-            ? (props.searchParams as { session_id?: string }).session_id
-            : undefined) ||
-        resolvedSessionId;
+    const sessionId = props?.sessionId ?? props?.searchParams?.session_id;
     const params = sessionId ? { session_id: sessionId } : undefined;
 
     const [loading, setLoading] = useState(true);
@@ -126,13 +107,22 @@ export default function DashboardPage(props?: {
             : 0;
 
 
+    const handleSignOut = async () => {
+        try {
+            await signOut();
+        } catch (err) {
+            console.error("[Dashboard] signOut error:", err);
+        }
+        navigateTo("/");
+    };
+
     return (
         <div className="min-h-screen bg-zinc-950">
             {/* Navigation */}
             <nav className="fixed top-0 left-0 right-0 z-50 border-b border-zinc-800/50 bg-zinc-950/80 backdrop-blur-lg">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="flex items-center justify-between h-16">
-                        <Link href="/dashboard" className="flex items-center gap-2">
+                        <Link to="/dashboard" className="flex items-center gap-2">
                             <img
                                 src="/logo.png"
                                 alt="LUGX"
@@ -144,40 +134,22 @@ export default function DashboardPage(props?: {
                         </Link>
 
                         <div className="flex items-center gap-4">
-                            <Link href="/workspace">
+                            <Link to="/workspace">
                                 <Button variant="ai" size="sm" className="gap-2">
                                     <Sparkles className="w-4 h-4" />
                                     Open Editor
                                 </Button>
                             </Link>
 
-                            <Link href="/account">
+                            <Link to="/account">
                                 <Button variant="ghost" size="icon-sm">
                                     <Settings className="w-4 h-4" />
                                 </Button>
                             </Link>
 
-                            <form
-                                onSubmit={async (e) => {
-                                    e.preventDefault();
-                                    try {
-                                        await signOut();
-                                    } catch (err) {
-                                        console.error("[Dashboard] signOut error:", err);
-                                    }
-                                    try {
-                                        const supabase = createClient();
-                                        await supabase.auth.signOut();
-                                    } catch {}
-                                    if (typeof window !== "undefined") {
-                                        navigateTo("/");
-                                    }
-                                }}
-                            >
-                                <Button type="submit" variant="ghost" size="icon-sm">
-                                    <LogOut className="w-4 h-4" />
-                                </Button>
-                            </form>
+                            <Button type="button" onClick={handleSignOut} variant="ghost" size="icon-sm">
+                                <LogOut className="w-4 h-4" />
+                            </Button>
                         </div>
                     </div>
                 </div>
@@ -291,7 +263,7 @@ export default function DashboardPage(props?: {
                 {/* Quick Actions */}
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {/* New Document */}
-                    <Link href="/workspace">
+                    <Link to="/workspace">
                         <Card className="group hover:border-zinc-700 cursor-pointer transition-all h-full">
                             <CardHeader>
                                 <div className="w-12 h-12 rounded-lg bg-indigo-500/10 flex items-center justify-center mb-3 group-hover:bg-indigo-500/20 transition-colors">
@@ -306,7 +278,7 @@ export default function DashboardPage(props?: {
                     </Link>
 
                     {/* Recent Files */}
-                    <Link href="/workspace">
+                    <Link to="/workspace">
                         <Card className="group hover:border-zinc-700 cursor-pointer transition-all h-full">
                             <CardHeader>
                                 <div className="w-12 h-12 rounded-lg bg-violet-500/10 flex items-center justify-center mb-3 group-hover:bg-violet-500/20 transition-colors">
@@ -322,7 +294,7 @@ export default function DashboardPage(props?: {
 
                     {/* Upgrade */}
                     {userTier === "free" && (
-                        <Link href="/account">
+                        <Link to="/account">
                             <Card className="group hover:border-indigo-500/50 cursor-pointer transition-all h-full border-indigo-500/20 bg-gradient-to-br from-indigo-500/5 to-transparent">
                                 <CardHeader>
                                     <div className="w-12 h-12 rounded-lg bg-indigo-500/20 flex items-center justify-center mb-3 group-hover:bg-indigo-500/30 transition-colors">
@@ -342,8 +314,19 @@ export default function DashboardPage(props?: {
     );
 }
 
-export function DashboardRouteView() {
-    const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
-    const sessionId = searchParams?.get("session_id") || undefined;
-    return <DashboardPage searchParams={{ session_id: sessionId }} />;
+export function DashboardRouteView(props?: {
+    sessionId?: string;
+    searchParams?: { session_id?: string };
+}) {
+    let searchParams: Record<string, unknown> = {};
+    try {
+        searchParams = useSearch({ strict: false }) ?? {};
+    } catch {
+        if (typeof window !== "undefined") {
+            searchParams = Object.fromEntries(new URLSearchParams(window.location.search));
+        }
+    }
+    const searchSessionId = typeof searchParams.session_id === "string" ? searchParams.session_id : undefined;
+    const sessionId = props?.sessionId ?? props?.searchParams?.session_id ?? searchSessionId;
+    return <DashboardPage sessionId={sessionId} />;
 }

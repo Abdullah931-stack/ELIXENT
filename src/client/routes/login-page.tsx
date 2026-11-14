@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
+import { useSearch } from "@tanstack/react-router";
 import { AppLink as Link } from "@/components/ui/app-link";
 import { signInWithGoogle } from "@/client/rpc-client";
 import { navigateTo } from "@/client/navigation";
@@ -18,29 +19,10 @@ async function resolveAuthUser() {
 }
 
 export default function LoginPage(props?: {
-    searchParams?: Promise<{ redirectTo?: string }> | { redirectTo?: string };
     redirectTo?: string;
+    searchParams?: { redirectTo?: string };
 }) {
-    const [resolvedRedirectTo, setResolvedRedirectTo] = useState<string | undefined>(props?.redirectTo);
-
-    useEffect(() => {
-        if (props?.redirectTo) {
-            setResolvedRedirectTo(props.redirectTo);
-        } else if (props?.searchParams) {
-            if ("then" in props.searchParams && typeof props.searchParams.then === "function") {
-                props.searchParams.then((sp) => setResolvedRedirectTo(sp?.redirectTo));
-            } else {
-                setResolvedRedirectTo((props.searchParams as { redirectTo?: string }).redirectTo);
-            }
-        }
-    }, [props?.searchParams, props?.redirectTo]);
-
-    const redirectTo =
-        props?.redirectTo ||
-        (props?.searchParams && !("then" in props.searchParams)
-            ? (props.searchParams as { redirectTo?: string }).redirectTo
-            : undefined) ||
-        resolvedRedirectTo;
+    const redirectTo = props?.redirectTo ?? props?.searchParams?.redirectTo;
 
     useEffect(() => {
         let isMounted = true;
@@ -64,7 +46,7 @@ export default function LoginPage(props?: {
         setSignInError(null);
         try {
             const res = await signInWithGoogle(redirectTo);
-            if (res && res.success && "redirectUrl" in res && res.redirectUrl && typeof window !== "undefined") {
+            if (res && res.success && "redirectUrl" in res && res.redirectUrl) {
                 window.location.assign(res.redirectUrl);
             } else if (res && !res.success) {
                 const msg = res.error || "Failed to initialize Google Sign In";
@@ -80,16 +62,11 @@ export default function LoginPage(props?: {
         }
     };
 
-    const handleGoogleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        await triggerGoogleSignIn();
-    };
-
     return (
         <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
             <div className="w-full max-w-md">
                 {/* Logo */}
-                <Link href="/" className="block mb-8 text-center">
+                <Link to="/" className="block mb-8 text-center">
                     <img
                         src="/logo.png"
                         alt="LUGX"
@@ -115,29 +92,33 @@ export default function LoginPage(props?: {
                         )}
 
                         {/* Google Sign In */}
-                        <form onSubmit={handleGoogleSubmit}>
-                            <Button type="submit" variant="outline" className="w-full gap-3" disabled={isSigningIn}>
-                                <svg className="w-5 h-5" viewBox="0 0 24 24">
-                                    <path
-                                        fill="currentColor"
-                                        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                                    />
-                                    <path
-                                        fill="currentColor"
-                                        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                                    />
-                                    <path
-                                        fill="currentColor"
-                                        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                                    />
-                                    <path
-                                        fill="currentColor"
-                                        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                                    />
-                                </svg>
-                                Continue with Google
-                            </Button>
-                        </form>
+                        <Button
+                            type="button"
+                            onClick={triggerGoogleSignIn}
+                            variant="outline"
+                            className="w-full gap-3"
+                            disabled={isSigningIn}
+                        >
+                            <svg className="w-5 h-5" viewBox="0 0 24 24">
+                                <path
+                                    fill="currentColor"
+                                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                                />
+                                <path
+                                    fill="currentColor"
+                                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                                />
+                                <path
+                                    fill="currentColor"
+                                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+                                />
+                                <path
+                                    fill="currentColor"
+                                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                                />
+                            </svg>
+                            Continue with Google
+                        </Button>
 
                         <div className="relative">
                             <div className="absolute inset-0 flex items-center">
@@ -159,7 +140,7 @@ export default function LoginPage(props?: {
 
                 <p className="mt-6 text-center text-sm text-zinc-500">
                     By signing in, you agree to our{" "}
-                    <Link href="/terms" className="text-zinc-400 hover:text-zinc-50 underline underline-offset-4">
+                    <Link to="/terms" className="text-zinc-400 hover:text-zinc-50 underline underline-offset-4">
                         Terms of Service
                     </Link>
                 </p>
@@ -168,9 +149,20 @@ export default function LoginPage(props?: {
     );
 }
 
-export function LoginRouteView() {
-    const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
-    const redirectTo = searchParams?.get("redirectTo") || undefined;
-    return <LoginPage searchParams={{ redirectTo }} />;
+export function LoginRouteView(props?: {
+    redirectTo?: string;
+    searchParams?: { redirectTo?: string };
+}) {
+    let searchParams: Record<string, unknown> = {};
+    try {
+        searchParams = useSearch({ strict: false }) ?? {};
+    } catch {
+        if (typeof window !== "undefined") {
+            searchParams = Object.fromEntries(new URLSearchParams(window.location.search));
+        }
+    }
+    const searchRedirectTo = typeof searchParams.redirectTo === "string" ? searchParams.redirectTo : undefined;
+    const redirectTo = props?.redirectTo ?? props?.searchParams?.redirectTo ?? searchRedirectTo;
+    return <LoginPage redirectTo={redirectTo} />;
 }
 
