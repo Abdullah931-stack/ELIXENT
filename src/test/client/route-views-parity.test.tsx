@@ -82,6 +82,7 @@ vi.mock("@/client/navigation", () => ({
 vi.mock("@tanstack/react-router", () => ({
   Outlet: () => <div data-testid="mock-outlet">Outlet</div>,
   useRouter: () => null,
+  useSearch: () => ({}),
   Link: ({ children, to, href, ...props }: any) => (
     <a href={to || href || "#"} {...props}>
       {children}
@@ -323,6 +324,7 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
 
       await waitFor(() => {
         expect(mockSignInWithGoogle).toHaveBeenCalled();
+        expect(assignSpy).toHaveBeenCalledWith("https://accounts.google.com/oauth");
       });
     });
   });
@@ -403,6 +405,89 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
       });
       expect(mockNavigateTo).not.toHaveBeenCalledWith("/login");
     });
+
+    it("clicking Sign Out button invokes Hono RPC signOut and navigates to '/'", async () => {
+      setMockUser({ id: "user-abc", email: "test@lugx.ai" });
+      mockGetUserProfile.mockResolvedValue({
+        success: true,
+        data: { displayName: "Ada Lovelace", tier: "pro" },
+      });
+      mockSignOut.mockResolvedValue({ success: true });
+
+      const { container } = render(<DashboardPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Welcome back, Ada Lovelace/i)).toBeTruthy();
+      });
+
+      const signOutBtn = container.querySelector("svg.lucide-log-out")?.closest("button");
+      expect(signOutBtn).toBeTruthy();
+      fireEvent.click(signOutBtn!);
+
+      await waitFor(() => {
+        expect(mockSignOut).toHaveBeenCalledTimes(1);
+        expect(mockNavigateTo).toHaveBeenCalledWith("/");
+      });
+    });
+
+    it("clicking Retry after balance error re-fetches credit balance and redirects on unauthorized", async () => {
+      setMockUser({ id: "user-abc", email: "test@lugx.ai" });
+      mockGetUserProfile.mockResolvedValue({
+        success: true,
+        data: { displayName: "Ada Lovelace", tier: "pro" },
+      });
+      mockGetCreditBalanceResult
+        .mockResolvedValueOnce({
+          success: false,
+          status: "error",
+          statusCode: 500,
+          error: "Billing service unavailable",
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          balanceMicro: "250000000",
+          balance: BigInt(250_000_000),
+        });
+
+      render(<DashboardPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Billing service unavailable/i)).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: /^retry$/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/25% available/i)).toBeTruthy();
+        expect(screen.queryByText(/Billing service unavailable/i)).toBeNull();
+      });
+
+      // Re-render fresh under error state, then verify unauthorized on Retry redirects to /login
+      mockGetCreditBalanceResult
+        .mockResolvedValueOnce({
+          success: false,
+          status: "error",
+          statusCode: 500,
+          error: "Transient timeout",
+        })
+        .mockResolvedValueOnce({
+          success: false,
+          status: "unauthorized",
+          statusCode: 401,
+          error: "Session expired",
+        });
+      cleanup();
+      render(<DashboardPage />);
+      await waitFor(() => {
+        expect(screen.getByText(/Transient timeout/i)).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: /^retry$/i }));
+
+      await waitFor(() => {
+        expect(mockNavigateTo).toHaveBeenCalledWith("/login");
+      });
+    });
   });
 
   // ==========================================================================
@@ -470,6 +555,62 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
         expect(screen.getByText(/Billing service unavailable/i)).toBeTruthy();
       });
       expect(mockNavigateTo).not.toHaveBeenCalledWith("/login");
+    });
+
+    it("clicking Sign Out button invokes Hono RPC signOut and navigates to '/'", async () => {
+      setMockUser({ id: "user-xyz", email: "grace@navy.mil" });
+      mockGetUserProfile.mockResolvedValue({
+        success: true,
+        data: { displayName: "Grace Hopper", email: "grace@navy.mil", tier: "free" },
+      });
+      mockSignOut.mockResolvedValue({ success: true });
+
+      render(<AccountPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Grace Hopper")).toBeTruthy();
+      });
+
+      const signOutBtn = screen.getByRole("button", { name: /sign out/i });
+      fireEvent.click(signOutBtn);
+
+      await waitFor(() => {
+        expect(mockSignOut).toHaveBeenCalledTimes(1);
+        expect(mockNavigateTo).toHaveBeenCalledWith("/");
+      });
+    });
+
+    it("clicking Retry after balance error re-fetches credit balance and recovers UI", async () => {
+      setMockUser({ id: "user-xyz", email: "grace@navy.mil" });
+      mockGetUserProfile.mockResolvedValue({
+        success: true,
+        data: { displayName: "Grace Hopper", email: "grace@navy.mil", tier: "free" },
+      });
+      mockGetCreditBalanceResult
+        .mockResolvedValueOnce({
+          success: false,
+          status: "error",
+          statusCode: 500,
+          error: "Billing service unavailable",
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          balanceMicro: "25000000",
+          balance: BigInt(25_000_000),
+        });
+
+      render(<AccountPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Billing service unavailable/i)).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: /^retry$/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText("50% remaining")).toBeTruthy();
+        expect(screen.queryByText(/Billing service unavailable/i)).toBeNull();
+      });
     });
   });
 
@@ -565,6 +706,13 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
         expect(screen.getByText("Architecture Plan")).toBeTruthy();
         expect(screen.getByText("Research Papers")).toBeTruthy();
       });
+
+      expect(screen.getByText("Architecture Plan").closest("a")?.getAttribute("href")).toBe(
+        "/workspace/editor/file-doc-1"
+      );
+      expect(screen.getByText("Research Papers").closest("a")?.getAttribute("href")).toBe(
+        "/workspace"
+      );
     });
   });
 

@@ -39,16 +39,20 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
   };
 });
 
-import { useAppParams, useAppNavigate, navigateTo } from "@/client/navigation";
+import { useAppParams, useAppNavigate, navigateTo, registerRouter, getActiveRouter } from "@/client/navigation";
 
 describe("Client Navigation Adapters (src/client/navigation.ts)", () => {
   const originalLocation = window.location;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    registerRouter(null);
+    delete (window as { __APP_ROUTER__?: unknown }).__APP_ROUTER__;
   });
 
   afterEach(() => {
+    registerRouter(null);
+    delete (window as { __APP_ROUTER__?: unknown }).__APP_ROUTER__;
     vi.restoreAllMocks();
     Object.defineProperty(window, "location", {
       writable: true,
@@ -202,6 +206,27 @@ describe("Client Navigation Adapters (src/client/navigation.ts)", () => {
       expect(pushStateSpy).toHaveBeenCalledWith({}, "", "/account");
       expect(dispatchSpy).toHaveBeenCalled();
     });
+
+    it("forwards { replace: true } through routerNavigate and falls back to replaceState when outside RouterProvider", () => {
+      const mockRouterNav = vi.fn().mockResolvedValue(undefined);
+      mockUseNavigate.mockReturnValue(mockRouterNav);
+
+      const { result: routerHook } = renderHook(() => useAppNavigate());
+      routerHook.current("/login", { replace: true });
+      expect(mockRouterNav).toHaveBeenCalledWith({ to: "/login", replace: true });
+
+      mockUseNavigate.mockImplementation(() => {
+        throw new Error("useNavigate must be used within a RouterProvider");
+      });
+      const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+      const pushStateSpy = vi.spyOn(window.history, "pushState");
+
+      const { result: fallbackHook } = renderHook(() => useAppNavigate());
+      fallbackHook.current("/login", { replace: true });
+
+      expect(replaceStateSpy).toHaveBeenCalledWith({}, "", "/login");
+      expect(pushStateSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe("3. navigateTo()", () => {
@@ -249,6 +274,92 @@ describe("Client Navigation Adapters (src/client/navigation.ts)", () => {
       } finally {
         window.removeEventListener("popstate", onPopState);
       }
+    });
+
+    it("delegates navigateTo('/path') to registered mockRouter.navigate without invoking window.history.pushState", () => {
+      const mockRouter = {
+        navigate: vi.fn().mockResolvedValue(undefined),
+      };
+      const pushStateSpy = vi.spyOn(window.history, "pushState");
+      const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+
+      registerRouter(mockRouter);
+      navigateTo("/path");
+
+      expect(mockRouter.navigate).toHaveBeenCalledTimes(1);
+      expect(mockRouter.navigate).toHaveBeenCalledWith({ to: "/path", replace: undefined });
+      expect(pushStateSpy).not.toHaveBeenCalled();
+      expect(dispatchSpy).not.toHaveBeenCalled();
+    });
+
+    it("delegates navigateTo('/path', { replace: true }) to registered mockRouter.navigate without invoking window.history.replaceState", () => {
+      const mockRouter = {
+        navigate: vi.fn().mockResolvedValue(undefined),
+      };
+      const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+
+      registerRouter(mockRouter);
+      navigateTo("/dashboard", { replace: true });
+
+      expect(mockRouter.navigate).toHaveBeenCalledTimes(1);
+      expect(mockRouter.navigate).toHaveBeenCalledWith({ to: "/dashboard", replace: true });
+      expect(replaceStateSpy).not.toHaveBeenCalled();
+    });
+
+    it("exposes registered router via getActiveRouter() and clears it with registerRouter(null)", () => {
+      expect(getActiveRouter()).toBeNull();
+
+      const mockRouter = { navigate: vi.fn().mockResolvedValue(undefined) };
+      registerRouter(mockRouter);
+      expect(getActiveRouter()).toBe(mockRouter);
+
+      registerRouter(null);
+      expect(getActiveRouter()).toBeNull();
+    });
+
+    it("uses window.history.replaceState and dispatches PopStateEvent when replace: true and no router is registered", () => {
+      const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+      const pushStateSpy = vi.spyOn(window.history, "pushState");
+      let popstateReceived = false;
+      const onPopState = () => {
+        popstateReceived = true;
+      };
+      window.addEventListener("popstate", onPopState);
+
+      try {
+        navigateTo("/login", { replace: true });
+        expect(replaceStateSpy).toHaveBeenCalledWith({}, "", "/login");
+        expect(pushStateSpy).not.toHaveBeenCalled();
+        expect(popstateReceived).toBe(true);
+      } finally {
+        window.removeEventListener("popstate", onPopState);
+      }
+    });
+
+    it("falls back to window.__APP_ROUTER__ when activeRouter is null and prioritizes activeRouter when both exist", () => {
+      const windowRouter = { navigate: vi.fn().mockResolvedValue(undefined) };
+      const registeredRouter = { navigate: vi.fn().mockResolvedValue(undefined) };
+      const pushStateSpy = vi.spyOn(window.history, "pushState");
+
+      (window as { __APP_ROUTER__?: typeof windowRouter }).__APP_ROUTER__ = windowRouter;
+      navigateTo("/via-window-router");
+
+      expect(windowRouter.navigate).toHaveBeenCalledWith({ to: "/via-window-router", replace: undefined });
+      expect(pushStateSpy).not.toHaveBeenCalled();
+
+      registerRouter(registeredRouter);
+      navigateTo("/via-active-router");
+
+      expect(registeredRouter.navigate).toHaveBeenCalledWith({ to: "/via-active-router", replace: undefined });
+      expect(windowRouter.navigate).toHaveBeenCalledTimes(1);
+    });
+
+    it("falls back to window.history.pushState when registered router lacks a callable navigate function", () => {
+      const pushStateSpy = vi.spyOn(window.history, "pushState");
+      registerRouter({} as unknown as { navigate: (opts: { to: string; replace?: boolean }) => Promise<unknown> });
+
+      navigateTo("/workspace");
+      expect(pushStateSpy).toHaveBeenCalledWith({}, "", "/workspace");
     });
   });
 });

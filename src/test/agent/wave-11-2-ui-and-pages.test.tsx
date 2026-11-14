@@ -42,6 +42,7 @@ let mockFileIdParam = "file-arch-test-123";
 vi.mock("@tanstack/react-router", () => ({
     Outlet: () => <div data-testid="mock-outlet">Outlet</div>,
     useRouter: () => null,
+    useSearch: () => ({}),
     Link: ({ children, to, href, ...props }: any) => (
         <a href={to || href || "#"} {...props}>
             {children}
@@ -679,7 +680,7 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
 
             render(
                 <DashboardPage
-                    searchParams={Promise.resolve({ session_id: "cs_stripe_mock_session_123" })}
+                    searchParams={{ session_id: "cs_stripe_mock_session_123" }}
                 />
             );
 
@@ -1115,6 +1116,37 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
             const resolveBtn = screen.getByTestId("resolve-merge-btn");
             fireEvent.click(resolveBtn);
             expect(resolveConflictMock).toHaveBeenCalledWith("merge");
+        });
+
+        it("cycles direction mode via Ctrl+Alt+D and persists preference to localStorage", async () => {
+            await renderEditorPage();
+
+            // Initial default mode is "auto" -> Ctrl+Alt+D cycles auto -> rtl -> ltr -> auto
+            fireEvent.keyDown(window, { key: "d", code: "KeyD", ctrlKey: true, altKey: true });
+            expect(mockAdapterInstance.setDirectionSettings).toHaveBeenLastCalledWith({
+                mode: "rtl",
+                lockCodeBlocksLTR: true,
+            });
+            expect(JSON.parse(window.localStorage.getItem("lugx_editor_direction_pref") || "{}")).toEqual({
+                mode: "rtl",
+                lockCodeBlocksLTR: true,
+            });
+
+            // Repeat events must be ignored
+            fireEvent.keyDown(window, { key: "d", code: "KeyD", ctrlKey: true, altKey: true, repeat: true });
+            expect(mockAdapterInstance.setDirectionSettings).toHaveBeenCalledTimes(1);
+
+            fireEvent.keyDown(window, { key: "d", code: "KeyD", ctrlKey: true, altKey: true });
+            expect(mockAdapterInstance.setDirectionSettings).toHaveBeenLastCalledWith({
+                mode: "ltr",
+                lockCodeBlocksLTR: true,
+            });
+
+            fireEvent.keyDown(window, { key: "d", code: "KeyD", ctrlKey: true, altKey: true });
+            expect(mockAdapterInstance.setDirectionSettings).toHaveBeenLastCalledWith({
+                mode: "auto",
+                lockCodeBlocksLTR: true,
+            });
         });
     });
 });

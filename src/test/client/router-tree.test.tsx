@@ -26,7 +26,8 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup } from "@testing-library/react";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
-import { router } from "@/client/router";
+import { router, loginRoute, dashboardRoute } from "@/client/router";
+import { getActiveRouter } from "@/client/navigation";
 import { HomeRouteView } from "@/client/routes/home-page";
 import { LoginRouteView } from "@/client/routes/login-page";
 import { DashboardRouteView } from "@/client/routes/dashboard-page";
@@ -92,6 +93,10 @@ describe("TanStack Router Route Tree (src/client/router.tsx)", () => {
   describe("1. Route Tree Architecture & Invariants", () => {
     it("configures defaultPreload as 'intent'", () => {
       expect(router.options.defaultPreload).toBe("intent");
+    });
+
+    it("registers the active router instance in navigation.ts on module initialization", () => {
+      expect(getActiveRouter()).toBe(router);
     });
 
     it("attaches routeTree with rootRoute as root node", () => {
@@ -191,6 +196,61 @@ describe("TanStack Router Route Tree (src/client/router.tsx)", () => {
         expect(screen.getByTestId("route-view-workspace-layout")).toBeTruthy();
         expect(screen.getByTestId("route-view-editor")).toBeTruthy();
       });
+    });
+
+    it("renders root notFoundComponent for nested unmatched workspace subpaths", async () => {
+      const testRouter = createTestRouter("/workspace/non-existent-subpath");
+      render(<RouterProvider router={testRouter} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Page Not Found")).toBeTruthy();
+      });
+      expect(screen.getByRole("link", { name: /return to home/i }).getAttribute("href")).toBe("/");
+    });
+  });
+
+  describe("3. Search Parameter Validation (validateSearch)", () => {
+    it("loginRoute.options.validateSearch extracts valid non-empty redirectTo string and strips invalid or extraneous keys", () => {
+      const validateSearch = loginRoute.options.validateSearch as
+        | ((search: Record<string, unknown>) => { redirectTo?: string })
+        | undefined;
+      expect(validateSearch).toBeTypeOf("function");
+
+      expect(validateSearch!({ redirectTo: "/workspace" })).toEqual({ redirectTo: "/workspace" });
+      expect(validateSearch!({ redirectTo: "/dashboard?tab=overview" })).toEqual({
+        redirectTo: "/dashboard?tab=overview",
+      });
+      expect(validateSearch!({ redirectTo: "/workspace", extra: "ignored" })).toEqual({
+        redirectTo: "/workspace",
+      });
+
+      // Empty string and non-string values must be stripped to undefined
+      const invalidValues: unknown[] = ["", 123, true, false, null, undefined, { path: "/workspace" }, ["/workspace"]];
+      for (const value of invalidValues) {
+        expect(validateSearch!({ redirectTo: value })).toEqual({ redirectTo: undefined });
+      }
+      expect(validateSearch!({})).toEqual({ redirectTo: undefined });
+    });
+
+    it("dashboardRoute.options.validateSearch extracts valid non-empty session_id string and strips invalid or extraneous keys", () => {
+      const validateSearch = dashboardRoute.options.validateSearch as
+        | ((search: Record<string, unknown>) => { session_id?: string })
+        | undefined;
+      expect(validateSearch).toBeTypeOf("function");
+
+      expect(validateSearch!({ session_id: "cs_stripe_mock_session_123" })).toEqual({
+        session_id: "cs_stripe_mock_session_123",
+      });
+      expect(validateSearch!({ session_id: "cs_123", utm_source: "stripe" })).toEqual({
+        session_id: "cs_123",
+      });
+
+      // Empty string and non-string values must be stripped to undefined
+      const invalidValues: unknown[] = ["", 42, true, false, null, undefined, { id: "cs_123" }, ["cs_123"]];
+      for (const value of invalidValues) {
+        expect(validateSearch!({ session_id: value })).toEqual({ session_id: undefined });
+      }
+      expect(validateSearch!({})).toEqual({ session_id: undefined });
     });
   });
 });
