@@ -10,8 +10,9 @@ and engine-agnostic `EditorAdapter` contract;
 amended in Vault Phase 3 with Zero-Knowledge Vault gating (`vault_locked`),
 pre-save Web Worker envelope encryption, and offline-first dynamic file conversion (Section 6e);
 amended in Phase 17 (v1.45.0) with decoupled standalone `useEditorAutosave` hook (`src/hooks/use-editor-autosave.ts`), AI write-lock suspension/resumption gate, and React 19 ref discipline;
-amended in Phase 18 with decoupled standalone `useEditorConflict` hook (`src/hooks/use-editor-conflict.ts`), cross-tab lifecycle synchronization, 412 conflict isolation, and in-flight snapshot concurrent edit protection (Section 4).
-**Authoritative Modules:** `src/hooks/use-editor-orchestrator.ts`, `src/hooks/use-editor-autosave.ts`, `src/hooks/use-editor-conflict.ts`
+amended in Phase 18 with decoupled standalone `useEditorConflict` hook (`src/hooks/use-editor-conflict.ts`), cross-tab lifecycle synchronization, 412 conflict isolation, and in-flight snapshot concurrent edit protection (Section 4);
+amended in v0.20.5 (`ELIXENT-SRS-LOCAL-FIRST-SYNC-v2.0`) with Local-First Cookie Identity Verification (0ms cold start, Better Auth seam), `initialBaselinePersistedRef` baseline synchronization, and Conditional React State Flushing on Server Conflict (412) and Server Fetch (reconnection pull, page reload / Step 2 fetch) (Sections 3.3, 6c, 6d).
+**Authoritative Modules:** `src/hooks/use-editor-orchestrator.ts`, `src/hooks/use-editor-autosave.ts`, `src/hooks/use-editor-conflict.ts`, `src/lib/auth/client-identity.ts`
 **Consuming Page:** `src/client/routes/editor-page.tsx`
 
 ---
@@ -110,6 +111,9 @@ flowchart TD
    - On component unmount, `flushOnUnmount` is executed if `isDirtyRef.current` is true.
    - The orchestrator validates encryption state before writing: if the file is encrypted and the vault is locked (`!sessionKeyStore.hasMasterKey()`), unmount flush is skipped to guarantee that plaintext is never persisted with an encrypted tag to local storage.
    - If the vault is unlocked, the payload is symmetrically encrypted via `SyncCryptoGateway.encryptOutbound` before persisting to IndexedDB with `isDirty: true`.
+6. **Page Reload & Tab Close Flush Protection (`pagehide` / `beforeunload`):**
+   - Attached `pagehide` and `beforeunload` lifecycle listeners inside `useEditorAutosave` trigger `flushDirtyEdits()` whenever `isDirtyRef.current` is true.
+   - User keystrokes buffered in the `1,000ms` debounce window are immediately flushed into `IndexedDB` before page refresh or browser close, eradicating in-flight data loss on hard reloads.
 
 ### 3.4 Architectural Decisions & Trade-offs
 
@@ -556,6 +560,8 @@ Invariants:
    backdrop overlay (`Loader2`) informs the user of active synchronization. When `fatal`,
    a dedicated error recovery card is presented with a direct action to return to `/workspace`.
    The status bar reflects `Syncing...` while hydration is active.
+7. **Local-First Identity Verification (`0ms` Cold Start & Better Auth Seam):** Initial `userId` is resolved synchronously via `resolveInitialClientUserIdSync()` from local browser cookies (`elixent_uid` and Supabase session cookies) without waiting for asynchronous network round-trips (`src/lib/auth/client-identity.ts`). When online, background session verification proceeds via `resolveLocalFirstAuthUser()` and triggers `onSessionExpired` only upon explicit server auth rejection (`401` / expired session), never on network failures. When offline, local cookie identity is trusted unconditionally, enabling immediate instantiation of per-user `IndexedDB` (`textai_db_${userId}`) and full offline editing continuity.
+8. **Initial Baseline Persistence Guard (`initialBaselinePersistedRef`):** If `loadInitialFile()` finishes loading the baseline before `syncHook.isInitialized` transitions to `true`, a dedicated effect observing `syncHook.isInitialized` writes the clean baseline snapshot (`baseSnapshot`) to `IndexedDB` as soon as initialization settles, ensuring that subsequent offline edits have a confirmed ancestor snapshot.
 
 ---
 
@@ -813,6 +819,29 @@ In Phase 11 (`v0.11.0`), all direct imports of `ai-ops.ts`, `ai-commit.ts`, `pen
 
 ---
 
+## 6j. Local-First Identity Verification & Conditional React State Flushing (v0.20.5 / ELIXENT-SRS-LOCAL-FIRST-SYNC-v2.0 Amendment)
+
+Release v0.20.5 (`ELIXENT-SRS-LOCAL-FIRST-SYNC-v2.0`) remediates the cold-start identity blocking defects and the `baseSnapshot` corruption vectors during debounced autosave:
+
+### 1. Local-First Cookie Identity Verification & Provider-Agnostic Seam (`REQ-LF-AUTH`)
+- **0ms Cold-Start Extraction:** Client route components (`workspace-layout.tsx`, `editor-page.tsx`, `workspace-page.tsx`, `dashboard-page.tsx`, `account-page.tsx`), navigation sidebars, and context menus extract `userId` synchronously (0ms) from local browser cookies (`elixent_uid` and Supabase auth token cookies including `.0` / `.1` chunking) or localStorage fallback via `resolveInitialClientUserIdSync()` (`src/lib/auth/client-identity.ts`).
+- **Unblocking IndexedDB & Editor Hydration:** The editor surface paints and initializes the per-user IndexedDB database (`textai_db_${userId}`) on the initial render tick without awaiting network round-trips (`supabase.auth.getUser()`).
+- **Offline Editing Continuity:** When offline (`navigator.onLine === false`), the local cookie identity is trusted unconditionally, enabling full local editing without blocking or redirecting to `/login`.
+- **Background Online Session Verification:** When online, `resolveLocalFirstAuthUser()` verifies the session against the server in the background and triggers `onSessionExpired` to redirect to `/login` only upon explicit server authentication revocation (`401 Unauthorized` / `invalid_jwt` / `session_expired`), never on transient network errors or timeouts.
+- **Provider-Agnostic Seam (Better Auth Readiness):** All client identity logic is decoupled from direct Supabase primitives into `src/lib/auth/client-identity.ts`, persisting a first-party readable identity cookie (`elixent_uid`, `Path=/; SameSite=Lax; Max-Age=2592000`) and clearing it via `clearLocalClientUserId()` inside `signOut()` (`src/client/rpc-client.ts`).
+- **Initial Baseline Persistence Guard:** In `useEditorOrchestrator`, `initialBaselinePersistedRef` ensures that if initial file loading completes before `syncHook.isInitialized` transitions to true, a dedicated effect commits the clean baseline snapshot to IndexedDB as soon as `syncHook.isInitialized` becomes true.
+
+### 2. Conditional React State Flushing on Conflict and Server Fetch (`REQ-COND-FLUSH`)
+React editor state is **never** flushed unconditionally during routine sync cycles, preserving `useEditorAutosave`'s `1,000ms` debounce without typing stutter. Mandatory flushing of dirty React state (`flushDirtyEditorStateToIDB`) and cancellation of autosave debounce (`cancelAutosave()`) are triggered strictly under two conditions:
+1. **Case 1 — Server Responds with a Conflict (Push Conflict / 412):**
+   - When a client write returns `status: "conflict"` / HTTP 412, `useEditorOrchestrator` immediately cancels pending debounce timers and persists dirty local edits along with the pristine `baseSnapshot` (`baseContentRef.current` at `fileVersionRef.current`) into IndexedDB before `handle412Conflict` evaluates three-way merge.
+2. **Case 2 — A Copy of the File is Requested/Received from the Server (Server Copy Fetch / Pull):**
+   - **a. Reconnection / Background Pull (`SyncPullEngine.pullFile`):** First checks `compareETags(localFile.etag, serverFile.etag)`; if matching, the pull is skipped without flushing. If divergent or unindexed, `pullFile` invokes `onBeforePullConflictCheck(serverFile.id)` to flush live dirty editor edits into IndexedDB before conflict quarantine or 3-way merge is evaluated.
+   - **b. Page Reload & Initial Server Fetch (`loadInitialFile`):** `useEditorAutosave` listens for `pagehide` and `beforeunload` to flush in-flight edits before browser reload. On mount, Step 1 recovers `isDirtyRef.current = true` and `baseContentRef.current = localFile.baseSnapshot.content` when `localFile.isDirty === true`. In Step 2, fetching `getFile(fileId)` flushes pending dirty edits before remote update classification, escalating divergent local edits via `handleRemoteUpdate`.
+3. **Explicit `baseSnapshot` Preservation (`saveLocal`):** In `src/hooks/use-sync.ts`, `saveLocal` preserves explicit `file.baseSnapshot ?? existingFile?.baseSnapshot` during dirty writes, ensuring that an explicit baseline passed by `flushDirtyEditorStateToIDB` is not dropped before the existing file record is committed.
+
+---
+
 ## 7. Verification Proof
 
 - **Automated Test Execution Evidence:**
@@ -848,7 +877,7 @@ In Phase 11 (`v0.11.0`), all direct imports of `ai-ops.ts`, `ai-commit.ts`, `pen
   - **Vault Subsystem Total:** 10/10 test files, 178/178 tests passing (100% success rate).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 143 unit suites (2937 tests) · 21 live suites (105 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 145 unit suites (2972 tests) · 21 live suites (105 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
   - **TypeScript Typecheck:** `npx tsc --noEmit` exits with code 0 (zero errors).

@@ -176,3 +176,30 @@ In compliance with the architectural decision and trade-off documentation rules 
 
 - **`ADR-006`:** [Replacing Next.js 16 (App Router) with Unified Web-Standard Architecture (Vite 6 SPA + TanStack Router + Hono RPC)](./adr_006_unified_vite_tanstack_hono_rpc_architecture.md) — Amends §1.1 and §2 container architecture to decouple the presentation and server layers into a Vite 6 SPA with TanStack Router and a Web-standard Hono RPC backend.
 - **`ADR-007`:** [Enforcing Dual-Plane Contract Separation (ICloudControlPlane vs. IWorkspaceProvider) and Request-Scoped AsyncLocalStorage Context Isolation](./adr_007_dual_plane_separation_and_als_request_context.md) — Establishes request-scoped `AsyncLocalStorage` context isolation (`src/server/context/request-context.ts`) and separates Cloud Control Plane contracts from runtime-injected Workspace Plane providers.
+
+### 3.7. `ADR-008`: Local-First Cookie Identity Verification & Conditional React State Flushing on Conflict and Server Fetch
+
+- **Context & Problem:**
+  1. In `v0.20.2`, client routes resolved `userId` asynchronously over the network (`supabase.auth.getUser()`) before opening user-scoped IndexedDB (`textai_db_${userId}`). When offline, `getUser()` returned `null` and redirected to `/login`, blocking offline editor hydration and delaying cold start online.
+  2. The `1,000ms` autosave debounce buffered dirty edits in React memory. If a concurrent server write occurred (HTTP 412), or if a background reconnection pull or page reload occurred within that window, the clean server copy overwrote local IndexedDB state—corrupting the `baseSnapshot` and causing false clean Diff3 merges or lost local edits.
+- **Accepted Decision:**
+  1. **Local-First Identity Seam (`REQ-LF-AUTH`):** Extract user identity synchronously (`0ms`) from local cookies (`elixent_uid` and Supabase auth token cookies) via `resolveInitialClientUserIdSync()` (`src/lib/auth/client-identity.ts`). Unconditionally trust local cookies when offline. When online, verify in the background via `resolveLocalFirstAuthUser()` and redirect to `/login` only upon explicit server authentication revocation (`401` / expired session), decoupling editor mounting and IndexedDB initialization from network auth.
+  2. **Provider-Agnostic Seam (Better Auth Readiness):** Maintain a readable first-party cookie (`elixent_uid`, `SameSite=Lax; Path=/; Max-Age=2592000`) alongside session cookie parsing so future migration from Supabase Auth to Better Auth (`better-auth.session_token` with Neon or Docker PostgreSQL) requires zero changes to sync or editor engines.
+  3. **Conditional State Flushing (`REQ-COND-FLUSH`):** React editor state is **never** flushed unconditionally during routine sync cycles (preserving the 1,000ms debounce during active typing). Mandatory flushing (`flushDirtyEditorStateToIDB`) and debounce cancellation (`cancelAutosave()`) occur strictly on:
+     - **Push Conflict (HTTP 412):** Persists dirty edits and pristine `baseSnapshot` (`baseContentRef.current`) before three-way conflict evaluation.
+     - **Server Pull Divergence (`SyncPullEngine.pullFile`):** Fast ETag check bypasses flush if identical; divergence invokes `onBeforePullConflictCheck` to flush in-flight edits before conflict evaluation or durable quarantine.
+     - **Page Reload & Initial Server Fetch (`loadInitialFile`):** `pagehide`/`beforeunload` listener flushes dirty edits; `loadInitialFile` recovers dirty status in Step 1 and flushes dirty edits in Step 2 before classification, escalating divergent edits via `handleRemoteUpdate`.
+     - **Explicit `baseSnapshot` Preservation (`saveLocal`):** Preserves `file.baseSnapshot ?? existingFile?.baseSnapshot` during dirty writes.
+- **Rejected Alternatives:**
+  - _Unconditional Periodic IDB Flushing on Every Sync Tick:_ Causes typing micro-stutters and unnecessary IndexedDB transaction churn.
+  - _Synchronous Network Auth Blocking on Mount:_ Breaches the core Local-First invariant by breaking offline cold starts.
+- **Trade-off Matrix:**
+
+| Evaluation Criteria | Chosen Solution (Local Cookie Identity + Conditional Flush) | Alternative 1 (Network Auth Blocking) | Alternative 2 (Unconditional Periodic Flush) |
+| :--- | :--- | :--- | :--- |
+| **Offline Cold Start Latency** | **0ms** (Instant local mount) | Blocked / Redirected to `/login` | 0ms |
+| **Typing Responsiveness** | Uninterrupted 1,000ms debounce | Uninterrupted | Typing stutter on periodic writes |
+| **3-Way Merge Accuracy** | 100% (Pristine `baseSnapshot` guaranteed) | Degraded on reload | 100% |
+| **Provider Portability** | Provider-agnostic seam (`Better Auth` ready) | Coupled to Supabase SDK | Decoupled |
+
+- **Migration Trigger:** Re-evaluate `src/lib/auth/client-identity.ts` when migrating authentication from Supabase Auth to Better Auth, ensuring that `better-auth.session_token` and `elixent_uid` are bound to the same first-party domain cookies.

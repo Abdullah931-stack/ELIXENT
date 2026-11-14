@@ -523,6 +523,17 @@ The sync system implements a deterministic Three-Way Merge protocol to resolve c
    - Broadcast channels are scoped per authenticated user (`lugx_sync_${userId}`) to prevent cross-tenant event bleed, filtering echo messages (`senderTabId !== currentTabId`) and only advancing clean tab versions.
    - **Storage-First Sequential Broadcast:** `useEditorOrchestrator` strictly awaits local IndexedDB persistence (`await syncHook.saveLocal()`) before emitting `file_saved` events, eliminating asynchronous race conditions where sibling tabs read stale or uncommitted data from disk.
    - **Root Move Null-Preservation in `saveLocal`:** Inside `src/hooks/use-sync.ts`, `saveLocal` evaluates `file.parentFolderId !== undefined ? file.parentFolderId : (existingFile?.parentFolderId ?? null)`. Explicitly passing `parentFolderId: null` is strictly preserved, ensuring that moving documents or folders to the workspace root is persisted to IndexedDB without falling back to existing parent folder identifiers.
+9. **Conditional React State Flushing on Conflict and Server Fetch (v0.20.5 / `REQ-COND-FLUSH`):**
+   - **Push Conflict (HTTP 412 / status: "conflict"):** Cancels autosave debounce and flushes dirty React state and pristine `baseSnapshot` into `IndexedDB` before `handle412Conflict` evaluates 3-way merge.
+   - **Divergence-Gated Server Pull (`SyncPullEngine.pullFile` via `onBeforePullConflictCheck`):** Bypasses flush on identical ETag; on divergence, invokes `onBeforePullConflictCheck(fileId)` to flush pending edits to `IndexedDB` before evaluating durable quarantine or 3-way merge.
+   - **Page Reload & Fetch:** `pagehide`/`beforeunload` listener flushes dirty edits; `loadInitialFile` recovers dirty status in Step 1 and flushes dirty edits in Step 2 before classification, escalating divergent edits via `handleRemoteUpdate`.
+   - **Explicit `baseSnapshot` Preservation in `saveLocal`:** Preserves `file.baseSnapshot ?? existingFile?.baseSnapshot` during dirty writes.
+10. **Local-First Client Identity Verification & Provider Seam (`REQ-LF-AUTH` / `src/lib/auth/client-identity.ts`):**
+   - Synchronous identity resolution in `0ms` via `resolveInitialClientUserIdSync()` from local cookies (`elixent_uid` and Supabase auth token cookies) or localStorage fallback, initializing `IndexedDB` (`textai_db_${userId}`) immediately without network blocking.
+   - Background session verification via `resolveLocalFirstAuthUser()` triggers `onSessionExpired` to redirect to `/login` only on explicit server session expiration (401/expired), never on network failures.
+   - First-party readable cookie `elixent_uid` (`Path=/; SameSite=Lax; Max-Age=2592000`) provides compatibility for future Better Auth (`better-auth.session_token`) migration.
+   - Sign-out clears local client identity via `clearLocalClientUserId()`.
+   - `initialBaselinePersistedRef` ensures clean baseline persistence as soon as `syncHook.isInitialized` transitions to true.
 
 ---
 

@@ -4,6 +4,29 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.20.5] - 2026-11-14 (Local-First Cookie Identity Verification & Conditional React State Flushing on Conflict and Server Fetch)
+
+### Local-First Identity Verification & Provider Seam (`REQ-LF-AUTH`)
+- **Synchronous Cookie-Based User Identity Extraction:** Extracted `src/lib/auth/client-identity.ts` providing `resolveInitialClientUserIdSync()` for 0ms synchronous extraction of user identity from local browser cookies (`elixent_uid` and Supabase auth token cookies including `.0` / `.1` chunking) and `localStorage`.
+- **Decoupled IndexedDB Initialization:** Mounts editor route views (`workspace-layout.tsx`, `editor-page.tsx`, `workspace-page.tsx`, `dashboard-page.tsx`, `account-page.tsx`) and initializes per-user IndexedDB (`textai_db_${userId}`) on the first render pass without awaiting asynchronous network auth calls (`supabase.auth.getUser()`).
+- **Offline Editing Continuity:** When offline (`navigator.onLine === false`), trusts the local cookie identity unconditionally, enabling full local editing without blocking or redirecting to `/login`.
+- **Background Online Session Verification:** Implemented `resolveLocalFirstAuthUser()` to verify sessions in the background when online, redirecting to `/login` only upon explicit server auth revocation (`401 Unauthorized` / `invalid_jwt` / `session_expired`), never on transient network timeouts or errors.
+- **Provider-Agnostic Seam (`Better Auth` Readiness):** Decoupled client identity from Supabase primitives by maintaining a readable first-party identity cookie (`elixent_uid`, `Path=/; SameSite=Lax; Max-Age=2592000`) cleared on sign-out via `clearLocalClientUserId()` inside `src/client/rpc-client.ts:signOut`.
+- **Initial Baseline Persistence Guard:** Added `initialBaselinePersistedRef` inside `useEditorOrchestrator` to ensure that if `loadInitialFile()` finishes loading before `syncHook.isInitialized` transitions to true, a dedicated effect commits the clean baseline snapshot to IndexedDB as soon as initialization settles.
+
+### Conditional React State Flushing on Conflict & Server Fetch (`REQ-COND-FLUSH`)
+- **Governing Debounce Preservation:** Preserves `useEditorAutosave`'s `1,000ms` debounce without interference during active typing, avoiding typing stutters and periodic flush churn.
+- **Push Conflict Flushing (HTTP 412 / `status: "conflict"`):** When a client write returns a conflict response, `useEditorOrchestrator` immediately cancels pending debounce timers and persists dirty local edits along with the pristine `baseSnapshot` (`baseContentRef.current` at `fileVersionRef.current`) into IndexedDB before `handle412Conflict` evaluates three-way merge.
+- **Divergence-Gated Server Pull Flushing (`SyncPullEngine.pullFile`):** Added `onBeforePullConflictCheck` callback to `SyncPullEngine`, `SyncManager`, and `useSync`. Bypasses flushes when local and server ETags match (`compareETags`); on divergence or missing records, invokes `onBeforePullConflictCheck` to flush in-flight React edits to IndexedDB before conflict quarantine or 3-way merge is evaluated.
+- **Page Reload & Initial Server Fetch Flushing:** Attached `pagehide` and `beforeunload` listeners in `useEditorAutosave` to flush buffered edits before reload. In `loadInitialFile()`, Step 1 recovers dirty flags and base snapshots from IndexedDB, and Step 2 flushes dirty edits before classification, escalating divergent local edits via `handleRemoteUpdate`.
+- **Explicit `baseSnapshot` Preservation:** In `src/hooks/use-sync.ts:saveLocal`, preserves explicit `file.baseSnapshot ?? existingFile?.baseSnapshot` during dirty writes, ensuring that an explicit baseline passed by `flushDirtyEditorStateToIDB` is not overwritten before the existing file record settles.
+
+### Verification Baseline
+- **Verification Baseline:** 145 unit/contract suites (2,972 passing tests, +35 tests across `client-identity.unit.test.ts` and `editor-conditional-flush.integration.test.ts`), 21 live suites (105 passing tests on isolated Neon branch), 14 E2E specs (15 journeys), 0 TS errors (`tsc --noEmit`), 100% internal links valid (639 links across 135 files).
+- **Release Closure Report:** Documented in [`docs/records/closures/extensions/release-0-20-5-local-first-cookie-identity-and-conditional-state-flushing-closure.md`](./records/closures/extensions/release-0-20-5-local-first-cookie-identity-and-conditional-state-flushing-closure.md).
+
+---
+
 ## [0.20.2] - 2026-11-11 (Phase 2.6: Post-Audit Architectural, Security & Contract Remediation)
 
 ### Core Server Security & URL Hardening (`FIND-01`, `FIND-04`, `FIND-08`)

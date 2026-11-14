@@ -141,10 +141,10 @@ to a live URL; push failures surface immediately).
 ## 5. Evidence of isolation
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 143 unit suites (2937 tests) · 21 live suites (105 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 145 unit suites (2972 tests) · 21 live suites (105 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
-- **Active Unit & Contract Suite (`npm run test`):** **143 files / 2937 tests — all passed (100% pass rate)**, zero LIVE files included.
+- **Active Unit & Contract Suite (`npm run test`):** **145 files / 2972 tests — all passed (100% pass rate)**, zero LIVE files included.
 - **Active Live Multi-System Suite (`npm run test:live`):** **21 registered suites / 105 tests — all passed (100% pass rate)** on isolated Neon branch (`ep-dark-queen-ahbapy5k-pooler`).
 - **Guard unit tests (`src/test/infrastructure/test-db.isolation.test.ts`):** **8/8 passed** (main-branch refusal, missing-URL refusal, mismatch refusal, loader leak prevention, shell-value precedence, and `-pooler` endpoint refusal).
 - **Historical Milestone Baseline (Phase 10 Archive):** Initially verified at 37 unit files / 488 tests and 16 live suites; systematically expanded through Phase 18 and Phase 20 hardening rounds to current active levels.
