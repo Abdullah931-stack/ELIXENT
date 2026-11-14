@@ -34,6 +34,7 @@ export interface SyncPullEngineOptions {
     encryptedConflictStore: SyncEncryptedConflictStore;
     getConflictCallback?: () => ConflictCallback | undefined;
     onRemoteUpdate?: (event: RemoteUpdateEvent) => void;
+    onBeforePullConflictCheck?: (fileId: string) => Promise<boolean> | boolean;
     signal?: AbortSignal;
 }
 
@@ -50,6 +51,7 @@ export class SyncPullEngine {
     private encryptedConflictStore: SyncEncryptedConflictStore;
     private getConflictCallback?: () => ConflictCallback | undefined;
     private onRemoteUpdate?: (event: RemoteUpdateEvent) => void;
+    private onBeforePullConflictCheck?: (fileId: string) => Promise<boolean> | boolean;
     private isDestroyed = false;
 
     constructor(options: SyncPullEngineOptions) {
@@ -61,6 +63,7 @@ export class SyncPullEngine {
         this.encryptedConflictStore = options.encryptedConflictStore;
         this.getConflictCallback = options.getConflictCallback;
         this.onRemoteUpdate = options.onRemoteUpdate;
+        this.onBeforePullConflictCheck = options.onBeforePullConflictCheck;
     }
 
     /**
@@ -75,6 +78,7 @@ export class SyncPullEngine {
         if (options.encryptedConflictStore !== undefined) this.encryptedConflictStore = options.encryptedConflictStore;
         if (options.getConflictCallback !== undefined) this.getConflictCallback = options.getConflictCallback;
         if (options.onRemoteUpdate !== undefined) this.onRemoteUpdate = options.onRemoteUpdate;
+        if (options.onBeforePullConflictCheck !== undefined) this.onBeforePullConflictCheck = options.onBeforePullConflictCheck;
         this.isDestroyed = false;
     }
 
@@ -219,10 +223,38 @@ export class SyncPullEngine {
             return { fileId: serverFile.id, success: true, action: 'pulled' };
         }
 
-        const localFile = await this.idb.getFile(serverFile.id);
+        let localFile = await this.idb.getFile(serverFile.id);
 
         // DATA-SAFETY GUARD: If file is in durable conflict quarantine,
         // strictly refuse to overwrite or replace it during background server pull!
+        if (localFile?.syncStatus === 'conflict' || (localFile && await this.conflictStore.isConflicted(serverFile.id))) {
+            console.warn(`[SyncPullEngine] pullFile skipped for ${serverFile.id}: file is in durable conflict quarantine`);
+            return {
+                fileId: serverFile.id,
+                success: false,
+                action: 'conflict',
+                error: 'DURABLE_CONFLICT_QUARANTINE',
+            };
+        }
+
+        // Fast ETag match check: zero unnecessary flush if local and server already match
+        if (localFile && compareETags(localFile.etag, serverFile.etag)) {
+            return { fileId: serverFile.id, success: true, action: 'skipped' };
+        }
+
+        // Divergence-gated flush: flush dirty editor state if server differs or file is not in IDB
+        if (this.onBeforePullConflictCheck) {
+            try {
+                const flushed = await this.onBeforePullConflictCheck(serverFile.id);
+                if (flushed) {
+                    localFile = await this.idb.getFile(serverFile.id);
+                }
+            } catch (err) {
+                console.error('[SyncPullEngine] onBeforePullConflictCheck error:', err);
+            }
+        }
+
+        // Re-check conflict quarantine in case freshly flushed state entered conflict
         if (localFile?.syncStatus === 'conflict' || (localFile && await this.conflictStore.isConflicted(serverFile.id))) {
             console.warn(`[SyncPullEngine] pullFile skipped for ${serverFile.id}: file is in durable conflict quarantine`);
             return {
@@ -292,7 +324,7 @@ export class SyncPullEngine {
             return { fileId: serverFile.id, success: true, action: 'pulled' };
         }
 
-        // Check if server has newer version
+        // Check if server has newer version (e.g. if newly flushed file already matches server ETag)
         if (compareETags(localFile.etag, serverFile.etag)) {
             return { fileId: serverFile.id, success: true, action: 'skipped' };
         }

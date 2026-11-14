@@ -87,6 +87,7 @@ class SyncManager {
             encryptedConflictStore: this.encryptedConflictStore,
             getConflictCallback: () => this.conflictCallback,
             onRemoteUpdate: (e) => this.notifyRemoteUpdate(e),
+            onBeforePullConflictCheck: this.config?.onBeforePullConflictCheck,
         });
     }
 
@@ -115,6 +116,7 @@ class SyncManager {
             encryptedConflictStore: this.encryptedConflictStore,
             getConflictCallback: () => this.conflictCallback,
             onRemoteUpdate: (e) => this.notifyRemoteUpdate(e),
+            onBeforePullConflictCheck: this.config?.onBeforePullConflictCheck,
         });
     }
 
@@ -188,6 +190,13 @@ class SyncManager {
         this.conflictCallback = cb;
         this.encryptedConflictStore.setConflictCallback(cb);
         this.pullEngine.updateConfig({ getConflictCallback: () => this.conflictCallback });
+    }
+
+    setOnBeforePullConflictCheck(cb: (fileId: string) => Promise<boolean> | boolean): void {
+        if (this.config) {
+            this.config.onBeforePullConflictCheck = cb;
+        }
+        this.pullEngine.updateConfig({ onBeforePullConflictCheck: cb });
     }
 
     onRemoteUpdate(cb: RemoteUpdateCallback): () => void {

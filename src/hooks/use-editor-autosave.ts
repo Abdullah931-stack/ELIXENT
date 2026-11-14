@@ -155,19 +155,42 @@ export function useEditorAutosave({
     };
   }, [fileId, cancelAutosave]);
 
-  // Unmount flush
-  useEffect(() => {
-    return () => {
-      cancelAutosave();
-      if (isDirtyRef.current) {
-        const { flushOnUnmount, getContent, fileId } = optsRef.current;
+  const flushDirtyEdits = useCallback(() => {
+    cancelAutosave();
+    if (isDirtyRef.current) {
+      const { flushOnUnmount, getContent, fileId } = optsRef.current;
+      if (typeof flushOnUnmount === 'function') {
         const content = lastContentRef.current ?? getContent();
         if (content !== null) {
           flushOnUnmount(content, fileId);
         }
       }
-    };
+    }
   }, [cancelAutosave]);
+
+  // Unmount flush
+  useEffect(() => {
+    return () => {
+      flushDirtyEdits();
+    };
+  }, [flushDirtyEdits]);
+
+  // Page reload / tab close flush (pagehide and beforeunload)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleWindowUnload = () => {
+      flushDirtyEdits();
+    };
+
+    window.addEventListener('pagehide', handleWindowUnload);
+    window.addEventListener('beforeunload', handleWindowUnload);
+
+    return () => {
+      window.removeEventListener('pagehide', handleWindowUnload);
+      window.removeEventListener('beforeunload', handleWindowUnload);
+    };
+  }, [flushDirtyEdits]);
 
   return {
     isDirty,

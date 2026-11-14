@@ -65,6 +65,7 @@ export interface UseEditorConflictOptions {
     // Document state
     getTitle: () => string;
     setTitle: (title: string) => void;
+    getBaseContent?: () => string;
 
     // Version & ETag anchors
     getVersion: () => number;
@@ -271,10 +272,273 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
         [getEffectiveUserId]
     );
 
+    const handle412Conflict = useCallback(
+        async (
+            serverVersion: ServerVersionPayload,
+            localContent: string,
+            payloadToSend?: { contentToSend?: string; metaToSend?: FileEncryptionMetadata | null }
+        ) => {
+            const { fileId } = optsRef.current;
+            optsRef.current.cancelAutosave();
+            const effectiveUid = await getEffectiveUserId();
+
+            let decryptedServerContent = serverVersion.content || "";
+            const isEncrypted = optsRef.current.isEncrypted();
+
+            if (isEncrypted || serverVersion.isEncrypted) {
+                const serverInbound = await SyncCryptoGateway.decryptInbound({
+                    fileId,
+                    content: serverVersion.content || "",
+                    isEncrypted: true,
+                    encryptionMetadata: serverVersion.encryptionMetadata || optsRef.current.getEncryptionMetadata(),
+                    userId: effectiveUid,
+                });
+                if (serverInbound.status === "decrypted") {
+                    decryptedServerContent = serverInbound.content;
+                }
+            }
+
+            // LUGX-053: False conflict check using normalizeMarkdownSource
+            const isIdenticalContent =
+                normalizeMarkdownSource(decryptedServerContent) === normalizeMarkdownSource(localContent);
+
+            let contentToSend = payloadToSend?.contentToSend;
+            let metaToSend = payloadToSend?.metaToSend ?? optsRef.current.getEncryptionMetadata();
+
+            if (isEncrypted && !contentToSend) {
+                if (sessionKeyStore.hasMasterKey()) {
+                    const enc = await SyncCryptoGateway.encryptOutbound(fileId, localContent, effectiveUid);
+                    contentToSend = enc.ciphertextBase64;
+                    metaToSend = enc.encryptionMetadata;
+                    optsRef.current.setEncryptionMetadata(metaToSend);
+                }
+            }
+
+            if (
+                isIdenticalContent ||
+                (serverVersion.etag && serverVersion.etag === optsRef.current.getEtag())
+            ) {
+                console.log("[Conflict] Server conflict has identical content, auto-synchronizing version");
+                const newVersion = serverVersion.version || optsRef.current.getVersion();
+                optsRef.current.setVersion(newVersion);
+                optsRef.current.setEtag(serverVersion.etag || null);
+
+                if (optsRef.current.isSyncInitialized()) {
+                    await optsRef.current.saveLocal({
+                        id: fileId,
+                        content: isEncrypted ? (contentToSend ?? localContent) : localContent,
+                        title: optsRef.current.getTitle(),
+                        version: serverVersion.version ?? optsRef.current.getVersion(),
+                        etag: serverVersion.etag || "",
+                        isEncrypted,
+                        encryptionMetadata: metaToSend,
+                        isDirty: false,
+                    });
+                }
+                optsRef.current.markClean();
+                activeConflictRef.current = null;
+                setActiveConflict(null);
+                setIsConflictDialogOpen(false);
+                return;
+            }
+
+            // True conflict (412 Precondition Failed)
+            // LUGX-013: Never overwrite editor content with stale snapshot on 412 conflict
+            console.warn("[Conflict] 412 Sync conflict detected during save:", serverVersion);
+            const localFile = optsRef.current.isSyncInitialized() ? await optsRef.current.loadLocal(fileId) : null;
+
+            let baseContent = localFile?.baseSnapshot?.content ?? optsRef.current.getBaseContent?.();
+            if (baseContent && (isEncrypted || localFile?.baseSnapshot?.isEncrypted)) {
+                const baseInbound = await SyncCryptoGateway.decryptInbound({
+                    fileId,
+                    content: baseContent,
+                    isEncrypted: true,
+                    encryptionMetadata: localFile?.baseSnapshot?.encryptionMetadata || localFile?.encryptionMetadata || optsRef.current.getEncryptionMetadata(),
+                    userId: effectiveUid,
+                });
+                if (baseInbound.status === "decrypted") {
+                    baseContent = baseInbound.content;
+                }
+            }
+
+            const resolvedBaseContent = baseContent || optsRef.current.getBaseContent?.() || "";
+            const baseVersionPayload = localFile?.baseSnapshot
+                ? {
+                      content: baseContent || "",
+                      etag: localFile.baseSnapshot.etag,
+                      lastModified: localFile.lastSyncedAt || 0,
+                      version: localFile.baseSnapshot.version,
+                      title: localFile.baseSnapshot.title,
+                      parentFolderId: localFile.baseSnapshot.parentFolderId,
+                      deleted: false,
+                      isEncrypted,
+                      encryptionMetadata: localFile.baseSnapshot.encryptionMetadata || localFile.encryptionMetadata,
+                  }
+                : resolvedBaseContent
+                ? {
+                      content: resolvedBaseContent,
+                      etag: optsRef.current.getEtag() || "",
+                      lastModified: localFile?.lastSyncedAt || 0,
+                      version: optsRef.current.getVersion(),
+                      title: optsRef.current.getTitle(),
+                      parentFolderId: localFile?.parentFolderId ?? null,
+                      deleted: false,
+                      isEncrypted,
+                      encryptionMetadata: optsRef.current.getEncryptionMetadata(),
+                  }
+                : undefined;
+
+            const conflictObj: SyncConflict = {
+                fileId,
+                localVersion: {
+                    content: localContent,
+                    etag: optsRef.current.getEtag() || "",
+                    lastModified: Date.now(),
+                    version: optsRef.current.getVersion(),
+                    title: optsRef.current.getTitle(),
+                    parentFolderId: null,
+                    deleted: false,
+                    isEncrypted,
+                    encryptionMetadata: optsRef.current.getEncryptionMetadata(),
+                },
+                serverVersion: {
+                    content: decryptedServerContent,
+                    etag: serverVersion.etag || "",
+                    lastModified: serverVersion.updatedAt
+                        ? new Date(serverVersion.updatedAt).getTime()
+                        : Date.now(),
+                    version: serverVersion.version || 0,
+                    title: optsRef.current.getTitle(),
+                    parentFolderId: null,
+                    deleted: false,
+                    isEncrypted: serverVersion.isEncrypted ?? isEncrypted,
+                    encryptionMetadata: serverVersion.encryptionMetadata || optsRef.current.getEncryptionMetadata(),
+                },
+                baseVersion: baseVersionPayload,
+                operations: [],
+                detectedAt: Date.now(),
+                type: "content",
+            };
+
+            // LUGX-054: Attempt silent automated 3-way merge for non-overlapping offline/concurrent edits
+            if (conflictObj.baseVersion) {
+                const mergeResult = conflictResolver.attemptThreeWayMerge({
+                    base: conflictObj.baseVersion,
+                    local: conflictObj.localVersion,
+                    remote: conflictObj.serverVersion,
+                });
+
+                if (mergeResult.success && mergeResult.status === "merged_clean" && typeof mergeResult.content === "string") {
+                    console.log("[Conflict] 412 resolved via silent automated 3-way merge:", mergeResult);
+                    const mergedText = mergeResult.content;
+
+                    let mergedContentToSend = mergedText;
+                    let mergedMetaToSend = metaToSend;
+
+                    if (isEncrypted) {
+                        if (sessionKeyStore.hasMasterKey()) {
+                            const enc = await SyncCryptoGateway.encryptOutbound(fileId, mergedText, effectiveUid);
+                            mergedContentToSend = enc.ciphertextBase64;
+                            mergedMetaToSend = enc.encryptionMetadata;
+                            optsRef.current.setEncryptionMetadata(mergedMetaToSend);
+                        }
+                    }
+
+                    const targetExpectedVersion = serverVersion.version ?? optsRef.current.getVersion();
+                    const targetExpectedETag = serverVersion.etag || undefined;
+
+                    let pushRes: FileOpResult | null = null;
+                    try {
+                        pushRes = isEncrypted
+                            ? await toggleFileEncryption(fileId, true, mergedContentToSend, mergedMetaToSend, {
+                                  expectedVersion: targetExpectedVersion,
+                                  expectedETag: targetExpectedETag,
+                              })
+                            : await updateFileContent(fileId, mergedContentToSend, {
+                                  expectedVersion: targetExpectedVersion,
+                                  expectedETag: targetExpectedETag,
+                              });
+                    } catch (pushErr) {
+                        console.error("[useEditorConflict] Network error pushing auto-merge:", pushErr);
+                    }
+
+                    if (pushRes && pushRes.success && pushRes.version) {
+                        const newVersion = pushRes.version;
+                        const newEtag = pushRes.etag || null;
+
+                        optsRef.current.setVersion(newVersion);
+                        optsRef.current.setEtag(newEtag);
+                        optsRef.current.incrementEditorGeneration();
+
+                        optsRef.current.setEditorContent(mergedText);
+                        optsRef.current.setProgrammaticUpdate(true);
+                        try {
+                            optsRef.current.getAdapter()?.setValue(mergedText);
+                        } finally {
+                            optsRef.current.setProgrammaticUpdate(false);
+                        }
+
+                        optsRef.current.cancelAutosave();
+
+                        // Commit to local IndexedDB first
+                        if (optsRef.current.isSyncInitialized()) {
+                            await optsRef.current.saveLocal({
+                                id: fileId,
+                                content: isEncrypted ? mergedContentToSend : mergedText,
+                                title: optsRef.current.getTitle(),
+                                version: newVersion,
+                                etag: newEtag || "",
+                                isEncrypted,
+                                encryptionMetadata: mergedMetaToSend,
+                                isDirty: false,
+                            });
+                        }
+
+                        // Broadcast cross-tab only after IDB commit
+                        broadcastCrossTabEvent({
+                            type: "file_saved",
+                            fileId,
+                            version: newVersion,
+                            etag: newEtag || undefined,
+                        });
+
+                        optsRef.current.markServerPersisted?.(new Date());
+                        optsRef.current.markClean();
+                        activeConflictRef.current = null;
+                        setActiveConflict(null);
+                        setIsConflictDialogOpen(false);
+                        return;
+                    }
+                }
+            }
+
+            activeConflictRef.current = conflictObj;
+            setActiveConflict(conflictObj);
+            setIsConflictDialogOpen(true);
+
+            if (optsRef.current.isSyncInitialized()) {
+                await optsRef.current.saveLocal({
+                    id: fileId,
+                    content: isEncrypted ? (contentToSend ?? localContent) : localContent,
+                    title: optsRef.current.getTitle(),
+                    version: optsRef.current.getVersion(),
+                    etag: optsRef.current.getEtag() || "",
+                    isEncrypted,
+                    encryptionMetadata: metaToSend,
+                    isDirty: true,
+                });
+            }
+        },
+        [getEffectiveUserId]
+    );
+
     const handleRemoteUpdate = useCallback(
         async (event: RemoteUpdatePayload) => {
             const { fileId } = optsRef.current;
             if (event.fileId !== fileId) return;
+
+            // Invariant: Cancel any pending autosave debounce timer immediately
+            optsRef.current.cancelAutosave();
 
             // Invariant Guards:
             // 1. Never overwrite during active unresolved conflict or active conflict resolution
@@ -428,256 +692,29 @@ export function useEditorConflict(options: UseEditorConflictOptions): UseEditorC
                     }
                 }
             } else if (decision.action === "keep_local") {
-                console.log(
-                    `[Conflict] Remote update retained locally (reason: ${decision.reason}). Local edits preserved.`
-                );
+                if (decision.reason === "dirty_local_divergent") {
+                    console.log(
+                        `[Conflict] Remote update diverges from dirty local baseline (reason: ${decision.reason}). Routing to 3-way merge / conflict resolution.`
+                    );
+                    await handle412Conflict(
+                        {
+                            version: event.version,
+                            etag: event.etag,
+                            content: safeContent,
+                            updatedAt: event.updatedAt,
+                            isEncrypted: event.isEncrypted,
+                            encryptionMetadata: event.encryptionMetadata,
+                        },
+                        currentLocalContent
+                    );
+                } else {
+                    console.log(
+                        `[Conflict] Remote update retained locally (reason: ${decision.reason}). Local edits preserved.`
+                    );
+                }
             }
         },
-        [getEffectiveUserId]
-    );
-
-    const handle412Conflict = useCallback(
-        async (
-            serverVersion: ServerVersionPayload,
-            localContent: string,
-            payloadToSend?: { contentToSend?: string; metaToSend?: FileEncryptionMetadata | null }
-        ) => {
-            const { fileId } = optsRef.current;
-            const effectiveUid = await getEffectiveUserId();
-
-            let decryptedServerContent = serverVersion.content || "";
-            const isEncrypted = optsRef.current.isEncrypted();
-
-            if (isEncrypted || serverVersion.isEncrypted) {
-                const serverInbound = await SyncCryptoGateway.decryptInbound({
-                    fileId,
-                    content: serverVersion.content || "",
-                    isEncrypted: true,
-                    encryptionMetadata: serverVersion.encryptionMetadata || optsRef.current.getEncryptionMetadata(),
-                    userId: effectiveUid,
-                });
-                if (serverInbound.status === "decrypted") {
-                    decryptedServerContent = serverInbound.content;
-                }
-            }
-
-            // LUGX-053: False conflict check using normalizeMarkdownSource
-            const isIdenticalContent =
-                normalizeMarkdownSource(decryptedServerContent) === normalizeMarkdownSource(localContent);
-
-            let contentToSend = payloadToSend?.contentToSend;
-            let metaToSend = payloadToSend?.metaToSend ?? optsRef.current.getEncryptionMetadata();
-
-            if (isEncrypted && !contentToSend) {
-                if (sessionKeyStore.hasMasterKey()) {
-                    const enc = await SyncCryptoGateway.encryptOutbound(fileId, localContent, effectiveUid);
-                    contentToSend = enc.ciphertextBase64;
-                    metaToSend = enc.encryptionMetadata;
-                    optsRef.current.setEncryptionMetadata(metaToSend);
-                }
-            }
-
-            if (
-                isIdenticalContent ||
-                (serverVersion.etag && serverVersion.etag === optsRef.current.getEtag())
-            ) {
-                console.log("[Conflict] Server conflict has identical content, auto-synchronizing version");
-                const newVersion = serverVersion.version || optsRef.current.getVersion();
-                optsRef.current.setVersion(newVersion);
-                optsRef.current.setEtag(serverVersion.etag || null);
-
-                if (optsRef.current.isSyncInitialized()) {
-                    await optsRef.current.saveLocal({
-                        id: fileId,
-                        content: isEncrypted ? (contentToSend ?? localContent) : localContent,
-                        title: optsRef.current.getTitle(),
-                        version: serverVersion.version ?? optsRef.current.getVersion(),
-                        etag: serverVersion.etag || "",
-                        isEncrypted,
-                        encryptionMetadata: metaToSend,
-                        isDirty: false,
-                    });
-                }
-                optsRef.current.markClean();
-                activeConflictRef.current = null;
-                setActiveConflict(null);
-                setIsConflictDialogOpen(false);
-                return;
-            }
-
-            // True conflict (412 Precondition Failed)
-            // LUGX-013: Never overwrite editor content with stale snapshot on 412 conflict
-            console.warn("[Conflict] 412 Sync conflict detected during save:", serverVersion);
-            const localFile = optsRef.current.isSyncInitialized() ? await optsRef.current.loadLocal(fileId) : null;
-
-            let baseContent = localFile?.baseSnapshot?.content;
-            if (baseContent && (isEncrypted || localFile?.baseSnapshot?.isEncrypted)) {
-                const baseInbound = await SyncCryptoGateway.decryptInbound({
-                    fileId,
-                    content: baseContent,
-                    isEncrypted: true,
-                    encryptionMetadata: localFile?.encryptionMetadata || optsRef.current.getEncryptionMetadata(),
-                    userId: effectiveUid,
-                });
-                if (baseInbound.status === "decrypted") {
-                    baseContent = baseInbound.content;
-                }
-            }
-
-            const conflictObj: SyncConflict = {
-                fileId,
-                localVersion: {
-                    content: localContent,
-                    etag: optsRef.current.getEtag() || "",
-                    lastModified: Date.now(),
-                    version: optsRef.current.getVersion(),
-                    title: optsRef.current.getTitle(),
-                    parentFolderId: null,
-                    deleted: false,
-                    isEncrypted,
-                    encryptionMetadata: optsRef.current.getEncryptionMetadata(),
-                },
-                serverVersion: {
-                    content: decryptedServerContent,
-                    etag: serverVersion.etag || "",
-                    lastModified: serverVersion.updatedAt
-                        ? new Date(serverVersion.updatedAt).getTime()
-                        : Date.now(),
-                    version: serverVersion.version || 0,
-                    title: optsRef.current.getTitle(),
-                    parentFolderId: null,
-                    deleted: false,
-                    isEncrypted: serverVersion.isEncrypted ?? isEncrypted,
-                    encryptionMetadata: serverVersion.encryptionMetadata || optsRef.current.getEncryptionMetadata(),
-                },
-                baseVersion: localFile?.baseSnapshot
-                    ? {
-                          content: baseContent || "",
-                          etag: localFile.baseSnapshot.etag,
-                          lastModified: localFile.lastSyncedAt || 0,
-                          version: localFile.baseSnapshot.version,
-                          title: localFile.baseSnapshot.title,
-                          parentFolderId: localFile.baseSnapshot.parentFolderId,
-                          deleted: false,
-                          isEncrypted,
-                          encryptionMetadata: localFile.encryptionMetadata,
-                      }
-                    : undefined,
-                operations: [],
-                detectedAt: Date.now(),
-                type: "content",
-            };
-
-            // LUGX-054: Attempt silent automated 3-way merge for non-overlapping offline/concurrent edits
-            if (conflictObj.baseVersion) {
-                const mergeResult = conflictResolver.attemptThreeWayMerge({
-                    base: conflictObj.baseVersion,
-                    local: conflictObj.localVersion,
-                    remote: conflictObj.serverVersion,
-                });
-
-                if (mergeResult.success && mergeResult.status === "merged_clean" && typeof mergeResult.content === "string") {
-                    console.log("[Conflict] 412 resolved via silent automated 3-way merge:", mergeResult);
-                    const mergedText = mergeResult.content;
-
-                    let mergedContentToSend = mergedText;
-                    let mergedMetaToSend = metaToSend;
-
-                    if (isEncrypted) {
-                        if (sessionKeyStore.hasMasterKey()) {
-                            const enc = await SyncCryptoGateway.encryptOutbound(fileId, mergedText, effectiveUid);
-                            mergedContentToSend = enc.ciphertextBase64;
-                            mergedMetaToSend = enc.encryptionMetadata;
-                            optsRef.current.setEncryptionMetadata(mergedMetaToSend);
-                        }
-                    }
-
-                    const targetExpectedVersion = serverVersion.version ?? optsRef.current.getVersion();
-                    const targetExpectedETag = serverVersion.etag || undefined;
-
-                    let pushRes: FileOpResult | null = null;
-                    try {
-                        pushRes = isEncrypted
-                            ? await toggleFileEncryption(fileId, true, mergedContentToSend, mergedMetaToSend, {
-                                  expectedVersion: targetExpectedVersion,
-                                  expectedETag: targetExpectedETag,
-                              })
-                            : await updateFileContent(fileId, mergedContentToSend, {
-                                  expectedVersion: targetExpectedVersion,
-                                  expectedETag: targetExpectedETag,
-                              });
-                    } catch (pushErr) {
-                        console.error("[useEditorConflict] Network error pushing auto-merge:", pushErr);
-                    }
-
-                    if (pushRes && pushRes.success && pushRes.version) {
-                        const newVersion = pushRes.version;
-                        const newEtag = pushRes.etag || null;
-
-                        optsRef.current.setVersion(newVersion);
-                        optsRef.current.setEtag(newEtag);
-                        optsRef.current.incrementEditorGeneration();
-
-                        optsRef.current.setEditorContent(mergedText);
-                        optsRef.current.setProgrammaticUpdate(true);
-                        try {
-                            optsRef.current.getAdapter()?.setValue(mergedText);
-                        } finally {
-                            optsRef.current.setProgrammaticUpdate(false);
-                        }
-
-                        optsRef.current.cancelAutosave();
-
-                        // Commit to local IndexedDB first
-                        if (optsRef.current.isSyncInitialized()) {
-                            await optsRef.current.saveLocal({
-                                id: fileId,
-                                content: isEncrypted ? mergedContentToSend : mergedText,
-                                title: optsRef.current.getTitle(),
-                                version: newVersion,
-                                etag: newEtag || "",
-                                isEncrypted,
-                                encryptionMetadata: mergedMetaToSend,
-                                isDirty: false,
-                            });
-                        }
-
-                        // Broadcast cross-tab only after IDB commit
-                        broadcastCrossTabEvent({
-                            type: "file_saved",
-                            fileId,
-                            version: newVersion,
-                            etag: newEtag || undefined,
-                        });
-
-                        optsRef.current.markServerPersisted?.(new Date());
-                        optsRef.current.markClean();
-                        activeConflictRef.current = null;
-                        setActiveConflict(null);
-                        setIsConflictDialogOpen(false);
-                        return;
-                    }
-                }
-            }
-
-            activeConflictRef.current = conflictObj;
-            setActiveConflict(conflictObj);
-            setIsConflictDialogOpen(true);
-
-            if (optsRef.current.isSyncInitialized()) {
-                await optsRef.current.saveLocal({
-                    id: fileId,
-                    content: isEncrypted ? (contentToSend ?? localContent) : localContent,
-                    title: optsRef.current.getTitle(),
-                    version: optsRef.current.getVersion(),
-                    etag: optsRef.current.getEtag() || "",
-                    isEncrypted,
-                    encryptionMetadata: metaToSend,
-                    isDirty: true,
-                });
-            }
-        },
-        [getEffectiveUserId]
+        [getEffectiveUserId, handle412Conflict]
     );
 
     const handleResolveConflict = useCallback(

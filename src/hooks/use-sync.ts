@@ -32,6 +32,7 @@ export interface UseSyncOptions {
     autoSyncInterval?: number;
     onConflict?: (conflict: SyncConflict) => Promise<'local' | 'server' | 'merge'>;
     onRemoteUpdate?: (event: RemoteUpdateEvent) => void;
+    onBeforePullConflictCheck?: (fileId: string) => Promise<boolean> | boolean;
 }
 
 export interface UseSyncReturn {
@@ -51,7 +52,7 @@ export interface UseSyncReturn {
 }
 
 export function useSync(options: UseSyncOptions): UseSyncReturn {
-    const { userId, autoSyncInterval = 30000, onConflict, onRemoteUpdate } = options;
+    const { userId, autoSyncInterval = 30000, onConflict, onRemoteUpdate, onBeforePullConflictCheck } = options;
 
     const [status, setStatus] = useState<SyncStatus>(() => (userId?.trim() ? 'idle' : 'stopped'));
     const [connectionState, setConnectionState] = useState<ConnectionState>(() => connectionDetector.getState());
@@ -72,6 +73,12 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
     useEffect(() => {
         onRemoteUpdateRef.current = onRemoteUpdate;
     }, [onRemoteUpdate]);
+
+    const onBeforePullConflictCheckRef = useRef(onBeforePullConflictCheck);
+    onBeforePullConflictCheckRef.current = onBeforePullConflictCheck;
+    useEffect(() => {
+        onBeforePullConflictCheckRef.current = onBeforePullConflictCheck;
+    }, [onBeforePullConflictCheck]);
 
     // Unified scoped lifecycle effect
     useEffect(() => {
@@ -105,7 +112,15 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
 
         // Instantiate dedicated scoped instances for this user sharing the exact same IndexedDBManager
         const scopedIdb = createIndexedDBManager(normalizedUserId);
-        const scopedSyncManager = createSyncManager({ userId: normalizedUserId, autoSyncInterval, idb: scopedIdb });
+        const onBeforePullConflictCheckBridge = (fileId: string) =>
+            onBeforePullConflictCheckRef.current ? onBeforePullConflictCheckRef.current(fileId) : false;
+
+        const scopedSyncManager = createSyncManager({
+            userId: normalizedUserId,
+            autoSyncInterval,
+            idb: scopedIdb,
+            onBeforePullConflictCheck: onBeforePullConflictCheckBridge,
+        });
         const scopedGC = createOperationsGC(scopedIdb);
 
         idbManagerRef.current = scopedIdb;
@@ -116,7 +131,12 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
             try {
                 // Initialize user-scoped IndexedDB and SyncManager
                 await scopedIdb.init(normalizedUserId);
-                await scopedSyncManager.init({ userId: normalizedUserId, autoSyncInterval, idb: scopedIdb });
+                await scopedSyncManager.init({
+                    userId: normalizedUserId,
+                    autoSyncInterval,
+                    idb: scopedIdb,
+                    onBeforePullConflictCheck: onBeforePullConflictCheckBridge,
+                });
 
                 if (isCancelled) {
                     scopedSyncManager.destroy();
@@ -298,22 +318,30 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
         const existingFile = await activeIdb.getFile(file.id);
         const normalizedContent = normalizeMarkdownSource(file.content);
 
+        const isTargetDirty = file.isDirty !== undefined ? file.isDirty : true;
+
         // Preserve or compute baseSnapshot before the file is edited
-        let baseSnapshot = file.baseSnapshot || existingFile?.baseSnapshot;
-        if (!baseSnapshot && existingFile && !existingFile.isDirty) {
-            // First dirty modification on a clean file: record the pristine base snapshot
-            baseSnapshot = {
-                content: normalizeMarkdownSource(existingFile.content),
-                etag: existingFile.etag,
-                version: existingFile.version,
-                title: existingFile.title,
-                parentFolderId: existingFile.parentFolderId,
-                isEncrypted: file.isEncrypted ?? existingFile.isEncrypted ?? false,
-                encryptionMetadata: file.encryptionMetadata ?? existingFile.encryptionMetadata ?? null,
-            };
-        } else if (file.isDirty === false) {
-            // Clean file: baseSnapshot matches confirmed state
-            baseSnapshot = {
+        let baseSnapshot: IDBFile['baseSnapshot'] = undefined;
+        if (isTargetDirty) {
+            if (file.baseSnapshot) {
+                baseSnapshot = file.baseSnapshot;
+            } else if (existingFile?.baseSnapshot) {
+                baseSnapshot = existingFile.baseSnapshot;
+            } else if (existingFile && !existingFile.isDirty) {
+                // First dirty modification on a clean file: record the pristine base snapshot
+                baseSnapshot = {
+                    content: normalizeMarkdownSource(existingFile.content),
+                    etag: existingFile.etag,
+                    version: existingFile.version,
+                    title: existingFile.title,
+                    parentFolderId: existingFile.parentFolderId,
+                    isEncrypted: file.isEncrypted ?? existingFile.isEncrypted ?? false,
+                    encryptionMetadata: file.encryptionMetadata ?? existingFile.encryptionMetadata ?? null,
+                };
+            }
+        } else {
+            // Clean file: baseSnapshot matches confirmed state or explicit baseSnapshot
+            baseSnapshot = file.baseSnapshot ?? {
                 content: normalizedContent,
                 etag: file.etag !== undefined ? file.etag : (existingFile?.etag || ''),
                 version: file.version !== undefined ? file.version : (existingFile?.version || 0),
@@ -323,8 +351,6 @@ export function useSync(options: UseSyncOptions): UseSyncReturn {
                 encryptionMetadata: file.encryptionMetadata ?? existingFile?.encryptionMetadata ?? null,
             };
         }
-
-        const isTargetDirty = file.isDirty !== undefined ? file.isDirty : true;
         const currentRevision = file.localRevision !== undefined
             ? file.localRevision
             : (existingFile?.localRevision ?? 0);

@@ -122,4 +122,6 @@ export interface SyncManagerConfig {
     idb?: IndexedDBManager;
     /** Enable randomized backoff jitter (defaults to false for deterministic testing) */
     enableJitter?: boolean;
+    /** Optional hook called before pull conflict check (e.g. to flush dirty editor state) */
+    onBeforePullConflictCheck?: (fileId: string) => Promise<boolean> | boolean;
 }
