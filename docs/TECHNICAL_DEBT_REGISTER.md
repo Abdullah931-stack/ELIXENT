@@ -2,7 +2,7 @@
 
 Living register of known technical debt, accepted risks, and deferred work.
 Each entry records the decision owner and the mitigation currently in place.
-Last reviewed: 2026-10-26 (v1.46.3 — AI Model Upgrade, Vitest 5, TD-15 liquidation & Phase 2 Green-Field Baseline).
+Last reviewed: 2026-11-15 (v0.22.0 — Phase 4 Pure Vite 6 + Hono 4.13 Alignment & Next.js Decoupling Plan Closure).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
 **Active Verification Baseline:** 146 unit suites (3007 tests) · 21 live suites (105 tests) · 14 E2E specs (15 journeys) — 100% Passing.
@@ -46,7 +46,7 @@ Last reviewed: 2026-10-26 (v1.46.3 — AI Model Upgrade, Vitest 5, TD-15 liquida
 
 ## TD-04 — Pre-existing lint errors in two legacy test files — ✅ RESOLVED (2026-08-25)
 
-- **Debt:** `file-ops.ownership.test.ts` (3× `no-explicit-any`, unused import) and
+- **Debt:** `file-ops.ownership.test.ts` (verifying `src/server/actions/files.ts` and `src/server/actions/folders.ts`; 3× `no-explicit-any`, unused import) and
   `ai-atomic-commit.integration.test.ts` (1× `no-explicit-any`, unused imports)
   fail strict ESLint rules.
 - **Resolution:** fixed in the Phase 11 debt-cleanup round — cycle-detection maps now
@@ -63,6 +63,7 @@ Last reviewed: 2026-10-26 (v1.46.3 — AI Model Upgrade, Vitest 5, TD-15 liquida
   - In Phase 11 (2026-10-02), client financial authority was completely revoked: client hook `useAIStream` was stripped of all settlement RPC invocations (`commitAIReservation`, `settleReservationAsConsumed`). `stopStream()` aborts immediately (0ms) and dismantles ghost decorations instantly without dispatching any network settlement calls, leaving 100% of stream settlement to the server stream handler (`cancel()` and `req.signal.aborted`).
   - Upstream Gemini model generation terminates instantly at socket level, eliminating token bleed and guaranteeing 0ms UI stop latency.
   - Verified via dedicated test suites `src/test/ai/ai-stream-abort-latency.test.ts`, `src/test/ai/ai-client-authority-revocation.test.ts`, and `src/test/ai/ai-authoritative-stream-settlement.test.ts` (100% pass rate).
+  - **Post-Migration Addendum (ADR-006 / Phase 12):** Legacy `src/app/api/ai/stream/route.ts` was permanently superseded by `/api/agent/stream` (`src/server/routes/agent.routes.ts`), preserving the Dual-Side Inversion Protocol and server-authoritative settlement.
 
 ## TD-06 — Dead `'error'` member in the `SyncStatus` union — ✅ RESOLVED (2026-08-25)
 
@@ -84,6 +85,7 @@ Last reviewed: 2026-10-26 (v1.46.3 — AI Model Upgrade, Vitest 5, TD-15 liquida
 
 - **Debt:** Real-browser browser journeys across authentication, file system, CodeMirror 6 BiDi editing, offline-first sync, AI streaming & quota reservations, zero-knowledge vault lifecycle & lock state, Stripe billing, and tenant isolation were previously asserted via jsdom integration suites or manual checklists.
 - **Resolution:** Fully resolved in Phase 19 with Playwright + Chromium automated test infrastructure (`@playwright/test` v1.63.0) and dedicated Next.js test runner harness. 14 test specs covering all 15 journeys in `e2e/specs/` execute deterministically against the isolated Neon database branch (`TEST_DATABASE_URL`) with zero flakiness across consecutive validation runs (15/15 passed in Run 1 and Run 2). Covered journeys include SSR authentication cookies, nested file tree/trash, pure Markdown & Arabic auto-RTL, offline sync & conflict dialog, magic byte security & PDF pipeline, AI NDJSON streaming & atomic commit, quota refunding, 412 collision handling, AES-GCM-256 vault creation & deterministic AAD binding, multi-modal auto-lock & RAM clearing, AI shield gatekeeper (HTTP 403), Stripe durable event ledger, and tenant isolation with 404 anti-enumeration masking.
+  - **Post-Migration Addendum (ADR-006):** The legacy Next.js E2E test runner harness was superseded by the Vite SPA preview + Hono Node.js server E2E harness (`port: 3001`, `playwright.config.ts`).
 
 ## TD-08 — Database Driver Protocol Mismatch in CI Containers — ✅ RESOLVED (2026-08-29)
 
@@ -99,6 +101,7 @@ Last reviewed: 2026-10-26 (v1.46.3 — AI Model Upgrade, Vitest 5, TD-15 liquida
   - Extracted shared test suite arrays (`LIVE_TEST_FILES`, `CLOUD_E2E_FILES`) into a dedicated Single Source of Truth (`vitest.constants.mts`), restricting config files strictly to default exports (`export default defineConfig(...)`).
   - Migrated configuration files to Native ESM (`vitest.config.mts` and `vitest.live.config.mts`), replaced CommonJS `__dirname` with standard `import.meta.dirname`, and specified explicit `.mjs` import extensions for TypeScript module resolution.
   - Silenced all terminal warnings with zero collateral impact on root Next.js CommonJS toolchains. All test files execute cleanly with zero warnings and 100% pass rate.
+  - **Post-Migration Addendum (ADR-006 / Next.js Decoupling Phase 1):** Root Next.js CommonJS toolchains and `next` compiler plugins were completely removed from `package.json`, `tsconfig.json`, and `vite.config.ts`; the repository now operates natively on Vite 6 + ESM.
 
 ## TD-10 — Offline Extraction of IndexedDB Device Trust Envelope (Accepted Risk for PIN / Mitigated via WebAuthn PRF)
 
@@ -119,6 +122,7 @@ Last reviewed: 2026-10-26 (v1.46.3 — AI Model Upgrade, Vitest 5, TD-15 liquida
   - Pruned all unused imports, variables, and dead mocks across server actions, sync engines, UI modals, and test suites.
   - Resolved React 19 hook purity issues in `use-sync.ts` by leveraging a getter property to access `idbManagerRef.current` without executing during render phase.
   - Achieved `0 problems` (`0 errors, 0 warnings`) on `npm run lint` while preserving 100% test pass rate across the entire verification harness.
+  - **Post-Migration Addendum (ADR-006 / Next.js Decoupling Phase 2):** Legacy server actions were decoupled from Next.js into pure domain operation modules (`src/server/actions/files.ts`, `folders.ts`, `vault-actions.ts`, `auth-actions.ts`) exposed via typed Hono RPC (`/api/rpc/*`).
 
 ## TD-12 — Auth Sign-Out Cache Invalidation & Chromium Socket Pool Saturation on Stale Session — ✅ RESOLVED (2026-09-19)
 
@@ -130,6 +134,7 @@ Last reviewed: 2026-10-26 (v1.46.3 — AI Model Upgrade, Vitest 5, TD-15 liquida
   - Equipped `getUser()` in `src/proxy.ts` with an `AbortSignal.timeout(2500)` watchdog race that fails closed gracefully into an unauthenticated null user without socket stalling.
   - Implemented `copyCookiesAndRedirect` helper ensuring all `Set-Cookie` directives (including deletions from `@supabase/ssr`) are retained and returned to the client browser on 307 redirects and 401 API responses.
   - Verified via dedicated unit test suites (`src/test/auth/auth-signout.test.ts` and `src/test/auth/proxy.test.ts`), maintaining 100% test pass rate and clean ESLint status.
+  - **Post-Migration Addendum (ADR-006 / Phase 2.5):** `src/proxy.ts`, `redirect("/")`, `revalidatePath("/", "layout")`, and `NextResponse.redirect` were permanently superseded by Hono Session Middleware (`src/server/middleware/session-middleware.ts`), pure RPC `signOut()` (`src/server/actions/auth-actions.ts`), and RFC 6265 dual `sb-*` cookie clearing in `src/server/routes/rpc.routes.ts`.
 
 ## TD-13 — Systemic Fail-Open Defaults on Redis Outages & Unprotected Cron Execution — ✅ RESOLVED (Phase 13 / 2026-10-02)
 
@@ -171,6 +176,7 @@ Last reviewed: 2026-10-26 (v1.46.3 — AI Model Upgrade, Vitest 5, TD-15 liquida
   - Following the upgrade of `eslint-config-next@16.4.0`, the transitive dependency chain resolved cleanly to safe upstream packages with zero vulnerabilities reported by `npm audit`.
   - In accordance with the defined Conditions to Revisit / Reverse, `GHSA-vfj7-8cjw-p6xm` was permanently purged from `ALLOWLIST` in `scripts/ci-audit.mjs`.
   - `npm run audit:ci` executes with a completely empty allowlist (`ALLOWLIST = new Map()`) and validates 0 vulnerabilities across both production and development dependencies (100% clean gate).
+  - **Post-Migration Addendum (ADR-006):** `eslint-config-next` and `@next/eslint-plugin-next` were subsequently removed from the repository; `eslint.config.mjs` now runs pure `eslint` and `typescript-eslint` with zero Next.js toolchain plugins.
 
 ## TD-16 — Monolithic `sync-manager.ts` Architecture & Single-File Complexity — ✅ RESOLVED (Phase 16 / 2026-10-04)
 
@@ -240,7 +246,7 @@ Last reviewed: 2026-10-26 (v1.46.3 — AI Model Upgrade, Vitest 5, TD-15 liquida
   - **Storage-First Sequential Broadcast:** Enforced `await syncHook.saveLocal()` settlement before dispatching `broadcastCrossTabEvent('file_saved')`.
   - **Paired Visual Diff & Deletion Guard Hardening:** In `conflict-resolver.ts`, `baseSet.has(line)` is restricted to surplus insertions (`insLines.length > delLines.length`). In `diff3.ts`, Deletion Guard only prunes when `aContent.length < oContent.length`.
   - **Silent Automated 3-Way Merge (`LUGX-054`):** Integrated `attemptThreeWayMerge` into `handle412Conflict`. If `status === 'merged_clean'`, commits to IDB, pushes to server, updates editor buffer, and skips `ConflictDialog`.
-  - **React 19 Lint Cleanliness:** Eliminated render-phase state resets and missing mounted guards across `create-vault-modal`, `trust-device-modal`, `vault-security-card`, `vault-unlock-modal`, `ocr-settings-card`, and `editor/[fileId]/page.tsx`.
+  - **React 19 Lint Cleanliness:** Eliminated render-phase state resets and missing mounted guards across `create-vault-modal`, `trust-device-modal`, `vault-security-card`, `vault-unlock-modal`, `ocr-settings-card`, and `src/client/routes/editor-page.tsx`.
   - **Verification:** Covered by dedicated unit suites `src/test/editor/use-editor-conflict.test.ts` (12/12 passing) and `src/test/sync/sync-conflict-resolver.test.ts` (61/61 passing).
 
 ## TD-20 — Cloud Provider Smoke Test Bypass & Google Gemini API Overload Debt — ACCEPTED DEBT (2026-10-26)

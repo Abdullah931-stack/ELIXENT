@@ -34,11 +34,11 @@ All redirect parameters entering the authentication pipeline are strictly valida
 - **Iterative 3-Pass Decoding**: Prevents multi-encoded bypasses (`/%2F%2Fevil.com`).
 - **Scheme & Protocol Rejection**: Rejects `javascript:`, `data:`, `vbscript:`, `blob:`, `file:`, `about:`, `mailto:`, `tel:`, `sms:`, `urn:`, and external protocols `http:`, `https:`.
 - **OAuth Callback (`/auth/callback`)**: Redirection targets in `src/server/routes/auth-callback.routes.ts` anchor redirects to `process.env.VITE_APP_URL || origin`, ignoring untrusted client headers when configured.
-- **Canonical Application URL Resolver (`src/lib/config/app-url.ts` / DEF-A03)**: Server-initiated Stripe Checkout and Billing Portal return URLs resolve through `getAppBaseUrl()` / `resolveAppUrl(path?)`, enforcing `APP_URL` > `VITE_APP_URL` precedence (no `NEXT_PUBLIC_APP_URL`), Fail-Fast HTTPS enforcement in production, loopback-only (`localhost`, `127.0.0.1`, `[::1]`) HTTP allowance outside production, relative-path origin confinement (blocking `//`, backslashes, explicit schemes, control characters, and cross-origin escapes), and literal `{CHECKOUT_SESSION_ID}` template preservation.
+- **Canonical Application URL Resolver (`src/lib/config/app-url.ts` / DEF-A03)**: Server-initiated Stripe Checkout and Billing Portal return URLs resolve through `getAppBaseUrl()` / `resolveAppUrl(path?)`, enforcing `APP_URL` > `VITE_APP_URL` precedence, Fail-Fast HTTPS enforcement in production, loopback-only (`localhost`, `127.0.0.1`, `[::1]`) HTTP allowance outside production, relative-path origin confinement (blocking `//`, backslashes, explicit schemes, control characters, and cross-origin escapes), and literal `{CHECKOUT_SESSION_ID}` template preservation.
 
 ### 1.2. Cross-User Resource Isolation & Anti-Enumeration (404 vs 403)
 
-To prevent resource enumeration (probing for valid UUIDs via 403 vs 404 responses), all lookups across `src/server/auth/session.ts` (`requireOwnedFile`), `src/server/actions/files.ts`, `import-file.ts`, and `src/server/routes/agent.routes.ts` return unified `404 Not Found` responses when foreign/unauthorized resources are accessed. Furthermore, `requireOwnedFile` performs upfront UUID regex syntax verification, preventing PostgreSQL `22P02` syntax errors from revealing invalid UUID queries.
+To prevent resource enumeration (probing for valid UUIDs via 403 vs 404 responses), all lookups across `src/server/auth/session.ts` (`requireOwnedFile`), `src/server/actions/files.ts`, `src/server/actions/folders.ts`, `import-file.ts`, and `src/server/routes/agent.routes.ts` return unified `404 Not Found` responses when foreign/unauthorized resources are accessed. Furthermore, `requireOwnedFile` performs upfront UUID regex syntax verification, preventing PostgreSQL `22P02` syntax errors from revealing invalid UUID queries.
 
 ### 1.3 Zero-Knowledge Encrypted Content Governance & AI Route Hardening (LUGX-085, LUGX-004, LUGX-017)
 
@@ -49,7 +49,7 @@ To prevent unintentional data leakage or uninspected transmission of client-side
    - If `fileId` is missing or invalid, the route immediately fails closed with HTTP `400 Bad Request` and error code `MISSING_FILE_ID`.
    - The route verifies document existence and user ownership against PostgreSQL (`schema.files`).
    - If `targetFile.isEncrypted = true`, the route checks `userVaultProfiles.allowAIOnEncryptedFiles`. If not explicitly enabled by the user, the stream is rejected with HTTP `403 Forbidden` (`AI_PROHIBITED_ON_ENCRYPTED_FILES`) with zero quota consumed and zero prompt data transmitted to Gemini.
-   - Quota reservation (`reserveAndUpdateUsage` in `src/server/services/ai-settlement-service.ts` and `executeAtomicReservation` in `src/lib/metering/redis-wallet.ts`) is strictly coupled to the validated non-null `fileId`.
+   - Quota reservation and settlement (`reserveAndUpdateUsage` / `reserveAIQuota` in `src/server/services/ai-settlement-service.ts` and `executeReserveOrExtend` / `executeSettleOperation` in `src/lib/metering/lua-scripts.ts`, orchestrated by `StreamGovernor` in `src/lib/metering/stream-governor.ts`) are coupled to the authenticated user and validated `fileId` context.
 
 2. **Governed Document Export & Plaintext Warning Modal (`ExportWarningModal` / `export-service.ts` / LUGX-004, LUGX-017):**
    - When exporting documents from the editor (`handleExport`), encrypted files trigger an interactive security modal (`ExportWarningModal`) before any unencrypted payload can be written to disk.
@@ -57,7 +57,7 @@ To prevent unintentional data leakage or uninspected transmission of client-side
    - Plaintext download executes only after explicit user confirmation in the dialog.
 
 Defense-in-depth note: proxy gating complements — never replaces — the
-per-route `getUser()` checks performed inside every API route and server action
+per-route `getUser()` checks performed inside every REST route and Hono RPC endpoint
 (see [`file-ownership-and-versioning.md`](../sync/file-ownership-and-versioning.md) and [`../../records/closures/phase-11-to-15-core-infrastructure/phase-12-auth-ownership-closure.md`](../../records/closures/phase-11-to-15-core-infrastructure/phase-12-auth-ownership-closure.md)).
 
 ---
@@ -81,7 +81,7 @@ Exported limiter instances and their consumers:
 | Instance | Key prefix | Failure Policy | Used by |
 | :--- | :--- | :--- | :--- |
 | `syncApiRateLimiter` | `sync` | `fail-open` | `GET /api/files/sync` |
-| `fileApiRateLimiter` | `file` | `fail-open` | `GET` / `PUT` / `DELETE /api/files/[id]` |
+| `fileApiRateLimiter` | `file` | `fail-open` | `GET` / `PUT` / `DELETE /api/files/:id` |
 | `authRateLimiter` | `auth` | `fail-closed` | authentication endpoints |
 | `aiStreamRateLimiter` | `ai-stream` | `fail-closed` | `POST /api/agent/stream` |
 
@@ -145,7 +145,7 @@ LUGX implements a zero-knowledge dual-tier hybrid encryption architecture offloa
 ### 4.1 Isolated Cryptographic Execution & Non-Extractable Keys
 - **Background Worker Offloading (`src/lib/workers/crypto.worker.ts`)**: All computationally intensive key derivations (PBKDF2 with 600,000 iterations) and symmetric transformations run in an isolated Web Worker via a typed RPC bridge (`src/lib/sync/crypto-worker-bridge.ts`), sustaining 60fps UI performance.
 - **Zero-Latency Direct CSPRNG & W3C Chunking (`src/lib/sync/crypto-utils.ts`)**: Cryptographically secure random byte generation (IVs, salts, entropy) executes synchronously via `globalThis.crypto.getRandomValues` (<0.001ms), eliminating Web Worker IPC overhead and preventing background tab throttling deadlocks. Requests exceeding 64KB are automatically chunked to strictly comply with W3C quota limits (`MAX_RANDOM_BYTES_CHUNK = 65536`).
-- **Resilient Fallback & Circuit Breaker Queue Drain (`src/lib/sync/crypto-worker-bridge.ts`)**: In the event of Web Worker suspension or unexpected failure (e.g. background tab hibernation or Turbopack worker compilation stall), tasks time out at 5 seconds, trip the circuit breaker (`isTerminated = true`), and immediately drain all queued requests directly into the in-process `SubtleCrypto` engine without hanging the user interface or losing offline persistence.
+- **Resilient Fallback & Circuit Breaker Queue Drain (`src/lib/sync/crypto-worker-bridge.ts`)**: In the event of Web Worker suspension or unexpected failure (e.g. background tab hibernation or bundler worker compilation stall), tasks time out at 5 seconds, trip the circuit breaker (`isTerminated = true`), and immediately drain all queued requests directly into the in-process `SubtleCrypto` engine without hanging the user interface or losing offline persistence.
 - **Direct Engine Dual Mode**: In Node.js/SSR and automated test environments, the bridge transparently executes against the direct WebCrypto SubtleCrypto engine with identical security invariants and zero artificial mocking.
 - **Non-Extractable CryptoKey Enforcement**: All derived and imported keys are marked `extractable: false` within Web Crypto API memory spaces.
 
@@ -251,7 +251,7 @@ sequenceDiagram
 ### 4.9 Zero-Knowledge Operation & AI Streaming Guards
 
 - **Client-Side Re-Encrypted Copy Engine (`copyFile` / AUD-02)**: Copying an encrypted file decrypts in volatile RAM, generates a new UUID and fresh random IV, and re-encrypts with the target AAD (`vault:file:${userId}:${newFileId}`). Server-side `copyFile` strictly rejects copying encrypted files without valid client-side re-encryption.
-- **Zero-Knowledge Incremental Sync Guard (`useEditorAutosave` / `PUT /api/files/[id]`)**: When accepting AI hunk replacements on an encrypted file, the client encrypts the updated document locally via `SyncCryptoGateway` before pushing via `PUT /api/files/[id]`. The server strictly rejects writes to encrypted files if unencrypted content is supplied without valid `encryptionMetadata`. (The legacy `commitAIFileOperation` in `src/server/actions/ai-commit.ts` was permanently removed in Phase 12.)
+- **Zero-Knowledge Incremental Sync Guard (`useEditorAutosave` / `PUT /api/files/:id`)**: When accepting AI hunk replacements on an encrypted file, the client encrypts the updated document locally via `SyncCryptoGateway` before pushing via `PUT /api/files/:id`. The server strictly rejects writes to encrypted files if unencrypted content is supplied without valid `encryptionMetadata`.
 - **Conflict 412 Double-Encryption Prevention (AUD-03)**: Detects pre-authenticated ciphertext (`gcm:v1:...`) during server-version conflict resolution to eliminate double-encryption corruption loops.
 
 ### 4.10 Zero-Knowledge Log Hygiene & Diagnostic Trace Preservation (`src/lib/sync/log-sanitizer.ts`)
@@ -328,7 +328,7 @@ npx vitest run src/test/export/export-governance.test.ts                        
 npx vitest run src/test/export/export-warning-modal.test.tsx                                         # Plaintext export warning modal UI interaction
 npx vitest run --config vitest.live.config.mts src/test/server/cross-user-ownership.test.ts         # cross-user isolation & atomic sync (live DB)
 npx vitest run --config vitest.live.config.mts src/test/api/api-files-putguard.live.test.ts        # auth + rate-limit + version guards (live DB)
-npx vitest run --config vitest.live.config.mts src/test/server/file-ops.ownership.test.ts          # ownership isolation (live DB)
+npx vitest run --config vitest.live.config.mts src/test/server/file-ops.ownership.test.ts          # ownership isolation in files.ts & folders.ts (live DB)
 npx tsc --noEmit                                                                                    # type safety gate
 ```
 

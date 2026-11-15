@@ -84,11 +84,11 @@ Pre-generates UUIDs and computes strong SHA-256 ETags in-memory before issuing t
 - **Client-Server Encrypted ETag Parity:** For encrypted files (`isEncrypted === true`), `importFile` passes the structured `envelope` into `generateETagSync` matching `generateEncryptedETagSync`, guaranteeing client-server ETag parity and preventing spurious 412 Precondition Failed conflicts during subsequent sync polling.
 - **Server Ingestion Safeguards & Adversarial Defense:** Enforces a strict 10MB UTF-8 byte limit, checks magic bytes for disguised binaries (`isDisguisedBinary`), strips directory traversal patterns and invalid OS characters (`sanitizeFilename`), eliminates PostgreSQL null bytes (`\0`), counts words via an $O(1)$ memory streaming regex, and prevents infinite loops with a title deduplication circuit breaker (`counter <= 100`).
 
-### E. Cascading Soft-Delete with Precondition Locking (`deleteFile` & `DELETE /api/files/[id]` - LUGX-074)
+### E. Cascading Soft-Delete with Precondition Locking (`deleteFile` & `DELETE /api/files/:id` - LUGX-074)
 - **Precondition Requirement:** File deletions require either `expectedVersion` in the parameters or an `If-Match` ETag header. Missing preconditions return `428 Precondition Required`, and version mismatches return `412 Precondition Failed` with current `serverVersion` state.
 - **Atomic Deletion & Cascade:** Upon successful version comparison, the target file is marked with `deletedAt: now` and its version incremented atomically. If the entity is a folder, `getDescendantIds` traverses all subfolders and documents, cascading the tombstone in a single operation.
 
-### F. Optimistic Locking & Atomic Mutation (`PUT /api/files/[id]`)
+### F. Optimistic Locking & Atomic Mutation (`PUT /api/files/:id`)
 ```typescript
 const [updatedFile] = await db.update(schema.files)
     .set({
@@ -120,10 +120,10 @@ The signature `getDescendantIds(folderId: string, userId: string, includeDeleted
 - **Atomic Metadata & ETag Update**: Inverts `isEncrypted`, sets/clears structured `encryptionMetadata`, updates normalized content, computes strong SHA-256 ETag, and increments version atomically in a single SQL operation.
 
 ### L. Modular Action Architecture & Domain Separation (`src/server/actions/*`)
-To guarantee high cohesion and single-responsibility isolation, file and directory operations are divided into two dedicated server action modules:
+To guarantee high cohesion and single-responsibility isolation, file and directory operations are divided into two dedicated Hono RPC domain action modules (exposed via `src/server/routes/rpc.routes.ts`):
 - **`src/server/actions/files.ts`:** Governs individual file life cycles, including `createFile`, `updateFileContent`, `toggleFileEncryption`, `renameFile`, `deleteFile`, `restoreFile`, and `copyFile`.
 - **`src/server/actions/folders.ts`:** Governs folder hierarchy graph logic, including `moveFile`, `getFolderChildren`, `getDescendantIds`, and `isDescendantOf`.
-- **Direct Domain Imports:** Callers import domain actions directly from `@/server/actions/files` and `@/server/actions/folders`. The temporary Turbopack workaround facade `src/server/actions/file-ops.ts` has been permanently purged in Phase 2.
+- **Direct Domain Imports:** Hono RPC handlers (`src/server/routes/rpc.routes.ts`) and internal server routes import domain operations directly from `@/server/actions/files` and `@/server/actions/folders`. The legacy `src/server/actions/file-ops.ts` facade was permanently purged.
 
 ---
 
@@ -131,11 +131,11 @@ To guarantee high cohesion and single-responsibility isolation, file and directo
  
  - `src/test/server/phase-08-ownership-and-cycles.test.ts`: 18 tests verifying server session enforcement, UUID validation, cross-tenant 404 shielding, cycle detection, copy depth bounds, 412 deletion preconditions, and test route isolation.
  - `src/test/server/cross-user-ownership.test.ts`: 11 integration tests verifying cross-user isolation across `createFile`, `copyFile`, `moveFile`, `getFile`, `updateFileContent`, `deleteFile`, `importFile`, AI reservations, streaming, and atomic UPSERT user sync.
- - `src/test/server/file-ops.ownership.test.ts`: Covers cross-user parent validation, cycle detection across arbitrary hierarchy depth, and precondition enforcement (428/412).
+ - `src/test/server/file-ops.ownership.test.ts`: Covers cross-user parent validation, cycle detection across arbitrary hierarchy depth, and precondition enforcement (428/412) in `src/server/actions/files.ts` and `src/server/actions/folders.ts`.
  - `src/test/api/api-files-putguard.live.test.ts`: Verifies lost-update mitigation and atomic ETag/version updates.
- - `src/test/server/file-ops.lostupdate.test.ts`: Validates concurrent write isolation and monotonic version increments.
- - `src/test/server/file-ops.softdelete.test.ts`: Verifies tombstone lifecycle, unique title index handling, and bounded purge job.
- - `src/test/vault/file-ops-vault.unit.test.ts`: 10 unit tests covering `toggleFileEncryption` optimistic locking, folder rejection, and `copyFile` zero-knowledge encrypted overrides.
+ - `src/test/server/file-ops.lostupdate.test.ts`: Validates concurrent write isolation and monotonic version increments in `src/server/actions/files.ts`.
+ - `src/test/server/file-ops.softdelete.test.ts`: Verifies tombstone lifecycle, unique title index handling, and bounded purge job across `src/server/actions/files.ts` and `src/server/actions/folders.ts`.
+ - `src/test/vault/file-ops-vault.unit.test.ts`: 10 unit tests covering `toggleFileEncryption` optimistic locking, folder rejection, and `copyFile` zero-knowledge encrypted overrides in `src/server/actions/files.ts`.
  - `src/test/server/import-file.test.ts`: Tests text import, 10MB payload size ceiling, title deduplication, and null-byte sanitization.
  - `src/test/parsers/parser-pdf-settings.test.ts`: Unit tests verifying local preference toggling for spatial table extraction.
  - `src/test/vault/vault-import.integration.test.ts`: Integration test verifying direct client-encrypted vault import pipeline.

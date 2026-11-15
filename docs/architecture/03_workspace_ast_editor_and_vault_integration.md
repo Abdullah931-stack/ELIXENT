@@ -10,7 +10,7 @@
 
 ## 1. Unified Workspace Provider Contract (`IWorkspaceProvider Contract`)
 
-To decouple the architectural agent core (`src/core/agent/*`) from underlying storage medium details and enable executing the exact same state graph on **Vercel Serverless** (backed by PostgreSQL) and on **Electron Desktop** (backed by the local filesystem), agent nodes communicate exclusively through the standardized `IWorkspaceProvider` interface (`src/core/workspace/provider.ts`):
+To decouple the architectural agent core (`src/core/agent/*`) from underlying storage medium details and enable executing the exact same state graph on the **Cloud Hono Server** (backed by PostgreSQL) and on **Electron Desktop** (backed by the local filesystem), agent nodes communicate exclusively through the standardized `IWorkspaceProvider` interface (`src/core/workspace/provider.ts`):
 
 ```typescript
 export interface HeadingNode {
@@ -126,7 +126,7 @@ Therefore, `src/core/ast/heading-slicer.ts` implements a CommonMark §4.2 and §
 2. **Section Span Calculation (`Section Span Calculation`):** The span of each heading $H_k$ (at level $L \in [1, 6]$) extends from its starting line up to the line immediately preceding the next heading with a level **less than or equal to $L$** ($L_{\text{next}} \le L$), guaranteeing that the section encapsulates all of its paragraphs and sub-headings (`Sub-headings`) as a cohesive structural unit.
 3. **Parent Heading Breadcrumb Generation (`Heading Breadcrumb`):** The slicer maintains a hierarchical stack (`Heading Stack`) during scanning to generate the full structural path for every section and sub-heading (e.g., `"3. Economic Model > 3.4. Derivation Equations"`).
 4. **Unicode Heading Slug Generation (`generateHeadingSlug`):** Produces URL-friendly slugs preserving Arabic, Latin, and numeric characters while resolving duplicate collisions within the document via numeric suffixing (`base-1`, `base-2`).
-5. **Pure TypeScript FIPS 180-4 SHA-256 Hashing (`computeSectionHash`):** Computes a deterministic 64-character lowercase hex SHA-256 digest of normalized section content (`\0` removed, CRLF/CR to LF, Unicode NFC). Uses a pure bitwise implementation with zero `node:crypto` imports, guaranteeing 100% Next.js client bundle safety.
+5. **Pure TypeScript FIPS 180-4 SHA-256 Hashing (`computeSectionHash`):** Computes a deterministic 64-character lowercase hex SHA-256 digest of normalized section content (`\0` removed, CRLF/CR to LF, Unicode NFC). Uses a pure bitwise implementation with zero `node:crypto` imports, guaranteeing 100% browser client bundle safety.
 6. **Section Extraction (`extractSectionBySlug`):** Extracts targeted section metadata, full `sectionContent`, and subordinate `sectionBody` excluding the heading line.
 
 ### 2.2. Hybrid Search Coupled with Structural Breadcrumb (`Lexical BM25 + AST Breadcrumb`)
@@ -306,7 +306,7 @@ To preserve the end-to-end encryption (`Zero-Knowledge`) guarantees implemented 
    Validated via pure discriminated parsing helper `parseAgentStreamPayload(input)`.
 
 2. **Server-Authoritative SSE Stream Route (`src/server/routes/agent.routes.ts`, mounted via `src/server/app.ts`):**
-   - **Route Segment Configuration:** `export const dynamic = "force-dynamic"; export const maxDuration = 300;`.
+   - **Hono SSE Stream Endpoint Configuration:** Standard Web `ReadableStream` with non-blocking `scheduleAfterResponse()` settlement flush.
    - **Authentication Guard:** Strictly validates active session via `requireAuthenticatedUser()`, returning RFC 7807 `401 Unauthorized` problem details on failure before parsing the body.
    - **Fail-Closed Rate Limiting:** Enforces `aiStreamRateLimiter.limit(user.id)`, returning RFC 7807 `429 Too Many Requests` problem details on rate limit breach or Redis unavailability.
    - **Contract Validation:** Rejects malformed JSON with `400 Bad Request` and maps Zod schema issues into RFC 7807 `invalidParams`.
@@ -368,7 +368,7 @@ flowchart LR
 ```
 
 1. **Authenticated AES-256-GCM Encryption with HKDF Key Derivation:**
-   - Derives a 32-byte (256-bit) encryption key using `crypto.hkdfSync("sha256", keyMaterial, salt, info, 32)` from `CHECKPOINT_ENCRYPTION_KEY`, `AUTH_SECRET`, or `NEXTAUTH_SECRET`.
+   - Derives a 32-byte (256-bit) encryption key using `crypto.hkdfSync("sha256", keyMaterial, salt, info, 32)` from `CHECKPOINT_ENCRYPTION_KEY`, `AUTH_SECRET`, or the deprecated legacy alias `NEXTAUTH_SECRET`.
    - Encrypts serialized checkpoint payloads with `AES-256-GCM` using a 12-byte CSPRNG IV and a 16-byte authentication tag.
    - Binds Additional Authenticated Data (AAD) to the inner serialization type: `elixent:v1:checkpoint:${innerType}`.
 2. **PostgresSaver JSONB Column Compatibility (`EncryptedCheckpointEnvelope`):**

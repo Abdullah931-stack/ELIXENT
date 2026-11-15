@@ -348,11 +348,11 @@ counter backed by Upstash Redis, keyed per user:
 | `syncApiRateLimiter` | `GET /api/files/sync` | **100 requests** | **15 minutes** | Fail-Open (Redis outage allows requests to preserve offline-first continuity) |
 | `fileApiRateLimiter` | `GET` / `PUT` / `DELETE /api/files/:id` | **200 requests** | **15 minutes** | Fail-Open (Redis outage allows requests) |
 | `generalRateLimiter` | General application endpoints | **300 requests** | **15 minutes** | Fail-Open (Redis outage allows requests) |
-| `authRateLimiter` | Authentication endpoints & Server Actions | **20 requests** | **15 minutes** | Fail-Closed (Redis outage returns HTTP 503 / returns rate limit error) |
+| `authRateLimiter` | Authentication & Hono RPC endpoints | **20 requests** | **15 minutes** | Fail-Closed (Redis outage returns HTTP 503 / returns rate limit error) |
 | `aiStreamRateLimiter` | `POST /api/agent/stream` | **30 requests** | **60 seconds** | Fail-Closed (Redis outage returns HTTP 503 Service Unavailable) |
 
 > [!NOTE]
-> `authRateLimiter` actively protects server actions `signInWithGoogle` (keyed by client IP address derived from headers) and `syncUserToDatabase` (keyed by authenticated `user.id`), in addition to standard HTTP authentication endpoints, preventing brute-force abuse and credential-stuffing attacks with fail-closed semantics.
+> `authRateLimiter` actively protects Hono RPC authentication endpoints `signInWithGoogle` (keyed by client IP address derived from headers) and `syncUserToDatabase` (keyed by authenticated `user.id`), in addition to standard HTTP authentication endpoints, preventing brute-force abuse and credential-stuffing attacks with fail-closed semantics.
 
 ### Response (429 Too Many Requests — Exhaustion)
 ```http
@@ -537,9 +537,9 @@ The sync system implements a deterministic Three-Way Merge protocol to resolve c
 
 ---
 
-## Zero-Knowledge Vault Server Actions & Hono RPC Endpoints
+## Zero-Knowledge Vault Domain Operations & Hono RPC Endpoints
 
-> **Architecture Note:** All server actions in `src/server/actions/*` are decoupled from Next.js runtime dependencies and mounted as end-to-end typed Hono RPC routes under `/api/rpc/*` (`src/server/routes/rpc.routes.ts`). All client hooks (`useEditorOrchestrator`, `useEditorConflict`, `useSync`), routes, and UI components (`Sidebar`, `FileContextMenu`, `FolderPickerModal`, `FileTreeItem`, Vault modals) invoke operations exclusively via `@/client/rpc-client` (`hc<AppType>` with zero server imports or dynamic loopback loaders; Vitest injects `vitestLoopbackFetch` externally in `vitest.setup.ts`). Wire DTOs (`src/types/rpc-contracts.ts`) model JSON-serialized dates via `WireTimestamp` (`string | Date`) and `UserProfileRecord.creditBalanceMicro` as a decimal `string`. Internal navigation routes through `AppLink` (`src/components/ui/app-link.tsx`).
+> **Architecture Note:** All domain operation modules in `src/server/actions/*` (`files.ts`, `folders.ts`, `vault-actions.ts`, `auth-actions.ts`, `import-file.ts`) are decoupled from framework runtime dependencies and mounted as end-to-end typed Hono RPC routes under `/api/rpc/*` (`src/server/routes/rpc.routes.ts`). All client hooks (`useEditorOrchestrator`, `useEditorConflict`, `useSync`), routes, and UI components (`Sidebar`, `FileContextMenu`, `FolderPickerModal`, `FileTreeItem`, Vault modals) invoke operations exclusively via `@/client/rpc-client` (`hc<AppType>` with zero server imports or dynamic loopback loaders; Vitest injects `vitestLoopbackFetch` externally in `vitest.setup.ts`). Wire DTOs (`src/types/rpc-contracts.ts`) model JSON-serialized dates via `WireTimestamp` (`string | Date`) and `UserProfileRecord.creditBalanceMicro` as a decimal `string`. Internal navigation routes through `AppLink` (`src/components/ui/app-link.tsx`).
 
 ### 1. `toggleFileEncryption` (`src/server/actions/files.ts`, RPC: `POST /api/rpc/files/toggle-encryption`)
 Converts a file between plaintext and encrypted states:
@@ -573,8 +573,8 @@ Server-side guard primitives eliminating client-supplied `userId` parameters:
 - `requireAuthenticatedUser()`: Extracts user strictly from verified server session, throwing `AuthenticationRequiredError` (401) on missing sessions.
 - `requireOwnedFile(fileId, userId, options)`: Enforces UUID syntax check (preventing PostgreSQL `22P02` exceptions) and asserts ownership. Returns `ResourceNotFoundError` (404) on foreign or deleted records, eliminating resource enumeration.
 
-### 4. Vault Profile Server Actions & RPC Endpoints (`src/server/actions/vault-actions.ts`, RPC: `/api/rpc/vault/*`)
-Atomic server actions and typed Hono RPC routes managing zero-knowledge profiles:
+### 4. Vault Profile Domain Operations & Hono RPC Endpoints (`src/server/actions/vault-actions.ts`, RPC: `/api/rpc/vault/*`)
+Atomic domain operations and typed Hono RPC routes managing zero-knowledge profiles:
 - `getUserVaultProfile()` (`GET /api/rpc/vault/profile`): Retrieves user's profile (`userVaultProfiles`) or `null`.
 - `createUserVaultProfile(input)` (`POST /api/rpc/vault/create`): Atomically inserts dual-wrapped master keys (`encryptedMasterKey` and `recoveryEncryptedMasterKey`) with 409 conflict guard.
 - `updateVaultPassword(input)` (`POST /api/rpc/vault/update-password`): Updates password-wrapped master key and salt with 404 guard.

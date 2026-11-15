@@ -1,7 +1,7 @@
 # AI Quota Reservation, Deduplication & Key Rotation Lifecycle
 
 > [!NOTE]
-> **Elixent Platform Migration Note (`v0.2.0` & `v0.12.0`):** In Elixent v0.2.0 (Phase 2), the legacy word counter (`usage`) and word quota reservation (`ai_reservations`) tables were formally deprecated and dropped via migration `0013_migrate_to_credit_ledger.sql`. In Phase 12 (`v0.12.0`), the legacy modules `src/server/actions/ai-ops.ts`, `src/lib/ai/quota-settlement-reducer.ts`, `src/lib/ai/pending-operation-store.ts`, and `src/app/api/ai/stream/route.ts` were permanently deleted from the repository. All quota reservation, settlement, and expiration operations are now consolidated inside `src/server/services/ai-settlement-service.ts`, `src/lib/metering/redis-wallet.ts`, and `src/server/routes/agent.routes.ts` (mounted at `/api/agent/stream`) backed by `credit_ledger_transactions` and `users.credit_balance_micro`. For the active Elixent credit metering and agent state machine specifications, refer to [04_credit_metering_and_settlement_architecture.md](../04_credit_metering_and_settlement_architecture.md) and [05_data_contracts_and_lugx_migration_plan.md](../05_data_contracts_and_lugx_migration_plan.md).
+> **Elixent Platform Migration Note (`v0.2.0` & `v0.12.0`):** In Elixent v0.2.0 (Phase 2), the legacy word counter (`usage`) and word quota reservation (`ai_reservations`) tables were formally deprecated and dropped via migration `0013_migrate_to_credit_ledger.sql`. In Phase 12 (`v0.12.0`), the legacy modules `src/server/actions/ai-ops.ts`, `src/lib/ai/quota-settlement-reducer.ts`, `src/lib/ai/pending-operation-store.ts`, and the legacy streaming route (superseded by `/api/agent/stream` in `src/server/routes/agent.routes.ts`) were permanently deleted from the repository. All quota reservation, streaming governance, cold-start hydration, and settlement operations are now consolidated inside `src/server/services/ai-settlement-service.ts`, `src/lib/metering/lua-scripts.ts`, `src/lib/metering/stream-governor.ts`, `src/lib/metering/cold-start.ts`, and `src/server/routes/agent.routes.ts` (mounted at `/api/agent/stream`) backed by `credit_ledger_transactions` and `users.credit_balance_micro`. For the active Elixent credit metering and agent state machine specifications, refer to [04_credit_metering_and_settlement_architecture.md](../04_credit_metering_and_settlement_architecture.md) and [05_data_contracts_and_lugx_migration_plan.md](../05_data_contracts_and_lugx_migration_plan.md).
 
 This document describes the technical architecture, database schema, concurrency controls, multi-key rotation algorithms, and high-load production resilience guarantees for the AI System (Phases 5 & 6).
 
@@ -98,7 +98,7 @@ flowchart TD
 
 ### C. Server-Authoritative Streaming Settlement & Revocation of Client Financial Authority (Phase 11)
 - **Zero Client Financial Authority:** Settlement functions (`refundAIReservation` and `commitAIReservation`) are strictly encapsulated inside `src/server/services/ai-settlement-service.ts` and cannot be invoked by clients directly. The client cannot manipulate reservation states via network calls; settlement is driven authoritatively by the Hono agent stream.
-- **Server Stream Lifecycle Settlement (`/api/ai/stream/route.ts`):**
+- **Server Stream Lifecycle Settlement (`/api/agent/stream` in `src/server/routes/agent.routes.ts`):**
   - **Normal Stream Completion:** The server autonomously commits the reservation (`commitAIReservation(operationId)`) *immediately prior* to enqueuing the terminal `{ type: "done" }` NDJSON frame.
   - **Pre-TTFT Failures & Aborts (`ttftMs === null`):** If upstream generation fails before any token is emitted, or if the client disconnects before the first chunk, the server issues an atomic refund (`refundAIReservation(operationId, 'mid_stream_failure_pre_ttft' | 'disconnect_pre_generation')`).
   - **Post-TTFT Failures & Aborts (`ttftMs !== null`):** If tokens have already been delivered across the wire and the connection is aborted or interrupted, the server commits the reservation to account for consumed upstream compute.
@@ -122,7 +122,7 @@ Quota refunds are reserved strictly for **system failures** occurring pre-TTFT. 
 | Upstream error post-TTFT (`ttftMs !== null`) | Mid-stream failure | **Settle as consumed** (`commitAIReservation` on server) |
 | Client disconnect post-TTFT (`ttftMs !== null`) | Client abort | **Settle as consumed** (`commitAIReservation` on server) |
 | Stream successfully finished | Successful completion | **Settle as consumed** (Committed before `done` frame) |
-| User accepts preview (`commitPreview`) | User decision | **Document committed** (`commitAIFileOperation` updates file) |
+| User accepts preview (`acceptGhostHunk` / `acceptAllGhostHunks` / `commitPreview`) | User decision | **Document persisted** (atomic editor transaction followed by `useEditorAutosave` -> `PUT /api/files/:id` via `handleFileByIdPut` / `updateFileContent`; AI credits settled server-side via `ai-settlement-service.ts`) |
 | User rejects preview (`rejectPreview`) | User decision | **Settle as consumed** (Reservation committed; doc unchanged) |
 | User retries preview (`retryPreview`) | User decision | **Settle as consumed** (New session reserves fresh quota) |
 

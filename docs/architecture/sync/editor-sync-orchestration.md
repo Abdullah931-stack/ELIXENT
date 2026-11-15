@@ -282,7 +282,7 @@ flowchart TD
     SnapshotCapture --> EncryptOutbound{"Encrypted File?"}
     EncryptOutbound -- Yes --> ReEncrypt["Re-encrypt Outbound Plaintext<br/>SyncCryptoGateway.encryptOutbound()"]
     EncryptOutbound -- No --> ServerCommit
-    ReEncrypt --> ServerCommit["Authoritative Save via Server Action<br/>expectedVersion: serverVersion.version"]
+    ReEncrypt --> ServerCommit["Authoritative Save via Hono RPC<br/>expectedVersion: serverVersion.version"]
     
     ServerCommit --> CommitSuccess{"Save Succeeded?"}
     CommitSuccess -- "No / Repeat 412" --> RollbackSafe["Preserve Editor Live Edits (LUGX-013)<br/>Update SyncConflict & Surface Error"]
@@ -556,7 +556,7 @@ Invariants:
    `bootstrap_server`, `apply`, and genuine `adopt_metadata`; eager-cold adoption leaves
    the dot red while user text remains dirty.
 5. **Hard-reload & Orphaned Reservation Recovery.** Server-side quota reservation status inspection and stale reservation expiration (`getAIReservationStatus(operationId)` and `expireStaleReservations()`) are consolidated inside `src/server/services/ai-settlement-service.ts` (session-derived and ownership-filtered), superseding the legacy `src/lib/ai/pending-operation-store.ts` and `src/server/actions/ai-ops.ts` modules (permanently deleted in Phase 12). Abandoned previews are never applied to the document nor treated as committed. See [`reference/phase-11-editor-orchestration-closure.md`](../../records/closures/phase-11-to-15-core-infrastructure/phase-11-editor-orchestration-closure.md).
-6. **UI layer integration (`page.tsx`).** During `hydrating` on an empty document, an animated
+6. **UI layer integration (`src/client/routes/editor-page.tsx`).** During `hydrating` on an empty document, an animated
    backdrop overlay (`Loader2`) informs the user of active synchronization. When `fatal`,
    a dedicated error recovery card is presented with a direct action to return to `/workspace`.
    The status bar reflects `Syncing...` while hydration is active.
@@ -655,7 +655,7 @@ To prevent race conditions where a pending debounced auto-save executes in the b
 
 1. **Auto-Save Debounce Cancellation (`startAIOperation`):** Starting an AI operation immediately invokes `autosave.cancelAutosave()`, clearing any queued timers before capturing the initial version.
 2. **Live Version Resolution at Commit Time:** `useAIStream` accepts `getLatestVersion` and `getLatestETag` getters connecting directly to `fileVersionRef` and `fileEtagRef`, resolving the most up-to-date local orchestrator version at the moment of commit rather than relying on a stale start snapshot.
-3. **Incremental Debounced Save Coalescing (Superseding `commitAIFileOperation`):** In Phases 11–12, the legacy `commitAIFileOperation` (`src/server/actions/ai-commit.ts`) was permanently removed; accepted ghost hunks update local IndexedDB immediately (`localRevision += 1`) and coalesce into a debounced `PUT /api/files/[id]` via `useEditorAutosave` carrying the latest `expectedVersion` and `If-Match` ETag.
+3. **Incremental Debounced Save Coalescing (Superseding `commitAIFileOperation`):** In Phases 11–12, the legacy `commitAIFileOperation` (`src/server/actions/ai-commit.ts`) was permanently removed; accepted ghost hunks update local IndexedDB immediately (`localRevision += 1`) and coalesce into a debounced `PUT /api/files/:id` via `useEditorAutosave` carrying the latest `expectedVersion` and `If-Match` ETag.
 
 ---
 
@@ -749,7 +749,7 @@ The editor write and sync pipeline transparently integrates client-side end-to-e
 2. **Pre-Save Envelope Encryption (`executeServerWrite`):**
    - When saving an encrypted file (`isEncrypted === true`), `executeServerWrite` intercepts the plaintext from the editor adapter before network dispatch.
    - The plaintext is encrypted using AES-GCM-256 inside the Web Worker (`cryptoWorkerBridge.encryptAESGCM`).
-   - The resulting `ciphertextBase64` is sent as `content` alongside the `encryptionMetadata` envelope in the PUT request to `/api/files/[id]` or `toggleFileEncryption`.
+   - The resulting `ciphertextBase64` is sent as `content` alongside the `encryptionMetadata` envelope in the PUT request to `/api/files/:id` or `toggleFileEncryption`.
    - In IndexedDB, `IDBFile` stores the `ciphertextBase64` in `content` with `encryptionMetadata`, ensuring that **zero plaintext** ever touches local storage or network pipelines (Zero Plaintext Invariant).
    - If the Master Key is absent during a write attempt, the orchestrator triggers a fail-closed circuit: the save is aborted immediately, preserving encrypted integrity without leaking plaintext.
 
@@ -815,7 +815,7 @@ When a user accepts an individual ghost hunk (or clicks "Accept All"):
 5. This eliminates the race condition where concurrent save requests with identical version numbers collided on the server, permanently preventing self-inflicted `412 Precondition Failed` errors.
 
 ### 3. Complete Purge of Legacy 5-Operation Modules (Phases 11 & 12)
-In Phase 11 (`v0.11.0`), all direct imports of `ai-ops.ts`, `ai-commit.ts`, `pending-operation-store.ts`, and `/api/ai/stream` were removed from `src/app`, `src/components`, and `src/hooks`. In Phase 12 (`v0.12.0`), all 7 legacy 5-operation modules (`src/app/api/ai/stream/route.ts`, `src/lib/ai/pending-operation-store.ts`, `src/lib/ai/preview-buffer.ts`, `src/lib/ai/prompts.ts`, `src/lib/ai/quota-settlement-reducer.ts`, `src/server/actions/ai-commit.ts`, and `src/server/actions/ai-ops.ts`) were permanently deleted from the repository, and all unit, live, and E2E test suites were migrated to `/api/agent/stream`, `src/server/services/ai-settlement-service.ts`, and `MultiHunkGhostState`.
+In Phase 11 (`v0.11.0`), all direct imports of `ai-ops.ts`, `ai-commit.ts`, `pending-operation-store.ts`, and legacy streaming calls were removed from UI routes, `src/components`, and `src/hooks` in favor of `/api/agent/stream`. In Phase 12 (`v0.12.0`), all 7 legacy 5-operation modules (including `src/lib/ai/pending-operation-store.ts`, `src/lib/ai/preview-buffer.ts`, `src/lib/ai/prompts.ts`, `src/lib/ai/quota-settlement-reducer.ts`, `src/server/actions/ai-commit.ts`, `src/server/actions/ai-ops.ts`, and the retired legacy stream route — with `src/app` itself subsequently purged under ADR-006 in favor of `src/client/routes/**` and `src/server/routes/**`) were permanently deleted from the repository, and all unit, live, and E2E test suites were migrated to `/api/agent/stream`, `src/server/services/ai-settlement-service.ts`, and `MultiHunkGhostState`.
 
 ---
 
@@ -867,8 +867,8 @@ React editor state is **never** flushed unconditionally during routine sync cycl
     - `src/test/vault/vault-crypto.test.ts` (40/40 passing - W3C chunking, timeout & circuit-breaker queue draining, cross-tab volatile RAM purge & auto-lock synchronization)
     - `src/test/vault/vault-storage.test.ts` (15/15 passing - transparent IndexedDB encryption & raw store inspection)
     - `src/test/vault/vault-orchestration.test.ts` (29/29 passing - dual wrapping, seed recovery, 6-digit PIN, AAD re-encryption, double-encryption guards)
-    - `src/test/vault/vault-actions.unit.test.ts` (25/25 passing - server actions CRUD, validation, 401/404/409 guards, device trust revocation, AI toggle settings)
-    - `src/test/vault/file-ops-vault.unit.test.ts` (10/10 passing - encryption toggle, optimistic concurrency, copy with re-encrypted override)
+    - `src/test/vault/vault-actions.unit.test.ts` (25/25 passing - Hono RPC CRUD actions, validation, 401/404/409 guards, device trust revocation, AI toggle settings)
+    - `src/test/vault/file-ops-vault.unit.test.ts` (10/10 passing - encryption toggle, optimistic concurrency, copy with re-encrypted override in `src/server/actions/files.ts`)
     - `src/test/vault/vault-crypto-resilience.unit.test.ts` (17/17 passing - 6-digit PIN, tampering detection, RAM wipeBuffer, SessionKeyStore auto-lock & touch)
     - `src/test/vault/vault-cross-module.integration.test.ts` (5/5 passing - E2E zero-knowledge lifecycle, re-encrypted copy, AI commit, conflict 412, epoch invalidation)
     - `src/test/vault/vault-sync-ai-gate.test.ts` (28/28 passing - dual-layer AI safety barriers, non-blocking sync with CONFLICT_LOCKED quarantine, Markdown syntax validator)

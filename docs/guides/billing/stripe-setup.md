@@ -98,7 +98,7 @@ When ready to go live:
 4. **Update production environment variables**:
 ```bash
 STRIPE_SECRET_KEY=sk_live_XXXXXXXX
-NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_XXXXXXXX
+VITE_STRIPE_PUBLISHABLE_KEY=pk_live_XXXXXXXX
 STRIPE_PRO_PRICE_ID=price_live_XXXXXXXX
 STRIPE_ULTRA_PRICE_ID=price_live_XXXXXXXX
 ```

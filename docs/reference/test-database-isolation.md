@@ -41,9 +41,9 @@ LIVE suites registered in `vitest.constants.mts` (21 hermetic database suites):
 1. `src/test/api/api-files-putguard.live.test.ts`
 2. `src/test/ai/ai-ops.integrity.test.ts`
 3. `src/test/ai/ai-ops.refund.test.ts`
-4. `src/test/server/file-ops.lostupdate.test.ts`
-5. `src/test/server/file-ops.ownership.test.ts`
-6. `src/test/server/file-ops.softdelete.test.ts`
+4. `src/test/server/file-ops.lostupdate.test.ts` — verifies optimistic locking in `src/server/actions/files.ts`
+5. `src/test/server/file-ops.ownership.test.ts` — verifies ownership, restore, and cycle guards in `src/server/actions/files.ts` and `src/server/actions/folders.ts`
+6. `src/test/server/file-ops.softdelete.test.ts` — verifies soft-delete lifecycle in `src/server/actions/files.ts` and `src/server/actions/folders.ts`
 7. `src/test/ai/ai-atomic-commit.integration.test.ts`
 8. `src/test/sync/conflict-resolution.integration.test.ts`
 9. `src/test/ai/ai-quota-idempotency.live.test.ts`
@@ -71,7 +71,7 @@ branch live twins were added and registered in `vitest.constants.mts`:
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/test/ai/ai-quota-idempotency.test.ts`                 | `src/test/ai/ai-quota-idempotency.live.test.ts` — incl. concurrent same-operationId race on real rows                                                         |
 | `src/test/ai/ai-server-atomic-commit.test.ts`              | `src/test/ai/ai-atomic-commit.integration.test.ts` — real interactive transactions, live ACID rollbacks, and unauthenticated route isolation                  |
-| `src/test/editor/editor-orchestration.integration.test.ts` | `src/test/editor/editor-orchestration.live.test.ts` — real file/folder domain actions; real 412 vs sibling write + merge resolution                         |
+| `src/test/editor/editor-orchestration.integration.test.ts` | `src/test/editor/editor-orchestration.live.test.ts` — real `src/server/actions/files.ts` & `src/server/actions/folders.ts` domain actions; real 412 vs sibling write + merge resolution                         |
 | `src/test/ai/ai-preview-decision.test.ts`                  | `src/test/ai/ai-preview-decision.live.test.ts` — hook-generated operationId settled against real reservation rows                                             |
 | `src/test/api/stripe-webhook.test.ts`                      | `src/test/api/stripe-webhook.live.test.ts` — REAL HMAC signature verification + persisted tier/subscription rows (durable-ledger dedupe deferred to Phase 13) |
 

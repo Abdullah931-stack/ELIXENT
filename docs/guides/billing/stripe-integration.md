@@ -104,7 +104,7 @@ export function isValidStripeTier(tier: unknown): tier is 'pro' | 'ultra'
 ```
 
 #### `webhook-dedupe.ts`
-In-memory fast-path deduplication cache and Next.js App Router route isolation:
+In-memory fast-path deduplication cache and Hono / TanStack Router route isolation:
 
 ```typescript
 export function isEventProcessedInMemory(eventId: string): boolean

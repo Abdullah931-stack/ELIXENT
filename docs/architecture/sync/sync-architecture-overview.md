@@ -22,7 +22,7 @@ graph TD
         ConflictStore -.->|"Quarantine locked conflicts"| Quarantine["pendingEncryptedConflicts (CONFLICT_LOCKED)"]
     end
 
-    QueueWorker & PullEngine <-->|"HTTP REST (If-Match / If-None-Match / Strong ETags / X-Correlation-ID / Rate Limits)"| APILayer["API Gateway Layer (/api/files & /api/ai)"]
+    QueueWorker & PullEngine <-->|"HTTP REST (If-Match / If-None-Match / Strong ETags / X-Correlation-ID / Rate Limits)"| APILayer["API Gateway Layer (/api/files & /api/agent)"]
     APILayer <-->|"Drizzle ORM / Adaptive Pool (Neon / pg.Pool)"| DBLayer[("PostgreSQL Database (files, users, user_vault_profiles)")]
 ```
 
@@ -64,9 +64,9 @@ graph TD
 | `SyncPerformanceMonitor` (`performance-monitor.ts`) | In-memory performance metric profiling with metadata sanitization on ingestion and automated `sync_duration` timing |
 | `ConcurrencyManager` | In-memory mutex promise locking per file ID |
 | `ConnectionDetector` | Network monitoring with exponential backoff and jitter |
-| `Vault Server Actions` (`vault-actions.ts`) | Atomic vault profile CRUD, AI setting persistence (`updateVaultAISetting`), and remote device revocation |
-| `File Operations` (`files.ts`) | Optimistic `toggleFileEncryption` & client-re-encrypted `copyFile` guard (AUD-02) with `operationId` continuity |
-| `AI Commit Action` (`ai-commit.ts`) | Transactional AI commit with Zero-Knowledge plaintext rejection and automatic reservation refunding |
+| `Vault Hono RPC Actions` (`vault-actions.ts`) | Atomic vault profile CRUD, AI setting persistence (`updateVaultAISetting`), and remote device revocation via `src/server/routes/rpc.routes.ts` |
+| `File & Folder Operations` (`files.ts` & `folders.ts`) | Optimistic `toggleFileEncryption`, client-re-encrypted `copyFile` guard (AUD-02) with `operationId` continuity, and folder hierarchy operations via `src/server/routes/rpc.routes.ts` |
+| `Agent Stream & AI Settlement` (`agent.routes.ts` & `ai-settlement-service.ts`) | Server-authoritative SSE streaming (`/api/agent/stream`), `StreamGovernor` micro-credit metering, and Zero-Knowledge `PUT /api/files/:id` persistence |
 
 ### 3. Data & Cryptography Layer
 

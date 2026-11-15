@@ -1,21 +1,21 @@
 # AI NDJSON Streaming Protocol & Session State Machine Architecture
 
 > [!NOTE]
-> **Elixent Phase 12 Architecture Migration Note (`v0.12.0`):** In Phase 12, the legacy 5-operation streaming route (`src/app/api/ai/stream/route.ts`) and single-range preview buffer (`src/lib/ai/preview-buffer.ts`) were permanently deleted. All AI streaming and agentic orchestration now execute through the **Elixent Agentic Engine** (`src/server/routes/agent.routes.ts`, mounted at `/api/agent/stream`), the **Multi-Hunk Ghost Engine** (`src/components/editor/codemirror/extensions/streaming-ghost.ts`), and `src/server/services/ai-settlement-service.ts`. For the active multi-hunk and agentic streaming specifications, see [02_agent_orchestration_and_decision_engine.md](../02_agent_orchestration_and_decision_engine.md) and [03_workspace_ast_editor_and_vault_integration.md](../03_workspace_ast_editor_and_vault_integration.md).
+> **Elixent Phase 12 Architecture Migration Note (`v0.12.0`):** In Phase 12, the legacy 5-operation streaming route and single-range preview buffer (`src/lib/ai/preview-buffer.ts`) were permanently deleted. All AI streaming and agentic orchestration now execute through the **Elixent Agentic Engine** (`src/server/routes/agent.routes.ts`, mounted at `/api/agent/stream`), the **Multi-Hunk Ghost Engine** (`src/components/editor/markdown/streaming-ghost.ts`, using `MultiHunkGhostState` from `src/components/editor/markdown/types.ts`), and `src/server/services/ai-settlement-service.ts`. For the active multi-hunk and agentic streaming specifications, see [02_agent_orchestration_and_decision_engine.md](../02_agent_orchestration_and_decision_engine.md) and [03_workspace_ast_editor_and_vault_integration.md](../03_workspace_ast_editor_and_vault_integration.md).
 
 ## 1. Overview & Architectural Objectives
 
 This specification details the end-to-end NDJSON (Newline-Delimited JSON) Streaming Protocol, finite state machine (FSM), and adversarial hardening layer connecting:
-- **Server Stream Handler**: `src/server/routes/agent.routes.ts` (mounted at `/api/agent/stream`, superseding the deleted `src/app/api/ai/stream/route.ts`)
+- **Server Stream Handler**: `src/server/routes/agent.routes.ts` (mounted at `/api/agent/stream`)
 - **Client Protocol Parser**: `src/lib/ai/stream-handler.ts`
 - **Session State Machine & Integrity**: `src/lib/ai/stream-session.ts`
-- **Multi-Hunk Preview & Editor Extension**: `src/components/editor/codemirror/extensions/streaming-ghost.ts` (`MultiHunkGhostState`, superseding the deleted `src/lib/ai/preview-buffer.ts`)
+- **Multi-Hunk Preview & Editor Extension**: `src/components/editor/markdown/streaming-ghost.ts` (`acceptGhostHunk`, `acceptAllGhostHunks`, `createMultiHunkGhostState`) and `src/components/editor/markdown/types.ts` (`MultiHunkGhostState`, superseding the deleted `src/lib/ai/preview-buffer.ts`)
 - **React Consumer Hook**: `src/hooks/use-ai-stream.ts`
 
 ### Architectural Guarantees
 1. **Zero Document Model Mutation During Streaming**: Chunks stream exclusively into `EphemeralPreviewBuffer` and UI preview overlays. Neither document source state nor IndexedDB storage is modified until atomic commit.
 2. **Deterministic Single-Phase Commit**: Atomic server and local transaction commits occur strictly on stream completion.
-3. **Atomic Quota Reservation & Server-Authoritative Settlement (Phase 11)**: Quota refunds occur strictly on startup errors or pre-TTFT disconnects/failures (`ttftMs === null`). Post-TTFT disconnects (`ttftMs !== null`), normal stream completion, and user-initiated stops (`stopStream`), rejections, or retries settle quota as consumed without refund. Client financial authority is completely revoked: `refundAIReservation` and `commitAIReservation` are not exposed as Server Actions.
+3. **Atomic Quota Reservation & Server-Authoritative Settlement (Phase 11)**: Quota refunds occur strictly on startup errors or pre-TTFT disconnects/failures (`ttftMs === null`). Post-TTFT disconnects (`ttftMs !== null`), normal stream completion, and user-initiated stops (`stopStream`), rejections, or retries settle quota as consumed without refund. Client financial authority is completely revoked: `refundAIReservation` and `commitAIReservation` are not exposed as Hono RPC Actions.
 4. **Multi-Byte UTF-8 & Line Boundary Preservation**: Resilient stream parsing protects against chunk slicing, surrogate splits, and network fragmentation.
 5. **Adversarial Resilience**: Line buffer flooding guards (`MAX_LINE_BUFFER_CHARS = 256KB`), payload ceiling guards (`MAX_INPUT_CHARS = 100,000`), DOM XSS immunity, and dynamic position tracking.
 
@@ -23,7 +23,7 @@ This specification details the end-to-end NDJSON (Newline-Delimited JSON) Stream
 
 ## 2. NDJSON Message Framing Specification
 
-Every message transmitted over the `/api/ai/stream` endpoint conforms to single-line JSON terminated by `\n` (`Content-Type: application/x-ndjson; charset=utf-8`).
+Every message transmitted over the `/api/agent/stream` endpoint conforms to single-line JSON terminated by `\n` (`Content-Type: application/x-ndjson; charset=utf-8`).
 
 ### 2.1 Event Schema Definitions
 
@@ -40,7 +40,7 @@ Every message transmitted over the `/api/ai/stream` endpoint conforms to single-
 - `Cache-Control`: `no-cache, no-transform, no-store, must-revalidate`
 - `Connection`: `keep-alive`
 - `X-Content-Type-Options`: `nosniff`
-- `X-Accel-Buffering`: `no` (disables reverse-proxy buffering in Nginx/Vercel)
+- `X-Accel-Buffering`: `no` (disables reverse-proxy buffering)
 - `X-Correlation-ID`: Authoritative request correlation identifier (UUID v4) for distributed tracing
 - `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`: Rate limiter headers (`aiStreamRateLimiter`: 30 req/60s)
 
@@ -80,8 +80,8 @@ Stream completion (`onDone`) does **not** commit anything. The validated Markdow
 in `pendingPreviewRef` while the session rests in `preview_ready`. All decision controls are unified
 and embedded directly inside the inline `CMStreamingGhostWidget` at the document mutation coordinates:
 
-- **Accept (`commitPreview`)** — `preview_ready -> committing`: server-first atomic commit
-  (`commitAIFileOperation`) followed by one atomic Editor transaction replacing the dynamically tracked range `[from, to]` via `EditorAdapter.replaceRange`.
+- **Accept (`acceptGhostHunk` / `acceptAllGhostHunks` / `commitPreview`)** — `preview_ready -> committing`: atomic Editor transaction (`acceptGhostHunk` or `acceptAllGhostHunks` in `src/components/editor/markdown/streaming-ghost.ts`, or `EditorAdapter.replaceRange` over `[from, to]`),
+  followed by document persistence via `useEditorAutosave` (`src/hooks/use-editor-autosave.ts` -> `PUT /api/files/:id` via `handleFileByIdPut` in `src/server/routes/files-api.routes.ts`) while AI credit settlement executes server-side in `src/server/services/ai-settlement-service.ts`.
 - **Reject (`rejectPreview`)** — `preview_ready -> aborted`: ephemeral preview dismantled, document untouched,
   reservation settled as consumed (never refunded).
 - **Retry (`retryPreview`)** — old session settled exactly like a rejection, then a brand-new
@@ -132,10 +132,10 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, AIStreamStatus[]> = {
 
 ### 4.4 Payload Validation, Size Ceiling (`MAX_INPUT_CHARS`) & Mandatory `fileId` (LUGX-085)
 - **Risk**: Massive payloads or non-string inputs causing high CPU regex evaluation during word counting, or omitting `fileId` to bypass Zero-Knowledge gatekeeping inspection.
-- **Protection**: `route.ts` validates payload types (`typeof prompt === 'string'`), enforces `MAX_INPUT_CHARS = 100_000` returning clean `400 Bad Request`, and mandates a valid non-empty `fileId` returning HTTP `400 Bad Request` (`MISSING_FILE_ID`) if missing or whitespace-only.
+- **Protection**: `src/server/routes/agent.routes.ts` validates payload types (`typeof prompt === 'string'`), enforces `MAX_INPUT_CHARS = 100_000` returning clean `400 Bad Request`, and mandates a valid non-empty `fileId` returning HTTP `400 Bad Request` (`MISSING_FILE_ID`) if missing or whitespace-only.
 
 ### 4.5 Non-Abortable Committing State Guard
-- **Risk**: User clicking Cancel while `commitAIFileOperation` is in-flight on the server database, leading to server-commit success but client-side rollback (causing version desynchronization and HTTP 412 conflicts).
+- **Risk**: User clicking Cancel while an accepted-hunk document persistence request (`PUT /api/files/:id` via `useEditorAutosave` -> `handleFileByIdPut`, or `updateFileContent`) is in-flight on the server database, leading to server-commit success but client-side rollback (causing version desynchronization and HTTP 412 conflicts).
 - **Protection**: `stopStream()` strictly locks and suppresses cancellations once the session enters `committing` state.
 
 ### 4.6 DOM XSS Immunity in Ghost Widget
@@ -149,9 +149,9 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, AIStreamStatus[]> = {
 ### 4.8 Zero-Knowledge AI Gatekeeper & User Privacy Opt-In (`allowAIOnEncryptedFiles`)
 - **Risk**: Automated or accidental invocation of external AI models on end-to-end encrypted files, breaching Zero-Knowledge guarantees and leaking private plaintext.
 - **Protection**:
-  - **Server Route Gatekeeper (`/api/ai/stream`)**: Requests require a verified non-empty `fileId` belonging to the authenticated user (LUGX-085). When `targetFile.isEncrypted === true`, checks `userVaultProfiles.allowAIOnEncryptedFiles`. If `false` (default) or profile missing: immediately rejects with HTTP 403 `AI_PROHIBITED_ON_ENCRYPTED_FILES` prior to token consumption or quota reservation.
+  - **Server Route Gatekeeper (`/api/agent/stream`)**: Requests require a verified non-empty `fileId` belonging to the authenticated user (LUGX-085). When `targetFile.isEncrypted === true`, checks `userVaultProfiles.allowAIOnEncryptedFiles`. If `false` (default) or profile missing: immediately rejects with HTTP 403 `AI_PROHIBITED_ON_ENCRYPTED_FILES` prior to token consumption or quota reservation.
   - **Strict Transport Isolation**: When user explicitly opts in, decrypted plaintext in browser RAM is streamed over TLS directly to the AI provider without server persistence.
-  - **Re-Encryption on Commit**: `commitAIFileOperation` strictly rejects plaintext commits to encrypted files if `encryptionMetadata.iv` is omitted. The editor orchestrator re-encrypts generated Markdown in browser RAM with the Master Key before committing over the network.
+  - **Re-Encryption on Commit**: `handleFileByIdPut` (`PUT /api/files/:id` in `src/server/routes/files-api.routes.ts`) and `updateFileContent` (`src/server/actions/files.ts`) strictly reject plaintext writes or missing `encryptionMetadata.iv` payloads on encrypted files (`400 Bad Request`). The editor orchestrator re-encrypts updated Markdown in browser RAM with the Master Key before `useEditorAutosave` dispatches `PUT /api/files/:id`.
   - **UI Shield Badge**: `AIToolbar` renders an amber privacy badge (`data-testid="ai-encrypted-badge"`) disabling AI actions when opting in is disabled on encrypted files.
 
 ### 4.9 Information Disclosure Prevention & Graceful Overload Handling (Phase 17 & v1.31.3)
@@ -167,7 +167,7 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, AIStreamStatus[]> = {
   - The settlement service computes a deterministic SHA-256 fingerprint:
     $$\text{requestHash} = \text{SHA-256}(\text{userId} : \text{operation} : \text{fileId} : \text{text})$$
   - When `reserveAIQuota` encounters an existing `operationId`, it asserts that `existing.requestHash === incomingHash` and `existing.userId === incomingUserId`.
-  - If a mismatch is detected, the operation is rejected with `isReplayConflict: true`, and the `/api/ai/stream` route immediately returns `HTTP 409 Conflict` (`Replay attack detected: operationId reused with divergent payload`).
+  - If a mismatch is detected, the operation is rejected with `isReplayConflict: true`, and the `/api/agent/stream` route immediately returns `HTTP 409 Conflict` (`Replay attack detected: operationId reused with divergent payload`).
 
 ---
 
@@ -193,7 +193,7 @@ The implementation is verified with automated tests covering all parser, FSM, an
 
 ### Decision TR-08: Custom NDJSON over ReadableStream vs. Server-Sent Events (SSE) vs. WebSockets
 
-- **Context:** Streaming real-time AI linguistic edits (token-by-token deltas) from Google Gemini LLM via Next.js Route Handlers to CodeMirror 6 inline ghost widgets.
+- **Context:** Streaming real-time AI linguistic edits (token-by-token deltas) from Google Gemini LLM via Hono SSE route handlers to CodeMirror 6 inline ghost widgets.
 - **Chosen Architecture:** Custom line-delimited JSON (NDJSON) over standard HTTP/2 `ReadableStream` (`fetch` body stream).
 - **Rejected Alternatives:**
   1. **Server-Sent Events (`text/event-stream` / EventSource):** Standard browser SSE API.
@@ -201,7 +201,7 @@ The implementation is verified with automated tests covering all parser, FSM, an
 - **Trade-off Analysis:**
   | Evaluation Criteria | Chosen Solution (NDJSON / Fetch) | Alternative #1 (SSE / EventSource) | Alternative #2 (WebSockets) |
   | :--- | :--- | :--- | :--- |
-  | **Serverless & Edge Affinity** | **Native**: Direct Next.js App Router Route Handler response streaming; zero socket server infrastructure. | **Moderate**: Requires specialized buffering headers (`X-Accel-Buffering: no`). | **Poor**: Serverless lambda runtimes cannot sustain persistent long-lived TCP state. |
+  | **Serverless & Edge Affinity** | **Native**: Direct Hono SSE route handler response streaming; zero socket server infrastructure. | **Moderate**: Requires specialized buffering headers (`X-Accel-Buffering: no`). | **Poor**: Serverless lambda runtimes cannot sustain persistent long-lived TCP state. |
   | **Custom Request Headers** | **Full Support**: Transmits standard `Authorization: Bearer`, custom correlation IDs, and CSRF tokens. | **Severely Restricted**: Native browser `EventSource` cannot send custom HTTP authorization headers. | **Moderate**: Initial handshake only; requires subprotocol workarounds for headers. |
   | **Connection Pool Limits** | **Multiplexed**: Operates over multiplexed HTTP/2 or HTTP/3 connections. | **Vulnerable**: Under HTTP/1.1, browsers enforce a strict limit of 6 open SSE connections per domain. | **Resource-Intensive**: Each socket holds a persistent port/descriptor. |
   | **Cancellation & Abort** | **Instant**: Direct `AbortController.abort()` cleanly severs the socket and triggers server-side cleanup. | **Moderate**: Requires explicit `.close()` call on EventSource instance. | **Heavy**: Custom application-level heartbeat and disconnect framing. |

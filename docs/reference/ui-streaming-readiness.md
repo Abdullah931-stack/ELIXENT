@@ -15,9 +15,9 @@ This document specifies the architecture and implementation of the **Hybrid Stre
 | Gate | Specification | Implementation File(s) | Status |
 | :--- | :--- | :--- | :--- |
 | **G1** | Idempotent transaction record (`credit_ledger_transactions`, replacing legacy `ai_reservations`) with unique `operationId` constraint and conditional state transitions (`RESERVED`, `SETTLED`, `ABORTED_REFUNDED`, `EXPIRED_RELEASED`). | `src/server/db/schema/credit-ledger.ts`<br>`src/server/db/migrations/0013_migrate_to_credit_ledger.sql`<br>`src/server/services/ai-settlement-service.ts` | **Implemented & Consolidated (v0.12.0)** |
-| **G2** | Atomic hunk acceptance and incremental debounced document sync (`useEditorAutosave` -> `PUT /api/files/[id]`), superseding the deleted `src/server/actions/ai-commit.ts`. | `src/components/editor/codemirror/extensions/streaming-ghost.ts`<br>`src/hooks/editor/use-editor-autosave.ts`<br>`src/server/routes/files-api.routes.ts` | **Implemented & Consolidated (v0.12.0)** |
+| **G2** | Atomic hunk acceptance (`acceptGhostHunk`, `acceptAllGhostHunks` with `MultiHunkGhostState`) and incremental debounced document sync (`useEditorAutosave` -> `PUT /api/files/:id`), replacing legacy single-range server commits. | `src/components/editor/markdown/streaming-ghost.ts`<br>`src/components/editor/markdown/types.ts`<br>`src/hooks/use-editor-autosave.ts`<br>`src/server/routes/files-api.routes.ts` | **Implemented & Consolidated (v0.12.0)** |
 | **G3** | Dual-Side Inversion Stop Protocol (TD-05): Instant client abort (< 50ms), reader cleanup, server-side pre-TTFT refund and post-TTFT autonomous commit. | `src/hooks/use-ai-stream.ts`<br>`src/lib/ai/stream-handler.ts`<br>`src/server/routes/agent.routes.ts`<br>`src/test/ai/ai-stream-abort-latency.test.ts` | **Implemented & Hardened (v0.12.0)** |
-| **G4** | Deterministic reservation and settlement lifecycle governed by `ai-settlement-service.ts` and `redis-wallet.ts`, superseding the deleted `src/server/actions/ai-ops.ts`. | `src/server/services/ai-settlement-service.ts`<br>`src/lib/metering/redis-wallet.ts` | **Implemented & Consolidated (v0.12.0)** |
+| **G4** | Deterministic reservation and settlement lifecycle governed by `ai-settlement-service.ts` and Redis metering (`stream-governor.ts`, `lua-scripts.ts`, `cold-start.ts`), superseding the deleted `src/server/actions/ai-ops.ts`. | `src/server/services/ai-settlement-service.ts`<br>`src/lib/metering/stream-governor.ts`<br>`src/lib/metering/lua-scripts.ts`<br>`src/lib/metering/cold-start.ts` | **Implemented & Consolidated (v0.12.0)** |
 | **G5** | Auto-save and sync suspension invariants during active streaming, committing, and conflict states. | `src/hooks/use-editor-orchestrator.ts`<br>`src/client/routes/editor-page.tsx` | **Implemented** |
 | **G6** | Stale session and generation guard (`editorGeneration`) preventing old callbacks from applying to new state. | `src/lib/ai/stream-session.ts`<br>`src/hooks/use-ai-stream.ts` | **Implemented** |
 | **G7** | Production path integration tests calling real settlement services and schema entities. | `src/test/ai/ai-quota-idempotency.test.ts`<br>`src/test/ai/ai-server-atomic-commit.test.ts`<br>`src/test/metering/ai-settlement-service.unit.test.ts` | **Implemented** |
@@ -25,7 +25,7 @@ This document specifies the architecture and implementation of the **Hybrid Stre
 | **G9** | Editor orchestration and authoritative write integration tests with zero regression. | `src/test/editor/editor-orchestration.integration.test.ts`<br>[`docs/architecture/sync/editor-sync-orchestration.md`](../architecture/sync/editor-sync-orchestration.md) | **Validated** |
 | **G10** | Feature Flag gating (`AI_STREAMING_ENABLED`) with zero sensitive prompt leakage in server logs. | `src/config/features.config.ts`<br>`src/server/routes/agent.routes.ts` | **Implemented & Enforced** |
 | **G11** | Zero-Knowledge AI Safety Gatekeeper: Mandatory non-empty `fileId` with HTTP 400 (`MISSING_FILE_ID`), database ownership check, amber UI badge (`ai-encrypted-badge`), and server-side check against `userVaultProfiles.allowAIOnEncryptedFiles` rejecting encrypted files with HTTP 403 (`AI_PROHIBITED_ON_ENCRYPTED_FILES`) unless opted-in. | `src/components/editor/ai-toolbar.tsx`<br>`src/hooks/use-editor-orchestrator.ts`<br>`src/server/routes/agent.routes.ts`<br>`src/test/ai/ai-stream-fileid-governance.test.ts` | **Implemented & Hardened (v0.12.0)** |
-| **G12** | Architectural Agent Presentation & Incremental Sync: Integration of `AgentChatPanel`, `HITLQuestionCard`, and debounced incremental autosave via `useEditorAutosave` (800ms–1000ms), purging legacy 5-operation UI references from `src/app`, `src/components`, and `src/hooks`. | `src/components/agent/chat-panel.tsx`<br>`src/components/agent/hitl-question-card.tsx`<br>`src/components/editor/ai-toolbar.tsx`<br>`src/hooks/use-ai-stream.ts`<br>`src/hooks/use-editor-orchestrator.ts` | **Implemented & Verified (v0.11.0 / Phase 11)** |
+| **G12** | Architectural Agent Presentation & Incremental Sync: Integration of `AgentChatPanel`, `HITLQuestionCard`, and debounced incremental autosave via `useEditorAutosave` (800ms–1000ms), purging legacy 5-operation UI references from `src/components` and `src/hooks` (with legacy `src/app` routes replaced by `src/server/routes/` and `src/client/routes/`). | `src/components/agent/chat-panel.tsx`<br>`src/components/agent/hitl-question-card.tsx`<br>`src/components/editor/ai-toolbar.tsx`<br>`src/hooks/use-ai-stream.ts`<br>`src/hooks/use-editor-orchestrator.ts` | **Implemented & Verified (v0.11.0 / Phase 11)** |
 | **G13** | Final Purge of Legacy 5-Operation Modules & Full Test Suite Migration: Permanent deletion of the 7 legacy 5-operation modules (`api/ai/stream/route.ts`, `pending-operation-store.ts`, `preview-buffer.ts`, `prompts.ts`, `quota-settlement-reducer.ts`, `ai-commit.ts`, `ai-ops.ts`), cleanup of `models.config.json`, `tiers.config.ts`, `ai/client.ts`, and `ai-contracts.ts`, and migration of all unit, live, and E2E test suites. | `src/config/models.config.json`<br>`src/config/tiers.config.ts`<br>`src/lib/ai/client.ts`<br>`src/server/services/ai-settlement-service.ts`<br>`src/types/ai-contracts.ts`<br>`e2e/specs/06`–`09`, `12` | **Implemented & Verified (v0.12.0 / Phase 12)** |
 
 ---
@@ -37,15 +37,15 @@ To prevent distributed transaction failure modes, the system decouples server qu
 ```mermaid
 flowchart TD
     Client["Client Session: streaming_hunks -> preview_ready (Parked)"] --> UserChoice{"User Decision Trigger"}
-    UserChoice -->|"Accept Hunk(s) (acceptHunk / acceptAllHunks)"| Step1["Step 1: Local Atomic CodeMirror Transaction"]
-    UserChoice -->|"Reject Hunk(s) (rejectHunk / rejectAllHunks)"| SettleConsumed["Quota Settled Server-Side as Consumed<br/>Dismantle Ghost Hunk(s) (Doc Pristine, No Refund)"]
+    UserChoice -->|"Accept Hunk(s) (acceptGhostHunk / acceptAllGhostHunks)"| Step1["Step 1: Local Atomic CodeMirror Transaction"]
+    UserChoice -->|"Reject Hunk(s) (rejectGhostHunk / rejectAllGhostHunks)"| SettleConsumed["Quota Settled Server-Side as Consumed<br/>Dismantle Ghost Hunk(s) (Doc Pristine, No Refund)"]
     
     Step1 --> Dismantle["Dismantle Accepted Ghost Hunk Decoration"]
     Step1 --> Undo["Push 1 Isolated History Entry (Undoable with single Ctrl+Z)"]
     Step1 --> IDBSync["Write Updated Markdown to IndexedDB (localRevision += 1)"]
     
     IDBSync --> Step2["Step 2: Debounced Incremental Sync (useEditorAutosave 800-1000ms)"]
-    Step2 --> VerifyVer["PUT /api/files/[id] with expectedVersion & If-Match ETag"]
+    Step2 --> VerifyVer["PUT /api/files/:id with expectedVersion & If-Match ETag"]
     VerifyVer -->|Success (200 OK)| CleanState["Adopt Server ETag & Version (Lean CAS)"]
     VerifyVer -->|Version Conflict (412)| ThreeWay["Automated Diff3 3-Way Merge or Conflict Resolution"]
 ```
@@ -85,7 +85,7 @@ stateDiagram-v2
 
 ## 5. NDJSON & Stream Framing Protocol Specification
 
-The `/api/agent/stream` endpoint (superseding the deleted `/api/ai/stream` route in Phase 12) streams framed events over an HTTP response:
+The `/api/agent/stream` endpoint (`src/server/routes/agent.routes.ts`) streams framed events over an HTTP response:
 
 ### 5.0 Request Contract & Gatekeeper Validation
 Requests to `/api/agent/stream` validate the JSON payload against `agentStreamRequestSchema`:
@@ -130,13 +130,13 @@ Emitted if an error occurs during stream transmission:
 ## 6. Failure Recovery & Quota Idempotency
 
 ### 6.1 Server-Authoritative Quota Settlement (`v0.12.0` / Phase 12)
-Client financial authority is revoked: `refundAIReservation`, `commitAIReservation`, `reserveAIQuota`, and `reserveAndUpdateUsage` are strictly internal server functions encapsulated in `src/server/services/ai-settlement-service.ts` and cannot be invoked by clients. Settlement is driven authoritatively by `/api/agent/stream` and `redis-wallet.ts`:
+Client financial authority is revoked: `refundAIReservation`, `commitAIReservation`, `reserveAIQuota`, and `reserveAndUpdateUsage` are strictly internal server functions encapsulated in `src/server/services/ai-settlement-service.ts` and cannot be invoked by clients. Settlement is driven authoritatively by `/api/agent/stream` (`StreamGovernor` in `src/lib/metering/stream-governor.ts`), `src/lib/metering/lua-scripts.ts`, and `src/server/services/ai-settlement-service.ts`:
 - **Pre-TTFT System Failure / Disconnect (`ttftMs === null`):** Server triggers internal `refundAIReservation(operationId, reason)` or `executeAtomicRefund`:
   - **Condition:** Updates `status = 'ABORTED_REFUNDED'` WHERE `operation_id = operationId AND status = 'RESERVED'`.
   - **Idempotency:** Subsequent calls find `status == 'ABORTED_REFUNDED'` or `'SETTLED'` and return `{ refunded: false, reason: "already_refunded" | "already_committed" }`, eliminating double-refund risks.
   - **Micro-Credit Restoration:** Refunds the reserved micro-credit hold back to `users.credit_balance_micro` and the Redis wallet (`lugx:wallet:${userId}`).
 - **Post-TTFT Disconnect / Stream Completion (`ttftMs !== null`):** Server autonomously executes `commitAIReservation(operationId)` or `executeAtomicSettlement` before `{ type: "done" }` or upon socket disconnect, settling quota as consumed for generated tokens.
-- **Decoupled Incremental Document Sync (`useEditorAutosave`):** User acceptance applies hunks locally and syncs the updated document via `PUT /api/files/[id]` independently of server-side quota settlement.
+- **Decoupled Incremental Document Sync (`useEditorAutosave`):** User acceptance applies hunks locally and syncs the updated document via `PUT /api/files/:id` independently of server-side quota settlement.
 
 ### 6.2 Stale Reservation Sweeper (TTL)
 `expireStaleReservations()` in `src/server/services/ai-settlement-service.ts` queries all `credit_ledger_transactions` where `status = 'RESERVED'` and `createdAt <= cutoff` (5-minute TTL). It transitions them to `EXPIRED_RELEASED` and refunds the reserved micro-credit amount back to `users.credit_balance_micro`, ensuring abandoned client tabs do not leak quota balances. Authorized via `CRON_SECRET` on `/api/cron/expire-reservations`.
@@ -188,8 +188,8 @@ tested and ready for progressive canary activation by setting the flag to `true`
 
 As part of the Elixent autonomous agent architecture (`ELIXENT-ARCH-03` §5.1 & `ELIXENT-ARCH-02`), the unified route `POST /api/agent/stream` serves server-authoritative Server-Sent Events (SSE) for LangGraph state machine execution:
 
-### 8.1 Route Segment & Security Invariants
-- **Execution Budget:** `export const maxDuration = 300;` (5-minute serverless execution window) with `export const dynamic = "force-dynamic";`.
+### 8.1 Route Handler & Stream Execution Invariants
+- **Hono SSE Route Handler (`agentRoutes` / `handleAgentStreamPost`):** Served as a persistent Web-standard Hono `ReadableStream<Uint8Array>` handler (`POST /api/agent/stream` in `src/server/routes/agent.routes.ts`) with `AbortController` cancellation bound to `req.signal` and `ReadableStream.cancel()`, `StreamGovernor` multi-slice Redis leases (`120s` TTL via `LEASE_TTL_SECONDS`), and background PostgreSQL settlement flush via `scheduleAfterResponse()` (ADR-007 ALS).
 - **Pre-Execution Auth Guard:** Invokes `requireAuthenticatedUser()` prior to reading the request body; unauthenticated requests fail immediately with RFC 7807 `401 Unauthorized` (`urn:problem-type:unauthorized`).
 - **Fail-Closed Stream Rate Limiting:** Enforces `aiStreamRateLimiter.limit(user.id)`; returns RFC 7807 `429 Too Many Requests` if the user exceeds limits or Redis is unavailable.
 - **Strict Payload Schema (`src/core/agent/stream-payload.ts`):** Validated via `parseAgentStreamPayload`:

@@ -44,7 +44,7 @@ Advanced search and replace functionality integrated into the LUGX text editor w
 - Imported Search icon from lucide-react
 
 ### Page Integration
-**`src/app/workspace/editor/[fileId]/page.tsx`**
+**`src/client/routes/editor-page.tsx`**
 - State management for dialog visibility
 - Ctrl+F global keyboard shortcut
 - SearchReplace component integration
@@ -118,7 +118,7 @@ useEffect(() => {
 
 ## 🧪 Testing Instructions
 
-1. Open editor: `http://localhost:3000/workspace/editor/[fileId]`
+1. Open editor: `http://localhost:3000/workspace/editor/:fileId`
 2. Add test text: "The quick brown fox. The fox is quick."
 3. Press `Ctrl+F` to open search
 4. Type "the" slowly - **verify no search happens immediately**

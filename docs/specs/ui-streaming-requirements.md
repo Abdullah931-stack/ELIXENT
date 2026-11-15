@@ -1,7 +1,7 @@
 # Architectural Specification: Resilient UI Streaming & Atomic Undo in LUGX Editor
 
 > [!NOTE]
-> **Phase 12 Supersession Notice (`v0.12.0`):** In Phase 12, the legacy single-range modules (`src/app/api/ai/stream/route.ts`, `src/server/actions/ai-ops.ts`, `src/server/actions/ai-commit.ts`, `src/lib/ai/preview-buffer.ts`, and `src/components/editor/ai-toolbar.tsx` 5-operation buttons) were permanently superseded by the **Elixent Multi-Hunk Ghost Engine** (`src/components/editor/codemirror/extensions/streaming-ghost.ts`), `src/app/api/agent/stream/route.ts`, `src/server/services/ai-settlement-service.ts`, and incremental editor sync via `useEditorAutosave` (`src/hooks/editor/use-editor-autosave.ts`). See [03_workspace_ast_editor_and_vault_integration.md](../architecture/03_workspace_ast_editor_and_vault_integration.md) for the active multi-hunk specification.
+> **Phase 12 Supersession Notice (`v0.12.0`):** In Phase 12, the legacy single-range modules (the legacy 5-operation streaming route, `ai-ops` actions, `ai-commit` actions, `src/lib/ai/preview-buffer.ts`, and `src/components/editor/ai-toolbar.tsx` 5-operation buttons) were permanently superseded by the **Elixent Multi-Hunk Ghost Engine** (`src/components/editor/markdown/streaming-ghost.ts` & `src/components/editor/markdown/types.ts` — `acceptGhostHunk`, `acceptAllGhostHunks`, `MultiHunkGhostState`), `src/server/routes/agent.routes.ts` (`/api/agent/stream`), `src/server/services/ai-settlement-service.ts`, and incremental editor sync via `useEditorAutosave` (`src/hooks/use-editor-autosave.ts`). See [03_workspace_ast_editor_and_vault_integration.md](../architecture/03_workspace_ast_editor_and_vault_integration.md) for the active multi-hunk specification.
 
 ## 1. Executive Summary & Objective
 
@@ -35,14 +35,14 @@ sequenceDiagram
     participant Editor as Editor (MarkdownEditor / EditorAdapter)
     participant StreamHandler as Stream Handler & Client
     participant GhostExt as Preview Overlay
-    participant Backend as Next.js API / Gemini Stream
+    participant Backend as Hono API / Gemini Stream
 
     User->>Editor: Select Range [from, to] & Click AI Tool
     Editor->>StreamHandler: Initiate AI Stream Request with Range [from, to]
     StreamHandler->>Editor: Take Document Snapshot & Lock Target Selection
     StreamHandler->>GhostExt: Create Ephemeral Preview Buffer
     Note over Editor: Surrounding text [0, from) and (to, size] remains 100% normal
-    StreamHandler->>Backend: POST /api/ai/stream (with AbortSignal)
+    StreamHandler->>Backend: POST /api/agent/stream (with AbortSignal)
     
     loop Real-Time Chunk Ingestion
         Backend-->>StreamHandler: NDJSON Chunk Stream
@@ -55,7 +55,7 @@ sequenceDiagram
         StreamHandler->>Editor: Park output in preview_ready (Doc Untouched)
         Note over User,Editor: User chooses in Unified Inline Preview Card: Accept / Reject / Retry
         alt User clicks Accept (commitPreview)
-            StreamHandler->>Backend: Atomic commit (commitAIFileOperation)
+            StreamHandler->>Backend: Atomic commit (Hono RPC action / PUT /api/files/:id)
             StreamHandler->>GhostExt: Teardown Ephemeral Preview
             StreamHandler->>Editor: Dispatch Single Atomic Transaction on [from, to] (adapter.replaceRange)
             Editor->>Editor: Push 1 Entry to History Stack (Undo Ready)
@@ -151,7 +151,7 @@ flowchart LR
    - Encapsulates SSE consumption, `AbortController` lifecycle, backpressure handling, and error mapping.
 3. **`src/components/editor/ai-toolbar.tsx`**:
    - Active streaming state indicator with instant *"Stop Generation"* action.
-4. **`src/app/workspace/editor/[fileId]/page.tsx`**:
+4. **`src/client/routes/editor-page.tsx`**:
    - Integration point connecting `stream-handler`, unified inline `CMStreamingGhostWidget` with embedded controls, and atomic transaction commits on $[from, to]$ via `adapter.replaceRange`.
 5. **`src/test/ai/ai-transaction.test.ts`**:
    - Comprehensive unit and integration test suite asserting auto-save isolation, partial range replacement, single-action undo, and failure recovery.

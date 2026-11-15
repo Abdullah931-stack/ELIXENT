@@ -470,7 +470,7 @@ sequenceDiagram
     Saver-->>INode: Transition to pure_interrupt_node
     INode->>INode: interrupt(state.question_queue, { responseSchema })
     INode-->>Client: Throw GraphInterrupt & Emit SSE HITL Payload
-    Note over INode,Client: Serverless Function Terminates Safely (Zero Active Connections)
+    Note over INode,Client: Hono SSE Stream Handler Terminates Safely (Zero Active Connections)
     Client->>INode: POST /api/agent/stream with new Command({ resume: userAnswers })
     INode->>INode: Re-runs from Line 1 (Zero LLM calls / Zero duplicate billing)
     INode->>ANode: Command({ update: { question_queue: null, ...appliedAnswers }, goto: "assumption_analyzer_node" })
@@ -486,7 +486,7 @@ According to the execution semantics of LangGraph.js Interrupts, invoking `new C
      `const userAnswers = interrupt(state.question_queue, { responseSchema: ClarificationResponseSchema });`
    - Upon receiving the schema-validated user answers on resume, the node returns an explicit routing command:
      `return new Command({ update: { question_queue: null, ...appliedAnswers }, goto: "assumption_analyzer_node" });`
-3. **Prohibition of Swallowing Interrupt Exceptions:** Wrapping the `interrupt()` call inside `pure_interrupt_node` with a generic `try / catch` block is strictly prohibited, because `LangGraph` relies on throwing an internal `GraphInterrupt` control exception to freeze execution state and cleanly terminate the serverless function invocation.
+3. **Prohibition of Swallowing Interrupt Exceptions:** Wrapping the `interrupt()` call inside `pure_interrupt_node` with a generic `try / catch` block is strictly prohibited, because `LangGraph` relies on throwing an internal `GraphInterrupt` control exception to freeze execution state and cleanly complete the Hono SSE stream response.
 
 ---
 

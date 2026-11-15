@@ -17,10 +17,10 @@ Rather than demolishing the existing repository and rebuilding it from scratch, 
 ### 1.1. System Constraints & Invariants
 
 1. **Dual-Runtime Single Agent Core (`Dual-Runtime Single Agent Core`):**
-   - **Cloud Runtime:** A **Next.js 16 (App Router)**, **React 19**, and **TypeScript 5 (Strict Mode)** application hosted on **Vercel Serverless**, backed by **PostgreSQL (Neon / Node-PG)** via Drizzle ORM (`src/server/db/`) and an **Upstash Redis** in-memory data layer.
+   - **Cloud Runtime:** A **Vite 6 SPA + TanStack Router** client and Web-standard **Hono 4.13** Node.js server written in **React 19** and **TypeScript 5 (Strict Mode)**, backed by **PostgreSQL (Neon / Node-PG)** via Drizzle ORM (`src/server/db/`) and an **Upstash Redis** in-memory data layer.
    - **Desktop Runtime:** A future **Electron** application operating locally over code repositories and files on the user's machine without uploading them to the cloud, sharing the exact same agent core (`src/core/agent/*`) with the cloud runtime via a unified workspace abstraction interface (`IWorkspaceProvider`).
 2. **Financial Immunity & Zero-Overdraft Protection (`Zero-Overdraft & Fail-Closed Metering`):**
-   - All model invocations (streaming generative models, closed-schema structured models, and decision models) are metered by actual token consumption and billed in **Micro-Credits (`BigInt`)** within Redis via atomic Lua scripts, with asynchronous flushing to PostgreSQL via `after()` / `waitUntil()` that shields the database connection pool during active streaming.
+   - All model invocations (streaming generative models, closed-schema structured models, and decision models) are metered by actual token consumption and billed in **Micro-Credits (`BigInt`)** within Redis via atomic Lua scripts, with asynchronous flushing to PostgreSQL via `scheduleAfterResponse()` that shields the database connection pool during active streaming.
 3. **Zero-Knowledge Vault Boundary (`Zero-Knowledge Vault Boundary`):**
    - End-to-end client-side encryption (`AES-256-GCM` + `PBKDF2 600k` inside a Web Worker under `src/lib/crypto/*` and `src/lib/vault/*`) remains an inviolable boundary. The agent never processes any encrypted file unless the user explicitly enables `allowAIOnEncryptedFiles`, and storing any decrypted plaintext inside persistent `LangGraph` checkpoint tables (`PostgresSaver`) is strictly prohibited.
 
@@ -30,15 +30,15 @@ The following diagram illustrates the four system layers and the data and contro
 
 ```mermaid
 flowchart TB
-    subgraph UI_LAYER ["1. Presentation & Interaction Layer (Next.js 16 Web / Electron Desktop UI)"]
+    subgraph UI_LAYER ["1. Presentation & Interaction Layer (Vite 6 SPA Web / Electron Desktop UI)"]
         CM6["CodeMirror 6 Editor<br/>(Live Preview + RTL Bidi + Multi-Hunk Ghost Overlay)"]
         CHAT_HITL["Agent Dialogue Panel & Structured Question Queue<br/>(HITL Form UI driven by Zod responseSchema)"]
     end
 
     subgraph ADAPTER_GOV ["2. Transport & Financial Governance Layer"]
-        SSE_ADAPTER["Unified Event Stream Adapter (SSE / UI Stream Protocol v3)<br/>src/server/routes/agent.routes.ts (maxDuration = 300s)"]
+        SSE_ADAPTER["Unified Event Stream Adapter (SSE / UI Stream Protocol v3)<br/>src/server/routes/agent.routes.ts (Streaming SSE Endpoint)"]
         GOV["Real-Time Stream Governor (StreamGovernor)<br/>Runway Extension + 500ms Local Hold + AbortController"]
-        SETTLE_ENGINE["Dual-Track Settlement Engine (Fail-Closed Settlement)<br/>Upstash Redis Lua + Next.js after() + Flush-First Cold Start"]
+        SETTLE_ENGINE["Dual-Track Settlement Engine (Fail-Closed Settlement)<br/>Upstash Redis Lua + scheduleAfterResponse() + Flush-First Cold Start"]
     end
 
     subgraph AGENT_CORE ["3. Shared Architectural Agent Core (src/core/agent/*)"]
@@ -72,7 +72,7 @@ In compliance with the architectural decision and trade-off documentation rules 
 
 ### 3.1. `ADR-001`: Adopting a Hybrid Architecture Combining `@langchain/langgraph` for Cyclic Orchestration and `Vercel AI SDK v6` for Generative Models
 
-- **Context & Problem:** The architectural agent must execute multi-loop autonomous investigation and auditing cycles (local search $\leftarrow$ assumption analysis $\leftarrow$ decision adjudication $\leftarrow$ conditional loopback to search or a Human-in-the-Loop `HITL` pause spanning hours or days $\leftarrow$ exact resumption from the interruption point), while maintaining smooth frontend streaming and avoiding dependency bloat in the Vercel Serverless environment.
+- **Context & Problem:** The architectural agent must execute multi-loop autonomous investigation and auditing cycles (local search $\leftarrow$ assumption analysis $\leftarrow$ decision adjudication $\leftarrow$ conditional loopback to search or a Human-in-the-Loop `HITL` pause spanning hours or days $\leftarrow$ exact resumption from the interruption point), while maintaining smooth frontend streaming and avoiding dependency bloat in cloud server and serverless environments.
 - **Accepted Decision:**
   1. Adopt the isolated **`@langchain/langgraph`** package exclusively as a state machine (`StateGraph`) to manage cyclic control flow, conditional edges, persistent checkpoints (`Checkpoints`), and stateless human interrupts (`Stateless Interrupts`).
   2. Adopt **`Vercel AI SDK v6` (`ai`)** as the unified gateway for generative model invocations (`generateObject`, `generateText`, `streamText`) inside graph nodes, wired into the existing multi-key rotation and circuit breaker engine in `src/lib/ai/key-rotation.ts`.
@@ -133,26 +133,26 @@ In compliance with the architectural decision and trade-off documentation rules 
 
 - **Migration Trigger:** In the `Electron Desktop` runtime, when inspecting massive code repositories exceeding $10,000$ source files, augment the local `IWorkspaceProvider` with a local lexical index built on `SQLite FTS5` + `Tree-sitter AST` on the user's machine with zero cloud vectors.
 
-### 3.4. `ADR-004`: Adopting a Dual-Track Real-Time Billing Engine (`Upstash Redis Lua + Next.js after()`) on Vercel Serverless
+### 3.4. `ADR-004`: Adopting a Dual-Track Real-Time Billing Engine (`Upstash Redis Lua + scheduleAfterResponse()`) on Hono Cloud Server
 
-- **Context & Problem:** `LUGX v1.46.3` reserved word quotas via direct pessimistic row locking in PostgreSQL (`SELECT ... FOR UPDATE` in `src/server/services/ai-settlement-service.ts`). In a multi-node agent architecture with long-lived streaming responses, opening PostgreSQL transactions during streaming or on every runway slice extension causes connection pool exhaustion (`Connection Pool Exhaustion`) and severe latency spikes, whereas remaining on **Vercel Serverless** requires avoiding persistent background daemons (`Persistent Daemons`).
+- **Context & Problem:** `LUGX v1.46.3` reserved word quotas via direct pessimistic row locking in PostgreSQL (`SELECT ... FOR UPDATE` in `src/server/services/ai-settlement-service.ts`). In a multi-node agent architecture with long-lived streaming responses, opening PostgreSQL transactions during streaming or on every runway slice extension causes connection pool exhaustion (`Connection Pool Exhaustion`) and severe latency spikes, whereas operating on a **Hono Cloud Server** requires avoiding persistent background daemons (`Persistent Daemons`).
 - **Accepted Decision:**
   1. Convert the accounting unit to **Micro-Credits (`BigInt`)** metered on actual token usage (`Input`, `Cached Input`, `Output + Reasoning`).
   2. Execute pre-authorization reservations, real-time slice extensions (`Runway Extension`), and final settlement atomically within **Upstash Redis** via Lua scripts, enforcing a strict **Fail-Closed** policy whenever Redis is unreachable.
-  3. Append settlement ledger records with a `created_at_ms` timestamp into `lugx:pending_settlements:${userId}` in Redis, and flush them asynchronously after stream termination via Next.js 16 **`after()` (`waitUntil`)** into the `credit_ledger_transactions` table in PostgreSQL (`INSERT ... ON CONFLICT (operation_id) DO NOTHING`).
-  4. Enforce the **`Flush-First Cold Start`** protocol to prevent any double deduction if a wallet key expires from Redis concurrently with an in-flight `after()` execution.
+  3. Append settlement ledger records with a `created_at_ms` timestamp into `lugx:pending_settlements:${userId}` in Redis, and flush them asynchronously after stream termination via **`scheduleAfterResponse()`** into the `credit_ledger_transactions` table in PostgreSQL (`INSERT ... ON CONFLICT (operation_id) DO NOTHING`).
+  4. Enforce the **`Flush-First Cold Start`** protocol to prevent any double deduction if a wallet key expires from Redis concurrently with an in-flight `scheduleAfterResponse()` execution.
 - **Rejected Alternatives:**
   - _Direct PostgreSQL locks per streaming slice:_ Exhausts Neon/Postgres connections and adds high round-trip latency during token streaming.
-  - _Migrating hosting away from Vercel to dedicated container servers solely to run a background flush worker:_ Unjustified operational and engineering overhead given that the `Redis Pending Hash + after() + Cron Sweeper` pattern achieves $100\%$ financial durability on Vercel Serverless.
+  - _Deploying dedicated background worker servers solely to run a flush daemon:_ Unjustified operational and engineering overhead given that the `Redis Pending Hash + scheduleAfterResponse() + Cron Sweeper` pattern achieves $100\%$ financial durability on Hono Cloud Server.
 - **Trade-off Matrix:**
 
-| Evaluation Criterion | Accepted Solution (`Redis Lua + after() + Cron Sweeper`) | Alternative 1 (Direct PostgreSQL Transactions) | Alternative 2 (Dedicated Background Servers Outside Vercel) |
+| Evaluation Criterion | Accepted Solution (`Redis Lua + scheduleAfterResponse() + Cron Sweeper`) | Alternative 1 (Direct PostgreSQL Transactions) | Alternative 2 (Dedicated Background Worker Servers) |
 | :--- | :--- | :--- | :--- |
 | **PostgreSQL Connection Pressure During Streaming** | Zero ($0$ DB queries during token streaming) | Very high (Risk of connection pool exhaustion) | Zero |
 | **Financial Durability (`Financial Durability`)** | $100\%$ (Protected by `pending_settlements` and `ON CONFLICT DO NOTHING`) | $100\%$ | $100\%$ |
-| **Vercel Serverless Compatibility & Cost** | Natively compatible at very low cost | Compatible but bottlenecks under concurrency | Requires extra hosting infrastructure and ongoing maintenance |
+| **Hono Cloud Server Compatibility & Cost** | Natively compatible at very low cost | Compatible but bottlenecks under concurrency | Requires extra hosting infrastructure and ongoing maintenance |
 
-- **Migration Trigger:** If concurrent settlement throughput exceeds $5,000$ operations per second such that individual `after()` invocations create batch write pressure on PostgreSQL, upgrade the flush mechanism to a scheduled batch consumer running every $5$ seconds via `Upstash QStash / Workflow` while keeping the application hosted on Vercel.
+- **Migration Trigger:** If concurrent settlement throughput exceeds $5,000$ operations per second such that individual `scheduleAfterResponse()` invocations create batch write pressure on PostgreSQL, upgrade the flush mechanism to a scheduled batch consumer running every $5$ seconds via `Upstash QStash / Workflow` while keeping the Hono Cloud Server stateless.
 
 ### 3.5. `ADR-005`: Adopting Dual Persistent Storage (`Checkpointer + Project Store`) and Isolating the Zero-Knowledge Vault via `vault_ref://` Pointers
 
@@ -174,7 +174,7 @@ In compliance with the architectural decision and trade-off documentation rules 
 
 ### 3.6. Standalone Framework Migration ADRs (Amending ADR-001 through ADR-005)
 
-- **`ADR-006`:** [Replacing Next.js 16 (App Router) with Unified Web-Standard Architecture (Vite 6 SPA + TanStack Router + Hono RPC)](./adr_006_unified_vite_tanstack_hono_rpc_architecture.md) — Amends §1.1 and §2 container architecture to decouple the presentation and server layers into a Vite 6 SPA with TanStack Router and a Web-standard Hono RPC backend.
+- **`ADR-006`:** [Replacing Next.js 16 (App Router) with Unified Web-Standard Architecture (Vite 6 SPA + TanStack Router + Hono RPC)](./adr_006_unified_vite_tanstack_hono_rpc_architecture.md) — Establishes the active **Vite 6 SPA + TanStack Router + Hono RPC** architecture across the decoupled presentation and server layers (amending the §1.1 and §2 container architecture baseline).
 - **`ADR-007`:** [Enforcing Dual-Plane Contract Separation (ICloudControlPlane vs. IWorkspaceProvider) and Request-Scoped AsyncLocalStorage Context Isolation](./adr_007_dual_plane_separation_and_als_request_context.md) — Establishes request-scoped `AsyncLocalStorage` context isolation (`src/server/context/request-context.ts`) and separates Cloud Control Plane contracts from runtime-injected Workspace Plane providers.
 
 ### 3.7. `ADR-008`: Local-First Cookie Identity Verification & Conditional React State Flushing on Conflict and Server Fetch

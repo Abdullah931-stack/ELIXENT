@@ -12,7 +12,7 @@ The export pipeline decouples security governance from format transformation str
 
 ```mermaid
 flowchart TD
-    Client["Editor Page (src/app/workspace/editor/[fileId]/page.tsx)"] --> Trigger["handleExport(format)"]
+    Client["Editor Page (src/client/routes/editor-page.tsx)"] --> Trigger["handleExport(format)"]
     Trigger --> EncCheck{"isEncrypted == true?"}
     
     EncCheck -- "Yes" --> ShowModal["Open ExportWarningModal<br/>(amber alert, testid: export-warning-modal)"]
@@ -151,7 +151,7 @@ export interface IExporter {
 
 ## 5. Usage in Editor Workspace
 
-### Implementation in `src/app/workspace/editor/[fileId]/page.tsx`:
+### Implementation in `src/client/routes/editor-page.tsx`:
 
 ```typescript
 // State initialization

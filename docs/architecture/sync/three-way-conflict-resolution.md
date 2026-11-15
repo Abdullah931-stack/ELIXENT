@@ -303,7 +303,7 @@ If-Match: "server_etag"
   "expectedVersion": 2
 }
 ```
-*(Alternatively committed atomically via `toggleFileEncryption` Server Action).*
+*(Alternatively committed atomically via `toggleFileEncryption` Hono RPC action).*
 
 ---
 
@@ -317,7 +317,7 @@ If-Match: "server_etag"
 | `src/test/sync/sync-manager.test.ts` | 36 | Passed | 412 conflict handling, retry backoff, dead-letter transitions, RemoteUpdateEvent dispatch. |
 | `src/test/sync/conflict-resolution.integration.test.ts` | 3 | Passed | Real PostgreSQL lifecycle integration (Base -> Remote write -> Local 412 -> 3-way merge -> Authoritative write -> Verified reload). |
 | `src/test/api/api-files-putguard.live.test.ts` | 3 | Passed | Concurrency race conditions, stale write rejection. |
-| `src/test/server/file-ops.lostupdate.test.ts` | 4 | Passed | Lost-update prevention via optimistic database version locking. |
+| `src/test/server/file-ops.lostupdate.test.ts` | 4 | Passed | Lost-update prevention via optimistic database version locking in `src/server/actions/files.ts`. |
 | `src/test/sync/sync-operations-gc.test.ts` | 5 | Passed | Garbage collection of synced operations, compaction thresholds. |
 | `src/test/sync/sync-rollback.test.ts` | 22 | Passed | Checkpoint creation, rollback recovery from crashes. |
 | `src/test/sync/sync-connection-detector.test.ts` | 17 | Passed | Exponential backoff, jitter, network status detection. |

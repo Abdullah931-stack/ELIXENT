@@ -1,7 +1,7 @@
 # AI Atomic Commit & Transactional Settlement Architecture
 
 > [!NOTE]
-> **Elixent Phase 11 & Phase 12 Migration Note (`v0.11.0` – `v0.12.0`):** In Phase 11 (`v0.11.0`) and Phase 12 (`v0.12.0`), the legacy server action `src/server/actions/ai-commit.ts` (`commitAIFileOperation`) was deprecated and permanently deleted from the repository. Document persistence after accepting AI hunk replacements now flows exclusively through incremental editor autosave (`useEditorAutosave` in `src/hooks/editor/use-editor-autosave.ts` -> `PUT /api/files/[id]`) with atomic CodeMirror transactions (`acceptHunk`, `acceptAllHunks` in `src/components/editor/codemirror/extensions/streaming-ghost.ts`), while micro-credit reservation and settlement execute server-side in `src/server/services/ai-settlement-service.ts` and `src/server/routes/agent.routes.ts` (mounted at `/api/agent/stream`).
+> **Elixent Phase 11 & Phase 12 Migration Note (`v0.11.0` – `v0.12.0`):** In Phase 11 (`v0.11.0`) and Phase 12 (`v0.12.0`), the legacy server action `src/server/actions/ai-commit.ts` (`commitAIFileOperation`) was deprecated and permanently deleted from the repository. Document persistence after accepting AI hunk replacements now flows exclusively through incremental editor autosave (`useEditorAutosave` in `src/hooks/use-editor-autosave.ts` -> `PUT /api/files/:id` via `handleFileByIdPut` in `src/server/routes/files-api.routes.ts`, or Hono RPC `updateFileContent` in `src/server/actions/files.ts`) after atomic CodeMirror transactions (`acceptGhostHunk`, `acceptAllGhostHunks` in `src/components/editor/markdown/streaming-ghost.ts`, backed by `MultiHunkGhostState` in `src/components/editor/markdown/types.ts`), while micro-credit reservation and settlement execute server-side in `src/server/services/ai-settlement-service.ts` and `src/server/routes/agent.routes.ts` (mounted at `/api/agent/stream`).
 
 ## 1. Overview & Technical Objective
 
@@ -36,13 +36,13 @@ The goal is to ensure a strictly verified, single-transaction atomic commit mech
 
 5. **Idempotency & Decoupled File Commit (Phase 11)**:
    - In Phase 11, the server marks the quota reservation as `committed` during stream execution (prior to the terminal `{ type: "done" }` frame or upon post-TTFT completion).
-   - Document commit idempotency in `commitAIFileOperation` is therefore decoupled from the reservation's active status: the server inspects the target file's current version and content. If `currentFile.version > expectedVersion` or `(currentFile.version === expectedVersion && currentFile.content === resultContent)`, the commit returns idempotent success (`already_committed`) without redundant version increments.
-   - If `currentFile.version === expectedVersion && currentFile.content !== resultContent`, the server executes the atomic file write and version increment inside `txDb.transaction`, guaranteeing consistent document persistence even when the reservation was already settled.
+   - Document persistence is decoupled from the AI quota reservation lifecycle: once the user accepts ghost hunks locally, `useEditorAutosave` (`src/hooks/use-editor-autosave.ts`) dispatches `PUT /api/files/:id` (`handleFileByIdPut` in `src/server/routes/files-api.routes.ts`) with `If-Match` / `expectedVersion`. If `If-Match` and `expectedVersion` are missing, `handleFileByIdPut` rejects with `428 Precondition Required`; if the version or ETag has diverged, it returns `412 Conflict` with the authoritative server state.
+   - When the version and ETag preconditions match (`WHERE version = currentVersion`), `handleFileByIdPut` (and Hono RPC `updateFileContent` in `src/server/actions/files.ts`) executes an optimistic-locking `UPDATE` incrementing `version` and recomputing `etag` in PostgreSQL, guaranteeing consistent document persistence independently of prior AI credit settlement.
 
 6. **Server-First Commit & Markdown Source of Truth**:
    - The client editor maintains ephemeral preview buffers during generation using pure Markdown.
    - Stream completion does NOT commit: the validated Markdown output is parked in `preview_ready` until an explicit user decision.
-   - On user **Accept** (`commitPreview`), the client queries the dynamically tracked range (`editor.getGhostRange()`), executes server commit on raw Markdown (`commitAIFileOperation`), and applies a single atomic replacement via `EditorAdapter.replaceRange`.
+   - On user **Accept** (`acceptGhostHunk` or `acceptAllGhostHunks` in `src/components/editor/markdown/streaming-ghost.ts`), the editor applies an isolated atomic CodeMirror replacement (`Transaction.userEvent` + `isolateHistory.of("full")`) so Ctrl+Z reverts the edit in a single undo step, and marks the buffer dirty so `useEditorAutosave` persists the raw (or client-encrypted) Markdown via `PUT /api/files/:id`.
    - In case of network failure or 412 conflict, the ephemeral preview is dismantled and the document remains in its pristine state.
    - On user **Reject** or **Retry**, no document mutation occurs at all; the quota reservation is settled as consumed per the Explicit Settlement Policy ([`ai-quota-reservation-lifecycle.md`](./ai-quota-reservation-lifecycle.md) §4-D).
 
@@ -50,9 +50,9 @@ The goal is to ensure a strictly verified, single-transaction atomic commit mech
    - Starting an AI operation immediately cancels any pending background auto-save timers (`debouncedAutoSave.cancel()`) to prevent version collisions.
    - Background autosave and cross-tab sync broadcasts are suppressed while `aiStream.isLoading` / `aiStream.isCommitting` is active **or while the session rests in `preview_ready` awaiting the user's decision**, and resume only after the editor generation and file version are updated with the server's response.
 
-8. **Zero-Knowledge Encrypted AI Commit Invariant (`src/hooks/use-ai-stream.ts`, `src/server/actions/ai-commit.ts`)**:
+8. **Zero-Knowledge Encrypted AI Commit Invariant (`src/hooks/use-ai-stream.ts`, `src/server/routes/files-api.routes.ts`, `src/server/actions/files.ts`)**:
    - **Client-Side Envelope Encryption**: When the targeted file is encrypted (`isEncrypted === true`), the client editor intercepts the accepted AI markdown text in `useAIStream`. The content is encrypted locally via the Web Worker using the volatile Master Key, a fresh random 12-byte IV, and AAD (`vault:file:${userId}:${fileId}`).
-   - **Fail-Closed Server Gate**: The server action `commitAIFileOperation` enforces a strict defense-in-depth gatekeeper: if `currentFile.isEncrypted` is true and `params.encryptionMetadata?.iv` is missing, the server strictly rejects the commit with `"Cannot commit unencrypted content to an encrypted file without encryption metadata"`, completely preventing plaintext data leaks to the database.
+   - **Fail-Closed Server Gate**: `PUT /api/files/:id` (`handleFileByIdPut` in `src/server/routes/files-api.routes.ts`) and the Hono RPC handlers in `src/server/actions/files.ts` (`updateFileContent` / `toggleFileEncryption` via `src/server/routes/rpc.routes.ts`) enforce a strict defense-in-depth gatekeeper: if `currentFile.isEncrypted` is true and `encryptionMetadata?.iv` is missing, the server strictly rejects the write with HTTP 400 (`"Cannot update content of an encrypted file without valid encryption metadata"` / `"Encrypted files require valid encryptionMetadata with an IV"`), completely preventing plaintext data leaks to the database.
    - **Atomic Ciphertext & Metadata Persistence**: The encrypted ciphertext payload and the structured `encryptionMetadata` envelope are updated atomically alongside the version increment, ETag generation, and reservation settlement inside `txDb.transaction`.
 
 ---
@@ -64,30 +64,31 @@ sequenceDiagram
     autonumber
     actor User
     participant Editor as Editor (MarkdownEditor / EditorAdapter)
-    participant Hook as useAIStream Hook
-    participant Server as commitAIFileOperation
+    participant Hook as useAIStream / useEditorAutosave
+    participant Server as Hono Server (/api/agent/stream & PUT /api/files/:id)
     participant DB as Neon Database (txDb)
 
     User->>Editor: Trigger AI Action (e.g. improve/summarize)
     Editor->>Hook: Start stream (Selection: [from, to])
     Hook->>Editor: Attach Ghost / Ephemeral Preview (Zero doc mutation)
-    Hook->>Server: consumeAIStream & Quota Reserve
-    Server-->>Hook: Stream tokens -> Preview buffer update
-    Hook->>Server: commitAIFileOperation(fileId, opId, expectedVersion, expectedETag)
+    Hook->>Server: POST /api/agent/stream & StreamGovernor Reserve
+    Server-->>Hook: Stream tokens -> MultiHunkGhostState & Credit Settlement
+    Hook->>Editor: Accept Hunk (acceptGhostHunk / acceptAllGhostHunks, 1 History Step)
+    Hook->>Server: PUT /api/files/:id (useEditorAutosave, If-Match / expectedVersion)
     
     rect rgb(240, 248, 255)
         Note over Server,DB: Transactional Boundary
-        Server->>DB: Check Ownership, Version & ETag
+        Server->>DB: Check Ownership, Version & ETag (handleFileByIdPut)
         alt Precondition Failed (Version / ETag mismatch)
-            Server-->>Hook: 412 Conflict (version, etag, updatedAt)
-            Hook->>Editor: Clear Preview & Rollback
+            Server-->>Hook: 412 Conflict (currentVersion, serverEtag, updatedAt)
+            Hook->>Editor: Trigger Conflict Resolution / Sync Rebase
         else Precondition Valid
             Server->>DB: BEGIN TRANSACTION
-            Server->>DB: UPDATE files SET content, version+1, etag WHERE version = expectedVersion
-            Server->>DB: UPDATE aiReservations SET status='committed'
+            Server->>DB: UPDATE files SET content, version+1, etag WHERE id AND userId AND version = currentVersion
+            Note right of Server: AI credits settled via ai-settlement-service.ts & credit_ledger_transactions
             Server->>DB: COMMIT TRANSACTION
-            Server-->>Hook: { success: true, status: 'committed', version, etag }
-            Hook->>Editor: Apply Atomic Editor Transaction (1 History Step)
+            Server-->>Hook: 200 OK { version, etag, updatedAt }
+            Hook->>Editor: Update Synced Version & ETag Metadata
         end
     end
 ```
@@ -97,7 +98,7 @@ sequenceDiagram
 ## 4. Verification & Test Evidence
 
 The atomic commit guarantees are verified across the following automated test suites:
-- `src/test/ai/ai-atomic-commit.integration.test.ts`: **Real PostgreSQL Integration Test** executing the actual production actions (`commitAIFileOperation`, `refundAIReservation`) against real PostgreSQL tables, enforcing foreign keys, live interactive transactions, and rollback verification.
+- `src/test/ai/ai-atomic-commit.integration.test.ts`: **Real PostgreSQL Integration Test** executing the actual production functions (`updateFileContent` in `src/server/actions/files.ts`, and `reserveAIQuota`, `commitAIReservation`, `refundAIReservation` in `src/server/services/ai-settlement-service.ts`) against real PostgreSQL tables, enforcing foreign keys, live interactive transactions, and rollback verification.
 - `src/test/ai/ai-server-atomic-commit.test.ts`: Covers auth verification, parameter validation, file-reservation association, idempotent retries, ETag/version conflict guards, production transaction requirement, and transactional execution/rollback.
 - `src/test/editor/editor-atomic-commit.test.ts`: Verifies partial and full replacement single undo invariants, conflict rollbacks, ephemeral ghost preview isolation, and pristine document preservation upon server failure.
 - `src/test/ai/ai-quota-idempotency.test.ts` & `src/test/ai/ai-ops.refund.test.ts` & `src/test/ai/ai-ops.integrity.test.ts`: Verifies quota reservation state machine, cross-midnight resilience, and concurrency idempotency.

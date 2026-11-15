@@ -14,7 +14,7 @@
 
 ## 2. File Operations (Copy & Move)
 **Goal:** Enable full file management capabilities.
-- **Deep Copy:** Implemented `copyFile` server action (recursive copy for folders and children).
+- **Deep Copy:** Implemented `copyFile` Hono RPC action (`src/server/actions/files.ts`, mounted via `POST /api/rpc/files/copy` for recursive copy of folders and children).
 - **UI:** Added `FolderPickerModal` for destination selection.
 - **Context Menu:** Enabled Copy/Move actions in `FileContextMenu`.
 

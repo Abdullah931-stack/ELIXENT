@@ -5,7 +5,7 @@
 | **Document ID** | `ELIXENT-ARCH-04` |
 | **Classification** | `LIVING SUBSYSTEM SPEC` (`src/lib/metering/*`, `src/server/services/ai-settlement-service.ts`, `src/server/services/billing-service.ts`) |
 | **Version & Status** | `v3.1 — Fully Implemented & Verified in Phase 4 (Accepted & Implemented)` |
-| **SSOT Scope** | Economic model specification (`Micro-Credits` / `BigInt`), Lean Dynamic Model Registry (`Lean Model Registry`), automatic derivation equations for the three execution modes, idempotent pre-node gate wrapper (`withMeteredNodeGate`), stream governor and backpressure valve (`StreamGovernor`), bifurcated settlement engine (`Redis Lua + after()`), and cold-start protocol (`Flush-First Cold Start`). |
+| **SSOT Scope** | Economic model specification (`Micro-Credits` / `BigInt`), Lean Dynamic Model Registry (`Lean Model Registry`), automatic derivation equations for the three execution modes, idempotent pre-node gate wrapper (`withMeteredNodeGate`), stream governor and backpressure valve (`StreamGovernor`), bifurcated settlement engine (`Redis Lua + scheduleAfterResponse()`), and cold-start protocol (`Flush-First Cold Start`). |
 | **Suite Index** | • [01_architecture_vision_and_adrs](./01_architecture_vision_and_adrs.md)<br>• [02_agent_orchestration_and_decision_engine](./02_agent_orchestration_and_decision_engine.md)<br>• [03_workspace_ast_editor_and_vault_integration](./03_workspace_ast_editor_and_vault_integration.md)<br>• [05_data_contracts_and_lugx_migration_plan](./05_data_contracts_and_lugx_migration_plan.md) |
 
 ## 1. Context of Transitioning from Word Counting to Actual Token and Credit Metering
@@ -34,7 +34,7 @@ In its legacy model, the **LUGX (`v1.46.3`)** platform relied on counting words 
 
 These constants are centrally defined in `src/lib/metering/constants.ts`:
 
-- **Safety Runway Window ($T_{\text{runway}} = 3\text{s} = 3,000\text{ ms}$):** A fixed temporal window to absorb network round-trip latency to Upstash Redis over HTTP in the Vercel Serverless environment and complete the next chunk extension reservation before the active slice is exhausted.
+- **Safety Runway Window ($T_{\text{runway}} = 3\text{s} = 3,000\text{ ms}$):** A fixed temporal window to absorb network round-trip latency to Upstash Redis over HTTP in cloud server environments and complete the next chunk extension reservation before the active slice is exhausted.
 - **Chunk Stability Duration ($T_{\text{chunk}} = 10\text{s}$):** The target operational lifetime of a reservation slice to avoid saturating Redis with overly frequent extension requests.
 - **Standard Minimum Chunk Floor ($L_{\min} = 500\text{ tokens}$):** An algebraic token floor preventing tiny reservation slices for lower-velocity models under normal operating conditions.
 - **Pessimistic Thinking Ceiling for Discrete Steps ($B_{\text{discrete}} = 1,500\text{ tokens}$):** The pessimistic output/thinking token cap reserved up front for non-streaming steps (`generateObject` or `Fastino GLiDE`), tunable per node schema.
@@ -131,7 +131,7 @@ sequenceDiagram
     participant Gov as Stream Governor (StreamGovernor)
     participant Redis as Upstash Redis (Lua Atomic)
     participant LLM as Model Provider (AI SDK / Decisions)
-    participant PG as PostgreSQL (via Next.js after())
+    participant PG as PostgreSQL (via scheduleAfterResponse())
 
     Client->>Gov: Initiate step or stream (Request + targetFileIds)
     Gov->>Gov: Compute pessimistic input estimate (Tokenizer + 15% Safety Margin)
@@ -159,7 +159,7 @@ sequenceDiagram
         end
         Gov->>Redis: Execute settle_operation.lua (refund surplus + HSET pending_settlements)
         Gov-->>Client: Close stream response (Done Frame)
-        Gov-)PG: Execute asynchronous after() (INSERT ON CONFLICT DO NOTHING + HDEL)
+        Gov-)PG: Execute asynchronous scheduleAfterResponse() (INSERT ON CONFLICT DO NOTHING + HDEL)
     end
 ```
 
@@ -179,19 +179,19 @@ If the reserved token slice is $100\%$ consumed during streaming before the Redi
 
 ## 5. Bifurcated Settlement Engine and Race-Free Cold Start Protocol (Bifurcated Settlement & Cold Start)
 
-### 5.1. Atomic Settlement and Asynchronous Draining via `after()` (`Serverless-Native Durability`)
+### 5.1. Atomic Settlement and Asynchronous Draining via `scheduleAfterResponse()` (`Non-Blocking Durability`)
 
 1. **In Redis (`settle_operation.lua`):** Upon completion of a step or stream (or upon `Abort`, incorporating a minor `Ghost Abort Margin` to cover network teardown latency), a Lua script atomically computes the actual cost, refunds the unused surplus to `lugx:wallet:${userId}`, refreshes the wallet expiration (`EXPIRE 86400`), writes the settlement payload stamped with **`created_at_ms`** into `lugx:pending_settlements:${userId}`, and adds the user to `lugx:dirty_wallets`.
-2. **In Next.js `after()` (`waitUntil`):** Immediately after closing the stream response to the user, the `after()` callback pulls pending records from `lugx:pending_settlements:${userId}` and commits them to PostgreSQL in a single idempotent transaction:
+2. **In `scheduleAfterResponse()`:** Immediately after closing the stream response to the user, the `scheduleAfterResponse()` callback pulls pending records from `lugx:pending_settlements:${userId}` and commits them to PostgreSQL in a single idempotent transaction:
    `INSERT INTO credit_ledger_transactions ... ON CONFLICT (operation_id) DO NOTHING`
    deducting the net newly inserted amounts from `users.credit_balance_micro`, and then removes the committed keys from Redis via `HDEL`.
-3. **The $30$-Second Grace Guard in the Cron Job (`/api/cron/expire-reservations`):** The periodic Cron job cleans up expired orphan reservations (`TTL = 120s`) and drains pending records in `lugx:pending_settlements:${userId}` whose `created_at_ms` timestamp is **older than $30,000\text{ ms}$** only, preventing any race condition with an active `after()` callback.
+3. **The $30$-Second Grace Guard in the Cron Job (`/api/cron/expire-reservations`):** The periodic Cron job cleans up expired orphan reservations (`TTL = 120s`) and drains pending records in `lugx:pending_settlements:${userId}` whose `created_at_ms` timestamp is **older than $30,000\text{ ms}$** only, preventing any race condition with an active `scheduleAfterResponse()` callback.
 
 ### 5.2. Race-Free Flush-First Cold Start Protocol (`Flush-First Cold Start Protocol`)
 
 When a request arrives for a user whose wallet key `lugx:wallet:${userId}` is absent from Redis (due to `TTL` expiration or a cold start):
 
-- **It is strictly prohibited** to read the balance from PostgreSQL and manually subtract `lugx:pending_settlements` in memory (because a concurrent `after()` callback may have just deducted the amount from PostgreSQL without having executed `HDEL` yet, which would cause a double deduction).
+- **It is strictly prohibited** to read the balance from PostgreSQL and manually subtract `lugx:pending_settlements` in memory (because a concurrent `scheduleAfterResponse()` callback may have just deducted the amount from PostgreSQL without having executed `HDEL` yet, which would cause a double deduction).
 - **Mandatory Rule (`Flush-First`):** The cold-start routine first checks `HLEN lugx:pending_settlements:${userId}`; if pending records exist, **it flushes them to PostgreSQL first (`INSERT ... ON CONFLICT DO NOTHING` + `HDEL`)**, and only then reads the updated, authoritative `users.credit_balance_micro` from PostgreSQL and populates Redis via `SETNX lugx:wallet:${userId}`.
 
 ### 5.3. Webhook Dual-Write Protocol for Stripe Top-Up Events (`Webhook Dual-Write Protocol`)

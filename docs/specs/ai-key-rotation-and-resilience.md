@@ -1,7 +1,7 @@
 # AI Key Rotation, Model Fallback & Resilient Streaming Architecture in LUGX
 
 > [!NOTE]
-> **Phase 12 Supersession Notice (`v0.12.0`):** In Phase 12, the legacy 5-operation configuration in `src/config/models.config.json` (`correct`, `improve`, `summarize`, `toPrompt`, `translate`) and the legacy streaming route `src/app/api/ai/stream/route.ts` were permanently purged and superseded by the **Lean Dynamic Model Registry** ([`docs/guides/ai/ai-models-config.md`](../guides/ai/ai-models-config.md)), the Vercel AI SDK v7 gateway in `src/lib/ai/client.ts`, and `src/app/api/agent/stream/route.ts`. The 24-hour key rotation engine and distributed 3-state circuit breaker in `src/lib/ai/key-rotation.ts` remain active and underpin all Elixent agent calls.
+> **Phase 12 Supersession Notice (`v0.12.0`):** In Phase 12, the legacy 5-operation configuration in `src/config/models.config.json` (`correct`, `improve`, `summarize`, `toPrompt`, `translate`) and the legacy 5-operation streaming route were permanently purged and superseded by the **Lean Dynamic Model Registry** ([`docs/guides/ai/ai-models-config.md`](../guides/ai/ai-models-config.md)), the Vercel AI SDK v7 gateway in `src/lib/ai/client.ts`, and `src/server/routes/agent.routes.ts` (`/api/agent/stream`). The 24-hour key rotation engine and distributed 3-state circuit breaker in `src/lib/ai/key-rotation.ts` remain active and underpin all Elixent agent calls.
 
 ## 1. Executive Summary
 
@@ -53,12 +53,12 @@ All AI models (primary and cascading fallbacks) are strictly declared within `sr
 sequenceDiagram
     autonumber
     actor User as LUGX Editor
-    participant Route as /api/ai/stream (Route Handler)
+    participant Route as /api/agent/stream (Hono Route Handler)
     participant Client as streamWithAI (AI Client)
     participant Redis as Upstash Redis
     participant Gemini as Google Gemini API
 
-    User->>Route: POST /api/ai/stream
+    User->>Route: POST /api/agent/stream
     Route->>Client: streamWithAI(operation, text, tier)
     Client->>Redis: getModelCircuitState("gemini-3.8-flash")
     
@@ -141,7 +141,7 @@ sequenceDiagram
 * **Synchronous Generation (`processWithAI`)** and **Stream Generation (`streamWithAI`)**.
 * **Cascading In-Flight Failover**: Maintains `attemptedModels = new Set()` in each request. If a model returns 503 / Overload, records failure in Redis and seamlessly cascades to the next healthy untried fallback without dropping the client request.
 * **Micro-Retry with Jitter**: If all fallback models in the chain have been attempted and 503 persists, pauses for 300ms–700ms jittered backoff before re-evaluating, absorbing transient Google traffic spikes.
-* **Structured 503 Route Response**: If capacity is entirely exhausted, `/api/ai/stream` emits `HTTP 503 Service Unavailable` with `Retry-After: 30` header and clear client guidance instead of opaque `HTTP 500`.
+* **Structured 503 Route Response**: If capacity is entirely exhausted, `/api/agent/stream` (`src/server/routes/agent.routes.ts`) emits `HTTP 503 Service Unavailable` with `Retry-After: 30` header and clear client guidance instead of opaque `HTTP 500`.
 * **Fail-Fast on 400**: Immediately throws on client errors / safety blocks without wasting quota.
 * **Native AbortSignal & Teardown**: Handles client aborts cleanly, stopping generator loops via `ReadableStream.cancel()`. As of v1.5.0 the signal is additionally forwarded into the Gemini SDK request options (`generateContent(request, { signal })` / `generateContentStream(request, { signal })`), so cancellation terminates the upstream provider HTTP socket instead of leaving the server pinned in `reader.read()` until generation finishes on its own (see Section 7, DEF-2).
 * **Dynamic Max Retries**: Bounded by key pool size `Math.min(Math.max(6, keys.length), 10)`.
@@ -188,7 +188,7 @@ suites because each sits on an async boundary that mocked tests do not exercise.
 Related hardening in the same release: AI atomic-commit / rollback document mutations are
 routed through `UseAIStreamOptions.onProgrammaticTransaction` so the orchestrator's
 programmatic-update guard suppresses the spurious post-commit autosave race
-([`docs/architecture/editor-sync-orchestration.md`](../architecture/sync/editor-sync-orchestration.md) §6b), and `/api/ai/stream` now actually enforces
+([`docs/architecture/editor-sync-orchestration.md`](../architecture/sync/editor-sync-orchestration.md) §6b), and `/api/agent/stream` (`src/server/routes/agent.routes.ts`) now enforces
 `FEATURES.AI_STREAMING_ENABLED` with `processWithAI` as a buffered NDJSON fallback.
 
 ### Terminality Contract (Post-Fix)
