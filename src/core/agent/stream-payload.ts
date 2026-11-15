@@ -5,7 +5,7 @@
  * unified agent stream endpoint (/api/agent/stream) per ELIXENT-ARCH-03 §5.1.
  *
  * Architectural Invariants:
- * 1. Framework-Agnostic: Zero imports from Next.js (next/*), React, or server-only runtimes.
+ * 1. Framework-Agnostic: Zero imports from external UI frameworks or server-only runtimes.
  * 2. Closed & Bounded: Strict object validation (.strict()) with sane upper bounds on string
  *    lengths, record entries, and array item counts to prevent resource exhaustion.
  * 3. Ephemeral Isolation: Validates the transient fields `ephemeralVaultPayloads` and

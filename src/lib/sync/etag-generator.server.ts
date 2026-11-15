@@ -2,7 +2,7 @@
  * Server-only ETag Generator for Sync System
  *
  * Uses Node.js crypto module for synchronous SHA-256 ETag generation.
- * This module is isolated strictly to server runtimes (Next.js server actions, API routes, DB scripts)
+ * This module is isolated strictly to server runtimes (server runtimes, Hono RPC endpoints, API routes, DB scripts)
  * and must NEVER be imported by browser/client bundles.
  */
 

@@ -5,7 +5,7 @@
  * section span calculation, breadcrumb hierarchy tracking, and pure
  * TypeScript SHA-256 section content hashing.
  *
- * Guaranteed 100% Next.js client-side bundle safety: zero top-level
+ * Guaranteed 100% browser client-side bundle safety: zero top-level
  * `node:crypto` imports, pure bitwise FIPS 180-4 SHA-256 implementation.
  */
 

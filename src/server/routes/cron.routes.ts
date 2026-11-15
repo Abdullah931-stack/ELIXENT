@@ -131,7 +131,7 @@ export async function handleExpireReservationsCron(request: Request): Promise<Re
  * RETENTION_DAYS, in bounded batches to keep each run short and cheap.
  *
  * AUTH: Protected by a shared cron secret (CRON_SECRET env). Call from
- * a scheduler (cron, GitHub Actions, Vercel cron) with:
+ * a scheduler (cron, GitHub Actions, HTTP cron schedulers) with:
  *   curl -H "Authorization: Bearer $CRON_SECRET" https://app/api/cron/purge-deleted
  *
  * IDEMPOTENT: running it extra times only deletes what is already past
