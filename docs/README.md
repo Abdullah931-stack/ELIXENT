@@ -14,8 +14,8 @@ automated tests remain the single source of truth for all technical claims.
 docs/
 ├── README.md                          ← you are here (structural master index)
 ├── DOCUMENTATION_GUIDELINES.md        ← repository-visible authoring standards & planning governance
-├── CHANGELOG.md                       ← release history (Elixent v0.1.0 to v0.21.0; archived LUGX v1.0.0–v1.46.3)
-├── TECHNICAL_DEBT_REGISTER.md         ← living technical debt & architectural decisions (TD-01 to TD-12)
+├── CHANGELOG.md                       ← release history (Elixent v0.1.0 to v0.22.0; archived LUGX v1.0.0–v1.46.3)
+├── TECHNICAL_DEBT_REGISTER.md         ← living technical debt & architectural decisions (TD-01 to TD-20)
 ├── METRICS.json                       ← automated single source of truth for test & suite metrics
 │
 ├── architecture/                      ← subsystem designs, protocols, state machines
@@ -29,7 +29,7 @@ docs/
 │   ├── elixent_sync_and_execution_srs.md  ← SRS: Local-First identity verification & conditional state flushing
 │   ├── sync/                          ← offline-first sync engine, concurrency & storage
 │   ├── ai/                            ← Gemini LLM streaming, atomic commit & quota lifecycle
-│   └── security/                      ← rate limiting, edge proxy, crypto workers & ZK log masking
+│   └── security/                      ← rate limiting, Hono session middleware, crypto workers & ZK log masking
 │
 ├── reference/                         ← living API contracts, hooks & testing runner specifications
 │   ├── sync-api.md                    ← REST contracts for /api/files/sync & client hook contracts
@@ -47,8 +47,7 @@ docs/
 │   ├── offline-sync-blueprint.md      ← foundational blueprint for IndexedDB offline synchronization
 │   └── ui-streaming-requirements.md
 │
-├── Plans/                             ← active official technical execution roadmaps (English)
-│   └── ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md ← Next.js decoupling & Clean Architecture transition plan (Active: Phases 1–3 Closed ✅ [incl. 2.5 & 2.6]; Phase 4 Pending)
+├── Plans/                             ← active official technical execution roadmaps (English; empty — completed plans archived under records/plans/)
 │
 ├── records/                           ← engineering records, incidents, audits, closures & plans archive
 │   ├── incidents/                     ← root-cause post-mortems (test-database-safety.md, codemirror-syntax-tree-parse-budget-race.md)
@@ -62,7 +61,7 @@ docs/
 │   │   ├── core-hardening/            ← core hardening dossiers (Phase 1–18: metrics, links, skipped tests, Redis, contracts, reducers, schema, identity, crypto hierarchy, encrypted content governance, AI settlement, Stripe 1:N, Redis fail-closed & cron overlap, local sync queue CAS, durable IDB conflict quarantine, CI dependency audit gate, thin coordinator sync-manager decomposition, use-editor-conflict extraction)
 │   │   ├── elixent-execution/         ← Elixent 12-phase execution plan closures (Phases 1–12: core hardening, dependencies & schema migration, lean models registry, flush-first settlement, AST slicer & BM25, ZK vault & encrypted checkpoints, concept taxonomy & conformal APS, ATMS DAG & cascade BFS, AgentGraphState channels, pure reducers, 7-stage nodes & compiled LangGraph StateGraph, CodeMirror 6 multi-hunk ghost & unified agent SSE stream route, agent chat panel, HITL cards, credit balance views & incremental editor sync, and final legacy 5-operation purge, test suite migration & living documentation sync dossiers)
 │   │   ├── framework-migration/       ← Framework migration plan closures (Phase 1: archive prior plan, packages & session middleware; Phase 2: migrate all 8 API routes & auth callback to Hono; Phase 3: decouple server actions & mount typed Hono RPC; Phase 4: wire client hooks & UI to Hono RPC client & strip directives; Phase 5: Vite 6 SPA entry, TanStack Router views & unified Hono Node server; Phase 6: final Next.js purge, test suite alignment to standard Request & CI/E2E closure)
-│   │   └── nextjs-decoupling/         ← Next.js decoupling & Clean Architecture closures (Phase 1: archive framework plan, compiler/env cleanup & boundary guard; Phase 2: purge middleware relics, file-ops facade & unify Hono RPC contracts; Phase 2.5: purge Vitest bridge, fix boundary leaks & harden RPC/auth security DEF-A01..A08; Phase 2.6: post-audit remediation phase-02-6-remediation-of-p1-p2-p25-audit-findings.md; Phase 3: native TanStack Router validateSearch, 404 boundary & pure SPA idioms phase-03-tanstack-router-validate-search-and-pure-spa-idioms.md)
+│   │   └── nextjs-decoupling/         ← Next.js decoupling & Clean Architecture closures (Phase 1: archive framework plan, compiler/env cleanup & boundary guard; Phase 2: purge middleware relics, file-ops facade & unify Hono RPC contracts; Phase 2.5: purge Vitest bridge, fix boundary leaks & harden RPC/auth security DEF-A01..A08; Phase 2.6: post-audit remediation phase-02-6-remediation-of-p1-p2-p25-audit-findings.md; Phase 3: native TanStack Router validateSearch, 404 boundary & pure SPA idioms phase-03-tanstack-router-validate-search-and-pure-spa-idioms.md; Phase 4: align living architecture specs, subsystem docs, guides & technical debt register + plan archival phase-04-living-architecture-docs-sync-and-final-closure.md)
 │   ├── plans/                         ← completed historical execution plans (comprehensive-technical-remediation-plan-lugx-v1, technical-execution, hybrid-vault, markdown-editor, M6)
 │   └── archive/                       ← superseded, halted, or abandoned specs & LUGX v1 historical baseline (lugx-v1/foundation/, CHANGELOG-LUGX-v1.md)
 │
@@ -80,7 +79,7 @@ docs/
 | [README.md](./README.md) | Structural master index mapping every document in the repository |
 | [DOCUMENTATION_GUIDELINES.md](./DOCUMENTATION_GUIDELINES.md) | Policy on create/update/merge, nested directories, evidence discipline, and dual-track planning governance |
 | [CHANGELOG.md](./CHANGELOG.md) | Append-only chronological release notes starting at Elixent v0.0.1 (with LUGX v1.0.0–v1.46.3 archived) |
-| [TECHNICAL_DEBT_REGISTER.md](./TECHNICAL_DEBT_REGISTER.md) | Living register of accepted debts, mitigations, and resolution status (TD-01 to TD-19) |
+| [TECHNICAL_DEBT_REGISTER.md](./TECHNICAL_DEBT_REGISTER.md) | Living register of accepted debts, mitigations, and resolution status (TD-01 to TD-20) |
 | [METRICS.json](./METRICS.json) | Centralized single source of truth for test suite counts and verification numbers |
 
 ---
@@ -91,7 +90,7 @@ docs/
 
 | Document | Scope |
 | :--- | :--- |
-| [01_architecture_vision_and_adrs.md](./architecture/01_architecture_vision_and_adrs.md) | Authoritative system vision, high-level topology, and Architectural Decision Records (ADR-001 to ADR-005) |
+| [01_architecture_vision_and_adrs.md](./architecture/01_architecture_vision_and_adrs.md) | Authoritative system vision, high-level topology, and Architectural Decision Records (ADR-001 to ADR-005, ADR-008) |
 | [02_agent_orchestration_and_decision_engine.md](./architecture/02_agent_orchestration_and_decision_engine.md) | Multi-agent orchestration pipeline, router-critic loop, and deterministic decision engine |
 | [03_workspace_ast_editor_and_vault_integration.md](./architecture/03_workspace_ast_editor_and_vault_integration.md) | CodeMirror 6 AST surgical patching, bidirectional isolation, and Zero-Knowledge vault boundary |
 | [04_credit_metering_and_settlement_architecture.md](./architecture/04_credit_metering_and_settlement_architecture.md) | Token-to-credit metering, dual-phase atomic reservation leases, and financial settlement ledger |
@@ -128,7 +127,7 @@ docs/
 
 | Document | Scope |
 | :--- | :--- |
-| [security-and-rate-limiting.md](./architecture/security/security-and-rate-limiting.md) | Edge Proxy auth gating, rate limiter tiers, Markdown normalization & XSS sanitization, Dual-Tier Hybrid Encryption (AES-GCM-256 + PBKDF2 600K worker, BIP-39 recovery, WebAuthn PRF Hardware Biometrics & 6-digit PIN, AAD integrity, RAM sanitization, device trust revocation via migration 0009, AI opt-in via migration 0010, Zero-Knowledge log hygiene & volatile RAM zeroing), cron purge |
+| [security-and-rate-limiting.md](./architecture/security/security-and-rate-limiting.md) | Hono Session Middleware auth gating, rate limiter tiers, Markdown normalization & XSS sanitization, Dual-Tier Hybrid Encryption (AES-GCM-256 + PBKDF2 600K worker, BIP-39 recovery, WebAuthn PRF Hardware Biometrics & 6-digit PIN, AAD integrity, RAM sanitization, device trust revocation via migration 0009, AI opt-in via migration 0010, Zero-Knowledge log hygiene & volatile RAM zeroing), cron purge |
 
 ---
 
@@ -137,7 +136,7 @@ docs/
 | Document | Scope |
 | :--- | :--- |
 | [sync-api.md](./reference/sync-api.md) | REST contract for `/api/files/sync` and `/api/files/:id`, client-side sync events, cryptographic interfaces, `LogSanitizer`, `SyncErrorHandler` & `SyncPerformanceMonitor` contracts |
-| [ui-streaming-readiness.md](./reference/ui-streaming-readiness.md) | G1–G11 readiness-gate compliance matrix, dual atomicity model, feature flags |
+| [ui-streaming-readiness.md](./reference/ui-streaming-readiness.md) | G1–G13 readiness-gate compliance matrix, dual atomicity model, feature flags |
 | [test-database-isolation.md](./reference/test-database-isolation.md) | Phase 10: isolated Neon test branch — fail-closed guard, `test` vs `test:live` split, CI multi-stage pipeline, closure evidence |
 | [ci-pipeline.md](./reference/ci-pipeline.md) | 7-stage CI workflow, progressive fail-closed release gate, and `$GITHUB_STEP_SUMMARY` reporting specification |
 
@@ -180,9 +179,7 @@ docs/
 
 ### 2.6. Plans (`Plans/`) — Active Execution Plans (English)
 
-| Document | Scope | Status |
-| :--- | :--- | :--- |
-| [ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md](./Plans/ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md) | Next.js decoupling, boundary enforcement & Clean Architecture execution plan (Phases 1–3 Closed ✅ [incl. 2.5 & 2.6]; Phase 4 Pending) | 🟢 Active |
+*(No active execution plans currently pending — the completed Next.js Decoupling & Clean Architecture execution plan has been verified and archived at [elixent-nextjs-decoupling-and-clean-architecture-plan.md](./records/plans/elixent-nextjs-decoupling-and-clean-architecture-plan.md).)*
 
 > **Dual-Track Planning Policy:** The `.Plans/` directory in the repository root is an **internal candidate planning incubator** (written in Arabic, untracked in Git via `.gitignore`). It serves as a scratchpad for drafting, evaluating, and incubating future ideas. Once an engineering plan is approved and executed, its authoritative English edition is published and tracked here under `docs/Plans/`.
 
@@ -218,12 +215,13 @@ docs/
 | [core-hardening/](./records/closures/core-hardening/) | Core Hardening dossiers: Phase 1 (metrics & SSOT sync), Phase 2 (internal link audit & CI link checker), Phase 3 (skipped tests & release gate), Phase 4 (Redis REST emulator, lock contention & fail-open), Phase 5 (contracts dictionary & discriminated storage), Phase 6 (pure state reducers & contractual safety nets), Phase 7 (PostgreSQL schema hardening, migrations & atomic interactive transactions), Phase 8 (server-authoritative identity, resource ownership guards, cycle detection & optimistic concurrency on deletions: [phase-08 closure dossier](./records/closures/core-hardening/phase-08-identity-ownership-and-cycle-detection-closure.md)), Phase 9 (cryptographic key hierarchy, standard AAD contexts & adaptive dual-try recovery migration: [phase-09 closure dossier](./records/closures/core-hardening/phase-09-crypto-hierarchy-and-adaptive-migration-closure.md)), Phase 10 (encrypted content governance, mandatory fileId & export warning modal: [phase-10 closure dossier](./records/closures/core-hardening/phase-10-encrypted-content-governance-closure.md)), Phase 11 (AI service, server-authoritative settlement, replay defense & decoupled commit: [phase-11 closure dossier](./records/closures/core-hardening/phase-11-ai-service-and-server-settlement-closure.md)), Phase 13 (Redis fail-closed policies, conditional ZADD, Upstash REST CI proxy, distributed cron locking & hermetic test isolation: [phase-13 closure dossier](./records/closures/core-hardening/phase-13-redis-fail-closed-and-cron-overlap-closure.md)), Phase 14 (local sync queue, monotonic localRevision, Lean CAS & pure queued-only coalescing: [phase-14 closure dossier](./records/closures/core-hardening/phase-14-local-sync-queue-and-atomic-cas-closure.md)), Phase 15 (durable IDB conflict quarantine, pull protection, deterministic Hunt-McIlroy Diff3 engine & user-scoped cross-tab isolation: [phase-15 closure dossier](./records/closures/core-hardening/phase-15-durable-idb-conflict-quarantine-diff3-and-tab-isolation-closure.md)), Phase 15.1 (deterministic dependency security audit gate with production fail-closed policy & TD-15 dev allowlist: [phase-15.1 closure dossier](./records/closures/core-hardening/phase-15-1-ci-dependency-security-audit-gate-closure.md)), Phase 16 (thin coordinator sync-manager decomposition, sub-engine extraction & SyncRollback preservation: [phase-16 closure dossier](./records/closures/core-hardening/phase-16-sync-manager-decomposition-and-thin-coordinator-closure.md)), and Phase 17 (standalone useEditorAutosave hook extraction, React 19 ref discipline, fail-closed vault unmount flush & security hardening: [phase-17 closure dossier](./records/closures/core-hardening/phase17-editor-autosave-react19.md)) |
 | [elixent-execution/](./records/closures/elixent-execution/) | Elixent 12-phase execution plan closure dossiers: [Phase 1 Core Hardening closure dossier](./records/closures/elixent-execution/phase-01-core-hardening.md), [Phase 2 Dependencies, Pool & Schema Migration closure dossier](./records/closures/elixent-execution/phase-02-dependencies-pool-and-schema-migration.md), [Phase 3 Lean Model Registry & Lua Scripts closure dossier](./records/closures/elixent-execution/phase-03-lean-model-registry-derivation-and-lua.md), [Phase 4 Flush-First Cold Start & Settlement closure dossier](./records/closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md), [Phase 5 Fence-Aware AST Heading Slicer, Section-Scoped Diff3 & Hybrid BM25 closure dossier](./records/closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md), [Phase 6 Zero-Knowledge Vault Boundary, Encrypted Checkpoints & Cloud Workspace Provider closure dossier](./records/closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md), [Phase 7 Comprehensive Concept Taxonomy, Unified Decisions Client & Conformal APS closure dossier](./records/closures/elixent-execution/phase-07-concept-taxonomy-unified-decisions-and-conformal-aps.md), [Phase 8 Justification-Driven ATMS DAG, Candidate Retriever & Relational Linker closure dossier](./records/closures/elixent-execution/phase-08-justification-driven-atms-dag-candidate-retriever-and-relational-linker.md), [Phase 9 AgentGraphState Channels, Pure Reducers, 7-Stage Nodes & Compiled LangGraph StateGraph closure dossier](./records/closures/elixent-execution/phase-09-agent-graph-state-channels-pure-reducers-7-stage-nodes-and-compiled-langgraph-stategraph.md), [Phase 10 CodeMirror 6 Multi-Hunk Ghost Upgrade & Unified Agent SSE Stream Route closure dossier](./records/closures/elixent-execution/phase-10-codemirror-6-multi-hunk-ghost-upgrade-and-unified-agent-sse-stream-route.md), [Phase 11 Agent Chat Panel, HITL Question Cards, Credit Balance Views & Incremental Editor Sync closure dossier](./records/closures/elixent-execution/phase-11-agent-chat-panel-hitl-question-cards-credit-balance-views-and-incremental-editor-sync.md), and [Phase 12 Final Purge of Legacy 5-Operation Modules, Test Suite Migration & Living Documentation Sync closure dossier](./records/closures/elixent-execution/phase-12-final-legacy-purge-test-suite-migration-and-living-docs-sync.md) |
 | [framework-migration/](./records/closures/framework-migration/) | Framework migration plan closure dossiers: [Phase 1 Archive Prior Plan, Packages & Session Middleware closure dossier](./records/closures/framework-migration/phase-01-archive-prior-plan-target-packages-and-session-middleware.md), [Phase 2 Migrate All 8 API Routes & OAuth Callback to Web-Standard Hono Routers closure dossier](./records/closures/framework-migration/phase-02-migrate-all-8-api-routes-and-oauth-callback-to-web-standard-hono-routers.md), [Phase 3 Decouple Server Actions & Mount Typed Hono RPC closure dossier](./records/closures/framework-migration/phase-03-decouple-server-actions-and-mount-typed-hono-rpc.md), [Phase 4 Wire Client Hooks & UI to Hono RPC Client & Strip Directives closure dossier](./records/closures/framework-migration/phase-04-wire-client-hooks-and-ui-to-hono-rpc-and-strip-directives.md), [Phase 5 Vite 6 SPA + TanStack Router & Unified Hono Server Entrypoint closure dossier](./records/closures/framework-migration/phase-05-vite-spa-tanstack-router-and-unified-hono-server.md), and [Phase 6 Final Next.js Purge, Test Suite Alignment & CI/E2E Closure dossier](./records/closures/framework-migration/phase-06-final-nextjs-purge-test-suite-alignment-and-ci-e2e-closure.md) |
-| [nextjs-decoupling/](./records/closures/nextjs-decoupling/) | Next.js decoupling and Clean Architecture plan closure dossiers: [Phase 1 closure dossier](./records/closures/nextjs-decoupling/phase-01-archive-plan-clean-compiler-env-and-vite-boundary-guard.md) · [Phase 2 closure dossier](./records/closures/nextjs-decoupling/phase-02-purge-middleware-relics-turbopack-facade-and-unify-rpc-contracts.md) · [Phase 2.5 closure dossier](./records/closures/nextjs-decoupling/phase-02-5-purge-vitest-bridge-fix-boundary-leaks-and-harden-rpc.md) · [Phase 2.6 closure dossier](./records/closures/nextjs-decoupling/phase-02-6-remediation-of-p1-p2-p25-audit-findings.md) · [Phase 3 closure dossier](./records/closures/nextjs-decoupling/phase-03-tanstack-router-validate-search-and-pure-spa-idioms.md) |
+| [nextjs-decoupling/](./records/closures/nextjs-decoupling/) | Next.js decoupling and Clean Architecture plan closure dossiers: [Phase 1 closure dossier](./records/closures/nextjs-decoupling/phase-01-archive-plan-clean-compiler-env-and-vite-boundary-guard.md) · [Phase 2 closure dossier](./records/closures/nextjs-decoupling/phase-02-purge-middleware-relics-turbopack-facade-and-unify-rpc-contracts.md) · [Phase 2.5 closure dossier](./records/closures/nextjs-decoupling/phase-02-5-purge-vitest-bridge-fix-boundary-leaks-and-harden-rpc.md) · [Phase 2.6 closure dossier](./records/closures/nextjs-decoupling/phase-02-6-remediation-of-p1-p2-p25-audit-findings.md) · [Phase 3 closure dossier](./records/closures/nextjs-decoupling/phase-03-tanstack-router-validate-search-and-pure-spa-idioms.md) · [Phase 4 closure dossier](./records/closures/nextjs-decoupling/phase-04-living-architecture-docs-sync-and-final-closure.md) |
 
 #### Completed Plans (`records/plans/`)
 
 | Document | Scope | Status |
 | :--- | :--- | :--- |
+| [elixent-nextjs-decoupling-and-clean-architecture-plan.md](./records/plans/elixent-nextjs-decoupling-and-clean-architecture-plan.md) | Next.js decoupling, boundary enforcement & Clean Architecture execution plan (Phases 1, 2, 2.5, 2.6, 3 & 4 — 100% Completed) | ✅ Completed |
 | [elixent-framework-migration-execution-plan.md](./records/plans/elixent-framework-migration-execution-plan.md) | Web-Standard framework migration (`Next.js` to `Hono` + `Vite` + `TanStack Router`, 6 Commit-Sized SRP Phases) | ✅ Completed |
 | [elixent-agentic-architecture-execution-plan.md](./records/plans/elixent-agentic-architecture-execution-plan.md) | Master architectural transition & multi-agent engineering execution plan (12 Commit-Sized SRP Phases) | ✅ Completed |
 | [comprehensive-technical-remediation-plan-lugx-v1.md](./records/plans/comprehensive-technical-remediation-plan-lugx-v1.md) | Unified technical remediation & core hardening plan for LUGX v1 (23 isolated SRP phases) | ✅ Completed |
@@ -279,7 +277,7 @@ npm run test            # pure unit, contract, and vault cryptographic test suit
 npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (21 files, 105 tests via vitest.live.config.mts)
 npm run test:e2e        # browser-driven E2E user journeys (14 specs, 15 scenarios via Playwright / Chromium)
 npm run test:all        # full suite execution (unit + live)
-npm run build           # Vite 6 production bundle compilation
+npm run build           # Vite 6 SPA + Hono Node server production bundle compilation
 act push --pull=false   # local containerized execution of the 7-stage CI workflow
 node scripts/verify-migrations.mjs     # test database migration & schema verification
 ```

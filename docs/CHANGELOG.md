@@ -4,6 +4,25 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.22.0] - 2026-11-15 (Phase 4: Align Living Architecture Specs, Subsystem Docs, Guides & Technical Debt Register)
+
+### Core Architecture Specs & Core JSDocs (`Sub-Agent 4.A`)
+- **Platform Architecture Suite Alignment (`docs/architecture/01`–`05`):** Updated [`01_architecture_vision_and_adrs.md`](./architecture/01_architecture_vision_and_adrs.md), [`02_agent_orchestration_and_decision_engine.md`](./architecture/02_agent_orchestration_and_decision_engine.md), [`03_workspace_ast_editor_and_vault_integration.md`](./architecture/03_workspace_ast_editor_and_vault_integration.md), [`04_credit_metering_and_settlement_architecture.md`](./architecture/04_credit_metering_and_settlement_architecture.md), and [`05_data_contracts_and_lugx_migration_plan.md`](./architecture/05_data_contracts_and_lugx_migration_plan.md) to reflect the active **Vite 6 SPA + TanStack Router + Hono 4.13** runtime (`src/server/routes/agent.routes.ts`), `AsyncLocalStorage`-backed `scheduleAfterResponse()` settlement flushes, and `Hono RPC` domain operations (`src/server/routes/rpc.routes.ts`).
+- **ADR & Dependency Synchronization:** Synchronized `ADR-001`, `ADR-004`, `ADR-006`, `ADR-007`, and `ADR-008` status descriptions, annotated `NEXTAUTH_SECRET` as a deprecated legacy alias in `03_workspace_ast_editor_and_vault_integration.md`, prepended an `ADR-006` historical archival note to `05_data_contracts_and_lugx_migration_plan.md` (`§§3.2–4`), and preserved intentional references to active `Vercel AI SDK` dependencies (`"ai"` / `"@ai-sdk/google"`).
+- **Core Module JSDoc Purification:** Updated client-safety JSDoc invariants in `src/core/ast/heading-slicer.ts` and `src/core/agent/stream-payload.ts`.
+
+### Subsystem Specs, Reference Contracts, Guides, Specs & Technical Debt Register (`Sub-Agent 4.B` & `Sub-Agent 4.C`)
+- **Subsystem Architecture Alignment:** Standardized `docs/architecture/sync/**`, `docs/architecture/ai/**`, and `docs/architecture/security/**` to Hono REST route syntax (`:id` replacing `[id]`), `/api/agent/stream` (`src/server/routes/agent.routes.ts`), `src/lib/metering/{stream-governor,lua-scripts,cold-start}.ts`, `src/components/editor/markdown/streaming-ghost.ts` (`acceptGhostHunk`, `acceptAllGhostHunks`, `MultiHunkGhostState`), `useEditorAutosave` -> `PUT /api/files/:id`, and `src/server/actions/{files,folders,vault-actions}.ts` (purging residual `file-ops.ts` and `ai-commit.ts` drift), alongside JSDoc updates in `src/lib/sync/etag-generator.server.ts` and `src/server/routes/cron.routes.ts`.
+- **Technical Debt Register Alignment (`docs/TECHNICAL_DEBT_REGISTER.md`):** Updated `Last reviewed:` to `2026-11-15 (v0.22.0)`, clarified `TD-04` (`files.ts` and `folders.ts`), appended `Post-Migration Addendum (ADR-006)` notes to `TD-05`, `TD-07`, `TD-09`, `TD-11`, `TD-12`, and `TD-15`, and repointed `TD-19` to `src/client/routes/editor-page.tsx`.
+- **Indices, Reference, Guides & Specs:** Aligned [`README.md`](../README.md), [`docs/README.md`](./README.md), [`sync-api.md`](./reference/sync-api.md), [`test-database-isolation.md`](./reference/test-database-isolation.md), [`ui-streaming-readiness.md`](./reference/ui-streaming-readiness.md), billing/editor guides (`docs/guides/**`), and streaming specs (`docs/specs/**`) to `VITE_*` keys, `:id` / `:fileId` routes, `src/client/routes/editor-page.tsx`, and Hono RPC contracts.
+
+### Metrics Sync, Plan Archival & Final Closure (`Sub-Agent 4.D`)
+- **Completed Plan Archival:** Moved `docs/Plans/ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md` to permanent records at [`docs/records/plans/elixent-nextjs-decoupling-and-clean-architecture-plan.md`](./records/plans/elixent-nextjs-decoupling-and-clean-architecture-plan.md) with all phases (`1`, `2`, `2.5`, `2.6`, `3`, `4`) closed, and repaired historical plan links across `CHANGELOG.md`, `nextjs-decoupling-phases-1-and-2-forensic-audit.md`, and Phase 1–3 closure dossiers.
+- **Verification Baseline:** `146` unit/contract suites (`3,007` tests passing, `0` failed, `0` skipped), `21` live suites (`105` tests on isolated Neon branch), `14` E2E specs (`15` journeys), `0` TS errors (`npx tsc --noEmit`), `0` ESLint errors (`npm run lint`), production build green (`2,197` Vite client modules + `dist/server/index.mjs` `479.2kb`), `0` audit vulnerabilities (`npm run audit:ci`), `30/30` CI gating checks (`npm run test:ci-gate`), `docs/METRICS.json` 100% synced, and `0` broken Markdown links.
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/nextjs-decoupling/phase-04-living-architecture-docs-sync-and-final-closure.md`](./records/closures/nextjs-decoupling/phase-04-living-architecture-docs-sync-and-final-closure.md).
+
+---
+
 ## [0.21.0] - 2026-11-14 (Phase 3: Replace Next.js 15 Async searchParams, Form Action Wrappers & SSR Guards with Native TanStack Router & SPA Idioms)
 
 ### TanStack Router Search Validation, 404 Boundary & `AppLink` Standardization (`Sub-Agent 3.A`)
@@ -148,7 +167,7 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 ### Framework Migration Plan Archival & Cross-Document Link Synchronization
 - **Archived Completed Framework Migration Plan:** Transferred `docs/Plans/ELIXENT_FRAMEWORK_MIGRATION_PLAN.md` to permanent records at [`docs/records/plans/elixent-framework-migration-execution-plan.md`](./records/plans/elixent-framework-migration-execution-plan.md) per documentation governance Rule 4 & Rule 5.
 - **Cross-Document Link Remediation:** Re-pointed all relative links across `docs/CHANGELOG.md` (line 208), `README.md`, `docs/README.md`, `ADR-006`, `ADR-007`, and all 6 framework migration closure dossiers (`phase-01` through `phase-06`).
-- **Activated Active Decoupling Plan:** Published [`docs/Plans/ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md`](./Plans/ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md) as the authoritative active tracked execution plan.
+- **Activated Active Decoupling Plan:** Published [`docs/Plans/ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md`](./records/plans/elixent-nextjs-decoupling-and-clean-architecture-plan.md) as the authoritative active tracked execution plan.
 
 ### Compiler & Production Environment Variable Purification (DEF-01)
 - **Purged Next.js Compiler Plugins:** Removed `"plugins": [{ "name": "next" }]` and `.next/` type glob inclusions from `tsconfig.json`, standardizing to `["**/*.ts", "**/*.tsx", "**/*.mts"]`.

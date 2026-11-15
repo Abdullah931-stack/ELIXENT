@@ -77,10 +77,10 @@
 - ⚡ **Micro-Credit Ledger & Dual-Phase Quota Settlement:** Eliminates TOCTOU race conditions with database-level conditional transactions (`credit_ledger_transactions`), non-negative balance constraints (`users.credit_balance_micro >= 0`), 5-minute TTL safety, and zero-bounded atomic refunds.
 - 🤖 **Resilient AI NDJSON Streaming:** High-performance inline preview card (`CMStreamingGhostWidget`) positioned at exact document offsets with 60fps in-place DOM updates, 3-state decision triggers (`Accept`, `Reject`, `Retry`), and a distributed 3-state circuit breaker with multi-key API rotation.
 - 💳 **Fail-Closed Stripe Subscriptions:** 8-state exhaustive webhook state machine with database-level uniqueness constraints preventing duplicate entitlements.
-- 🛡️ **Smart Hybrid Database Client:** Dual-protocol architecture supporting `@neondatabase/serverless` (HTTP/WebSocket) for Neon Cloud serverless edges and `pg.Pool` (TCP) for local Docker, CI, and development environments.
+- 🛡️ **Smart Hybrid Database Client:** Dual-protocol architecture supporting `@neondatabase/serverless` (HTTP/WebSocket) for Neon Cloud PostgreSQL and `pg.Pool` (TCP) for local Docker, CI, and development environments.
 - 🔒 **Zero-Knowledge Cloud Vault & Hybrid Encryption:** Client-side end-to-end encryption (`AES-GCM-256` with canonical AAD via `AAD.file(userId, fileId)` emitting `lugx:v1:file:${userId}:${fileId}` and WebAuthn PRF `AAD.deviceWrap(userId, epoch)` with Dual-Try backward compatibility), Web Worker-isolated key derivation (`PBKDF2-SHA256` with 600K iterations), WebAuthn PRF hardware biometrics, 6-digit Quick PIN, 12-word BIP-39 recovery seed, client-server encrypted import ETag parity, transparent local IndexedDB encryption, and dual-layer AI safety gatekeepers.
 - 📄 **Client-Side PDF & Multi-Modal Document Extraction:** 100% in-browser Web Worker text extraction (`pdfjs-dist`), 2D spatial clustering algorithm for automatic GitHub-Flavored Markdown tables, pure TypeScript Arabic Unicode normalization (de-spacing, un-shaping, BiDi correction), embedded font corruption detection (PUA range analysis), and on-demand bilingual OCR (`tesseract.js`).
-- 📡 **Dual-Mode Rate Limiting & Distributed Tracing:** Redis sliding-window limiters with Fail-Open resilience on public and file-sync operations, Fail-Closed protection on authentication Server Actions (`signInWithGoogle` by IP, `syncUserToDatabase` by user ID) and AI streaming quotas, distributed `X-Correlation-ID` context propagation across Server Actions and Route Handlers with CRLF injection sanitization, and Zero-Knowledge log masking with token-boundary isolation.
+- 📡 **Dual-Mode Rate Limiting & Distributed Tracing:** Redis sliding-window limiters with Fail-Open resilience on public and file-sync operations, Fail-Closed protection on authentication RPC endpoints (`signInWithGoogle` by IP, `syncUserToDatabase` by user ID) and AI streaming quotas, distributed `X-Correlation-ID` context propagation across Hono RPC and REST Route Handlers with CRLF injection sanitization, and Zero-Knowledge log masking with token-boundary isolation.
 - ⏱️ **Automated Quota & Maintenance Sweepers:** Scheduled crons for 30-day soft-delete purges (`/api/cron/purge-deleted`) and automated reclamation of expired AI quota leases (`/api/cron/expire-reservations`), resolving orphaned pending leases without manual intervention.
 - 📑 **Fence-Aware AST Heading Slicer & Path-Coupled BM25 Search Engine:** CommonMark §4.2 ATX and §4.5 code-fence tracking parser (`src/core/ast/heading-slicer.ts`) with pure TypeScript FIPS 180-4 SHA-256 (zero `node:crypto` imports), section-scoped 3-way merge (`diff3MergeSection` in `src/lib/sync/diff3.ts`), and path-coupled Okapi BM25 search engine (`src/core/workspace/lexical-bm25.ts`) featuring Arabic/Latin normalization, compound subword extraction, and ReDoS protection.
 - 🛡️ **Zero-Knowledge Vault Boundary & Authenticated Checkpoints:** Ephemeral in-memory section map (`EphemeralVaultMemoryMap`) backed by Node.js `AsyncLocalStorage` and `vault_ref://` pointers, `AES-256-GCM` authenticated checkpoint serializer (`EncryptedCheckpointSerializer`) with type-bound AAD and active plaintext leak prevention (`assertNoVaultPlaintextLeak`), and unified server-side workspace provider (`CloudPostgresWorkspaceProvider`) enforcing tenant isolation and user-consent AI gates.
@@ -139,10 +139,10 @@ _For the full comparative trade-off matrix, complexity analysis, and quantitativ
 | Domain                        | Technology / Specification                                   | Purpose / Implementation Highlights                                                                          |
 | ----------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
 | **Runtime & Framework**       | Vite 6 SPA · TanStack Router · Hono Node.js Server · React 19 · Node.js 22 LTS | Pure Web-standard Hono backend server, typed TanStack client routing, Vite 6 build pipeline                     |
-| **Language & Typings**        | TypeScript 5 (Strict Mode)                                   | Full type-safety across client hooks, server actions, and DB schemas                                         |
+| **Language & Typings**        | TypeScript 5 (Strict Mode)                                   | Full type-safety across client hooks, Hono RPC actions, and DB schemas                                       |
 | **Styling & Design System**   | Tailwind CSS 4 · Radix UI Primitives · Lucide Icons          | Dark Glassmorphism, tailored typography, and accessible UI controls                                          |
 | **Markdown Editor & Bidi**    | Standalone CodeMirror 6 (`MarkdownEditor` & `EditorAdapter`) | Live AST preview decorations, line-level Bidi isolation, LTR code block lock                                 |
-| **Database & ORM**            | PostgreSQL (Neon Cloud / Local) · Drizzle ORM                | Smart Hybrid DB Client (`neon-http` / `pg.Pool`), Migrations 0001–0010 (`src/lib/db/migrations/`)            |
+| **Database & ORM**            | PostgreSQL (Neon Cloud / Local) · Drizzle ORM                | Smart Hybrid DB Client (`neon-http` / `pg.Pool`), Migrations 0001–0013 (`src/server/db/migrations/`)         |
 | **Authentication & Proxy**    | Supabase Auth SSR · Hono Session Middleware (`src/server/middleware/session-middleware.ts`) | Static fast-path bypass, test-only placeholders, `401` mutations / `303` navs, RFC 6265 dual sign-out clear, 2500ms watchdog |
 | **Offline Synchronization**   | Custom Engine · IndexedDB (`textai_db_${userId}`)            | 3-Way Merge, ETag optimistic locks (HTTP 412), Bounded Queue, GC, DLQ                                        |
 | **AI LLM Engine**             | Google Gemini SDK (`@google/generative-ai`)                  | NDJSON streaming, 2-phase quota reservation, 3-state circuit breaker                                         |
@@ -163,10 +163,10 @@ lugx/
 │       └── cron.yml               # Scheduled maintenance workflow (Daily 03:00 UTC & Quota sweepers)
 ├── docs/                          # Comprehensive technical documentation & governance
 │   ├── README.md                  # Master structural map and documentation index
-│   ├── CHANGELOG.md               # Versioned engineering changelog (Elixent v0.1.0 to v0.21.0; archived LUGX v1.0.0–v1.46.3)
+│   ├── CHANGELOG.md               # Versioned engineering changelog (Elixent v0.1.0 to v0.22.0; archived LUGX v1.0.0–v1.46.3)
 │   ├── TECHNICAL_DEBT_REGISTER.md # Living register of accepted debts and resolution history
 │   ├── DOCUMENTATION_GUIDELINES.md# Rules for authoring, linking, and updating documentation
-│   ├── Plans/                     # Active technical execution plans (ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md)
+│   ├── Plans/                     # Active official execution plans (empty — completed plans archived under records/plans/)
 │   ├── architecture/              # Elixent architecture suite (01–05) & subsystem designs (sync/, ai/, security/)
 │   ├── reference/                 # Living API contracts (sync-api.md, ui-streaming, test-db isolation)
 │   ├── guides/                    # Operational how-tos partitioned by domain (billing/, editor/, ai/)
@@ -206,7 +206,7 @@ lugx/
 │   ├── server/                    # Web-Standard Hono app (app.ts), routers, actions, services & node entrypoint (index.ts)
 │   │   ├── routes/                # Modular Hono route handlers (files, folders, agent, stripe, cron, health)
 │   │   ├── middleware/            # Session validation, correlation ID, rate limiting, and error handling
-│   │   ├── actions/               # Domain-level server actions (file ops, document ingestion, sync)
+│   │   ├── actions/               # Domain-level operations (file ops, document ingestion, sync, vault, auth)
 │   │   └── services/              # AI settlement, credit metering, and background sweepers
 │   ├── test/                      # Centralized test suite partitioned into domain subdirectories
 │   │   ├── ai/                    # Gemini AI client, NDJSON streaming, and quota settlement tests
@@ -215,7 +215,7 @@ lugx/
 │   │   ├── vault/                 # Zero-Knowledge vault crypto, WebAuthn PRF, and recovery tests
 │   │   ├── parsers/               # PDF worker bridge, spatial table extractor, and Arabic normalizer tests
 │   │   ├── editor/                # Standalone CodeMirror 6 editor, toolbar, and autosave tests
-│   │   ├── server/                # Node server entrypoint, Server Actions and file operations tests
+│   │   ├── server/                # Node server entrypoint, domain operations, and file operations tests
 │   │   ├── auth/                  # Authentication, session guard, and correlation tests
 │   │   ├── infrastructure/        # Rate limiting, cron jobs, log sanitizer, and DB health tests
 │   │   ├── api/                   # REST route handlers and Stripe webhook live tests
@@ -296,7 +296,7 @@ npx drizzle-kit push
 ### 4. Running Development & Production
 
 ```bash
-# Run local development server (with Turbopack)
+# Run local development server (Vite 6 SPA + Hono dev server on port 3000)
 npm run dev
 
 # Compile production build
@@ -407,7 +407,7 @@ flowchart TD
 flowchart TD
     A["User AI Request"] --> B["1. Reserve Credits<br/>(credit_ledger_transactions Lease in PostgreSQL)"]
     B -->|Insufficient Quota| C["Return HTTP 429 Rate Limit"]
-    B -->|Quota Reserved| D["2. Stream Gemini NDJSON via Route Handler"]
+    B -->|Quota Reserved| D["2. Stream Agent SSE via /api/agent/stream"]
     D -->|Stream / Provider Failure| E["Atomic Quota Refund<br/>GREATEST(usage - n, 0)"]
     D -->|Stream Success| F["Inline Ghost Preview Card<br/>(CMStreamingGhostWidget)"]
     F --> G{"User Decision Trigger"}
@@ -427,9 +427,9 @@ flowchart TD
     style J fill:#FFF9C4,stroke:#FBC02D,stroke-width:1.5px
 ```
 
-- **Micro-Credit Dual-Phase Settlement (`src/server/services/ai-settlement-service.ts` & `src/lib/metering/redis-wallet.ts`):**
+- **Micro-Credit Dual-Phase Settlement (`src/server/services/ai-settlement-service.ts`, `src/lib/metering/stream-governor.ts`, `src/lib/metering/lua-scripts.ts`, & `src/lib/metering/cold-start.ts`):**
   - Credits are reserved prior to generation by creating an active lease in `credit_ledger_transactions` with a 5-minute TTL and debiting `users.credit_balance_micro`.
-  - Eliminates TOCTOU race conditions across distributed serverless functions.
+  - Eliminates TOCTOU race conditions across concurrent requests in the Web-standard Hono runtime.
   - Downstream system stream failures, timeouts, or pre-TTFT client aborts immediately trigger atomic, zero-bounded refunds (`GREATEST(column - n, 0)`). User-initiated aborts (`stopStream`) execute instantaneously (< 50ms) without blocking network calls, dismantling ghost decorations immediately while the server autonomously commits post-TTFT consumption per the Dual-Side Inversion Protocol (TD-05 & Explicit Settlement Policy §4-D).
 - **Unified Inline Interactive Preview Card (`src/components/editor/markdown/streaming-ghost.ts`):**
   - Eliminates static top preview panels in favor of an inline CodeMirror 6 `WidgetType` positioned at the exact document mutation point.
@@ -444,8 +444,8 @@ flowchart TD
 
 ### 4. Smart Hybrid Database Client & Neon Isolated Test Infrastructure
 
-- **Dual-Protocol Database Client (`src/lib/db/index.ts` & `src/lib/db/transactional.ts`):**
-  - **Neon Serverless Protocol:** Uses `@neondatabase/serverless` over HTTP/WebSocket for ultra-low latency query execution in serverless edge runtimes.
+- **Dual-Protocol Database Client (`src/server/db/index.ts` & `src/server/db/transactional.ts`):**
+  - **Neon Serverless Protocol:** Uses `@neondatabase/serverless` over HTTP/WebSocket for ultra-low latency query execution in cloud and Web-standard Hono runtimes.
   - **Node-Postgres Protocol:** Automatically falls back to standard `pg.Pool` over TCP when running in local Docker containers, CI pipelines, or non-Neon PostgreSQL environments, eliminating SSL connection pool mismatches.
 - **Isolated Branching for Integration Tests (`src/test/test-db-guard.ts`):**
   - Live integration suites execute exclusively against a dedicated, isolated Neon test branch (`TEST_DATABASE_URL`).
@@ -455,7 +455,7 @@ flowchart TD
 
 - **Exhaustive 8-State Mapping (`src/server/routes/stripe.routes.ts`):** Handles `active`, `trialing`, `past_due`, `canceled`, `unpaid`, `incomplete`, `incomplete_expired`, and `paused`.
 - **Zero False Entitlements:** Unrecognized webhook payloads fail closed, aborting transaction execution rather than granting unwarranted tier upgrades.
-- **Database-Level Idempotency (`src/lib/db/migrations/0004_stripe_constraints.sql`):** Partial unique index `idx_subscriptions_stripe_id_unique` guarantees that duplicate webhook deliveries cannot create duplicate active subscriptions for a single customer.
+- **Database-Level Idempotency (`src/server/db/migrations/0004_stripe_constraints.sql`):** Partial unique index `idx_subscriptions_stripe_id_unique` guarantees that duplicate webhook deliveries cannot create duplicate active subscriptions for a single customer.
 - **Atomic Audit Trail:** Webhook transactions record state transitions in `subscription_events` alongside user tier updates.
 
 ### 6. Scheduled Maintenance & Cron Automation
@@ -464,7 +464,7 @@ LUGX features fully automated, cryptographically secured background maintenance 
 
 - **Automated Soft-Delete Purge (`src/server/routes/cron.routes.ts`):** Permanently purges documents and folders marked as deleted (`deletedAt`) beyond the 30-day retention window.
 - **Automated Expired Quota Reservation Sweeper (`src/server/routes/cron.routes.ts`):** Continuously scans and expires orphaned `credit_ledger_transactions` held for longer than 5 minutes (resolving **TD-02**), releasing held credits back to `users.credit_balance_micro` without manual intervention.
-- **Secure Dual-Verb Dispatch:** Both endpoints support dual HTTP methods (`GET` for Vercel Cron, `POST` with Bearer token authentication against `CRON_SECRET` for GitHub Actions and external cron monitors) and are dispatched via `.github/workflows/cron.yml`.
+- **Secure Dual-Verb Dispatch:** Both endpoints in `src/server/routes/cron.routes.ts` support dual HTTP methods (`GET` for HTTP cron schedulers, `POST` with Bearer token authentication against `CRON_SECRET` for GitHub Actions and external cron monitors) and are dispatched via `.github/workflows/cron.yml`.
 
 ### 7. Zero-Knowledge Cloud Vault & Client-Side Hybrid Encryption Subsystem
 
@@ -554,7 +554,7 @@ To ensure enterprise-grade resilience under load and protect sensitive user secr
 
 ```mermaid
 flowchart TD
-    Req["Incoming Request / Server Action"] --> CID["Correlation Engine (correlation.ts)<br/>Extract / Generate X-Correlation-ID · Strip CRLF ([^\\w-])"]
+    Req["Incoming Request / Hono RPC"] --> CID["Correlation Engine (correlation.ts)<br/>Extract / Generate X-Correlation-ID · Strip CRLF ([^\\w-])"]
     CID --> Limiter{"Dual-Mode Rate Limiter (rate-limit.ts)"}
 
     Limiter -->|Public / Sync Route| R1["Fail-Open Strategy (onRateLimitError: 'allow')<br/>Upstash Redis Sliding Window · Unhindered Local/Sync Access"]
@@ -581,14 +581,14 @@ flowchart TD
 
 - **Distributed Correlation Tracing (`src/lib/utils/correlation.ts`):**
   - Generates RFC 4122 UUID v4 correlation identifiers when absent, extracts incoming `X-Correlation-ID` headers, and sanitizes characters against CRLF injection (`[^\w-]`).
-  - Threaded through Hono RPC & Server Actions via `operationId` in `FileOpResult` and propagated across downstream Route Handlers (`/api/files/sync`, `/api/agent/stream`).
+  - Threaded through Hono RPC & Hono route handlers via `operationId` in `FileOpResult` and propagated across downstream Route Handlers (`/api/files/sync`, `/api/agent/stream`).
   - Included in error responses to enable instant end-to-end incident debugging across client logs, server logs, and Redis monitors.
 - **Dual-Mode Rate Limiting Engine (`src/lib/rate-limit.ts`):**
   - **Public & Synchronization APIs:** Operates in **Fail-Open** mode (`onRateLimitError: 'allow'`). If Upstash Redis experiences network latency or downtime, document reads and offline-sync operations proceed uninterrupted.
   - **AI Streaming APIs (`aiStreamRateLimiter`):** Operates in **Fail-Closed** mode (`onRateLimitError: 'deny'`) with a strict 30 requests / 60 seconds limit. If the Redis rate limiter is unreachable, AI requests are rejected with a standardized `Retry-After: 60` response to prevent runaway LLM provider costs.
 - **Zero-Knowledge Token-Boundary Log Sanitization (`src/lib/sync/log-sanitizer.ts`):**
   - Implements word-boundary denylist regex matching (`(^|[^a-zA-Z0-9_])`) to redact sensitive cryptographic tokens (`vaultKey`, `privateKey`, `seedPhrase`, `kek`, `salt`, `authorization`).
-  - Eliminates false positives on benign identifiers (such as `key: value` or `keyboard`), guaranteeing that zero plaintext encryption secrets or session tokens leak into serverless runtime stdout or external observability drains.
+  - Eliminates false positives on benign identifiers (such as `key: value` or `keyboard`), guaranteeing that zero plaintext encryption secrets or session tokens leak into Web-standard Hono runtime stdout or external observability drains.
 
 ### 10. Live Multi-System Integration & Isolated Database Test Infrastructure
 
@@ -800,7 +800,7 @@ Comprehensive architectural designs, specifications, guides, and engineering rec
 | Directory                                                          | Content Scope                                                                            | Key Documents                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | :----------------------------------------------------------------- | :--------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`docs/architecture/`](./docs/architecture/)                       | Elixent architecture suite (`01`–`05`), standalone ADRs (`ADR-006`, `ADR-007`) & subsystem designs (`sync/`, `ai/`, `security/`) | [`01_architecture_vision_and_adrs.md`](./docs/architecture/01_architecture_vision_and_adrs.md), [`adr_006_unified_vite_tanstack_hono_rpc_architecture.md`](./docs/architecture/adr_006_unified_vite_tanstack_hono_rpc_architecture.md), [`adr_007_dual_plane_separation_and_als_request_context.md`](./docs/architecture/adr_007_dual_plane_separation_and_als_request_context.md), [`02_agent_orchestration_and_decision_engine.md`](./docs/architecture/02_agent_orchestration_and_decision_engine.md), [`03_workspace_ast_editor_and_vault_integration.md`](./docs/architecture/03_workspace_ast_editor_and_vault_integration.md), [`04_credit_metering_and_settlement_architecture.md`](./docs/architecture/04_credit_metering_and_settlement_architecture.md), [`05_data_contracts_and_lugx_migration_plan.md`](./docs/architecture/05_data_contracts_and_lugx_migration_plan.md), [`sync-lifecycle-architecture.md`](./docs/architecture/sync/sync-lifecycle-architecture.md), [`sync-architecture-overview.md`](./docs/architecture/sync/sync-architecture-overview.md), [`editor-sync-orchestration.md`](./docs/architecture/sync/editor-sync-orchestration.md), [`ai-atomic-commit-architecture.md`](./docs/architecture/ai/ai-atomic-commit-architecture.md), [`ai-quota-reservation-lifecycle.md`](./docs/architecture/ai/ai-quota-reservation-lifecycle.md), [`ai-streaming-protocol.md`](./docs/architecture/ai/ai-streaming-protocol.md), [`three-way-conflict-resolution.md`](./docs/architecture/sync/three-way-conflict-resolution.md), [`security-and-rate-limiting.md`](./docs/architecture/security/security-and-rate-limiting.md) |
-| [`docs/Plans/`](./docs/Plans/)                                     | Active official technical execution roadmaps (English)                                   | [`ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md`](./docs/Plans/ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `docs/Plans/`                                                      | Active official technical execution roadmaps (English)                                   | *(None active — completed plan archived at [`elixent-nextjs-decoupling-and-clean-architecture-plan.md`](./docs/records/plans/elixent-nextjs-decoupling-and-clean-architecture-plan.md))* |
 | [`docs/reference/`](./docs/reference/)                             | Living API contracts & test runner specifications                                        | [`sync-api.md`](./docs/reference/sync-api.md), [`test-database-isolation.md`](./docs/reference/test-database-isolation.md), [`ui-streaming-readiness.md`](./docs/reference/ui-streaming-readiness.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | [`docs/records/`](./docs/records/)                                 | Engineering records, incident post-mortems, completed plans & closures                   | [`test-database-safety.md`](./docs/records/incidents/test-database-safety.md), [`unified-security-and-engineering-audit.md`](./docs/records/audits/unified-security-and-engineering-audit.md), [`Completed Plans`](./docs/records/plans/comprehensive-technical-remediation-plan-lugx-v1.md), [`Phase Closures`](./docs/records/closures/), [`Archive`](./docs/records/archive/)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | [`docs/specs/`](./docs/specs/)                                     | Living technical specifications & blueprints                                             | [`offline-sync-blueprint.md`](./docs/specs/offline-sync-blueprint.md), [`ai-key-rotation-and-resilience.md`](./docs/specs/ai-key-rotation-and-resilience.md), [`ui-streaming-requirements.md`](./docs/specs/ui-streaming-requirements.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
@@ -814,7 +814,7 @@ Comprehensive architectural designs, specifications, guides, and engineering rec
 
 ### Standalone Node.js & Vite Static Hosting (Recommended)
 
-Deploy the server as a standalone Node.js process (`node dist/server/index.js` via `@hono/node-server`) and serve the Vite SPA bundle (`dist/client/`) statically or behind a reverse proxy (e.g., Nginx, Cloudflare, or Vercel SPA hosting).
+Deploy the server as a standalone Node.js process (`node dist/server/index.mjs` via `@hono/node-server`) and serve the Vite SPA bundle (`dist/client/`) statically or behind a reverse proxy (e.g., Nginx, Cloudflare, or standard cloud CDN hosting).
 
 ### GitHub Actions Scheduled Cron
 

@@ -7,7 +7,7 @@
 | **Document ID** | `ELIXENT-AUDIT-DECOUPLING-P1-P2-v1.0` |
 | **Classification** | `PERMANENT HISTORY` (per `.agents/rules/docs-governance.md` Rule 4 & Rule 5) |
 | **Target Repository** | `d:\Projects\ELIXENT` |
-| **Target Milestone** | Phases 1 & 2 Execution Outputs of [`ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md`](../../Plans/ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md) |
+| **Target Milestone** | Phases 1 & 2 Execution Outputs of [`ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md`](../../records/plans/elixent-nextjs-decoupling-and-clean-architecture-plan.md) |
 | **Auditing Architecture** | Distributed Three-Wave Multi-Agent Verification Topology (9 Specialized Subagents) |
 | **Audit Status** | **FINAL / AUTHORITATIVE RECORD** |
 | **Date of Record** | November 11, 2026 |
@@ -18,7 +18,7 @@
 
 ## 1. Executive Purpose & Multi-Agent Auditing Topology
 
-This engineering record provides an exhaustive forensic audit of the implementation outputs delivered under **Phase 1** and **Phase 2** of the platform's architectural purification plan ([`ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md`](../../Plans/ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md)). The review rigorously assesses whether the delivered changes introduced regressions, insecure workarounds, or artificial test-passing shims that compromise Clean Architecture, fail-closed boundaries, and first-principles contracts.
+This engineering record provides an exhaustive forensic audit of the implementation outputs delivered under **Phase 1** and **Phase 2** of the platform's architectural purification plan ([`ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md`](../../records/plans/elixent-nextjs-decoupling-and-clean-architecture-plan.md)). The review rigorously assesses whether the delivered changes introduced regressions, insecure workarounds, or artificial test-passing shims that compromise Clean Architecture, fail-closed boundaries, and first-principles contracts.
 
 The audit was executed via a **Three-Wave Multi-Agent Forensic Topology** deploying 9 specialized subagents:
 1. **Wave 1 (Granular Exploration & Code Inspection):** Five dedicated subagents conducted line-by-line static analysis and empirical execution checks targeting bundler guards, environment purification, session middleware, caller repointing across 15 suites, and RPC transport wiring.
