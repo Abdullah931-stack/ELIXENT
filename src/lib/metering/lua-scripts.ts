@@ -25,9 +25,9 @@ export interface RedisEvalClient {
 /**
  * Atomic Lua script for pre-flight credit reservation and chunk extension.
  *
- * KEYS[1] = lugx:wallet:${userId}
- * KEYS[2] = lugx:lease:${operationId}
- * KEYS[3] = lugx:step_done:${stepKey}
+ * KEYS[1] = credit:wallet:${userId}
+ * KEYS[2] = credit:lease:${operationId}
+ * KEYS[3] = credit:step_done:${stepKey}
  *
  * ARGV[1] = requiredInputMicro
  * ARGV[2] = desiredOutputMicro
@@ -100,11 +100,11 @@ return cjson.encode({
 /**
  * Atomic Lua script for operation settlement, surplus refund, and durability staging.
  *
- * KEYS[1] = lugx:wallet:${userId}
- * KEYS[2] = lugx:lease:${operationId}
- * KEYS[3] = lugx:pending_settlements:${userId}
- * KEYS[4] = lugx:dirty_wallets
- * KEYS[5] = lugx:step_done:${stepKey}
+ * KEYS[1] = credit:wallet:${userId}
+ * KEYS[2] = credit:lease:${operationId}
+ * KEYS[3] = credit:pending_settlements:${userId}
+ * KEYS[4] = credit:dirty_wallets
+ * KEYS[5] = credit:step_done:${stepKey}
  *
  * ARGV[1] = operationId
  * ARGV[2] = actualTotalCostMicro
@@ -140,7 +140,7 @@ return cjson.encode({
 /**
  * Atomic Lua script for Stripe webhook top-up dual-write to warm Redis wallets.
  *
- * KEYS[1] = lugx:wallet:${userId}
+ * KEYS[1] = credit:wallet:${userId}
  * ARGV[1] = topupMicro
  */
 export const STRIPE_DUAL_WRITE_LUA = `

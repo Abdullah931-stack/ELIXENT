@@ -356,22 +356,13 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
             const wrappedObj = JSON.parse(profile.encryptedMasterKey);
             const ivBytes = base64ToUint8Array(wrappedObj.iv);
 
-            // Unwrap Master Key with canonical schema and legacy fallback
-            try {
-                unwrappedMasterKey = await cryptoWorkerBridge.unwrapKeyRaw(
-                    kekPass,
-                    wrappedObj.ciphertext,
-                    ivBytes,
-                    AAD.passwordWrap(userId)
-                );
-            } catch (_canonicalErr) {
-                unwrappedMasterKey = await cryptoWorkerBridge.unwrapKeyRaw(
-                    kekPass,
-                    wrappedObj.ciphertext,
-                    ivBytes,
-                    AAD.legacy.passWrap(userId)
-                );
-            }
+            // Unwrap Master Key with canonical schema
+            unwrappedMasterKey = await cryptoWorkerBridge.unwrapKeyRaw(
+                kekPass,
+                wrappedObj.ciphertext,
+                ivBytes,
+                AAD.passwordWrap(userId)
+            );
 
             // Deposit Master Key into volatile RAM session store
             sessionKeyStore.setMasterKey(unwrappedMasterKey, profile.keyVersion || 1);
@@ -385,7 +376,7 @@ export function VaultUnlockModal({ isOpen, onClose, onUnlocked, userId }: VaultU
                         envelope = await createWebAuthnPrfEnvelope(
                             unwrappedMasterKey,
                             userId,
-                            "user@lugx.local",
+                            "user@elixent.local",
                             epoch
                         );
                     } else {

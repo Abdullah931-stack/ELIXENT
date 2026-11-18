@@ -43,9 +43,9 @@ export const DIRTY_SETTLEMENT_GRACE_MS = 30_000;
  * Canonical Redis key builder functions.
  */
 export const REDIS_KEYS = {
-  wallet: (userId: string) => `lugx:wallet:${userId}`,
-  lease: (operationId: string) => `lugx:lease:${operationId}`,
-  stepDone: (stepKey: string) => `lugx:step_done:${stepKey}`,
-  pendingSettlements: (userId: string) => `lugx:pending_settlements:${userId}`,
-  dirtyWallets: () => `lugx:dirty_wallets`,
+  wallet: (userId: string) => `credit:wallet:${userId}`,
+  lease: (operationId: string) => `credit:lease:${operationId}`,
+  stepDone: (stepKey: string) => `credit:step_done:${stepKey}`,
+  pendingSettlements: (userId: string) => `credit:pending_settlements:${userId}`,
+  dirtyWallets: () => `credit:dirty_wallets`,
 } as const;

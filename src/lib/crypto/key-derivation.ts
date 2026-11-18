@@ -71,7 +71,7 @@ export async function deriveSubkeyHKDF(
 
 /**
  * Derives an isolated, per-document 256-bit encryption subkey
- * Context: lugx:v1:doc-key:<fileId>
+ * Context: zk:v1:doc-key:<fileId>
  */
 export async function deriveDocumentKey(
   masterKeyBytes: Uint8Array,
@@ -80,12 +80,12 @@ export async function deriveDocumentKey(
   if (!fileId?.trim()) {
     throw new Error('fileId is required to derive document subkey');
   }
-  return deriveSubkeyHKDF(masterKeyBytes, `lugx:v1:doc-key:${fileId.trim()}`);
+  return deriveSubkeyHKDF(masterKeyBytes, `zk:v1:doc-key:${fileId.trim()}`);
 }
 
 /**
  * Derives an isolated subkey for encrypted client-side search index indexing
- * Context: lugx:v1:search-key:<userId>
+ * Context: zk:v1:search-key:<userId>
  */
 export async function deriveSearchIndexKey(
   masterKeyBytes: Uint8Array,
@@ -94,7 +94,7 @@ export async function deriveSearchIndexKey(
   if (!userId?.trim()) {
     throw new Error('userId is required to derive search index subkey');
   }
-  return deriveSubkeyHKDF(masterKeyBytes, `lugx:v1:search-key:${userId.trim()}`);
+  return deriveSubkeyHKDF(masterKeyBytes, `zk:v1:search-key:${userId.trim()}`);
 }
 
 /**
@@ -110,7 +110,7 @@ export async function deriveProofOfPossession(
   }
   const proofBytes = await deriveSubkeyHKDF(
     masterKeyBytes,
-    `lugx:v1:proof-of-possession:${nonce.trim()}`
+    `zk:v1:proof-of-possession:${nonce.trim()}`
   );
   try {
     return Array.from(proofBytes)

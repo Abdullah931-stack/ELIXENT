@@ -5,7 +5,7 @@
  * Settings are persisted in localStorage with defensive fallbacks for SSR and privacy modes.
  */
 
-export const TABLE_EXTRACTION_STORAGE_KEY = 'lugx_pdf_table_extraction_enabled';
+export const TABLE_EXTRACTION_STORAGE_KEY = 'pdf_table_extraction_enabled';
 
 /**
  * Checks whether spatial 2D table extraction is enabled.

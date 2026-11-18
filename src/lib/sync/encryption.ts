@@ -139,21 +139,14 @@ export async function unwrapMasterKeyWithPassword(
   const kek = await deriveKEKFromPassword(password, saltBytes, iterations);
   const iv = base64ToUint8Array(ivBase64);
 
-  const aadsToTry = [
-    AAD.passwordWrap(userId),
-    AAD.legacy.passWrap(userId),
-    AAD.legacy.masterKey(userId)
-  ];
+  const canonicalAad = AAD.passwordWrap(userId);
 
   try {
-    for (const aad of aadsToTry) {
-      try {
-        return await cryptoWorkerBridge.unwrapKeyRaw(kek, wrappedKeyBase64, iv, aad);
-      } catch {
-        // Continue to next candidate context
-      }
+    try {
+      return await cryptoWorkerBridge.unwrapKeyRaw(kek, wrappedKeyBase64, iv, canonicalAad);
+    } catch {
+      throw new InvalidCiphertextOrKeyError('Master key unwrap failed: password incorrect or tag mismatch');
     }
-    throw new InvalidCiphertextOrKeyError('Master key unwrap failed: password incorrect or tag mismatch');
   } finally {
     wipeBuffer(kek);
     wipeBuffer(iv);
@@ -183,7 +176,7 @@ export async function wrapMasterKeyWithRecoverySeed(
 }
 
 /**
- * Unwraps (decrypts) the Master Key using the 12-word recovery seed with adaptive dual-try fallback
+ * Unwraps (decrypts) the Master Key using the 12-word recovery seed
  */
 export async function unwrapMasterKeyWithRecoverySeed(
   wrappedKeyBase64: string,
@@ -196,21 +189,14 @@ export async function unwrapMasterKeyWithRecoverySeed(
   const kek = await deriveKEKFromRecoverySeed(mnemonic, recoverySaltBytes, iterations);
   const iv = base64ToUint8Array(ivBase64);
 
-  const aadsToTry = [
-    AAD.recoveryWrap(userId),
-    AAD.legacy.seedWrap(userId),
-    AAD.legacy.recoveryMasterKey(userId)
-  ];
+  const canonicalAad = AAD.recoveryWrap(userId);
 
   try {
-    for (const aad of aadsToTry) {
-      try {
-        return await cryptoWorkerBridge.unwrapKeyRaw(kek, wrappedKeyBase64, iv, aad);
-      } catch {
-        // Continue to next candidate context
-      }
+    try {
+      return await cryptoWorkerBridge.unwrapKeyRaw(kek, wrappedKeyBase64, iv, canonicalAad);
+    } catch {
+      throw new InvalidCiphertextOrKeyError('Master key unwrap failed: recovery seed incorrect or tag mismatch');
     }
-    throw new InvalidCiphertextOrKeyError('Master key unwrap failed: recovery seed incorrect or tag mismatch');
   } finally {
     wipeBuffer(kek);
     wipeBuffer(iv);
@@ -305,15 +291,10 @@ export async function unwrapMasterKeyWithPin(
 
   const iv = base64ToUint8Array(envelope.iv);
   const epoch = envelope.deviceTrustEpoch || 1;
-  const legacyAad = `trusted_device:${userId}:${epoch}`;
 
   try {
-    try {
-      const canonicalAad = AAD.deviceWrap(userId, epoch);
-      return await cryptoWorkerBridge.unwrapKeyRaw(kek, envelope.encryptedMasterKey, iv, canonicalAad);
-    } catch {
-      return await cryptoWorkerBridge.unwrapKeyRaw(kek, envelope.encryptedMasterKey, iv, legacyAad);
-    }
+    const canonicalAad = AAD.deviceWrap(userId, epoch);
+    return await cryptoWorkerBridge.unwrapKeyRaw(kek, envelope.encryptedMasterKey, iv, canonicalAad);
   } catch (_err) {
     throw new InvalidPinError(
       'Incorrect PIN provided for trusted device unlock',

@@ -40,17 +40,7 @@ export class SyncCryptoGateway {
      * Constructs standard authenticated additional data (AAD) binding
      */
     public static computeAad(userId: string | undefined, fileId: string): string {
-        if (userId && fileId) {
-            return AAD.file(userId, fileId);
-        }
-        return this.computeLegacyAad(userId, fileId);
-    }
-
-    /**
-     * Constructs legacy authenticated additional data (AAD) binding for backward compatibility
-     */
-    public static computeLegacyAad(userId: string | undefined, fileId: string): string {
-        return AAD.legacy.file(userId || '', fileId);
+        return AAD.file(userId || '', fileId);
     }
 
     /**
@@ -104,24 +94,12 @@ export class SyncCryptoGateway {
             ivBytes = base64ToUint8Array(ivString);
             const canonicalAad = this.computeAad(userId, fileId);
 
-            let decryptedPlaintext: string;
-            try {
-                decryptedPlaintext = await cryptoWorkerBridge.decryptAESGCM(
-                    masterKey,
-                    content,
-                    ivBytes,
-                    canonicalAad
-                );
-            } catch {
-                // Adaptive dual-try fallback to legacy AAD context
-                const legacyAad = this.computeLegacyAad(userId, fileId);
-                decryptedPlaintext = await cryptoWorkerBridge.decryptAESGCM(
-                    masterKey,
-                    content,
-                    ivBytes,
-                    legacyAad
-                );
-            }
+            const decryptedPlaintext = await cryptoWorkerBridge.decryptAESGCM(
+                masterKey,
+                content,
+                ivBytes,
+                canonicalAad
+            );
 
             VaultManager.touchActivity();
 

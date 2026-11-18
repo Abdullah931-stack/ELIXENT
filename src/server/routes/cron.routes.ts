@@ -34,7 +34,7 @@ function isCronRequestAuthorized(request: Request): boolean {
 /**
  * Periodic Batch-Draining Sweeper for Pending Credit Settlements.
  *
- * Scans `lugx:dirty_wallets` in Redis and drains pending settlements older than
+ * Scans `credit:dirty_wallets` in Redis and drains pending settlements older than
  * the safety grace period (DIRTY_SETTLEMENT_GRACE_MS = 30,000ms) into PostgreSQL
  * `credit_ledger_transactions` and synchronizes `users.creditBalanceMicro`.
  *

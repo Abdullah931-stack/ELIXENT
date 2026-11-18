@@ -37,7 +37,7 @@ export default function EditorPage() {
     const [adapter, setAdapter] = useState<EditorAdapter | null>(null);
     const [directionSettings, setDirectionSettings] = useState<DirectionSettings>(() => {
         try {
-            const saved = localStorage.getItem("lugx_editor_direction_pref");
+            const saved = localStorage.getItem("editor_direction_pref");
             if (saved) {
                 const parsed = JSON.parse(saved);
                 if (parsed && typeof parsed === "object") {
@@ -67,7 +67,7 @@ export default function EditorPage() {
             setDirectionSettings((prev) => {
                 const next = { ...prev, ...updated };
                 try {
-                    localStorage.setItem("lugx_editor_direction_pref", JSON.stringify(next));
+                    localStorage.setItem("editor_direction_pref", JSON.stringify(next));
                 } catch {
                     // Ignore storage errors
                 }
@@ -188,7 +188,7 @@ export default function EditorPage() {
                     const nextMode: TextDirectionMode = prev.mode === "auto" ? "rtl" : prev.mode === "rtl" ? "ltr" : "auto";
                     const next: DirectionSettings = { ...prev, mode: nextMode };
                     try {
-                        localStorage.setItem("lugx_editor_direction_pref", JSON.stringify(next));
+                        localStorage.setItem("editor_direction_pref", JSON.stringify(next));
                     } catch {
                         // Ignore storage errors
                     }

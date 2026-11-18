@@ -15,7 +15,7 @@ import { broadcastCrossTabEvent, subscribeCrossTabSync } from './cross-tab-sync'
 
 export type KeyStoreListener = (isUnlocked: boolean) => void;
 
-const SESSION_STORAGE_VAULT_KEY = 'lugx_vault_session_v1';
+const SESSION_STORAGE_VAULT_KEY = 'vault_session_v1';
 
 export interface SessionKeyStoreConfig {
   /**

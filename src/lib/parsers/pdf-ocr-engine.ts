@@ -9,8 +9,8 @@
 import { extractSpatialPdfTableContent, SpatialTextItem } from './pdf-table-extractor';
 import { normalizeArabicText } from './arabic-normalizer';
 
-const OCR_INSTALLED_KEY = 'lugx_ocr_bilingual_installed';
-const CACHE_NAME = 'lugx-ocr-v1';
+const OCR_INSTALLED_KEY = 'ocr_bilingual_installed';
+const CACHE_NAME = 'ocr-v1';
 
 export interface OcrProgressInfo {
     page: number;

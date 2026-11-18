@@ -3,7 +3,7 @@
  * 
  * Provides instantaneous, lightweight event notifications between browser tabs/windows
  * sharing the same workspace session without requiring server polling.
- * Scoped by userId (lugx_sync_${userId}) to isolate multi-tenant tab sessions.
+ * Scoped by userId (workspace_sync_${userId}) to isolate multi-tenant tab sessions.
  * 
  * Remediates: LUGX-109
  */
@@ -37,13 +37,13 @@ export function getActiveSyncUserId(): string | null {
 }
 
 /**
- * Derive user-scoped channel name (lugx_sync_${userId}).
+ * Derive user-scoped channel name (workspace_sync_${userId}).
  * Falls back to textai_cross_tab_sync if no userId is provided or active.
  */
 export function getSyncChannelName(userId?: string): string {
     const uid = userId?.trim() || activeSyncUserId;
     if (uid) {
-        return `lugx_sync_${uid}`;
+        return `workspace_sync_${uid}`;
     }
     return 'textai_cross_tab_sync';
 }

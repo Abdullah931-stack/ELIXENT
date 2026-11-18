@@ -1,6 +1,6 @@
 {
   "name": "elixent",
-  "version": "0.22.0",
+  "version": "0.24.0",
   "private": true,
   "engines": {
     "node": ">=22.0.0",
@@ -36,7 +36,6 @@
     "@codemirror/search": "^6.7.1",
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.9",
-    "@google/generative-ai": "^0.24.1",
     "@hono/node-server": "^2.1.6",
     "@hono/zod-validator": "^0.9.1",
     "@langchain/core": "^1.2.0",

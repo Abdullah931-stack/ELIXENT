@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
+import { useRouter } from "@tanstack/react-router";
 import { AppLink as Link } from "@/components/ui/app-link";
 import { navigateTo } from "@/client/navigation";
-import { getRootFiles, createFile } from "@/client/rpc-client";
+import { getRootFiles, getFolderChildren, createFile } from "@/client/rpc-client";
 import { Button } from "@/components/ui/button";
 import { Plus, FileText, Folder, Sparkles } from "lucide-react";
 import {
@@ -15,12 +16,34 @@ interface WorkspaceFileItem {
     updatedAt?: string | Date | null;
 }
 
+function getActiveFolderIdFromLocation(): string | null {
+    if (typeof window === "undefined") return null;
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("folderId");
+    return id && id.trim().length > 0 ? id : null;
+}
+
 export default function WorkspacePage() {
+    const router = useRouter({ warn: false });
+    const [folderId, setFolderId] = useState<string | null>(() => getActiveFolderIdFromLocation());
     const [loading, setLoading] = useState(true);
     const [user, setUser] = useState<{ id: string } | null>(null);
     const [files, setFiles] = useState<WorkspaceFileItem[]>([]);
     const [creationError, setCreationError] = useState<string | null>(null);
     const [isCreating, setIsCreating] = useState(false);
+
+    useEffect(() => {
+        const syncFolderFromLocation = () => {
+            setFolderId(getActiveFolderIdFromLocation());
+        };
+        syncFolderFromLocation();
+        window.addEventListener("popstate", syncFolderFromLocation);
+        const unsubscribe = router?.subscribe?.("onResolved", syncFolderFromLocation);
+        return () => {
+            window.removeEventListener("popstate", syncFolderFromLocation);
+            unsubscribe?.();
+        };
+    }, [router]);
 
     useEffect(() => {
         let isMounted = true;
@@ -40,16 +63,18 @@ export default function WorkspacePage() {
                 }
                 setUser(authUser);
                 try {
-                    const filesResult = await getRootFiles();
+                    const filesResult = folderId
+                        ? await getFolderChildren(folderId)
+                        : await getRootFiles();
                     if (!isMounted) return;
                     if (filesResult && filesResult.success) {
                         setFiles(filesResult.data || []);
                     } else {
-                        console.warn("[Workspace] getRootFiles returned unsuccessful result:", filesResult?.error);
+                        console.warn("[Workspace] Failed to fetch workspace files:", filesResult?.error);
                         setFiles(filesResult?.data || []);
                     }
                 } catch (err) {
-                    console.error("[Workspace] Network error fetching root files:", err);
+                    console.error("[Workspace] Network error fetching workspace files:", err);
                 }
             } catch {
                 if (isMounted) {
@@ -65,14 +90,14 @@ export default function WorkspacePage() {
         return () => {
             isMounted = false;
         };
-    }, []);
+    }, [folderId]);
 
     const triggerCreateDocument = async () => {
         if (isCreating) return;
         setIsCreating(true);
         setCreationError(null);
         try {
-            const result = await createFile("Untitled Document", null, false);
+            const result = await createFile("Untitled Document", folderId, false);
             if (result && result.success && result.data) {
                 navigateTo(`/workspace/editor/${result.data.id}`);
             } else {
@@ -152,7 +177,11 @@ export default function WorkspacePage() {
                         {files.map((file) => (
                             <Link
                                 key={file.id}
-                                to={file.isFolder ? `/workspace` : `/workspace/editor/${file.id}`}
+                                to={
+                                    file.isFolder
+                                        ? `/workspace?folderId=${encodeURIComponent(file.id)}`
+                                        : `/workspace/editor/${file.id}`
+                                }
                                 className="group block"
                             >
                                 <div className="p-4 rounded-lg border border-zinc-800 bg-zinc-900/30 hover:bg-zinc-900/50 hover:border-zinc-700 transition-all">

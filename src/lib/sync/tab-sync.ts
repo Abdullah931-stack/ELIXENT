@@ -2,7 +2,7 @@
  * Tab Sync Management Module
  * 
  * Provides user-scoped cross-tab synchronization and channel isolation.
- * Formats channel names as lugx_sync_${userId} to prevent multi-tenant event bleeding.
+ * Formats channel names as workspace_sync_${userId} to prevent multi-tenant event bleeding.
  * 
  * Remediates: LUGX-109
  */

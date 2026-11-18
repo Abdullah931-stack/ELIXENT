@@ -136,7 +136,7 @@ function calculateCost(
 
 /**
  * Higher-order node wrapper for LangGraph-style graph nodes providing:
- * 1. Resumption idempotency check via `lugx:step_done:${stepKey}`
+ * 1. Resumption idempotency check via `credit:step_done:${stepKey}`
  * 2. Pre-flight credit reservation with Zero-Dust drain derivation
  * 3. Interruption routing (`INSUFFICIENT_CREDITS`)
  * 4. Post-execution settlement and refund via atomic Lua scripts

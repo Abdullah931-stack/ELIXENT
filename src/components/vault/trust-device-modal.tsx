@@ -112,41 +112,23 @@ export function TrustDeviceModal({ isOpen, onClose, userId, userEmail, onSuccess
                     ivBytes,
                     AAD.passwordWrap(userId)
                 );
-            } catch {
-                try {
+            } catch (unwrapErr) {
+                if (password !== normalizePassword(password)) {
+                    rawPassBytes = new TextEncoder().encode(password);
+                    rawKekPass = await cryptoWorkerBridge.deriveKeyRaw(
+                        rawPassBytes,
+                        saltBytes,
+                        profile.kdfIterations || 600000,
+                        256
+                    );
                     masterKeyRaw = await cryptoWorkerBridge.unwrapKeyRaw(
-                        kekPass,
+                        rawKekPass,
                         wrappedObj.ciphertext,
                         ivBytes,
-                        AAD.legacy.passWrap(userId)
+                        AAD.passwordWrap(userId)
                     );
-                } catch (legacyErr) {
-                    if (password !== normalizePassword(password)) {
-                        rawPassBytes = new TextEncoder().encode(password);
-                        rawKekPass = await cryptoWorkerBridge.deriveKeyRaw(
-                            rawPassBytes,
-                            saltBytes,
-                            profile.kdfIterations || 600000,
-                            256
-                        );
-                        try {
-                            masterKeyRaw = await cryptoWorkerBridge.unwrapKeyRaw(
-                                rawKekPass,
-                                wrappedObj.ciphertext,
-                                ivBytes,
-                                AAD.passwordWrap(userId)
-                            );
-                        } catch {
-                            masterKeyRaw = await cryptoWorkerBridge.unwrapKeyRaw(
-                                rawKekPass,
-                                wrappedObj.ciphertext,
-                                ivBytes,
-                                AAD.legacy.passWrap(userId)
-                            );
-                        }
-                    } else {
-                        throw legacyErr;
-                    }
+                } else {
+                    throw unwrapErr;
                 }
             }
             sessionKeyStore.setMasterKey(masterKeyRaw, profile.keyVersion || 1);
@@ -207,7 +189,7 @@ export function TrustDeviceModal({ isOpen, onClose, userId, userEmail, onSuccess
                 const envelope = await createWebAuthnPrfEnvelope(
                     masterKeyRaw,
                     userId,
-                    userEmail || "user@lugx.local",
+                    userEmail || "user@elixent.local",
                     epoch
                 );
                 await indexedDBManager.saveDeviceTrustEnvelope(envelope, userId);

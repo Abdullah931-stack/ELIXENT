@@ -14,7 +14,7 @@ export default function HomePage() {
             <Link to="/" className="flex items-center gap-2">
               <img
                 src="/logo.png"
-                alt="LUGX"
+                alt="Elixent"
                 width={120}
                 height={32}
                 className="h-8 w-auto"
@@ -71,8 +71,8 @@ export default function HomePage() {
           </h1>
 
           <p className="text-lg text-zinc-400 max-w-2xl mx-auto mb-8">
-            Professional cloud-based text editing with AI-powered correction, improvement,
-            summarization, translation, and prompt generation. Full RTL/LTR support.
+            Zero-knowledge encrypted agentic workspace with multi-hunk document intelligence,
+            local-first synchronization, and full RTL/LTR support.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
@@ -99,7 +99,7 @@ export default function HomePage() {
               Powerful AI Features
             </h2>
             <p className="text-zinc-400 max-w-2xl mx-auto">
-              Five specialized AI engines designed for different aspects of text processing
+              Agentic intelligence built for structured writing, revision, and knowledge workflows
             </p>
           </div>
 
@@ -315,14 +315,14 @@ export default function HomePage() {
         <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
           <img
             src="/logo.png"
-            alt="LUGX"
+            alt="Elixent"
             width={80}
             height={24}
             className="h-6 w-auto opacity-50"
             style={{ width: "auto" }}
           />
           <p className="text-sm text-zinc-500">
-            © 2026 LUGX. All rights reserved.
+            © 2026 Elixent. All rights reserved.
           </p>
         </div>
       </footer>

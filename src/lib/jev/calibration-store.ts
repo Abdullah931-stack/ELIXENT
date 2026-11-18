@@ -2,7 +2,7 @@
  * Universal Prior Calibration Store for Adaptive Prediction Sets (Conformal APS)
  *
  * Implements an in-memory sliding window (capacity N = 200) per decision model with
- * optional non-blocking Upstash Redis persistence (`gemini:calibration_window:<modelId>`).
+ * optional non-blocking Upstash Redis persistence (`calibration:window:<modelId>`).
  *
  * Empirical Quantile Computation:
  * - When window size n >= 20: Computes empirical quantile at rank k = min(n, ceil((n + 1)(1 - alpha)))
@@ -65,7 +65,7 @@ export class CalibrationStore {
   }
 
   private getRedisKey(modelId: string): string {
-    return `gemini:calibration_window:${modelId}`;
+    return `calibration:window:${modelId}`;
   }
 
   /**

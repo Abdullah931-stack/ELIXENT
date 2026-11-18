@@ -363,24 +363,14 @@ export async function unwrapMasterKeyWithWebAuthnPrf(
     const iv = base64ToUint8Array(envelope.iv);
     const epoch = envelope.deviceTrustEpoch || 1;
     const canonicalAad = AAD.deviceWrap(userId, epoch);
-    const legacyAad = `trusted_device:${userId}:${epoch}`;
 
     try {
-      try {
-        return await cryptoWorkerBridge.unwrapKeyRaw(
-          kek,
-          envelope.encryptedMasterKey,
-          iv,
-          canonicalAad
-        );
-      } catch {
-        return await cryptoWorkerBridge.unwrapKeyRaw(
-          kek,
-          envelope.encryptedMasterKey,
-          iv,
-          legacyAad
-        );
-      }
+      return await cryptoWorkerBridge.unwrapKeyRaw(
+        kek,
+        envelope.encryptedMasterKey,
+        iv,
+        canonicalAad
+      );
     } finally {
       wipeBuffer(prfOutput);
       wipeBuffer(kek);

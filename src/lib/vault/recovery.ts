@@ -1,11 +1,8 @@
 /**
- * Vault Adaptive Dual-Try Recovery Migration Service
+ * Vault Recovery Service
  *
- * Resolves LUGX-005 (BIP-39 recovery phrase AAD mismatch).
- * Attempts unwrap using the canonical context (lugx:v1:recovery:<userId>) first.
- * Upon MAC/authentication failure, gracefully falls back to the legacy creation context
- * (vault:seed:<userId>). If the legacy unwrap succeeds, it automatically re-wraps the master
- * key under the canonical schema and returns the new envelope for cloud and local persistence.
+ * Unwraps the recovery-encrypted master key using the canonical AAD context
+ * (zk:v1:recovery:<userId>).
  */
 
 import { AAD } from '../crypto/aad';
@@ -88,7 +85,7 @@ export async function adaptiveUnwrapRecoverySeed(
 
     ivBytes = base64ToUint8Array(wrappedObj.iv);
 
-    // 3. Try 1: Attempt unwrap using canonical AAD (lugx:v1:recovery:<userId>)
+    // 3. Unwrap using canonical AAD (zk:v1:recovery:<userId>)
     const canonicalAAD = AAD.recoveryWrap(cleanUserId);
     try {
       const masterKey = await cryptoWorkerBridge.unwrapKeyRaw(
@@ -103,48 +100,10 @@ export async function adaptiveUnwrapRecoverySeed(
         wasMigrated: false
       };
     } catch (_canonicalErr: unknown) {
-      // Canonical unwrap failed; attempt legacy fallback for vaults created pre-remediation (LUGX-005)
-    }
-
-    // 4. Try 2: Attempt unwrap using legacy creation AAD (vault:seed:<userId>)
-    const legacyAAD = AAD.legacy.seedWrap(cleanUserId);
-    let legacyMasterKey: Uint8Array;
-    try {
-      legacyMasterKey = await cryptoWorkerBridge.unwrapKeyRaw(
-        kekSeed,
-        wrappedObj.ciphertext,
-        ivBytes,
-        legacyAAD
-      );
-    } catch (_legacyErr: unknown) {
-      // Both standard and legacy contexts rejected the seed / ciphertext
       throw new InvalidCiphertextOrKeyError(
         'Recovery seed phrase is incorrect, invalid, or does not match this vault.'
       );
     }
-
-    // 5. Legacy unwrap succeeded: immediately re-wrap under the canonical AAD
-    const newIv = await cryptoWorkerBridge.generateRandomBytes(12);
-    let reWrapped: { wrappedKeyBase64: string; ivBase64: string };
-    try {
-      reWrapped = await cryptoWorkerBridge.wrapKeyRaw(
-        kekSeed,
-        legacyMasterKey,
-        newIv,
-        canonicalAAD
-      );
-    } finally {
-      wipeBuffer(newIv);
-    }
-
-    return {
-      masterKey: legacyMasterKey,
-      wasMigrated: true,
-      reWrappedEnvelope: {
-        ciphertext: reWrapped.wrappedKeyBase64,
-        iv: reWrapped.ivBase64
-      }
-    };
   } finally {
     if (kekSeed) wipeBuffer(kekSeed);
     if (ivBytes) wipeBuffer(ivBytes);
