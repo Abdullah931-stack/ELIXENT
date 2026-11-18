@@ -20,7 +20,6 @@ import { createMarkdownExtensions } from "@/components/editor/markdown/markdown-
 import { useAIStream } from "@/hooks/use-ai-stream";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import * as schema from "@/server/db/schema";
-import { reserveAndUpdateUsage, commitAIReservation } from "@/server/services/ai-settlement-service";
 
 vi.mock("@/lib/supabase/server", () => ({ getUser: vi.fn(async () => ({ id: USER_ID })) }));
 
@@ -84,11 +83,20 @@ async function seedUserAndFile(): Promise<Fixture> {
  * SERVER-side for the hook-generated operationId once the stream starts.
  */
 async function seedServerReservation(operationId: string, fileId: string) {
-    const res = await reserveAndUpdateUsage(USER_ID, "improve", 11, "pro", {
-        operationId,
-        fileId,
-    });
-    if (!res.reserved) throw new Error(`server-seed failed: ${res.reason}`);
+    await testDb
+        .insert(schema.creditLedgerTransactions)
+        .values({
+            operationId,
+            userId: USER_ID,
+            nodeName: `agent:improve:${fileId}:11`,
+            modelId: "google/gemini-2.5-flash",
+            executionMode: "STREAMING_GENERATIVE",
+            inputTokens: 11,
+            outputTokens: 11,
+            deltaMicro: BigInt(-11000),
+            status: "SETTLED",
+        })
+        .onConflictDoNothing();
 }
 
 afterAll(async () => {
@@ -154,9 +162,6 @@ describe("LIVE: AI preview explicit decision model on isolated branch", () => {
                 },
             });
 
-            if (activeFixture) {
-                await commitAIReservation(opId);
-            }
             await opts.onComplete?.("Better text");
             opts.onDone?.({ type: "done", threadId: "thread-live", operationId: opId });
         });

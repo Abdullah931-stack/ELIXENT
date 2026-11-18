@@ -14,11 +14,11 @@ import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import {
+    flushPendingSettlementsToPostgres,
     getTodayUsage,
-    reserveAndUpdateUsage,
-    refundAIReservation,
-    commitAIReservation,
+    getUserCreditBalance,
 } from "@/server/services/ai-settlement-service";
+import { REDIS_KEYS } from "@/lib/metering/constants";
 
 const TEST_USER_ID = "11111111-1111-1111-1111-111111111111";
 let dbAvailable = false;
@@ -95,11 +95,9 @@ describe("credit ledger integrity under concurrency", () => {
         expect(userRow?.creditBalanceMicro).toBe(BigInt(1000000000));
     });
 
-    it("concurrent duplicate requests with identical operationId settle EXACTLY ONCE on real Postgres", async () => {
+    it("concurrent duplicate settlement flushes with identical operationId settle EXACTLY ONCE on real Postgres", async () => {
         const userId = crypto.randomUUID();
         const operationId = `op_race_${crypto.randomUUID()}`;
-        const WORDS = 75;
-        const requestHash = crypto.createHash("sha256").update(`${userId}:correct:${WORDS}:${operationId}`).digest("hex");
 
         await testDb
             .insert(schema.users)
@@ -111,53 +109,71 @@ describe("credit ledger integrity under concurrency", () => {
             })
             .onConflictDoNothing();
 
-        // 20 concurrent requests with the SAME operationId using real production reserveAndUpdateUsage
-        const results = await Promise.all(
+        const payloadJson = JSON.stringify({
+            userId,
+            nodeName: "agent:correct:hash:75",
+            modelId: "google/gemini-2.5-flash",
+            executionMode: "STREAMING_GENERATIVE",
+            inputTokens: 75,
+            outputTokens: 75,
+            deltaMicro: -75000,
+            status: "SETTLED",
+            created_at_ms: Date.now() - 1000,
+        });
+
+        // 20 concurrent flushPendingSettlementsToPostgres calls with the SAME operationId
+        const flushResults = await Promise.all(
             Array.from({ length: 20 }, () =>
-                reserveAndUpdateUsage(userId, "correct", WORDS, "pro", {
-                    operationId,
-                    requestHash,
+                flushPendingSettlementsToPostgres(userId, {
+                    customRedis: {
+                        pendingSettlements: new Map([
+                            [
+                                REDIS_KEYS.pendingSettlements(userId),
+                                new Map([[operationId, payloadJson]]),
+                            ],
+                        ]),
+                        dirtyWallets: new Set([userId]),
+                    },
                 })
             )
         );
 
-        // All 20 requests returned reserved: true
-        expect(results.every((r: { reserved: boolean }) => r.reserved)).toBe(true);
+        // Exactly ONE flush applied the -75000 delta; the remaining 19 applied 0n
+        const totalNetDelta = flushResults.reduce(
+            (sum, r) => sum + r.netDeltaMicro,
+            BigInt(0)
+        );
+        expect(totalNetDelta).toBe(BigInt(-75000));
 
-        // Exactly ONE transaction record in database
+        // Exactly ONE transaction record in database and exact single deduction on balance
         const resRows = await testDb
             .select()
             .from(schema.creditLedgerTransactions)
             .where(eq(schema.creditLedgerTransactions.operationId, operationId));
         expect(resRows.length).toBe(1);
 
-        const userRow = await testDb.query.users.findFirst({
-            where: eq(schema.users.id, userId),
-        });
-        expect(userRow?.creditBalanceMicro).toBeDefined();
+        const balance = await getUserCreditBalance(userId);
+        expect(balance).toBe(BigInt(999925000));
     });
 
-    it("cross-period refund updates credit ledger transaction status and credit balance", async () => {
+    it("getTodayUsage excludes ABORTED transactions and aggregates SETTLED transactions", async () => {
         const userId = crypto.randomUUID();
-        const operationId = `op_midnight_${crypto.randomUUID()}`;
-        const initialBalance = BigInt(1000000000);
 
         await testDb
             .insert(schema.users)
             .values({
                 id: userId,
-                email: `${userId}@midnight.test`,
+                email: `${userId}@usage.test`,
                 tier: "pro",
-                creditBalanceMicro: initialBalance,
+                creditBalanceMicro: BigInt(1000000000),
             })
             .onConflictDoNothing();
 
-        // Create transaction
-        await testDb
-            .insert(schema.creditLedgerTransactions)
-            .values({
-                operationId,
+        await testDb.insert(schema.creditLedgerTransactions).values([
+            {
+                operationId: `op_settled_${crypto.randomUUID()}`,
                 userId,
+                nodeName: "agent:correct:hash:100",
                 modelId: "google/gemini-2.5-flash",
                 executionMode: "STREAMING_GENERATIVE",
                 inputTokens: 100,
@@ -165,96 +181,22 @@ describe("credit ledger integrity under concurrency", () => {
                 deltaMicro: BigInt(-120000),
                 status: "SETTLED",
                 createdAt: new Date(),
-            });
-
-        // Execute real production refundAIReservation
-        const refundResult = await refundAIReservation(operationId, "midnight_test");
-        expect(refundResult.refunded).toBe(true);
-
-        // Verify in DB that transaction is marked ABORTED
-        const txRow = await testDb.query.creditLedgerTransactions.findFirst({
-            where: eq(schema.creditLedgerTransactions.operationId, operationId),
-        });
-        expect(txRow?.status).toBe("ABORTED");
-
-        const userRow = await testDb.query.users.findFirst({
-            where: eq(schema.users.id, userId),
-        });
-        expect(userRow?.creditBalanceMicro).toBeDefined();
-    });
-
-    it("blind refund on settled or aborted transaction is rejected or idempotently handled", async () => {
-        const userId = crypto.randomUUID();
-        const operationId = `op_commit_guard_${crypto.randomUUID()}`;
-
-        await testDb
-            .insert(schema.users)
-            .values({
-                id: userId,
-                email: `${userId}@commitguard.test`,
-                tier: "pro",
-                creditBalanceMicro: BigInt(1000000000),
-            })
-            .onConflictDoNothing();
-
-        // Transaction in ABORTED status
-        await testDb
-            .insert(schema.creditLedgerTransactions)
-            .values({
-                operationId,
+            },
+            {
+                operationId: `op_aborted_${crypto.randomUUID()}`,
                 userId,
-                modelId: "google/gemini-2.5-flash",
-                executionMode: "STREAMING_GENERATIVE",
-                inputTokens: 50,
-                outputTokens: 50,
-                deltaMicro: BigInt(-90000),
-                status: "ABORTED",
-            });
-
-        const refundResult = await refundAIReservation(operationId, "test_attempt");
-        expect(refundResult.refunded).toBe(false);
-
-        const userRow = await testDb.query.users.findFirst({
-            where: eq(schema.users.id, userId),
-        });
-        expect(userRow?.creditBalanceMicro).toBeDefined();
-    });
-
-    it("commitAIReservation transitions transaction to SETTLED status", async () => {
-        const userId = crypto.randomUUID();
-        const operationId = `op_commit_test_${crypto.randomUUID()}`;
-
-        await testDb
-            .insert(schema.users)
-            .values({
-                id: userId,
-                email: `${userId}@committest.test`,
-                tier: "pro",
-                creditBalanceMicro: BigInt(1000000000),
-            })
-            .onConflictDoNothing();
-
-        await testDb
-            .insert(schema.creditLedgerTransactions)
-            .values({
-                operationId,
-                userId,
-                nodeName: "reserved:correct:hash:50",
+                nodeName: "agent:correct:hash:50",
                 modelId: "google/gemini-2.5-flash",
                 executionMode: "STREAMING_GENERATIVE",
                 inputTokens: 50,
                 outputTokens: 0,
-                deltaMicro: BigInt(-50000),
-                status: "SETTLED",
-            });
+                deltaMicro: BigInt(0),
+                status: "ABORTED",
+                createdAt: new Date(),
+            },
+        ]);
 
-        const commitRes = await commitAIReservation(operationId);
-        expect(commitRes.committed).toBe(true);
-
-        const txRow = await testDb.query.creditLedgerTransactions.findFirst({
-            where: eq(schema.creditLedgerTransactions.operationId, operationId),
-        });
-        expect(txRow?.status).toBe("SETTLED");
-        expect(txRow?.nodeName).toContain("committed:");
+        const usage = await getTodayUsage(userId);
+        expect(usage.correctWords).toBe(100);
     });
 });

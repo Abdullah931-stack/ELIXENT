@@ -87,20 +87,15 @@ const mockTxDb = vi.hoisted(() => ({
 
 const mockSettlementService = vi.hoisted(() => ({
     getUserTier: vi.fn().mockResolvedValue('pro'),
-    reserveAIQuota: vi.fn().mockResolvedValue({
-        reserved: true,
-        reservationId: 'res-ai-gate-1',
-        operationId: 'op-ai-gate-1',
-        periodKey: '2026-10-02',
-    }),
-    reserveAndUpdateUsage: vi.fn().mockResolvedValue({ reserved: true }),
-    commitAIReservation: vi.fn().mockResolvedValue({ committed: true }),
-    refundAIReservation: vi.fn().mockResolvedValue({ refunded: true }),
+    getUserCreditBalance: vi.fn().mockResolvedValue(BigInt(1_000_000)),
     computeRequestHash: vi.fn().mockReturnValue('mock-request-hash'),
-    getAIReservationStatus: vi.fn().mockResolvedValue({ status: 'reserved' }),
     getTodayUsage: vi.fn().mockResolvedValue({}),
     flushPendingSettlementsToPostgres: vi.fn().mockResolvedValue({ flushedCount: 0, netDeltaMicro: BigInt(0) }),
 }));
+
+const mockGovernorInitializeLease = vi.hoisted(() =>
+    vi.fn().mockResolvedValue({ canAfford: true, reservedTokens: 250, reservedMicro: BigInt(1000) })
+);
 
 vi.mock('@/lib/supabase/server', () => ({
     getUser: mockGetUser,
@@ -160,6 +155,7 @@ vi.mock('@/core/agent/graph', () => ({
 
 vi.mock('@/lib/metering/stream-governor', () => ({
     StreamGovernor: class {
+        initializeLease = mockGovernorInitializeLease;
         async onTokenChunk() {
             return true;
         }
@@ -482,7 +478,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
             expect(response.status).toBe(403);
             const body = await response.json();
             expect(body.code).toBe('VAULT_AI_ACCESS_DENIED');
-            expect(mockSettlementService.reserveAIQuota).not.toHaveBeenCalled();
+            expect(mockGovernorInitializeLease).not.toHaveBeenCalled();
         });
 
         it('should reject streaming on encrypted file with 403 VAULT_AI_ACCESS_DENIED when ephemeralVaultPayloads does not provide decrypted plaintext', async () => {
@@ -515,7 +511,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
             expect(response.status).toBe(403);
             const body = await response.json();
             expect(body.code).toBe('VAULT_AI_ACCESS_DENIED');
-            expect(mockSettlementService.reserveAIQuota).not.toHaveBeenCalled();
+            expect(mockGovernorInitializeLease).not.toHaveBeenCalled();
         });
 
         it('should allow AI streaming on encrypted file when user opted in and ephemeralVaultPayloads provides decrypted plaintext', async () => {
@@ -578,7 +574,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
             expect(result.success).toBe(false);
             expect(result.status).toBe('error');
             expect(result.error).toContain('Cannot directly update encrypted file with plaintext');
-            expect(mockSettlementService.refundAIReservation).not.toHaveBeenCalled();
+            expect(mockSettlementService.flushPendingSettlementsToPostgres).not.toHaveBeenCalled();
         });
 
         it('should reject save to encrypted file if encryptionMetadata.iv is missing', async () => {
@@ -605,7 +601,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
             expect(result.success).toBe(false);
             expect(result.status).toBe('error');
             expect(result.error).toContain('Encrypted files require valid encryptionMetadata with an IV');
-            expect(mockSettlementService.refundAIReservation).not.toHaveBeenCalled();
+            expect(mockSettlementService.flushPendingSettlementsToPostgres).not.toHaveBeenCalled();
         });
 
         it('should verify IV uniqueness and monotonic version increment across sequential encrypted saves via updateFileContent', async () => {
@@ -796,7 +792,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
             expect(sessionKeyStore.isVaultUnlocked()).toBe(true);
 
             const userId = syncManager.getUserId() || testUserId;
-            const aad = `vault:file:${userId}:${encryptedFileId}`;
+            const aad = `zk:v1:file:${userId}:${encryptedFileId}`;
 
             const basePlaintext = '# Base Document\n\nSection 1 original\n\nSection 2 original\n';
             const localPlaintext = '# Base Document\n\nSection 1 local edit\n\nSection 2 original\n';
@@ -1012,7 +1008,7 @@ describe('Phase 4: AI Gatekeepers, Syntax Validation & Non-Blocking Encrypted Sy
         it('should automatically trigger resolution of pending encrypted conflicts when vault is unlocked (ADV2-03)', async () => {
             const rawKey = new Uint8Array(32).fill(7);
             const autoFileId = 'auto-resolve-target';
-            const aad = `vault:file:${testUserId}:${autoFileId}`;
+            const aad = `zk:v1:file:${testUserId}:${autoFileId}`;
 
             const basePlaintext = '# Auto Doc\n\nSection 1 original\n\nSection 2 original\n';
             const localPlaintext = '# Auto Doc\n\nSection 1 local edit\n\nSection 2 original\n';

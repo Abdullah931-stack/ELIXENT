@@ -148,7 +148,7 @@ describe('Phase 5: DocumentStoragePayload Discriminated Union', () => {
 describe('Phase 5: RFC 7807 ProblemDetails Contracts', () => {
   it('successfully creates a compliant RFC 7807 error object', () => {
     const problemInput: ProblemDetails = {
-      type: 'urn:lugx:error:sync:conflict',
+      type: 'urn:elixent:error:sync:conflict',
       title: 'Conflict Detected',
       status: 409,
       detail: 'ETag mismatch between local revision and remote version',
@@ -165,7 +165,7 @@ describe('Phase 5: RFC 7807 ProblemDetails Contracts', () => {
 
   it('accepts RFC 7807 invalidParams validation extension', () => {
     const problemWithParams = {
-      type: 'urn:lugx:error:validation',
+      type: 'urn:elixent:error:validation',
       title: 'Bad Request',
       status: 400,
       detail: 'Request body failed schema verification',
@@ -184,7 +184,7 @@ describe('Phase 5: RFC 7807 ProblemDetails Contracts', () => {
 
   it('rejects problem details with invalid HTTP status codes', () => {
     const invalidStatus = {
-      type: 'urn:lugx:error:unknown',
+      type: 'urn:elixent:error:unknown',
       title: 'Invalid Status',
       status: 99, // Out of HTTP range
       detail: 'Test',
@@ -203,7 +203,7 @@ describe('Phase 5: RFC 7807 ProblemDetails Contracts', () => {
 
   it('rejects problem details missing mandatory RFC 7807 properties', () => {
     const missingCorrelation = {
-      type: 'urn:lugx:error:auth',
+      type: 'urn:elixent:error:auth',
       title: 'Unauthorized',
       status: 401,
       detail: 'Authentication token required',

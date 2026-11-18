@@ -5,7 +5,7 @@
  * Real boundaries:
  * 1. REAL PostgreSQL database tables (`credit_ledger_transactions`, `users`).
  * 2. REAL authorization validation using process.env.CRON_SECRET.
- * 3. REAL Upstash Redis hash inspection (`lugx:pending_settlements:${userId}`) and set (`lugx:dirty_wallets`).
+ * 3. REAL Upstash Redis hash inspection (`credit:pending_settlements:${userId}`) and set (`credit:dirty_wallets`).
  * 4. REAL batch draining with grace period filtering (>30,000ms).
  * 5. REAL idempotency verification (re-sweeping causes zero extra mutation).
  */

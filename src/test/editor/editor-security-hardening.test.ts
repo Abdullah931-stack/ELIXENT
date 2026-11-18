@@ -127,8 +127,8 @@ describe("LUGX-056: Empty User ID in AAD Derivation", () => {
     });
 
     it("generates canonical AAD format when valid identifiers are provided", () => {
-        expect(AAD.file("user-123", "file-456")).toBe("lugx:v1:file:user-123:file-456");
-        expect(AAD.file("  user-123  ", "  file-456  ")).toBe("lugx:v1:file:user-123:file-456");
+        expect(AAD.file("user-123", "file-456")).toBe("zk:v1:file:user-123:file-456");
+        expect(AAD.file("  user-123  ", "  file-456  ")).toBe("zk:v1:file:user-123:file-456");
     });
 });
 

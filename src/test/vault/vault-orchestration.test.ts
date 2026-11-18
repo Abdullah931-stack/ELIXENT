@@ -499,7 +499,7 @@ describe('Phase 3: Vault UI, Editor Orchestration & Dynamic File Conversion', ()
                 testStore.setMasterKey(masterKey);
                 expect(testStore.hasMasterKey()).toBe(true);
                 // Zero bytes written to sessionStorage under Strict Zero-Trace mode
-                expect(mockStorage['lugx_vault_session_v1']).toBeUndefined();
+                expect(mockStorage['vault_session_v1']).toBeUndefined();
 
                 // Memory purge zeroes volatile RAM
                 testStore.purgeKeys();

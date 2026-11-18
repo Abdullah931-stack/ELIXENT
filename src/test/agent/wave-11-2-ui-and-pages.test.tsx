@@ -1127,7 +1127,7 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
                 mode: "rtl",
                 lockCodeBlocksLTR: true,
             });
-            expect(JSON.parse(window.localStorage.getItem("lugx_editor_direction_pref") || "{}")).toEqual({
+            expect(JSON.parse(window.localStorage.getItem("editor_direction_pref") || "{}")).toEqual({
                 mode: "rtl",
                 lockCodeBlocksLTR: true,
             });

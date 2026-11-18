@@ -109,6 +109,7 @@ vi.mock('@ai-sdk/google', () => ({
 }));
 
 import {
+    parseQualifiedModelId,
     getGoogleModel,
     executeStructuredGeneration,
     executeToolAgentGeneration,
@@ -160,6 +161,88 @@ describe('AI Client (Vercel AI SDK v7 Gateway & Model Registry)', () => {
     });
 
     // =========================================================================
+    // parseQualifiedModelId Tests
+    // =========================================================================
+    describe('parseQualifiedModelId', () => {
+        it.each([
+            [
+                'provider-qualified google model',
+                'google/gemini-3.8-flash',
+                {
+                    provider: 'google',
+                    providerModelName: 'gemini-3.8-flash',
+                    qualifiedModelId: 'google/gemini-3.8-flash',
+                },
+            ],
+            [
+                'trimmed provider-qualified model',
+                '  google/gemini-3.1-pro  ',
+                {
+                    provider: 'google',
+                    providerModelName: 'gemini-3.1-pro',
+                    qualifiedModelId: 'google/gemini-3.1-pro',
+                },
+            ],
+            [
+                'non-google provider namespace',
+                'openai/gpt-6-luna-decisions',
+                {
+                    provider: 'openai',
+                    providerModelName: 'gpt-6-luna-decisions',
+                    qualifiedModelId: 'openai/gpt-6-luna-decisions',
+                },
+            ],
+            [
+                'nested slash preserves remainder as providerModelName',
+                'openrouter/google/gemini-3.8-flash',
+                {
+                    provider: 'openrouter',
+                    providerModelName: 'google/gemini-3.8-flash',
+                    qualifiedModelId: 'openrouter/google/gemini-3.8-flash',
+                },
+            ],
+            [
+                'unprefixed model defaults to google provider',
+                'gemini-3.8-flash',
+                {
+                    provider: 'google',
+                    providerModelName: 'gemini-3.8-flash',
+                    qualifiedModelId: 'gemini-3.8-flash',
+                },
+            ],
+            [
+                'leading slash falls back to google without stripping',
+                '/gemini-3.8-flash',
+                {
+                    provider: 'google',
+                    providerModelName: '/gemini-3.8-flash',
+                    qualifiedModelId: '/gemini-3.8-flash',
+                },
+            ],
+            [
+                'trailing slash falls back to google without stripping',
+                'google/',
+                {
+                    provider: 'google',
+                    providerModelName: 'google/',
+                    qualifiedModelId: 'google/',
+                },
+            ],
+            [
+                'whitespace-only input normalizes to empty model name',
+                '   ',
+                {
+                    provider: 'google',
+                    providerModelName: '',
+                    qualifiedModelId: '',
+                },
+            ],
+        ])('parses %s (%s)', (_label, input, expected) => {
+            expect(parseQualifiedModelId(input)).toEqual(expected);
+        });
+    });
+
+    // =========================================================================
     // getGoogleModel Tests
     // =========================================================================
     describe('getGoogleModel', () => {
@@ -177,6 +260,108 @@ describe('AI Client (Vercel AI SDK v7 Gateway & Model Registry)', () => {
                     apiKey: 'test-api-key-1',
                 })
             );
+        });
+
+        it('strips google/ prefix at the SDK boundary while indexing circuit breakers by full qualifiedModelId', async () => {
+            const { modelInstance } = await getGoogleModel('google/gemini-3.8-flash');
+            expect(modelInstance).toEqual(
+                expect.objectContaining({
+                    modelId: 'gemini-3.8-flash',
+                })
+            );
+
+            // 503 failure records circuit failure under full qualifiedModelId, not stripped name
+            sdkMocks.generateTextMock.mockRejectedValueOnce(new Error('503 Service Unavailable'));
+            await expect(
+                executeStructuredGeneration({
+                    modelId: 'google/gemini-3.8-flash',
+                    schema: z.object({ ok: z.boolean() }),
+                    prompt: 'Overload check',
+                })
+            ).rejects.toThrow('503 Service Unavailable');
+
+            expect(mockStore.get('gemini:model_failures:google/gemini-3.8-flash')).toBe(1);
+            expect(mockStore.get('gemini:model_failures:gemini-3.8-flash')).toBeUndefined();
+
+            // Open circuit keyed by full qualifiedModelId blocks execution before SDK call
+            mockStore.set('gemini:circuit_breaker:google/gemini-3.8-flash', 'open');
+            await expect(
+                executeStructuredGeneration({
+                    modelId: 'google/gemini-3.8-flash',
+                    schema: z.object({ ok: z.boolean() }),
+                    prompt: 'Blocked check',
+                })
+            ).rejects.toThrow(CircuitBreakerOpenError);
+            expect(sdkMocks.generateTextMock).toHaveBeenCalledTimes(1);
+        });
+
+        it.each([
+            [
+                'executeStructuredGeneration',
+                () =>
+                    executeStructuredGeneration({
+                        modelId: '  google/gemini-3.8-flash  ',
+                        schema: z.object({ ok: z.boolean() }),
+                        prompt: 'Trimmed circuit check',
+                    }),
+            ],
+            [
+                'executeToolAgentGeneration',
+                () =>
+                    executeToolAgentGeneration({
+                        modelId: '  google/gemini-3.8-flash  ',
+                        tools: {} as ToolSet,
+                        prompt: 'Trimmed circuit check',
+                    }),
+            ],
+            [
+                'executeStreamingGeneration',
+                () =>
+                    executeStreamingGeneration({
+                        modelId: '  google/gemini-3.8-flash  ',
+                        prompt: 'Trimmed circuit check',
+                    }),
+            ],
+        ])(
+            '%s normalizes untrimmed modelId when checking circuit-breaker state',
+            async (_fnName, invokeGateway) => {
+                mockStore.set('gemini:circuit_breaker:google/gemini-3.8-flash', 'open');
+
+                await expect(invokeGateway()).rejects.toThrow(
+                    new CircuitBreakerOpenError('google/gemini-3.8-flash')
+                );
+                expect(sdkMocks.generateTextMock).not.toHaveBeenCalled();
+                expect(sdkMocks.streamTextMock).not.toHaveBeenCalled();
+            }
+        );
+
+        it('normalizes untrimmed modelId for failure recording and returned modelId', async () => {
+            sdkMocks.generateTextMock.mockRejectedValueOnce(new Error('503 Service Unavailable'));
+
+            await expect(
+                executeToolAgentGeneration({
+                    modelId: '  google/gemini-3.8-flash  ',
+                    tools: {} as ToolSet,
+                    prompt: 'Overload check',
+                })
+            ).rejects.toThrow('503 Service Unavailable');
+
+            expect(mockStore.get('gemini:model_failures:google/gemini-3.8-flash')).toBe(1);
+            expect(mockStore.get('gemini:model_failures:  google/gemini-3.8-flash  ')).toBeUndefined();
+
+            sdkMocks.generateTextMock.mockResolvedValueOnce({
+                output: { ok: true },
+                usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+                finishReason: 'stop',
+            });
+
+            const res = await executeStructuredGeneration({
+                modelId: '  google/gemini-3.8-flash  ',
+                schema: z.object({ ok: z.boolean() }),
+                prompt: 'Success check',
+            });
+            expect(res.modelId).toBe('google/gemini-3.8-flash');
+            expect(mockStore.get('gemini:model_failures:google/gemini-3.8-flash')).toBeUndefined();
         });
     });
 

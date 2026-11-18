@@ -711,7 +711,7 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
         "/workspace/editor/file-doc-1"
       );
       expect(screen.getByText("Research Papers").closest("a")?.getAttribute("href")).toBe(
-        "/workspace"
+        "/workspace?folderId=folder-1"
       );
     });
   });

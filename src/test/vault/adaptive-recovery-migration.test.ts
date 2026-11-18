@@ -29,8 +29,7 @@ import { VaultManager, sessionKeyStore } from '@/lib/vault/vault-manager';
 import {
   cryptoWorkerBridge,
   generateDirectRandomBytes,
-  wipeBuffer,
-  base64ToUint8Array
+  wipeBuffer
 } from '@/lib/sync/crypto-worker-bridge';
 
 const TEST_USER = 'user-adaptive-migration-phase9';
@@ -86,19 +85,12 @@ describe('Phase 9: Cryptographic Hierarchy, Standard AAD & Adaptive Dual-Try Mig
     });
   });
 
-  describe('2. Standardized AAD Contexts (LUGX-005)', () => {
+  describe('2. Standardized AAD Contexts (zk:v1)', () => {
     it('generates canonical v1 AAD formats', () => {
-      expect(AAD.passwordWrap(TEST_USER)).toBe(`lugx:v1:pass:${TEST_USER}`);
-      expect(AAD.recoveryWrap(TEST_USER)).toBe(`lugx:v1:recovery:${TEST_USER}`);
-      expect(AAD.deviceWrap(TEST_USER, 3)).toBe(`lugx:v1:device:${TEST_USER}:3`);
-      expect(AAD.file(TEST_USER, 'doc-123')).toBe(`lugx:v1:file:${TEST_USER}:doc-123`);
-    });
-
-    it('provides legacy fallback formats', () => {
-      expect(AAD.legacy.seedWrap(TEST_USER)).toBe(`vault:seed:${TEST_USER}`);
-      expect(AAD.legacy.passWrap(TEST_USER)).toBe(`vault:pass:${TEST_USER}`);
-      expect(AAD.legacy.recoveryWrap(TEST_USER)).toBe(`vault:recovery:${TEST_USER}`);
-      expect(AAD.legacy.file(TEST_USER, 'doc-123')).toBe(`vault:file:${TEST_USER}:doc-123`);
+      expect(AAD.passwordWrap(TEST_USER)).toBe(`zk:v1:pass:${TEST_USER}`);
+      expect(AAD.recoveryWrap(TEST_USER)).toBe(`zk:v1:recovery:${TEST_USER}`);
+      expect(AAD.deviceWrap(TEST_USER, 3)).toBe(`zk:v1:device:${TEST_USER}:3`);
+      expect(AAD.file(TEST_USER, 'doc-123')).toBe(`zk:v1:file:${TEST_USER}:doc-123`);
     });
 
     it('rejects empty identifiers with AADValidationError', () => {
@@ -109,68 +101,8 @@ describe('Phase 9: Cryptographic Hierarchy, Standard AAD & Adaptive Dual-Try Mig
     });
   });
 
-  describe('3. Adaptive Dual-Try Recovery Migration (LUGX-005 Resolution)', () => {
-    it('successfully recovers a legacy vault created with vault:seed: and re-wraps with lugx:v1:recovery:', async () => {
-      const masterKey = await generateDirectRandomBytes(32);
-      const mnemonic = await generateMnemonic(16);
-      const recoverySalt = await generateDirectRandomBytes(16);
-
-      // Simulate legacy vault creation: KEK derived from mnemonic, wrapped with AAD vault:seed:<userId>
-      const seedBytes = await cryptoWorkerBridge.mnemonicToSeed(mnemonic, recoverySalt, TEST_ITERATIONS);
-      const kekSeed = seedBytes.slice(0, 32);
-      wipeBuffer(seedBytes);
-
-      const legacyIv = await generateDirectRandomBytes(12);
-      const legacyAAD = AAD.legacy.seedWrap(TEST_USER); // 'vault:seed:userId'
-      const legacyWrapResult = await cryptoWorkerBridge.wrapKeyRaw(
-        kekSeed,
-        masterKey,
-        legacyIv,
-        legacyAAD
-      );
-      wipeBuffer(kekSeed);
-
-      const legacyEnvelopePayload = JSON.stringify({
-        ciphertext: legacyWrapResult.wrappedKeyBase64,
-        iv: legacyWrapResult.ivBase64
-      });
-
-      // Execute Adaptive Dual-Try Recovery
-      const recoveryResult = await adaptiveUnwrapRecoverySeed({
-        seedMnemonic: mnemonic,
-        recoveryEncryptedMasterKey: legacyEnvelopePayload,
-        recoverySaltBytes: recoverySalt,
-        userId: TEST_USER,
-        kdfIterations: TEST_ITERATIONS
-      });
-
-      // Assertions
-      expect(recoveryResult.wasMigrated).toBe(true);
-      expect(Array.from(recoveryResult.masterKey)).toEqual(Array.from(masterKey));
-      expect(recoveryResult.reWrappedEnvelope).toBeDefined();
-
-      // Verify that the re-wrapped envelope now successfully unwraps under canonical AAD without legacy fallback
-      const reWrapped = recoveryResult.reWrappedEnvelope!;
-      const newSeedBytes = await cryptoWorkerBridge.mnemonicToSeed(mnemonic, recoverySalt, TEST_ITERATIONS);
-      const newKekSeed = newSeedBytes.slice(0, 32);
-      wipeBuffer(newSeedBytes);
-
-      const canonicalAAD = AAD.recoveryWrap(TEST_USER); // 'lugx:v1:recovery:userId'
-      const unwrappedUnderCanonical = await cryptoWorkerBridge.unwrapKeyRaw(
-        newKekSeed,
-        reWrapped.ciphertext,
-        base64ToUint8Array(reWrapped.iv),
-        canonicalAAD
-      );
-
-      expect(Array.from(unwrappedUnderCanonical)).toEqual(Array.from(masterKey));
-      wipeBuffer(newKekSeed);
-      wipeBuffer(unwrappedUnderCanonical);
-      wipeBuffer(masterKey);
-      wipeBuffer(recoveryResult.masterKey);
-    });
-
-    it('unwraps canonical modern vaults directly on Try 1 without migration (wasMigrated: false)', async () => {
+  describe('3. Recovery Seed Unwrap', () => {
+    it('unwraps canonical modern vaults directly without migration (wasMigrated: false)', async () => {
       const masterKey = await generateDirectRandomBytes(32);
       const mnemonic = await generateMnemonic(16);
       const recoverySalt = await generateDirectRandomBytes(16);

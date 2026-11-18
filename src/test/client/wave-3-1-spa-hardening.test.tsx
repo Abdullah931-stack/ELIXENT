@@ -509,7 +509,7 @@ describe("Wave 3.1 SPA Hardening & Edge Cases", () => {
                 "/workspace/editor/doc-42"
             );
             expect(screen.getByText("Notes").closest("a")?.getAttribute("href")).toBe(
-                "/workspace"
+                "/workspace?folderId=dir-7"
             );
 
             const newDocBtn = screen.getByRole("button", { name: /new document/i });
@@ -590,7 +590,7 @@ describe("Wave 3.1 SPA Hardening & Edge Cases", () => {
             ],
         ])("sanitizes directionSettings from localStorage (%s)", (_label, rawPref, expectedDir, expectedLock) => {
             setupDefaultOrchestrator();
-            window.localStorage.setItem("lugx_editor_direction_pref", rawPref);
+            window.localStorage.setItem("editor_direction_pref", rawPref);
 
             render(<EditorPage />);
 

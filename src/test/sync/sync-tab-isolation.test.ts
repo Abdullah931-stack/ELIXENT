@@ -2,7 +2,7 @@
  * Phase 15 Acceptance Tests: User-Scoped Cross-Tab Synchronization & Channel Isolation
  * 
  * Verifies:
- * 1. Channel names are derived strictly as `lugx_sync_${userId}`.
+ * 1. Channel names are derived strictly as `workspace_sync_${userId}`.
  * 2. Active sync user ID configuration works for ambient context.
  * 3. Strict tenant isolation: User A's channel messages never bleed into User B's channel.
  * 4. Sibling tabs with the same user ID receive broadcast events.
@@ -33,19 +33,19 @@ describe('Phase 15: User-Scoped Cross-Tab Synchronization (LUGX-109)', () => {
     });
 
     describe('Channel Name Scoping', () => {
-        it('should format channel name as lugx_sync_${userId}', () => {
-            expect(getSyncChannelName('user_12345')).toBe('lugx_sync_user_12345');
-            expect(getSyncChannelName('alice@example.com')).toBe('lugx_sync_alice@example.com');
+        it('should format channel name as workspace_sync_${userId}', () => {
+            expect(getSyncChannelName('user_12345')).toBe('workspace_sync_user_12345');
+            expect(getSyncChannelName('alice@example.com')).toBe('workspace_sync_alice@example.com');
         });
 
         it('should trim whitespace around userId', () => {
-            expect(getSyncChannelName('  user_trimmed  ')).toBe('lugx_sync_user_trimmed');
+            expect(getSyncChannelName('  user_trimmed  ')).toBe('workspace_sync_user_trimmed');
         });
 
         it('should fall back to activeSyncUserId if userId parameter is omitted', () => {
             setActiveSyncUserId('user_ambient_99');
             expect(getActiveSyncUserId()).toBe('user_ambient_99');
-            expect(getSyncChannelName()).toBe('lugx_sync_user_ambient_99');
+            expect(getSyncChannelName()).toBe('workspace_sync_user_ambient_99');
         });
 
         it('should fall back to textai_cross_tab_sync if no userId and no activeSyncUserId', () => {
@@ -72,7 +72,7 @@ describe('Phase 15: User-Scoped Cross-Tab Synchronization (LUGX-109)', () => {
             }, userB);
 
             // Sibling tab for user A sends an event
-            const siblingChannelA = new BroadcastChannel(`lugx_sync_${userA}`);
+            const siblingChannelA = new BroadcastChannel(`workspace_sync_${userA}`);
             siblingChannelA.postMessage({
                 type: 'file_saved',
                 fileId: 'file_alpha_1',
@@ -92,7 +92,7 @@ describe('Phase 15: User-Scoped Cross-Tab Synchronization (LUGX-109)', () => {
             expect(eventsUserB).toHaveLength(0);
 
             // Now sibling tab for user B sends an event
-            const siblingChannelB = new BroadcastChannel(`lugx_sync_${userB}`);
+            const siblingChannelB = new BroadcastChannel(`workspace_sync_${userB}`);
             siblingChannelB.postMessage({
                 type: 'file_deleted',
                 fileId: 'file_beta_9',
@@ -121,7 +121,7 @@ describe('Phase 15: User-Scoped Cross-Tab Synchronization (LUGX-109)', () => {
             }, userId);
 
             // Sibling tab sends event with currentTabId as sender (simulating echo)
-            const channel = new BroadcastChannel(`lugx_sync_${userId}`);
+            const channel = new BroadcastChannel(`workspace_sync_${userId}`);
             channel.postMessage({
                 type: 'file_saved',
                 fileId: 'file_echo',
@@ -156,7 +156,7 @@ describe('Phase 15: User-Scoped Cross-Tab Synchronization (LUGX-109)', () => {
             const controller = createUserTabSync(userId);
 
             expect(controller.userId).toBe(userId);
-            expect(controller.channelName).toBe(`lugx_sync_${userId}`);
+            expect(controller.channelName).toBe(`workspace_sync_${userId}`);
             expect(controller.currentTabId).toBe(currentTabId);
 
             const received: CrossTabSyncEvent[] = [];
@@ -164,7 +164,7 @@ describe('Phase 15: User-Scoped Cross-Tab Synchronization (LUGX-109)', () => {
                 received.push(e);
             });
 
-            const externalChannel = new BroadcastChannel(`lugx_sync_${userId}`);
+            const externalChannel = new BroadcastChannel(`workspace_sync_${userId}`);
             externalChannel.postMessage({
                 type: 'conflict_resolved',
                 fileId: 'file_resolved_via_ctrl',

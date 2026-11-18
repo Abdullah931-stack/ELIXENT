@@ -1,23 +1,22 @@
 /**
- * LIVE integration tests - getAIReservationStatus ownership and lifecycle reads
- * (Phase 11 closure evidence) against the ISOLATED Neon test branch. No mocks
- * except the Supabase session user (the only mocked boundary, matching the
- * established live-suite convention).
+ * LIVE integration tests - user-scoped getUserCreditBalance & getTodayUsage
+ * isolation reads against the ISOLATED Neon test branch. No mocks except the
+ * Supabase session user (the only mocked boundary, matching the established
+ * live-suite convention).
  *
  * Covered invariants:
- * 1. Reserved operation: full authoritative snapshot for its owner.
- * 2. After commitAIReservation: status reflects the committed transition.
- * 3. Cross-user denial: another session user gets not_found (no leakage).
- * 4. Unknown operationId: not_found.
+ * 1. Existing user: returns authoritative creditBalanceMicro via getUserCreditBalance.
+ * 2. Settled usage aggregation: getTodayUsage scopes daily usage strictly to owner.
+ * 3. Cross-user isolation: another user's settled transactions do not leak into getTodayUsage.
+ * 4. Unknown userId: getUserCreditBalance returns 0n.
  */
 import { describe, it, expect, afterAll, beforeEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import * as schema from "@/server/db/schema";
 import {
-    getAIReservationStatus,
-    reserveAndUpdateUsage,
-    commitAIReservation,
+    getUserCreditBalance,
+    getTodayUsage,
 } from "@/server/services/ai-settlement-service";
 import { getUser } from "@/lib/supabase/server";
 
@@ -55,60 +54,41 @@ afterAll(async () => {
     await cleanupTestUsers([USER_ID, OTHER_USER_ID]);
 });
 
-describe("LIVE: getAIReservationStatus on isolated branch (Phase 11)", () => {
-    it("returns the full authoritative snapshot of a reserved operation to its owner", async () => {
+describe("LIVE: User-scoped Credit Balance & Usage Isolation on isolated branch", () => {
+    it("returns the authoritative creditBalanceMicro for an existing user", async () => {
         await seed();
-        const operationId = "live-res-" + randomUUID();
-        const reserved = await reserveAndUpdateUsage(USER_ID, "improve", 150, "pro", {
-            operationId,
-        });
-        expect(reserved.reserved).toBe(true);
-
-        const status = await getAIReservationStatus(operationId, USER_ID);
-        expect(status.found).toBe(true);
-        if (!status.found) throw new Error("expected found=true");
-        expect(status.status).toBe("reserved");
-        expect(status.operation).toBe("improve");
-        expect(status.reservedUnits).toBe(150);
-        expect(status.committedUnits).toBe(0);
-        expect(status.refundedUnits).toBe(0);
-        expect(status.periodKey).toBe(todayUtc());
+        const balance = await getUserCreditBalance(USER_ID);
+        expect(balance).toBe(BigInt(1000000000));
     });
 
-    it("reflects the committed transition after commitAIReservation", async () => {
+    it("aggregates today's SETTLED usage scoped strictly to the requested user", async () => {
         await seed();
-        const operationId = "live-res-" + randomUUID();
-        const reserved = await reserveAndUpdateUsage(USER_ID, "improve", 150, "pro", {
-            operationId,
+        const opId = "live-res-" + randomUUID();
+        await testDb.insert(schema.creditLedgerTransactions).values({
+            operationId: opId,
+            userId: USER_ID,
+            nodeName: "agent:improve:hash:150",
+            modelId: "google/gemini-2.5-flash",
+            executionMode: "STREAMING_GENERATIVE",
+            inputTokens: 150,
+            outputTokens: 150,
+            deltaMicro: BigInt(-150000),
+            status: "SETTLED",
+            createdAt: new Date(),
         });
-        expect(reserved.reserved).toBe(true);
 
-        const commit = await commitAIReservation(operationId);
-        expect(commit.committed).toBe(true);
+        const ownerUsage = await getTodayUsage(USER_ID);
+        expect(ownerUsage.userId).toBe(USER_ID);
+        expect(ownerUsage.date).toBe(todayUtc());
+        expect(ownerUsage.improveWords).toBeGreaterThanOrEqual(150);
 
-        const status = await getAIReservationStatus(operationId, USER_ID);
-        expect(status.found).toBe(true);
-        if (!status.found) throw new Error("expected found=true");
-        expect(status.status).toBe("committed");
-        expect(status.committedUnits).toBe(150);
+        const otherUsage = await getTodayUsage(OTHER_USER_ID);
+        expect(otherUsage.userId).toBe(OTHER_USER_ID);
+        expect(otherUsage.improveWords).toBe(0);
     });
 
-    it("denies a cross-user read: another session user gets not_found", async () => {
-        await seed();
-        const operationId = "live-res-" + randomUUID();
-        const reserved = await reserveAndUpdateUsage(USER_ID, "improve", 150, "pro", {
-            operationId,
-        });
-        expect(reserved.reserved).toBe(true);
-
-        vi.mocked(getUser).mockResolvedValueOnce({ id: OTHER_USER_ID } as never);
-
-        const status = await getAIReservationStatus(operationId, OTHER_USER_ID);
-        expect(status).toEqual({ found: false, reason: "not_found" });
-    });
-
-    it("returns not_found for an unknown operationId", async () => {
-        const status = await getAIReservationStatus("live-res-status-does-not-exist-" + randomUUID(), USER_ID);
-        expect(status).toEqual({ found: false, reason: "not_found" });
+    it("returns 0n for an unknown userId", async () => {
+        const balance = await getUserCreditBalance("00000000-0000-0000-0000-000000000999");
+        expect(balance).toBe(BigInt(0));
     });
 });

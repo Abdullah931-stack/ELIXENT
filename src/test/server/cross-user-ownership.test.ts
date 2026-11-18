@@ -27,7 +27,12 @@ import {
 } from "@/server/actions/files";
 import { moveFile } from "@/server/actions/folders";
 import { importFile } from "@/server/actions/import-file";
-import { getAIReservationStatus } from "@/server/services/ai-settlement-service";
+import {
+    flushPendingSettlementsToPostgres,
+    getTodayUsage,
+    getUserCreditBalance,
+} from "@/server/services/ai-settlement-service";
+import { REDIS_KEYS } from "@/lib/metering/constants";
 import { syncUserToDatabase } from "@/server/actions/auth-actions";
 import { handleAgentStreamPost as agentStreamPOST } from "@/server/routes/agent.routes";
 import { CloudPostgresWorkspaceProvider } from "@/core/workspace/cloud-provider";
@@ -260,24 +265,57 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
     });
 
     describe("AI Operations, Reservations & Stream Isolation", () => {
-        it("[DB] getAIReservationStatus: returns found: false (not_found) for foreign reservation", async () => {
+        it("[DB] getTodayUsage & getUserCreditBalance: isolates user ledger reads and balances from foreign user mutations", async () => {
+            await testDb
+                .update(schema.users)
+                .set({ creditBalanceMicro: BigInt(500_000) })
+                .where(eq(schema.users.id, USER_A_ID));
+            await testDb
+                .update(schema.users)
+                .set({ creditBalanceMicro: BigInt(900_000) })
+                .where(eq(schema.users.id, USER_B_ID));
+
             const opId = `op_b_${randomUUID()}`;
-            await testDb.insert(schema.creditLedgerTransactions).values({
-                operationId: opId,
-                userId: USER_B_ID,
-                modelId: "claude-3-5-sonnet",
-                executionMode: "STREAMING_GENERATIVE",
-                deltaMicro: BigInt(-50000),
-                status: "SETTLED",
-            });
+            const customRedis = {
+                pendingSettlements: new Map([
+                    [
+                        REDIS_KEYS.pendingSettlements(USER_B_ID),
+                        new Map([
+                            [
+                                opId,
+                                JSON.stringify({
+                                    userId: USER_B_ID,
+                                    nodeName: "agent:improve:file_b:200",
+                                    modelId: "google/gemini-3.8-flash",
+                                    executionMode: "STREAMING_GENERATIVE",
+                                    inputTokens: 200,
+                                    outputTokens: 50,
+                                    deltaMicro: -50_000,
+                                    status: "SETTLED",
+                                    created_at_ms: Date.now() - 1000,
+                                }),
+                            ],
+                        ]),
+                    ],
+                ]),
+                dirtyWallets: new Set([USER_B_ID]),
+            };
+
+            await flushPendingSettlementsToPostgres(USER_B_ID, { customRedis });
 
             currentSessionUser = { id: USER_A_ID, email: "user-a-phase12@example.com" };
-            const statusResult = await getAIReservationStatus(opId, USER_A_ID);
+            const usageA = await getTodayUsage(USER_A_ID);
+            expect(usageA.userId).toBe(USER_A_ID);
+            expect(usageA.correctWords).toBe(0);
+            expect(usageA.improveWords).toBe(0);
 
-            expect(statusResult.found).toBe(false);
-            if (!statusResult.found) {
-                expect(statusResult.reason).toBe("not_found");
-            }
+            const usageB = await getTodayUsage(USER_B_ID);
+            expect(usageB.improveWords).toBeGreaterThanOrEqual(200);
+
+            const balanceA = await getUserCreditBalance(USER_A_ID);
+            const balanceB = await getUserCreditBalance(USER_B_ID);
+            expect(balanceA).toBe(BigInt(500_000));
+            expect(balanceB).toBe(BigInt(850_000));
         });
 
         it("[DB] updateFileContent with operationId: returns not_found when committing into foreign file with foreign reservation", async () => {
@@ -312,9 +350,6 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
 
             expect(commitResult.success).toBe(false);
             expect(commitResult.status).toBe("not_found");
-
-            const foreignReservationStatus = await getAIReservationStatus(opId, USER_A_ID);
-            expect(foreignReservationStatus).toEqual({ found: false, reason: "not_found" });
         });
 
         it("[DB] CloudPostgresWorkspaceProvider: rejects workspace file access with 404 if fileId belongs to another user", async () => {

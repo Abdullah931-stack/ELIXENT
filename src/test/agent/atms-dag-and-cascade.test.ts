@@ -31,7 +31,6 @@ import {
 } from "@/core/agent/atms/candidate-retriever";
 import {
   PROJECT_TAXONOMY_SENTINEL_ID,
-  toTaxonomyLedgerPayload,
   type ProjectTaxonomyState,
 } from "@/core/agent/taxonomy/predefined-tags";
 import { linkAssumptionsToPriorDecisions } from "@/core/agent/atms/relational-linker";
@@ -41,53 +40,12 @@ import {
   type LinkedAssumptionInput,
 } from "@/core/agent/atms/invalidation";
 import { evaluateRelationalLinksBatch } from "@/lib/jev/client";
-import { db } from "@/server/db";
 
 vi.mock("@/lib/jev/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/jev/client")>();
   return {
     ...actual,
     evaluateRelationalLinksBatch: vi.fn(actual.evaluateRelationalLinksBatch),
-  };
-});
-
-// ============================================================================
-// Database Client Mocking for Hermetic Unit Tests
-// ============================================================================
-
-vi.mock("@/server/db", () => {
-  const mockSelectWhere = vi.fn();
-  const mockSelectFrom = vi.fn(() => ({ where: mockSelectWhere }));
-  const mockSelect = vi.fn(() => ({ from: mockSelectFrom }));
-
-  const mockInsertConflict = vi.fn();
-  const mockInsertValues = vi.fn(() => ({ onConflictDoUpdate: mockInsertConflict }));
-  const mockInsert = vi.fn(() => ({ values: mockInsertValues }));
-
-  const mockDeleteWhere = vi.fn();
-  const mockDelete = vi.fn(() => ({ where: mockDeleteWhere }));
-
-  const mockTx = {
-    select: mockSelect,
-    insert: mockInsert,
-    delete: mockDelete,
-  };
-
-  const mockTransaction = vi.fn(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx));
-
-  return {
-    db: {
-      select: mockSelect,
-      insert: mockInsert,
-      delete: mockDelete,
-      transaction: mockTransaction,
-    },
-    txDb: {
-      select: mockSelect,
-      insert: mockInsert,
-      delete: mockDelete,
-      transaction: mockTransaction,
-    },
   };
 });
 
@@ -306,133 +264,20 @@ describe("ATMS DAG Foundation & Project Decision Ledger Store (dag.ts)", () => {
       );
     });
 
-    it("should load decision rows and parse project taxonomy sentinel correctly", async () => {
-      const taxonomyState: ProjectTaxonomyState = {
-        projectId: "proj-100",
-        addedTags: ["wasm_security"],
-        removedTags: ["kubernetes_deployment"],
-        updatedAt: "2026-10-31T10:00:00.000Z",
-      };
-      const taxonomyPayload = toTaxonomyLedgerPayload(taxonomyState);
-
-      const mockDbRows = [
-        {
-          projectId: "proj-100",
-          userId: "user-abc",
-          decisionId: "dec-cache",
-          topicSlug: "cache-layer",
-          questionPrompt: "Which cache layer?",
-          conceptTags: ["caching", "performance"],
-          selectedOptionKey: "REDIS",
-          selectionRationale: "In-memory speed",
-          runnerUpOptionKey: "MEMCACHED",
-          evaluatedAlternatives: [],
-          status: "APPROVED_DIRECT",
-          impactTier: "CORE_ARCHITECTURAL",
-          isLoadBearing: true,
-          dependsOn: [],
-          dependedBy: [],
-          affectedSections: [{ fileId: "f1", headingSlug: "cache" }],
-          updatedAt: new Date("2026-10-31T10:00:00Z"),
-        },
-        {
-          projectId: "proj-100",
-          userId: "user-abc",
-          ...taxonomyPayload,
-          updatedAt: new Date("2026-10-31T10:00:00Z"),
-        },
-      ];
-
-      const selectMock = vi.mocked(db.select);
-      const fromMock = vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue(mockDbRows),
-      });
-      selectMock.mockReturnValue({ from: fromMock } as unknown as ReturnType<typeof db.select>);
-
+    it("returns an empty in-memory ledger state for valid projectId and userId", async () => {
       const result = await loadProjectDecisionLedger("proj-100", "user-abc");
 
-      expect(result.masterLedger["dec-cache"]).toBeDefined();
-      expect(result.masterLedger["dec-cache"].decisionId).toBe("dec-cache");
-      expect(result.masterLedger["dec-cache"].selectedOptionKey).toBe("REDIS");
-      expect(result.masterLedger[PROJECT_TAXONOMY_SENTINEL_ID]).toBeUndefined();
-
-      expect(result.projectTaxonomy).toBeDefined();
-      expect(result.projectTaxonomy?.projectId).toBe("proj-100");
-      expect(result.projectTaxonomy?.addedTags).toEqual(["wasm_security"]);
-      expect(result.projectTaxonomy?.removedTags).toEqual(["kubernetes_deployment"]);
-    });
-
-    it("should filter out rows belonging to another project or user and return empty state if no records match", async () => {
-      const foreignRows = [
-        {
-          projectId: "proj-FOREIGN",
-          userId: "user-abc",
-          decisionId: "dec-leak-1",
-        },
-        {
-          projectId: "proj-100",
-          userId: "user-FOREIGN",
-          decisionId: "dec-leak-2",
-        },
-      ];
-
-      const selectMock = vi.mocked(db.select);
-      const fromMock = vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue(foreignRows),
+      expect(result).toEqual({
+        masterLedger: {},
+        projectTaxonomy: null,
       });
-      selectMock.mockReturnValue({ from: fromMock } as unknown as ReturnType<typeof db.select>);
-
-      const result = await loadProjectDecisionLedger("proj-100", "user-abc");
-
-      expect(result.masterLedger).toEqual({});
-      expect(result.projectTaxonomy).toBeNull();
-    });
-
-    it("should safely handle database rows with null/missing array fields and fallback defaults", async () => {
-      const edgeRow = [
-        {
-          projectId: "proj-fallback",
-          userId: "user-fallback",
-          decisionId: "dec-sparse",
-          topicSlug: "sparse-topic",
-          questionPrompt: "Sparse prompt?",
-          conceptTags: null,
-          selectedOptionKey: "OPT_A",
-          selectionRationale: "Rationale",
-          runnerUpOptionKey: null,
-          evaluatedAlternatives: null,
-          status: "UNKNOWN_STATUS" as unknown as "APPROVED_DIRECT",
-          impactTier: "UNKNOWN_TIER" as unknown as "CORE_ARCHITECTURAL",
-          isLoadBearing: false,
-          dependsOn: null,
-          dependedBy: null,
-          affectedSections: null,
-          updatedAt: undefined,
-        },
-      ];
-
-      const selectMock = vi.mocked(db.select);
-      const fromMock = vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue(edgeRow),
-      });
-      selectMock.mockReturnValue({ from: fromMock } as unknown as ReturnType<typeof db.select>);
-
-      const result = await loadProjectDecisionLedger("proj-fallback", "user-fallback");
-      const loadedNode = result.masterLedger["dec-sparse"];
-
-      expect(loadedNode).toBeDefined();
-      expect(loadedNode.conceptTags).toEqual([]);
-      expect(loadedNode.evaluatedAlternatives).toEqual([]);
-      expect(loadedNode.affectedSections).toEqual([]);
-      expect(loadedNode.status).toBe("APPROVED_DIRECT");
-      expect(loadedNode.impactTier).toBe("CORE_ARCHITECTURAL");
     });
   });
 
   // =========================================================================
-  // 4. syncMasterLedgerToProjectStore — Persistence, Eviction & Multi-Tenancy
+  // 4. syncMasterLedgerToProjectStore — Pure In-Memory Adapter Stub
   // =========================================================================
-  describe("4. syncMasterLedgerToProjectStore — Atomic Upsert & Eviction Pruning", () => {
+  describe("4. syncMasterLedgerToProjectStore — Validation & Normalization", () => {
     it("should validate input arguments and reject invalid masterLedger structures", async () => {
       await expect(
         syncMasterLedgerToProjectStore("", "user-1", {})
@@ -447,189 +292,26 @@ describe("ATMS DAG Foundation & Project Decision Ledger Store (dag.ts)", () => {
       ).rejects.toThrow("ATMS Decision Ledger: masterLedger must be a valid record object.");
     });
 
-    it("should abort and throw when an existing project row is owned by a different userId (multi-tenant guard)", async () => {
-      const foreignRow = [
-        {
-          projectId: "proj-shared",
-          userId: "user-OTHER-TENANT",
-          decisionId: "dec-conflict",
-        },
-      ];
-
-      const selectMock = vi.mocked(db.select);
-      const fromMock = vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue(foreignRow),
-      });
-      selectMock.mockReturnValue({ from: fromMock } as unknown as ReturnType<typeof db.select>);
-
-      const masterLedger = {
-        "dec-auth": createTestDecisionNode({ decisionId: "dec-auth" }),
-      };
-
-      await expect(
-        syncMasterLedgerToProjectStore("proj-shared", "user-MY-TENANT", masterLedger)
-      ).rejects.toThrow(
-        'ATMS Decision Ledger: cross-tenant ownership conflict on project "proj-shared" decision "dec-conflict".'
-      );
-    });
-
-    it("should prune evicted decisions not present in active masterLedger while strictly sparing sentinels", async () => {
-      const persistedRows = [
-        {
-          projectId: "proj-1",
-          userId: "user-1",
-          decisionId: "dec-retained",
-        },
-        {
-          projectId: "proj-1",
-          userId: "user-1",
-          decisionId: "dec-obsolete-to-prune",
-        },
-        {
-          projectId: "proj-1",
-          userId: "user-1",
-          decisionId: PROJECT_TAXONOMY_SENTINEL_ID,
-        },
-      ];
-
-      const selectMock = vi.mocked(db.select);
-      const fromMock = vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue(persistedRows),
-      });
-      selectMock.mockReturnValue({ from: fromMock } as unknown as ReturnType<typeof db.select>);
-
-      const insertMock = vi.mocked(db.insert);
-      const insertValuesMock = vi.fn().mockReturnValue({
-        onConflictDoUpdate: vi.fn().mockResolvedValue(undefined),
-      });
-      insertMock.mockReturnValue({ values: insertValuesMock } as unknown as ReturnType<typeof db.insert>);
-
-      const deleteMock = vi.mocked(db.delete);
-      const deleteWhereMock = vi.fn().mockResolvedValue(undefined);
-      deleteMock.mockReturnValue({ where: deleteWhereMock } as unknown as ReturnType<typeof db.delete>);
-
-      const masterLedger = {
-        "dec-retained": createTestDecisionNode({ decisionId: "dec-retained" }),
-      };
-
-      await syncMasterLedgerToProjectStore("proj-1", "user-1", masterLedger, null, { pruneEvicted: true });
-
-      // Verifies delete was called for the evicted decision
-      expect(deleteMock).toHaveBeenCalledTimes(1);
-      expect(deleteWhereMock).toHaveBeenCalledTimes(1);
-
-      // Verifies upsert was called for the retained node
-      expect(insertMock).toHaveBeenCalledTimes(1);
-    });
-
-    it("should skip eviction deletion when pruneEvicted is explicitly set to false", async () => {
-      const persistedRows = [
-        {
-          projectId: "proj-1",
-          userId: "user-1",
-          decisionId: "dec-not-in-active",
-        },
-      ];
-
-      const selectMock = vi.mocked(db.select);
-      const fromMock = vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue(persistedRows),
-      });
-      selectMock.mockReturnValue({ from: fromMock } as unknown as ReturnType<typeof db.select>);
-
-      const insertMock = vi.mocked(db.insert);
-      const insertValuesMock = vi.fn().mockReturnValue({
-        onConflictDoUpdate: vi.fn().mockResolvedValue(undefined),
-      });
-      insertMock.mockReturnValue({ values: insertValuesMock } as unknown as ReturnType<typeof db.insert>);
-
-      const deleteMock = vi.mocked(db.delete);
-
-      const masterLedger = {
-        "dec-active": createTestDecisionNode({ decisionId: "dec-active" }),
-      };
-
-      await syncMasterLedgerToProjectStore("proj-1", "user-1", masterLedger, null, { pruneEvicted: false });
-
-      expect(deleteMock).not.toHaveBeenCalled();
-      expect(insertMock).toHaveBeenCalledTimes(1);
-    });
-
-    it("should upsert project taxonomy sentinel row when projectTaxonomy is provided", async () => {
-      const selectMock = vi.mocked(db.select);
-      const fromMock = vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue([]),
-      });
-      selectMock.mockReturnValue({ from: fromMock } as unknown as ReturnType<typeof db.select>);
-
-      const capturedRows: unknown[] = [];
-      const insertMock = vi.mocked(db.insert);
-      const insertValuesMock = vi.fn().mockImplementation((row) => {
-        capturedRows.push(row);
-        return {
-          onConflictDoUpdate: vi.fn().mockResolvedValue(undefined),
-        };
-      });
-      insertMock.mockReturnValue({ values: insertValuesMock } as unknown as ReturnType<typeof db.insert>);
-
+    it("resolves cleanly for valid masterLedger, optional taxonomy, and options without mutating input", async () => {
       const taxonomy: ProjectTaxonomyState = {
         projectId: "proj-1",
         addedTags: ["graphql_federation"],
         removedTags: [],
       };
-
-      const masterLedger = {
-        "dec-1": createTestDecisionNode({ decisionId: "dec-1" }),
+      const node = createTestDecisionNode({ decisionId: "dec-1" });
+      const masterLedger: Record<string, ATMSDecisionNode> = {
+        "dec-1": node,
       };
 
-      await syncMasterLedgerToProjectStore("proj-1", "user-1", masterLedger, taxonomy);
+      await expect(
+        syncMasterLedgerToProjectStore("proj-1", "user-1", masterLedger, taxonomy, { pruneEvicted: true })
+      ).resolves.toBeUndefined();
 
-      expect(capturedRows).toHaveLength(2);
-      const taxonomyRow = capturedRows.find(
-        (r) => (r as { decisionId: string }).decisionId === PROJECT_TAXONOMY_SENTINEL_ID
-      );
-      expect(taxonomyRow).toBeDefined();
-    });
+      await expect(
+        syncMasterLedgerToProjectStore("proj-1", "user-1", {}, null, { pruneEvicted: false })
+      ).resolves.toBeUndefined();
 
-    it("should prune all prior decisions when active masterLedger is empty", async () => {
-      const persistedRows = [
-        {
-          projectId: "proj-1",
-          userId: "user-1",
-          decisionId: "dec-to-prune-1",
-        },
-        {
-          projectId: "proj-1",
-          userId: "user-1",
-          decisionId: "dec-to-prune-2",
-        },
-      ];
-
-      const selectMock = vi.mocked(db.select);
-      const fromMock = vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue(persistedRows),
-      });
-      selectMock.mockReturnValue({ from: fromMock } as unknown as ReturnType<typeof db.select>);
-
-      const deleteMock = vi.mocked(db.delete);
-      const deleteWhereMock = vi.fn().mockResolvedValue(undefined);
-      deleteMock.mockReturnValue({ where: deleteWhereMock } as unknown as ReturnType<typeof db.delete>);
-
-      await syncMasterLedgerToProjectStore("proj-1", "user-1", {}, null, { pruneEvicted: true });
-
-      expect(deleteMock).toHaveBeenCalledTimes(1);
-    });
-
-    it("should return early without database operations when ledger is empty and pruneEvicted is false", async () => {
-      const selectMock = vi.mocked(db.select);
-      const insertMock = vi.mocked(db.insert);
-      const deleteMock = vi.mocked(db.delete);
-
-      await syncMasterLedgerToProjectStore("proj-1", "user-1", {}, null, { pruneEvicted: false });
-
-      expect(selectMock).not.toHaveBeenCalled();
-      expect(insertMock).not.toHaveBeenCalled();
-      expect(deleteMock).not.toHaveBeenCalled();
+      expect(masterLedger["dec-1"]).toBe(node);
     });
   });
 });

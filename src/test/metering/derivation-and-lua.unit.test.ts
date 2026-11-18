@@ -679,7 +679,7 @@ describe("Atomic Redis Lua Scripts & Execution Wrappers", () => {
     });
   });
 
-  describe("Idempotency via lugx:step_done", () => {
+  describe("Idempotency via credit:step_done", () => {
     it("returns ALREADY_DONE without double billing when stepKey was previously settled", async () => {
       const redis = new InMemoryRedisEvalClient();
       const userId = "user-idempotent";

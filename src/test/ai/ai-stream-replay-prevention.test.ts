@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { computeRequestHash, reserveAIQuota } from "@/server/services/ai-settlement-service";
+import { computeRequestHash } from "@/server/services/ai-settlement-service";
 import { handleAgentStreamPost as agentStreamRoute } from "@/server/routes/agent.routes";
 
 const {
@@ -97,51 +97,6 @@ describe("Phase 11: Replay Attack Defense & Request Fingerprint Validation", () 
 
         const hashOp = computeRequestHash("u1", "document_writer", "f1", "Hello World");
         expect(hash1).not.toBe(hashOp);
-    });
-
-    it("rejects reservation when operationId is reused with a divergent requestHash", async () => {
-        const operationId = "op-replay-1";
-        const legitimateHash = computeRequestHash("u1", "agent_stream", "f1", "Original Text");
-        const maliciousHash = computeRequestHash("u1", "agent_stream", "f1", "Tampered Text");
-
-        mockDb.query.creditLedgerTransactions.findFirst.mockResolvedValueOnce({
-            operationId,
-            userId: "u1",
-            nodeName: `reserved:agent_stream:${legitimateHash}:10`,
-            status: "SETTLED",
-        });
-
-        const result = await reserveAIQuota("u1", "agent_stream", 10, "free", {
-            operationId,
-            fileId: "f1",
-            requestHash: maliciousHash,
-        });
-
-        expect(result.reserved).toBe(false);
-        expect(result.isReplayConflict).toBe(true);
-        expect(result.reason).toContain("Replay attack detected");
-    });
-
-    it("rejects reservation when operationId belongs to a different user", async () => {
-        const operationId = "op-cross-user-replay";
-        const requestHash = computeRequestHash("u2", "agent_stream", "f1", "Text");
-
-        mockDb.query.creditLedgerTransactions.findFirst.mockResolvedValueOnce({
-            operationId,
-            userId: "u1",
-            nodeName: `reserved:agent_stream:${requestHash}:10`,
-            status: "SETTLED",
-        });
-
-        const result = await reserveAIQuota("u2", "agent_stream", 10, "free", {
-            operationId,
-            fileId: "f1",
-            requestHash,
-        });
-
-        expect(result.reserved).toBe(false);
-        expect(result.isReplayConflict).toBe(true);
-        expect(result.reason).toContain("belongs to another account");
     });
 
     it("mints fresh server-side operationId per POST /api/agent/stream invocation and prevents client operationId spoofing", async () => {

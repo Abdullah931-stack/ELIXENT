@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { handleAgentStreamPost as agentStreamRoute } from "@/server/routes/agent.routes";
-import { getAIReservationStatus } from "@/server/services/ai-settlement-service";
 import { updateFileContent } from "@/server/actions/files";
 import { getUser } from "@/lib/supabase/server";
 
@@ -84,14 +83,15 @@ describe("Phase 11 & Wave 12.2: Revocation of Client-Side Financial Authority & 
         expect(problem.title).toBe("Unauthorized");
     });
 
-    it("runtime invocation: rejects unauthenticated file content mutation and cross-user reservation status reads", async () => {
+    it("runtime invocation: rejects unauthenticated file content mutation and confirms legacy reservation status API is removed", async () => {
         const saveRes = await updateFileContent("file_unauth", "tampered content", {
             expectedVersion: 1,
         });
         expect(saveRes.success).toBe(false);
         expect(saveRes.status).toBe("unauthorized");
 
-        const statusRes = await getAIReservationStatus("op_unknown_probe", "user_unauth");
-        expect(statusRes).toEqual({ found: false, reason: "not_found" });
+        const settlementSvc = await import("@/server/services/ai-settlement-service");
+        expect((settlementSvc as Record<string, unknown>).getAIReservationStatus).toBeUndefined();
+        expect((settlementSvc as Record<string, unknown>).reserveAIQuota).toBeUndefined();
     });
 });

@@ -9,21 +9,34 @@
  * the exact failure mode the old code suffered from: a failed
  * processWithAI call permanently consumed quota the user never received.
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { eq } from "drizzle-orm";
 import crypto from "node:crypto";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
-import { reserveAndUpdateUsage, refundAIReservation } from "@/server/services/ai-settlement-service";
+import {
+    getUserCreditBalance,
+    flushPendingSettlementsToPostgres,
+} from "@/server/services/ai-settlement-service";
+import { StreamGovernor } from "@/lib/metering/stream-governor";
+import { isRedisConfigured } from "@/lib/redis";
 
 const TEST_USER_ID = "12121212-1212-1212-1212-121212121212"; // unique per suite — NOT shared with softdelete tests (parallel workers)
-const TIER = "pro";
 let dbAvailable = false;
 
 beforeAll(async () => {
+    if (!isRedisConfigured()) {
+        throw new Error(
+            "[test:live] UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN must be configured for ai-ops.refund.test.ts (fail-closed)."
+        );
+    }
     dbAvailable = await isTestDbAvailable();
-    if (!dbAvailable) return;
+    if (!dbAvailable) {
+        throw new Error(
+            "[test:live] Test database is unreachable for ai-ops.refund.test.ts (fail-closed)."
+        );
+    }
     await ensureTestDb();
     await runMigrations();
     await testDb
@@ -37,12 +50,6 @@ beforeAll(async () => {
         .onConflictDoNothing();
 });
 
-beforeEach((ctx) => {
-    if (!dbAvailable) {
-        ctx.skip();
-    }
-});
-
 afterAll(async () => {
     if (!dbAvailable) return;
     try {
@@ -54,96 +61,65 @@ afterAll(async () => {
     try { await cleanupTestUsers([TEST_USER_ID]); } catch { /* ignore */ }
 });
 
-async function reserve(
-    userId: string,
-    operation: string,
-    wordCount: number,
-    operationId: string = `op_${crypto.randomUUID()}`
-): Promise<{ reserved: boolean; operationId: string }> {
-    const requestHash = crypto.createHash("sha256").update(`${userId}:${operation}:${wordCount}:${operationId}`).digest("hex");
-    const result = await reserveAndUpdateUsage(userId, operation, wordCount, TIER, {
-        operationId,
-        requestHash,
-    });
-    return { reserved: result.reserved, operationId };
-}
+describe("SRS-04 lease abort & settlement flush after AI failure", () => {
+    it("releases unused reserved credits and records ABORTED settlement when governor aborts before output", async () => {
+        const beforeBalance = await getUserCreditBalance(TEST_USER_ID);
+        const operationId = `op_${crypto.randomUUID()}`;
+        const abortController = new AbortController();
 
-async function refund(operationId: string): Promise<boolean> {
-    const result = await refundAIReservation(operationId, "stream_failed");
-    return result.refunded;
-}
+        const governor = new StreamGovernor(
+            TEST_USER_ID,
+            operationId,
+            "google/gemini-3.8-flash",
+            0,
+            abortController
+        );
 
-async function snapshotCreditBalance(userId: string): Promise<bigint> {
-    const row = await testDb.query.users.findFirst({
-        where: eq(schema.users.id, userId),
-        columns: { creditBalanceMicro: true },
-    });
-    return row?.creditBalanceMicro ?? BigInt(0);
-}
+        const lease = await governor.initializeLease(0);
+        expect(lease.canAfford).toBe(true);
 
-describe("quota refund after AI failure (W1)", () => {
-    it("restores credit balance when a reserved correct() operation fails", async () => {
-        const beforeBalance = await snapshotCreditBalance(TEST_USER_ID);
+        // Simulate AI provider failure BEFORE producing tokens:
+        governor.abort("stream_failed");
+        const settleRes = await governor.settle("ABORTED");
+        expect(settleRes.status).toBe("SETTLED");
+        expect(settleRes.actualCostMicro).toBe(0);
+        expect(settleRes.refundMicro).toBe(Number(lease.reservedMicro));
 
-        const WORDS = 120;
-        const { reserved, operationId } = await reserve(TEST_USER_ID, "correct", WORDS);
-        expect(reserved).toBe(true);
+        await flushPendingSettlementsToPostgres(TEST_USER_ID);
 
-        // Simulate AI provider failure AFTER reservation:
-        const refunded = await refund(operationId);
-        expect(refunded).toBe(true);
-
-        const afterBalance = await snapshotCreditBalance(TEST_USER_ID);
+        const afterBalance = await getUserCreditBalance(TEST_USER_ID);
         expect(afterBalance).toBe(beforeBalance);
+
+        const txRow = await testDb.query.creditLedgerTransactions.findFirst({
+            where: eq(schema.creditLedgerTransactions.operationId, operationId),
+        });
+        expect(txRow?.status).toBe("ABORTED");
     });
 
-    it("restores credit balance when a reserved summarize() operation fails", async () => {
-        const beforeBalance = await snapshotCreditBalance(TEST_USER_ID);
+    it("settle() is idempotent on double-abort and never underflows balance", async () => {
+        const beforeBalance = await getUserCreditBalance(TEST_USER_ID);
+        const operationId = `op_${crypto.randomUUID()}`;
+        const abortController = new AbortController();
 
-        const WORDS = 45;
-        const { reserved, operationId } = await reserve(TEST_USER_ID, "summarize", WORDS);
-        expect(reserved).toBe(true);
+        const governor = new StreamGovernor(
+            TEST_USER_ID,
+            operationId,
+            "google/gemini-3.8-flash",
+            0,
+            abortController
+        );
 
-        const refunded = await refund(operationId);
-        expect(refunded).toBe(true);
+        const lease = await governor.initializeLease(0);
+        expect(lease.canAfford).toBe(true);
 
-        const afterBalance = await snapshotCreditBalance(TEST_USER_ID);
-        expect(afterBalance).toBe(beforeBalance);
-    });
+        const firstSettle = await governor.settle("ABORTED");
+        const secondSettle = await governor.settle("ABORTED");
+        expect(firstSettle).toEqual(secondSettle);
 
-    it("bounded refund never underflows counters below zero (double-refund safety)", async () => {
-        const beforeBalance = await snapshotCreditBalance(TEST_USER_ID);
+        await flushPendingSettlementsToPostgres(TEST_USER_ID);
 
-        const WORDS = 30;
-        const { reserved, operationId } = await reserve(TEST_USER_ID, "correct", WORDS);
-        expect(reserved).toBe(true);
-
-        // A bug-triggered DOUBLE refund:
-        const firstRefund = await refund(operationId);
-        expect(firstRefund).toBe(true);
-        const secondRefund = await refund(operationId);
-        expect(secondRefund).toBe(false);
-
-        const afterBalance = await snapshotCreditBalance(TEST_USER_ID);
+        const afterBalance = await getUserCreditBalance(TEST_USER_ID);
         expect(afterBalance).toBeGreaterThanOrEqual(BigInt(0));
         expect(afterBalance).toBe(beforeBalance);
-    });
-
-    it("refund restores the exact balance under concurrent traffic", async () => {
-        const beforeBalance = await snapshotCreditBalance(TEST_USER_ID);
-
-        const WORDS = 50;
-        const { reserved: res1, operationId: op1 } = await reserve(TEST_USER_ID, "correct", WORDS);
-        expect(res1).toBe(true);
-
-        // A concurrent successful request from the same user:
-        const { reserved: res2 } = await reserve(TEST_USER_ID, "correct", 40);
-        expect(res2).toBe(true);
-
-        const refunded = await refund(op1);
-        expect(refunded).toBe(true);
-
-        const afterBalance = await snapshotCreditBalance(TEST_USER_ID);
-        expect(afterBalance).toBeLessThanOrEqual(beforeBalance);
     });
 });

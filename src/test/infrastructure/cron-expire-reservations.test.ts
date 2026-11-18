@@ -167,7 +167,7 @@ describe("Cron: Batch-Draining Sweeper (/api/cron/expire-reservations) — TD-02
     expect(data.netDeltaMicro).toBe("-120000");
     expect(data.timestamp).toBeDefined();
 
-    expect(redisModule.redis.smembers).toHaveBeenCalledWith("lugx:dirty_wallets");
+    expect(redisModule.redis.smembers).toHaveBeenCalledWith("credit:dirty_wallets");
     expect(
       aiSettlement.flushPendingSettlementsToPostgres
     ).toHaveBeenCalledTimes(2);

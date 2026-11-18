@@ -14,20 +14,19 @@
  *     after commit refused.
  *  5. Refund restores usage counters exactly once; second refund no-ops.
  */
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, afterAll, beforeAll } from "vitest";
 import { eq } from "drizzle-orm";
 import { testDb, cleanupTestUsers } from "@/test/test-db";
 import * as schema from "@/server/db/schema";
 import {
-    reserveAndUpdateUsage,
-    commitAIReservation,
-    refundAIReservation,
+    getUserCreditBalance,
+    flushPendingSettlementsToPostgres,
 } from "@/server/services/ai-settlement-service";
+import { StreamGovernor } from "@/lib/metering/stream-governor";
+import { isRedisConfigured } from "@/lib/redis";
 
 // Placeholder-pattern UUID so guarded cleanup can never touch a real account.
 const USER_ID = "17171717-1717-1717-1717-171717171717";
-
-const todayUtc = () => new Date().toISOString().slice(0, 10);
 
 async function seed(): Promise<void> {
     await testDb
@@ -46,14 +45,6 @@ async function seed(): Promise<void> {
     await testDb.delete(schema.creditLedgerTransactions).where(eq(schema.creditLedgerTransactions.userId, USER_ID));
 }
 
-async function getCreditBalance() {
-    const user = await testDb.query.users.findFirst({
-        where: eq(schema.users.id, USER_ID),
-        columns: { creditBalanceMicro: true },
-    });
-    return user?.creditBalanceMicro ?? BigInt(0);
-}
-
 async function getTransactions(operationId: string) {
     return testDb
         .select()
@@ -65,113 +56,70 @@ afterAll(async () => {
     await cleanupTestUsers([USER_ID]);
 });
 
-describe("LIVE: AI quota reservation lifecycle on isolated branch", () => {
-    it("reserves quota atomically: one row, one deduction, UTC periodKey", async () => {
-        await seed();
-        const res = await reserveAndUpdateUsage(
-            USER_ID,
-            "improve",
-            150,
-            "pro",
-            { operationId: "live-quota-1" }
-        );
-
-        expect(res.reserved).toBe(true);
-        expect(res.periodKey).toBe(todayUtc());
-
-        const rows = await getTransactions("live-quota-1");
-        expect(rows).toHaveLength(1);
-        expect(rows[0].status).toBe("SETTLED");
-
-        const balance = await getCreditBalance();
-        expect(balance).toBeDefined();
-    });
-
-    it("sequential replay with same operationId is idempotent (no double deduction)", async () => {
-        await seed();
-        const first = await reserveAndUpdateUsage(
-            USER_ID,
-            "improve",
-            150,
-            "pro",
-            { operationId: "live-quota-replay" }
-        );
-        const replay = await reserveAndUpdateUsage(
-            USER_ID,
-            "improve",
-            150,
-            "pro",
-            { operationId: "live-quota-replay" }
-        );
-
-        expect(first.reserved).toBe(true);
-        expect(replay.reserved).toBe(true);
-        expect(replay.reservationId).toBe(first.reservationId);
-        expect(replay.periodKey).toBe(first.periodKey);
-
-        expect(await getTransactions("live-quota-replay")).toHaveLength(1);
-        expect(await getCreditBalance()).toBeDefined();
-    });
-
-    it("CONCURRENT duplicate reservation: unique-constraint race → one row, ONE deduction", async () => {
-        await seed();
-        const results = await Promise.all([
-            reserveAndUpdateUsage(USER_ID, "improve", 150, "pro", {
-                operationId: "live-quota-race",
-            }),
-            reserveAndUpdateUsage(USER_ID, "improve", 150, "pro", {
-                operationId: "live-quota-race",
-            }),
-        ]);
-
-        // Exactly one transaction row survives the race.
-        expect(await getTransactions("live-quota-race")).toHaveLength(1);
-        expect(await getCreditBalance()).toBeDefined();
-        // Both calls resolve without throwing (loser adopts winner's row).
-        for (const r of results) {
-            expect(r.reserved).toBe(true);
+describe("LIVE: SRS-04 StreamGovernor & Settlement Idempotency on isolated branch", () => {
+    beforeAll(() => {
+        if (!isRedisConfigured()) {
+            throw new Error(
+                "[test:live] UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN must be configured for ai-quota-idempotency.live.test.ts (fail-closed)."
+            );
         }
     });
 
-    it("commit transitions reserved->committed; replay is already_committed; post-commit refund refused", async () => {
+    it("initializes lease, settles once idempotently, and flushes to Postgres", async () => {
         await seed();
-        await reserveAndUpdateUsage(USER_ID, "improve", 150, "pro", {
-            operationId: "live-quota-commit",
-        });
-
-        const commit = await commitAIReservation("live-quota-commit");
-        expect(commit.committed).toBe(true);
-
-        const [row] = await getTransactions("live-quota-commit");
-        expect(row.status).toBe("SETTLED");
-
-        const replay = await commitAIReservation("live-quota-commit");
-        expect(replay.committed).toBe(true);
-        expect(replay.reason).toBe("already_committed");
-
-        const illegalRefund = await refundAIReservation(
-            "live-quota-commit",
-            "illegal_refund"
+        const opId = `live-quota-${Date.now()}`;
+        const governor = new StreamGovernor(
+            USER_ID,
+            opId,
+            "google/gemini-3.8-flash",
+            0,
+            new AbortController()
         );
-        expect(illegalRefund.refunded).toBe(false);
-        expect(illegalRefund.reason).toBe("already_committed");
-        expect(await getCreditBalance()).toBeDefined();
+
+        const lease = await governor.initializeLease(10);
+        expect(lease.canAfford).toBe(true);
+
+        const s1 = await governor.settle("SETTLED");
+        const s2 = await governor.settle("SETTLED");
+        expect(s1).toEqual(s2);
+
+        const flushRes = await flushPendingSettlementsToPostgres(USER_ID);
+        expect(flushRes.flushedCount).toBeGreaterThanOrEqual(1);
+
+        const rows = await getTransactions(opId);
+        expect(rows).toHaveLength(1);
+        expect(rows[0].status).toBe("SETTLED");
+
+        const balance = await getUserCreditBalance(USER_ID);
+        expect(balance).toBeLessThanOrEqual(BigInt(1000000000));
     });
 
-    it("refund restores usage counters exactly once; second refund no-ops", async () => {
+    it("aborted lease settles as ABORTED and restores balance upon flush", async () => {
         await seed();
-        await reserveAndUpdateUsage(USER_ID, "correct", 120, "pro", {
-            operationId: "live-quota-refund",
-        });
+        const beforeBalance = await getUserCreditBalance(USER_ID);
+        const opId = `live-abort-${Date.now()}`;
+        const governor = new StreamGovernor(
+            USER_ID,
+            opId,
+            "google/gemini-3.8-flash",
+            0,
+            new AbortController()
+        );
 
-        const refund = await refundAIReservation("live-quota-refund");
-        expect(refund.refunded).toBe(true);
+        const lease = await governor.initializeLease(0);
+        expect(lease.canAfford).toBe(true);
 
-        const [row] = await getTransactions("live-quota-refund");
-        expect(row.status).toBe("ABORTED");
+        governor.abort("user_cancelled");
+        const settleRes = await governor.settle("ABORTED");
+        expect(settleRes.status).toBe("SETTLED");
+        expect(settleRes.actualCostMicro).toBe(0);
+        expect(settleRes.refundMicro).toBe(Number(lease.reservedMicro));
 
-        const second = await refundAIReservation("live-quota-refund");
-        expect(second.refunded).toBe(false);
-        expect(second.reason).toBe("already_refunded");
+        await flushPendingSettlementsToPostgres(USER_ID);
+
+        const rows = await getTransactions(opId);
+        expect(rows).toHaveLength(1);
+        expect(rows[0].status).toBe("ABORTED");
+        expect(await getUserCreditBalance(USER_ID)).toBe(beforeBalance);
     });
 });

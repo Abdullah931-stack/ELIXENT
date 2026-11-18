@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { updateFileContent, toggleFileEncryption } from '@/server/actions/files';
-import {
-    commitAIReservation,
-    refundAIReservation,
-} from '@/server/services/ai-settlement-service';
 import { db } from '@/server/db';
 import { getUser } from '@/lib/supabase/server';
 
 vi.mock('@/lib/supabase/server', () => ({
     getUser: vi.fn(),
+}));
+
+vi.mock('@/server/db/transactional', () => ({
+    txDb: null,
 }));
 
 vi.mock('@/server/db', () => ({
@@ -18,9 +18,6 @@ vi.mock('@/server/db', () => ({
                 findFirst: vi.fn(),
             },
             files: {
-                findFirst: vi.fn(),
-            },
-            users: {
                 findFirst: vi.fn(),
             },
         },
@@ -43,10 +40,6 @@ vi.mock('@/server/db', () => ({
             deletedAt: 'deleted_at',
             isEncrypted: 'is_encrypted',
             encryptionMetadata: 'encryption_metadata',
-        },
-        users: {
-            id: 'id',
-            creditBalanceMicro: 'credit_balance_micro',
         },
     },
 }));
@@ -289,54 +282,5 @@ describe('Server Atomic Document Save & Optimistic Version Guard (Phase 8 / Elix
             expect(res.version).toBe(2);
             expect(res.etag).toBe('etag-enc-v2');
         }
-    });
-
-    describe('Server-Side AI Credit Reservation Lifecycle (ai-settlement-service)', () => {
-        it('returns not_found when committing a non-existent operationId', async () => {
-            vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce(undefined as any);
-
-            const res = await commitAIReservation('non-existent-op-id');
-            expect(res.committed).toBe(false);
-            expect(res.reason).toBe('not_found');
-        });
-
-        it('returns already_committed idempotently when reservation is already committed', async () => {
-            vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
-                operationId: 'op-committed',
-                userId: 'user-1',
-                status: 'SETTLED',
-                nodeName: 'committed:agent_stream:hash:100',
-            } as any);
-
-            const res = await commitAIReservation('op-committed');
-            expect(res.committed).toBe(true);
-            expect(res.reason).toBe('already_committed');
-        });
-
-        it('rejects commitAIReservation if reservation was already aborted or expired', async () => {
-            vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
-                operationId: 'op-expired',
-                userId: 'user-1',
-                status: 'ABORTED',
-                nodeName: 'expired:agent_stream:hash:100',
-            } as any);
-
-            const res = await commitAIReservation('op-expired');
-            expect(res.committed).toBe(false);
-            expect(res.reason).toBe('already_refunded');
-        });
-
-        it('rejects refundAIReservation if reservation was already committed', async () => {
-            vi.mocked(db.query.creditLedgerTransactions.findFirst).mockResolvedValueOnce({
-                operationId: 'op-committed',
-                userId: 'user-1',
-                status: 'SETTLED',
-                nodeName: 'committed:agent_stream:hash:100',
-            } as any);
-
-            const res = await refundAIReservation('op-committed');
-            expect(res.refunded).toBe(false);
-            expect(res.reason).toBe('already_committed');
-        });
     });
 });

@@ -24,10 +24,10 @@ import { randomUUID } from "crypto";
 import { generateETagSync } from "@/lib/sync/etag-generator.server";
 import { updateFileContent } from "@/server/actions/files";
 import {
-    reserveAIQuota,
-    commitAIReservation,
-    refundAIReservation,
+    flushPendingSettlementsToPostgres,
+    getUserCreditBalance,
 } from "@/server/services/ai-settlement-service";
+import { REDIS_KEYS } from "@/lib/metering/constants";
 import { getUser } from "@/lib/supabase/server";
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -129,16 +129,19 @@ describe("AI Atomic Document Save & Credit Settlement — Real PostgreSQL Execut
             updatedAt: initialDate,
         });
 
-        const reservation = await reserveAIQuota(TEST_USER_ID, "agent_stream", 300, "pro", {
+        await testDb.insert(schema.creditLedgerTransactions).values({
             operationId,
-            fileId,
+            userId: TEST_USER_ID,
             modelId: "google/gemini-3.8-flash",
             executionMode: "STREAMING_GENERATIVE",
+            inputTokens: 300,
+            outputTokens: 200,
+            deltaMicro: BigInt(-200000),
+            status: "SETTLED",
         });
-        expect(reservation.reserved).toBe(true);
 
-        const commitRes = await commitAIReservation(operationId, 200);
-        expect(commitRes.committed).toBe(true);
+        const balanceBefore = await getUserCreditBalance(TEST_USER_ID);
+        expect(balanceBefore).toBe(BigInt(1000000000));
 
         const aiResultContent = "# Enhanced AI polished document content";
         const fileResult = await updateFileContent(fileId, aiResultContent, {
@@ -209,26 +212,60 @@ describe("AI Atomic Document Save & Credit Settlement — Real PostgreSQL Execut
         expect(dbFile?.content).toBe("# Concurrent writer edits document");
     });
 
-    it("should idempotently handle repeated commitAIReservation calls and block subsequent refundAIReservation", async () => {
+    it("should flush pending settlement into Postgres and reject duplicate operationId replay without double-deduction", async () => {
         const operationId = `op_idempotent_${randomUUID()}`;
+        const pendingHash = new Map<string, string>([
+            [
+                operationId,
+                JSON.stringify({
+                    userId: TEST_USER_ID,
+                    modelId: "google/gemini-3.8-flash",
+                    executionMode: "STREAMING_GENERATIVE",
+                    inputTokens: 150,
+                    outputTokens: 150,
+                    deltaMicro: -150000,
+                    status: "SETTLED",
+                    created_at_ms: Date.now() - 1000,
+                }),
+            ],
+        ]);
+        const customRedis = {
+            pendingSettlements: new Map([[REDIS_KEYS.pendingSettlements(TEST_USER_ID), pendingHash]]),
+            dirtyWallets: new Set([TEST_USER_ID]),
+        };
 
-        const res = await reserveAIQuota(TEST_USER_ID, "agent_stream", 150, "pro", {
+        const firstFlush = await flushPendingSettlementsToPostgres(TEST_USER_ID, { customRedis });
+        expect(firstFlush.flushedCount).toBe(1);
+        expect(firstFlush.netDeltaMicro).toBe(BigInt(-150000));
+        expect(await getUserCreditBalance(TEST_USER_ID)).toBe(BigInt(999850000));
+
+        // Re-enqueue the identical operationId and flush again — production code must not double-debit
+        pendingHash.set(
             operationId,
-            modelId: "google/gemini-3.8-flash",
-            executionMode: "STREAMING_GENERATIVE",
-        });
-        expect(res.reserved).toBe(true);
+            JSON.stringify({
+                userId: TEST_USER_ID,
+                modelId: "google/gemini-3.8-flash",
+                executionMode: "STREAMING_GENERATIVE",
+                inputTokens: 150,
+                outputTokens: 150,
+                deltaMicro: -150000,
+                status: "SETTLED",
+                created_at_ms: Date.now() - 1000,
+            })
+        );
+        customRedis.dirtyWallets.add(TEST_USER_ID);
 
-        const firstCommit = await commitAIReservation(operationId, 150);
-        expect(firstCommit.committed).toBe(true);
+        const replayFlush = await flushPendingSettlementsToPostgres(TEST_USER_ID, { customRedis });
+        expect(replayFlush.flushedCount).toBe(1);
+        expect(replayFlush.netDeltaMicro).toBe(BigInt(0));
+        expect(await getUserCreditBalance(TEST_USER_ID)).toBe(BigInt(999850000));
 
-        const secondCommit = await commitAIReservation(operationId, 150);
-        expect(secondCommit.committed).toBe(true);
-        expect(secondCommit.reason).toBe("already_committed");
-
-        const refundAfterCommit = await refundAIReservation(operationId, "late_cancel");
-        expect(refundAfterCommit.refunded).toBe(false);
-        expect(refundAfterCommit.reason).toBe("already_committed");
+        const rows = await testDb
+            .select()
+            .from(schema.creditLedgerTransactions)
+            .where(eq(schema.creditLedgerTransactions.operationId, operationId));
+        expect(rows).toHaveLength(1);
+        expect(rows[0].status).toBe("SETTLED");
     });
 
     it("should reject updateFileContent when file belongs to another user in real DB", async () => {

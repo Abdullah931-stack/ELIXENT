@@ -23,7 +23,21 @@ class MockGovernorRedis implements RedisEvalClient {
   public extendCallCount = 0;
   public settleCallCount = 0;
   public shouldFailExtension = false;
+  public coldStartRequiredOnce = false;
+  public overrideReservedOutputMicro: number | null = null;
   public extensionDelayMs = 0;
+
+  public async exists(key: string): Promise<number> {
+    return this.wallets.has(key) ? 1 : 0;
+  }
+
+  public async get(key: string): Promise<number | null> {
+    return this.wallets.get(key) ?? null;
+  }
+
+  public async hlen(key: string): Promise<number> {
+    return this.pendingSettlements.get(key)?.size ?? 0;
+  }
 
   public async eval<T = unknown>(
     script: string,
@@ -37,6 +51,13 @@ class MockGovernorRedis implements RedisEvalClient {
         await new Promise((resolve) => setTimeout(resolve, this.extensionDelayMs));
       }
 
+      if (this.coldStartRequiredOnce) {
+        this.coldStartRequiredOnce = false;
+        return JSON.stringify({
+          status: "COLD_START_REQUIRED",
+        }) as unknown as T;
+      }
+
       if (this.shouldFailExtension) {
         return JSON.stringify({
           status: "INSUFFICIENT_CREDITS",
@@ -46,21 +67,41 @@ class MockGovernorRedis implements RedisEvalClient {
       }
 
       const [walletKey, leaseKey] = keys;
-      const [_reqInputStr, desOutputStr, _minOutputStr, _zeroDustStr, leaseTtlStr, userId, stepKey] = args;
+      const [reqInputStr, desOutputStr, minOutputStr, _zeroDustStr, leaseTtlStr, userId, stepKey] = args;
 
+      const reqInput = Number(reqInputStr);
       const desOutput = Number(desOutputStr);
+      const minOutput = Number(minOutputStr);
       const curBal = this.wallets.get(walletKey) ?? 50_000_000;
-      this.wallets.set(walletKey, curBal - desOutput);
+
+      if (curBal < reqInput + minOutput) {
+        return JSON.stringify({
+          status: "INSUFFICIENT_CREDITS",
+          available: curBal,
+          required: reqInput + minOutput,
+        }) as unknown as T;
+      }
+
+      const availableAfterInput = curBal - reqInput;
+      const grantedOutput =
+        this.overrideReservedOutputMicro !== null
+          ? this.overrideReservedOutputMicro
+          : Math.min(desOutput, availableAfterInput);
+      const totalDelta = reqInput + grantedOutput;
+
+      this.wallets.set(walletKey, curBal - totalDelta);
 
       const existingLease = this.leases.get(leaseKey) || {
         totalReservedMicro: 0,
         reservedOutputMicro: 0,
       };
+      const nextTotalReserved = (existingLease.totalReservedMicro || 0) + totalDelta;
+      const nextReservedOutput = (existingLease.reservedOutputMicro || 0) + grantedOutput;
 
       this.leases.set(leaseKey, {
         ...existingLease,
-        totalReservedMicro: (existingLease.totalReservedMicro || 0) + desOutput,
-        reservedOutputMicro: (existingLease.reservedOutputMicro || 0) + desOutput,
+        totalReservedMicro: nextTotalReserved,
+        reservedOutputMicro: nextReservedOutput,
         userId: String(userId),
         stepKey: String(stepKey),
         ttl: Number(leaseTtlStr),
@@ -68,10 +109,10 @@ class MockGovernorRedis implements RedisEvalClient {
 
       return JSON.stringify({
         status: "SUCCESS",
-        reservedInputMicro: 0,
-        reservedOutputMicro: desOutput,
-        totalReservedMicro: desOutput,
-        newBalanceMicro: curBal - desOutput,
+        reservedInputMicro: reqInput,
+        reservedOutputMicro: grantedOutput,
+        totalReservedMicro: nextTotalReserved,
+        newBalanceMicro: curBal - totalDelta,
       }) as unknown as T;
     }
 
@@ -180,6 +221,215 @@ describe("Stream Governor & Real-Time Local Hold Gate (stream-governor.ts)", () 
       );
 
       expect(governor.isAborted()).toBe(true);
+    });
+  });
+
+  describe("Pre-Stream Lease Initialization (initializeLease)", () => {
+    it("reserves input cost and initial output slice in Redis and syncs reserved/covered tokens", async () => {
+      const governor = new StreamGovernor(
+        userId,
+        operationId,
+        streamingModelId,
+        0,
+        abortController,
+        { customRedis: redis }
+      );
+
+      // 100 input tokens @ 0.15/1k = 15,000 micro + 1200 output tokens @ 0.60/1k = 720,000 micro => 735,000 micro
+      const lease = await governor.initializeLease(100);
+
+      expect(lease).toEqual({
+        canAfford: true,
+        reservedTokens: 1200,
+        reservedMicro: BigInt(735_000),
+      });
+      expect(governor.getTotalReservedTokens()).toBe(1200);
+      expect(governor.getCoveredTokens()).toBe(1200);
+      expect(redis.wallets.get(REDIS_KEYS.wallet(userId))).toBe(50_000_000 - 735_000);
+      expect(redis.leases.get(REDIS_KEYS.lease(operationId))).toBeDefined();
+    });
+
+    it("retries once after COLD_START_REQUIRED and updates lease state from retry response", async () => {
+      redis.coldStartRequiredOnce = true;
+
+      const governor = new StreamGovernor(
+        userId,
+        operationId,
+        streamingModelId,
+        0,
+        abortController,
+        { customRedis: redis }
+      );
+
+      const lease = await governor.initializeLease(100);
+
+      expect(lease.canAfford).toBe(true);
+      expect(lease.reservedTokens).toBe(1200);
+      expect(redis.extendCallCount).toBe(2);
+      expect(governor.getTotalReservedTokens()).toBe(1200);
+      expect(governor.getCoveredTokens()).toBe(1200);
+    });
+
+    it("clamps grantedTokens proportionally when Redis returns partial output micro (zero-dust drain)", async () => {
+      // Balance covers 100 input tokens (15,000) + 120 output tokens (72,000) = 87,000 micro (< full 735,000)
+      redis.wallets.set(REDIS_KEYS.wallet(userId), 87_000);
+
+      const governor = new StreamGovernor(
+        userId,
+        operationId,
+        streamingModelId,
+        0,
+        abortController,
+        { customRedis: redis }
+      );
+
+      const lease = await governor.initializeLease(100);
+
+      expect(lease).toEqual({
+        canAfford: true,
+        reservedTokens: 120,
+        reservedMicro: BigInt(87_000),
+      });
+      expect(governor.getTotalReservedTokens()).toBe(120);
+      expect(governor.getCoveredTokens()).toBe(120);
+    });
+
+    it("fails closed on INSUFFICIENT_CREDITS and resets reserved/covered tokens to 0", async () => {
+      redis.wallets.set(REDIS_KEYS.wallet(userId), 5_000); // Cannot cover 100 input tokens (15,000)
+
+      const governor = new StreamGovernor(
+        userId,
+        operationId,
+        streamingModelId,
+        500,
+        abortController,
+        { customRedis: redis }
+      );
+
+      const lease = await governor.initializeLease(100);
+
+      expect(lease).toEqual({
+        canAfford: false,
+        reservedTokens: 0,
+        reservedMicro: BigInt(0),
+      });
+      expect(governor.getTotalReservedTokens()).toBe(0);
+      expect(governor.getCoveredTokens()).toBe(0);
+    });
+
+    it("fails closed when paid-output reservation grants less than 1 full output token", async () => {
+      redis.overrideReservedOutputMicro = 300; // < 600 micro required for 1 output token on gemini-3.8-flash
+
+      const governor = new StreamGovernor(
+        userId,
+        operationId,
+        streamingModelId,
+        100,
+        abortController,
+        { customRedis: redis }
+      );
+
+      const lease = await governor.initializeLease(0);
+
+      expect(lease).toEqual({
+        canAfford: false,
+        reservedTokens: 0,
+        reservedMicro: BigInt(0),
+      });
+      expect(governor.getTotalReservedTokens()).toBe(0);
+      expect(governor.getCoveredTokens()).toBe(0);
+    });
+
+    it("handles free-output decision models and respects inputCostMicro override + input sanitization", async () => {
+      const governor = new StreamGovernor(
+        userId,
+        operationId,
+        decisionModelId,
+        0,
+        abortController,
+        { customRedis: redis, inputCostMicro: BigInt(40_000) }
+      );
+
+      const lease = await governor.initializeLease(-50);
+
+      expect(lease).toEqual({
+        canAfford: true,
+        reservedTokens: 500,
+        reservedMicro: BigInt(40_000),
+      });
+      expect(governor.getTotalReservedTokens()).toBe(500);
+      expect(governor.getCoveredTokens()).toBe(500);
+      expect(redis.wallets.get(REDIS_KEYS.wallet(userId))).toBe(50_000_000 - 40_000);
+    });
+
+    it("rejects immediately without calling Redis when governor is pre-aborted or already settled", async () => {
+      const preAborted = new AbortController();
+      preAborted.abort("cancelled");
+      const abortedGov = new StreamGovernor(
+        userId,
+        operationId,
+        streamingModelId,
+        0,
+        preAborted,
+        { customRedis: redis }
+      );
+
+      const abortedRes = await abortedGov.initializeLease(100);
+      expect(abortedRes).toEqual({
+        canAfford: false,
+        reservedTokens: 0,
+        reservedMicro: BigInt(0),
+      });
+      expect(redis.extendCallCount).toBe(0);
+
+      const settledGov = new StreamGovernor(
+        userId,
+        "op_already_settled",
+        streamingModelId,
+        0,
+        abortController,
+        { customRedis: redis }
+      );
+      await settledGov.settle("SETTLED");
+
+      const postSettleRes = await settledGov.initializeLease(100);
+      expect(postSettleRes).toEqual({
+        canAfford: false,
+        reservedTokens: 0,
+        reservedMicro: BigInt(0),
+      });
+      expect(redis.extendCallCount).toBe(0);
+    });
+
+    it("persists initialized input tokens and cost so settle() charges them when options.inputTokens and options.inputCostMicro are omitted", async () => {
+      const governor = new StreamGovernor(
+        userId,
+        operationId,
+        streamingModelId,
+        0,
+        abortController,
+        { customRedis: redis }
+      );
+
+      // 100 input tokens @ 0.15/1k = 15,000 micro + 1200 output tokens @ 0.60/1k = 720,000 micro => 735,000 micro
+      const lease = await governor.initializeLease(100);
+      expect(lease.canAfford).toBe(true);
+      expect(lease.reservedMicro).toBe(BigInt(735_000));
+
+      // Produce 10 output tokens (10 * 600 = 6,000 micro)
+      await governor.onTokenChunk(10);
+
+      const settleRes = await governor.settle("SETTLED");
+      expect(settleRes.status).toBe("SETTLED");
+      // Total actual cost = 15,000 (initialized input) + 6,000 (output) = 21,000 micro
+      expect(settleRes.actualCostMicro).toBe(21_000);
+      expect(settleRes.refundMicro).toBe(714_000);
+
+      const pendingHash = redis.pendingSettlements.get(REDIS_KEYS.pendingSettlements(userId));
+      const payload = JSON.parse(pendingHash?.get(operationId) as string);
+      expect(payload.inputTokens).toBe(100);
+      expect(payload.outputTokens).toBe(10);
+      expect(payload.actualTotalCostMicro).toBe(21_000);
     });
   });
 

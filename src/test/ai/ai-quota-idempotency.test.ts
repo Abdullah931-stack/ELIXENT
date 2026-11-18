@@ -6,11 +6,117 @@ import {
     deriveModelReservationParameters,
 } from '@/lib/metering/derivation';
 import {
-    reserveAIQuota,
-    commitAIReservation,
-    refundAIReservation,
-    getAIReservationStatus,
+    getUserCreditBalance,
+    computeRequestHash,
 } from '@/server/services/ai-settlement-service';
+import { StreamGovernor } from '@/lib/metering/stream-governor';
+import { REDIS_KEYS } from '@/lib/metering/constants';
+import {
+    RESERVE_OR_EXTEND_LUA,
+    SETTLE_OPERATION_LUA,
+    type RedisEvalClient,
+} from '@/lib/metering/lua-scripts';
+
+class InMemoryMeteringRedis implements RedisEvalClient {
+    public wallets = new Map<string, number>();
+    public leases = new Map<string, Record<string, any>>();
+    public stepDone = new Map<string, string>();
+    public pendingSettlements = new Map<string, Map<string, string>>();
+    public dirtyWallets = new Set<string>();
+
+    public async exists(key: string): Promise<number> {
+        return this.wallets.has(key) ? 1 : 0;
+    }
+
+    public async get(key: string): Promise<number | null> {
+        return this.wallets.get(key) ?? null;
+    }
+
+    public async hlen(key: string): Promise<number> {
+        return this.pendingSettlements.get(key)?.size ?? 0;
+    }
+
+    public async eval<T = unknown>(
+        script: string,
+        keys: string[],
+        args: (string | number)[]
+    ): Promise<T> {
+        if (script === RESERVE_OR_EXTEND_LUA) {
+            const [walletKey, leaseKey] = keys;
+            const [reqInputStr, desOutputStr, minOutputStr, _zeroDustStr, leaseTtlStr, userId, stepKey] = args;
+            const reqInput = Number(reqInputStr);
+            const desOutput = Number(desOutputStr);
+            const minOutput = Number(minOutputStr);
+            const curBal = this.wallets.get(walletKey);
+
+            if (curBal === undefined) {
+                return JSON.stringify({ status: 'COLD_START_REQUIRED' }) as unknown as T;
+            }
+            if (curBal < reqInput + minOutput) {
+                return JSON.stringify({
+                    status: 'INSUFFICIENT_CREDITS',
+                    available: curBal,
+                    required: reqInput + minOutput,
+                }) as unknown as T;
+            }
+
+            const grantedOutput = Math.min(desOutput, curBal - reqInput);
+            const totalDelta = reqInput + grantedOutput;
+            this.wallets.set(walletKey, curBal - totalDelta);
+
+            const existing = this.leases.get(leaseKey) ?? { totalReservedMicro: 0, reservedOutputMicro: 0 };
+            const totalReservedMicro = existing.totalReservedMicro + totalDelta;
+            this.leases.set(leaseKey, {
+                totalReservedMicro,
+                reservedOutputMicro: existing.reservedOutputMicro + grantedOutput,
+                userId: String(userId),
+                stepKey: String(stepKey),
+                ttl: Number(leaseTtlStr),
+            });
+
+            return JSON.stringify({
+                status: 'SUCCESS',
+                reservedInputMicro: reqInput,
+                reservedOutputMicro: grantedOutput,
+                totalReservedMicro,
+                newBalanceMicro: curBal - totalDelta,
+            }) as unknown as T;
+        }
+
+        if (script === SETTLE_OPERATION_LUA) {
+            const [walletKey, leaseKey, pendingKey, _dirtyKey, stepDoneKey] = keys;
+            const [operationId, actualCostStr, payloadJson, userId] = args;
+
+            const lease = this.leases.get(leaseKey);
+            const totalReserved = Number(lease?.totalReservedMicro ?? 0);
+            const actualCost = Number(actualCostStr);
+            const refund = Math.max(0, totalReserved - actualCost);
+
+            const cur = this.wallets.get(walletKey) ?? 0;
+            this.wallets.set(walletKey, cur + refund);
+            this.leases.delete(leaseKey);
+
+            let pending = this.pendingSettlements.get(pendingKey);
+            if (!pending) {
+                pending = new Map();
+                this.pendingSettlements.set(pendingKey, pending);
+            }
+            pending.set(String(operationId), String(payloadJson));
+            this.dirtyWallets.add(String(userId));
+            this.stepDone.set(stepDoneKey, String(payloadJson));
+
+            return JSON.stringify({
+                status: 'SETTLED',
+                refundMicro: refund,
+                totalReservedMicro: totalReserved,
+                actualCostMicro: actualCost,
+                newBalanceMicro: cur + refund,
+            }) as unknown as T;
+        }
+
+        throw new Error(`Unhandled script in InMemoryMeteringRedis: ${script}`);
+    }
+}
 
 const { ledgerStore, userStore, mockFindFirst } = vi.hoisted(() => ({
     ledgerStore: new Map<string, Record<string, any>>(),
@@ -156,66 +262,60 @@ describe('AI Quota Derivation & Idempotent Settlement State Machine (Elixent Met
         });
     });
 
-    describe('Idempotent Reservation, Commit & Refund Lifecycle (@/server/services/ai-settlement-service)', () => {
-        it('transitions from reserved to committed and handles idempotent commit replay', async () => {
-            const opId = 'op-lifecycle-1';
+    describe('StreamGovernor Lease Initialization & Idempotent Settlement State Machine (SRS-04)', () => {
+        it('initializes lease in Redis, settles idempotently with surplus refund, and rejects post-settle lease init', async () => {
+            const redis = new InMemoryMeteringRedis();
+            redis.wallets.set(REDIS_KEYS.wallet('user-101'), 5_000_000);
 
-            mockFindFirst.mockImplementation(
-                async () => ledgerStore.get(opId)
+            const abortController = new AbortController();
+            const governor = new StreamGovernor(
+                'user-101',
+                'op-lifecycle-1',
+                'google/gemini-3.8-flash',
+                0,
+                abortController,
+                { customRedis: redis, inputTokens: 100 }
             );
 
-            const reserveRes = await reserveAIQuota('user-101', 'agent_stream', 200, 'pro', {
-                operationId: opId,
-                requestHash: 'hash-lifecycle-1',
+            const lease = await governor.initializeLease(100);
+            expect(lease.canAfford).toBe(true);
+            expect(lease.reservedTokens).toBe(1200);
+            expect(governor.getTotalReservedTokens()).toBe(1200);
+            expect(redis.wallets.get(REDIS_KEYS.wallet('user-101'))).toBe(
+                5_000_000 - Number(lease.reservedMicro)
+            );
+
+            await governor.onTokenChunk(150);
+
+            const settle1 = await governor.settle('SETTLED');
+            const settle2 = await governor.settle('SETTLED');
+            expect(settle1).toBe(settle2);
+            expect(settle1.status).toBe('SETTLED');
+            expect(settle1.refundMicro).toBeGreaterThan(0);
+            expect(settle1.actualCostMicro + settle1.refundMicro).toBe(Number(lease.reservedMicro));
+            expect(governor.isSettled()).toBe(true);
+
+            const pending = redis.pendingSettlements.get(REDIS_KEYS.pendingSettlements('user-101'));
+            expect(pending?.size).toBe(1);
+            expect(pending?.has('op-lifecycle-1')).toBe(true);
+
+            // Post-settlement initializeLease is rejected
+            const postSettleLease = await governor.initializeLease(100);
+            expect(postSettleLease).toEqual({
+                canAfford: false,
+                reservedTokens: 0,
+                reservedMicro: BigInt(0),
             });
-            expect(reserveRes.reserved).toBe(true);
-
-            const statusReserved = await getAIReservationStatus(opId, 'user-101');
-            expect(statusReserved.found).toBe(true);
-            if (statusReserved.found) {
-                expect(statusReserved.status).toBe('reserved');
-                expect(statusReserved.reservedUnits).toBe(200);
-            }
-
-            const commitRes = await commitAIReservation(opId, 150);
-            expect(commitRes.committed).toBe(true);
-
-            // Idempotent commit replay returns already_committed
-            const replayCommit = await commitAIReservation(opId, 150);
-            expect(replayCommit.committed).toBe(true);
-            expect(replayCommit.reason).toBe('already_committed');
-
-            // Conflicting refund after commit is rejected
-            const illegalRefund = await refundAIReservation(opId);
-            expect(illegalRefund.refunded).toBe(false);
-            expect(illegalRefund.reason).toBe('already_committed');
         });
 
-        it('transitions from reserved to refunded and rejects subsequent commit or duplicate refund', async () => {
-            const opId = 'op-lifecycle-2';
+        it('computes deterministic request hashes and reads user credit balance safely', async () => {
+            const h1 = computeRequestHash('user-101', 'agent_stream', 'file-1', 'hello');
+            const h2 = computeRequestHash('user-101', 'agent_stream', 'file-1', 'hello');
+            expect(h1).toBe(h2);
+            expect(h1).toHaveLength(64);
 
-            mockFindFirst.mockImplementation(
-                async () => ledgerStore.get(opId)
-            );
-
-            const reserveRes = await reserveAIQuota('user-101', 'agent_stream', 180, 'pro', {
-                operationId: opId,
-                requestHash: 'hash-lifecycle-2',
-            });
-            expect(reserveRes.reserved).toBe(true);
-
-            const refundRes = await refundAIReservation(opId, 'user_cancelled');
-            expect(refundRes.refunded).toBe(true);
-
-            // Second refund returns already_refunded without double-crediting
-            const replayRefund = await refundAIReservation(opId, 'user_cancelled');
-            expect(replayRefund.refunded).toBe(false);
-            expect(replayRefund.reason).toBe('already_refunded');
-
-            // Commit after refund is rejected
-            const illegalCommit = await commitAIReservation(opId);
-            expect(illegalCommit.committed).toBe(false);
-            expect(illegalCommit.reason).toBe('already_refunded');
+            const missingBalance = await getUserCreditBalance('user-missing');
+            expect(missingBalance).toBe(BigInt(0));
         });
     });
 });

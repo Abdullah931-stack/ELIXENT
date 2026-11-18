@@ -21,7 +21,7 @@ const ITER = 5000;
 const USER = 'user-enconf-closure-5';
 async function makeEnvelope(text: string, key: Uint8Array, fileId: string): Promise<EncryptedEnvelope> {
     const saltB64 = arrayBufferToBase64(await generateSalt(16));
-    return encryptEnvelope(text, key, 'master-v1', saltB64, `vault:file:${USER}:${fileId}`, ITER);
+    return encryptEnvelope(text, key, 'master-v1', saltB64, `zk:v1:file:${USER}:${fileId}`, ITER);
 }
 describe('Phase 5 Closure: Encrypted Conflict Isolation & Merge (Matrix #8/#9)', () => {
     let mgr: SyncManager;
@@ -68,7 +68,7 @@ describe('Phase 5 Closure: Encrypted Conflict Isolation & Merge (Matrix #8/#9)',
         const key = await generateMasterKeyRaw();
         const encId = 'file-merge-enc-1';
         const mgrUser = mgr.getUserId() ?? USER;
-        const aad = `vault:file:${mgrUser}:${encId}`;
+        const aad = `zk:v1:file:${mgrUser}:${encId}`;
         const baseText = '# Doc\n\nSection 1 original\n\nSection 2 original\n';
         const localText = '# Doc\n\nSection 1 local edit\n\nSection 2 original\n';
         const remoteText = '# Doc\n\nSection 1 original\n\nSection 2 remote edit\n';
@@ -109,7 +109,7 @@ describe('Phase 5 Closure: Encrypted Conflict Isolation & Merge (Matrix #8/#9)',
         const key = await generateMasterKeyRaw();
         const encId = 'file-manual-enc-1';
         const mgrUser = mgr.getUserId() ?? USER;
-        const aad = `vault:file:${mgrUser}:${encId}`;
+        const aad = `zk:v1:file:${mgrUser}:${encId}`;
         const corruptedLocal = '# Doc\n\n```ts\nunclosed fence\n';
         const saltOf = async () => arrayBufferToBase64(await generateSalt(16));
         const base = await encryptEnvelope('# Doc\n\nok\n', key, 'master-v1', await saltOf(), aad, ITER);
