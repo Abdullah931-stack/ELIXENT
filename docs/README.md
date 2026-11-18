@@ -14,7 +14,7 @@ automated tests remain the single source of truth for all technical claims.
 docs/
 ├── README.md                          ← you are here (structural master index)
 ├── DOCUMENTATION_GUIDELINES.md        ← repository-visible authoring standards & planning governance
-├── CHANGELOG.md                       ← release history (Elixent v0.1.0 to v0.22.0; archived LUGX v1.0.0–v1.46.3)
+├── CHANGELOG.md                       ← release history (Elixent v0.1.0 to v0.23.0; archived LUGX v1.0.0–v1.46.3)
 ├── TECHNICAL_DEBT_REGISTER.md         ← living technical debt & architectural decisions (TD-01 to TD-20)
 ├── METRICS.json                       ← automated single source of truth for test & suite metrics
 │
@@ -24,9 +24,17 @@ docs/
 │   ├── 03_workspace_ast_editor_and_vault_integration.md
 │   ├── 04_credit_metering_and_settlement_architecture.md
 │   ├── 05_data_contracts_and_lugx_migration_plan.md
-│   ├── adr_006_unified_vite_tanstack_hono_rpc_architecture.md
-│   ├── adr_007_dual_plane_separation_and_als_request_context.md
-│   ├── elixent_sync_and_execution_srs.md  ← SRS: Local-First identity verification & conditional state flushing
+│   ├── adrs/                          ← standalone Architectural Decision Records (ADR-006, 007, 009..016)
+│   │   ├── adr_006_unified_vite_tanstack_hono_rpc_architecture.md
+│   │   ├── adr_007_dual_plane_separation_and_als_request_context.md
+│   │   ├── adr_009_native_graph_orchestration_engine.md
+│   │   ├── adr_010_replay_safe_node_boundary_topology.md
+│   │   ├── adr_011_multi_workspace_data_isolation_model.md
+│   │   ├── adr_012_json_decision_ledger_and_graph_traversal.md
+│   │   ├── adr_013_epistemic_framing_decoupling_system2_system1.md
+│   │   ├── adr_014_deterministic_change_weight_and_anti_domino_gate.md
+│   │   ├── adr_015_two_tier_workspace_undo_and_turn_rollback.md
+│   │   └── adr_016_zk_encryption_granularity_and_ephemeral_ai_bridge.md
 │   ├── sync/                          ← offline-first sync engine, concurrency & storage
 │   ├── ai/                            ← Gemini LLM streaming, atomic commit & quota lifecycle
 │   └── security/                      ← rate limiting, Hono session middleware, crypto workers & ZK log masking
@@ -43,11 +51,16 @@ docs/
 │   └── ai/                            ← decoupled Gemini model configuration via models.config.json
 │
 ├── specs/                             ← living technical specifications & design blueprints
+│   ├── elixent_sync_and_execution_srs.md  ← SRS: Local-First identity verification & conditional state flushing
 │   ├── ai-key-rotation-and-resilience.md
 │   ├── offline-sync-blueprint.md      ← foundational blueprint for IndexedDB offline synchronization
-│   └── ui-streaming-requirements.md
+│   ├── ui-streaming-requirements.md
+│   ├── srs_01_agent_orchestration_decision_graph_and_weight_engine.md
+│   ├── srs_02_multi_workspace_isolation_and_zk_vault_governance.md
+│   ├── srs_03_editor_tabs_multi_ghost_review_and_two_tier_undo.md
+│   └── srs_04_multi_provider_ai_gateway_and_wallet_metering.md
 │
-├── Plans/                             ← active official technical execution roadmaps (English; empty — completed plans archived under records/plans/)
+├── Plans/                             ← active official technical execution roadmaps (elixent-architectural-evolution-execution-plan.md)
 │
 ├── records/                           ← engineering records, incidents, audits, closures & plans archive
 │   ├── incidents/                     ← root-cause post-mortems (test-database-safety.md, codemirror-syntax-tree-parse-budget-race.md)
@@ -61,7 +74,8 @@ docs/
 │   │   ├── core-hardening/            ← core hardening dossiers (Phase 1–18: metrics, links, skipped tests, Redis, contracts, reducers, schema, identity, crypto hierarchy, encrypted content governance, AI settlement, Stripe 1:N, Redis fail-closed & cron overlap, local sync queue CAS, durable IDB conflict quarantine, CI dependency audit gate, thin coordinator sync-manager decomposition, use-editor-conflict extraction)
 │   │   ├── elixent-execution/         ← Elixent 12-phase execution plan closures (Phases 1–12: core hardening, dependencies & schema migration, lean models registry, flush-first settlement, AST slicer & BM25, ZK vault & encrypted checkpoints, concept taxonomy & conformal APS, ATMS DAG & cascade BFS, AgentGraphState channels, pure reducers, 7-stage nodes & compiled LangGraph StateGraph, CodeMirror 6 multi-hunk ghost & unified agent SSE stream route, agent chat panel, HITL cards, credit balance views & incremental editor sync, and final legacy 5-operation purge, test suite migration & living documentation sync dossiers)
 │   │   ├── framework-migration/       ← Framework migration plan closures (Phase 1: archive prior plan, packages & session middleware; Phase 2: migrate all 8 API routes & auth callback to Hono; Phase 3: decouple server actions & mount typed Hono RPC; Phase 4: wire client hooks & UI to Hono RPC client & strip directives; Phase 5: Vite 6 SPA entry, TanStack Router views & unified Hono Node server; Phase 6: final Next.js purge, test suite alignment to standard Request & CI/E2E closure)
-│   │   └── nextjs-decoupling/         ← Next.js decoupling & Clean Architecture closures (Phase 1: archive framework plan, compiler/env cleanup & boundary guard; Phase 2: purge middleware relics, file-ops facade & unify Hono RPC contracts; Phase 2.5: purge Vitest bridge, fix boundary leaks & harden RPC/auth security DEF-A01..A08; Phase 2.6: post-audit remediation phase-02-6-remediation-of-p1-p2-p25-audit-findings.md; Phase 3: native TanStack Router validateSearch, 404 boundary & pure SPA idioms phase-03-tanstack-router-validate-search-and-pure-spa-idioms.md; Phase 4: align living architecture specs, subsystem docs, guides & technical debt register + plan archival phase-04-living-architecture-docs-sync-and-final-closure.md)
+│   │   ├── nextjs-decoupling/         ← Next.js decoupling & Clean Architecture closures (Phase 1: archive framework plan, compiler/env cleanup & boundary guard; Phase 2: purge middleware relics, file-ops facade & unify Hono RPC contracts; Phase 2.5: purge Vitest bridge, fix boundary leaks & harden RPC/auth security DEF-A01..A08; Phase 2.6: post-audit remediation phase-02-6-remediation-of-p1-p2-p25-audit-findings.md; Phase 3: native TanStack Router validateSearch, 404 boundary & pure SPA idioms phase-03-tanstack-router-validate-search-and-pure-spa-idioms.md; Phase 4: align living architecture specs, subsystem docs, guides & technical debt register + plan archival phase-04-living-architecture-docs-sync-and-final-closure.md)
+│   │   └── architectural-evolution/   ← Architectural Evolution execution plan closures (Phase 0: prior-ADR conflict resolution & living documentation reconciliation)
 │   ├── plans/                         ← completed historical execution plans (comprehensive-technical-remediation-plan-lugx-v1, technical-execution, hybrid-vault, markdown-editor, M6)
 │   └── archive/                       ← superseded, halted, or abandoned specs & LUGX v1 historical baseline (lugx-v1/foundation/, CHANGELOG-LUGX-v1.md)
 │
@@ -96,13 +110,20 @@ docs/
 | [04_credit_metering_and_settlement_architecture.md](./architecture/04_credit_metering_and_settlement_architecture.md) | Token-to-credit metering, dual-phase atomic reservation leases, and financial settlement ledger |
 | [05_data_contracts_and_lugx_migration_plan.md](./architecture/05_data_contracts_and_lugx_migration_plan.md) | Canonical data contracts, Drizzle PostgreSQL schema evolution, and LUGX v1 to Elixent migration blueprint |
 
-#### Framework Migration ADR Registry (`architecture/adr_*`)
+#### Architectural Decision Records Registry (`architecture/adrs/`)
 
 | Document | Scope |
 | :--- | :--- |
-| [adr_006_unified_vite_tanstack_hono_rpc_architecture.md](./architecture/adr_006_unified_vite_tanstack_hono_rpc_architecture.md) | ADR-006: Replacing Next.js 16 with Unified Web-Standard Architecture (Vite 6 SPA + TanStack Router + Hono RPC) |
-| [adr_007_dual_plane_separation_and_als_request_context.md](./architecture/adr_007_dual_plane_separation_and_als_request_context.md) | ADR-007: Dual-Plane Separation (`ICloudControlPlane` vs. `IWorkspaceProvider`) & Request-Scoped `AsyncLocalStorage` Context |
-| [elixent_sync_and_execution_srs.md](./architecture/elixent_sync_and_execution_srs.md) | Software Requirements Specification: Local-First identity verification & conditional React state flushing (v0.20.5) |
+| [adr_006_unified_vite_tanstack_hono_rpc_architecture.md](./architecture/adrs/adr_006_unified_vite_tanstack_hono_rpc_architecture.md) | ADR-006: Replacing Next.js 16 with Unified Web-Standard Architecture (Vite 6 SPA + TanStack Router + Hono RPC) |
+| [adr_007_dual_plane_separation_and_als_request_context.md](./architecture/adrs/adr_007_dual_plane_separation_and_als_request_context.md) | ADR-007: Dual-Plane Separation (`ICloudControlPlane` vs. `IWorkspaceProvider`) & Request-Scoped `AsyncLocalStorage` Context |
+| [adr_009_native_graph_orchestration_engine.md](./architecture/adrs/adr_009_native_graph_orchestration_engine.md) | ADR-009: Replacing `@langchain/langgraph` with Zero-Dependency Native Graph Engine & Single-Table Encrypted Checkpoints |
+| [adr_010_replay_safe_node_boundary_topology.md](./architecture/adrs/adr_010_replay_safe_node_boundary_topology.md) | ADR-010: Replay-Safe Node Boundaries, Deterministic State-Predicate Routing Gates (G-01..G-06) & Workspace Mutator |
+| [adr_011_multi_workspace_data_isolation_model.md](./architecture/adrs/adr_011_multi_workspace_data_isolation_model.md) | ADR-011: Multi-Workspace Structural Isolation Model, Default Workspace Resolution & Unified `workspaceId` Scoping |
+| [adr_012_json_decision_ledger_and_graph_traversal.md](./architecture/adrs/adr_012_json_decision_ledger_and_graph_traversal.md) | ADR-012: JSON Decision Ledger (`decisions.ledger.json` v2.0) SSOT & Deterministic Graph Traversal Tools |
+| [adr_013_epistemic_framing_decoupling_system2_system1.md](./architecture/adrs/adr_013_epistemic_framing_decoupling_system2_system1.md) | ADR-013: Epistemic Framing Decoupling System 2 Intent from System 1 Scoring & Workspace Grounding |
+| [adr_014_deterministic_change_weight_and_anti_domino_gate.md](./architecture/adrs/adr_014_deterministic_change_weight_and_anti_domino_gate.md) | ADR-014: Deterministic 4-Source Change Weight $W(d)$ & Intent-Aware Anti-Domino Override Gate |
+| [adr_015_two_tier_workspace_undo_and_turn_rollback.md](./architecture/adrs/adr_015_two_tier_workspace_undo_and_turn_rollback.md) | ADR-015: Two-Tier Workspace Undo & Turn Rollback Across Open/Closed Files & Invalidation DAG |
+| [adr_016_zk_encryption_granularity_and_ephemeral_ai_bridge.md](./architecture/adrs/adr_016_zk_encryption_granularity_and_ephemeral_ai_bridge.md) | ADR-016: Zero-Knowledge Encryption Granularity, Mandatory Workspace Governance & Ephemeral AI Bridge |
 
 #### Sync & Storage Engine (`architecture/sync/`)
 
@@ -171,15 +192,22 @@ docs/
 
 | Document | Scope |
 | :--- | :--- |
+| [elixent_sync_and_execution_srs.md](./specs/elixent_sync_and_execution_srs.md) | Software Requirements Specification: Local-First identity verification & conditional React state flushing (v0.20.5) |
 | [offline-sync-blueprint.md](./specs/offline-sync-blueprint.md) | Original offline-first blueprint: storage engine, background sync, roadmap M1–M8 |
 | [ai-key-rotation-and-resilience.md](./specs/ai-key-rotation-and-resilience.md) | Circuit breaker states, key lifecycle, streaming watchdogs & terminality contract |
 | [ui-streaming-requirements.md](./specs/ui-streaming-requirements.md) | Requirements/invariants for ephemeral ghost preview & atomic undo |
+| [srs_01_agent_orchestration_decision_graph_and_weight_engine.md](./specs/srs_01_agent_orchestration_decision_graph_and_weight_engine.md) | SRS-01: Agent Orchestration Engine, Canonical Decision Graph & Deterministic Change Weight Gate |
+| [srs_02_multi_workspace_isolation_and_zk_vault_governance.md](./specs/srs_02_multi_workspace_isolation_and_zk_vault_governance.md) | SRS-02: Multi-Workspace Isolation, File Lifecycle Management & Zero-Knowledge Vault Governance |
+| [srs_03_editor_tabs_multi_ghost_review_and_two_tier_undo.md](./specs/srs_03_editor_tabs_multi_ghost_review_and_two_tier_undo.md) | SRS-03: Multi-File Editor Tabs, Ghost Review Lifecycle, Interactive Decision Graph UI & Two-Tier Undo |
+| [srs_04_multi_provider_ai_gateway_and_wallet_metering.md](./specs/srs_04_multi_provider_ai_gateway_and_wallet_metering.md) | SRS-04: Multi-Provider AI Gateway Routing & Open-Ceiling Wallet-Bounded Credit Metering |
 
 ---
 
 ### 2.6. Plans (`Plans/`) — Active Execution Plans (English)
 
-*(No active execution plans currently pending — the completed Next.js Decoupling & Clean Architecture execution plan has been verified and archived at [elixent-nextjs-decoupling-and-clean-architecture-plan.md](./records/plans/elixent-nextjs-decoupling-and-clean-architecture-plan.md).)*
+| Document | Scope & Status |
+| :--- | :--- |
+| [elixent-architectural-evolution-execution-plan.md](./Plans/elixent-architectural-evolution-execution-plan.md) | Active authoritative technical execution roadmap: Native Graph Engine, Decision Graph, Multi-Workspace Isolation, Epistemic Framing, Change Weight Gate, Multi-Tab Ghost Review, and Multi-Provider AI Gateway (Phases 0–6) — **Active** ⏳ |
 
 > **Dual-Track Planning Policy:** The `.Plans/` directory in the repository root is an **internal candidate planning incubator** (written in Arabic, untracked in Git via `.gitignore`). It serves as a scratchpad for drafting, evaluating, and incubating future ideas. Once an engineering plan is approved and executed, its authoritative English edition is published and tracked here under `docs/Plans/`.
 
@@ -216,6 +244,7 @@ docs/
 | [elixent-execution/](./records/closures/elixent-execution/) | Elixent 12-phase execution plan closure dossiers: [Phase 1 Core Hardening closure dossier](./records/closures/elixent-execution/phase-01-core-hardening.md), [Phase 2 Dependencies, Pool & Schema Migration closure dossier](./records/closures/elixent-execution/phase-02-dependencies-pool-and-schema-migration.md), [Phase 3 Lean Model Registry & Lua Scripts closure dossier](./records/closures/elixent-execution/phase-03-lean-model-registry-derivation-and-lua.md), [Phase 4 Flush-First Cold Start & Settlement closure dossier](./records/closures/elixent-execution/phase-04-flush-first-cold-start-and-settlement.md), [Phase 5 Fence-Aware AST Heading Slicer, Section-Scoped Diff3 & Hybrid BM25 closure dossier](./records/closures/elixent-execution/phase-05-ast-slicer-diff3-and-bm25.md), [Phase 6 Zero-Knowledge Vault Boundary, Encrypted Checkpoints & Cloud Workspace Provider closure dossier](./records/closures/elixent-execution/phase-06-vault-boundary-checkpoints-and-provider.md), [Phase 7 Comprehensive Concept Taxonomy, Unified Decisions Client & Conformal APS closure dossier](./records/closures/elixent-execution/phase-07-concept-taxonomy-unified-decisions-and-conformal-aps.md), [Phase 8 Justification-Driven ATMS DAG, Candidate Retriever & Relational Linker closure dossier](./records/closures/elixent-execution/phase-08-justification-driven-atms-dag-candidate-retriever-and-relational-linker.md), [Phase 9 AgentGraphState Channels, Pure Reducers, 7-Stage Nodes & Compiled LangGraph StateGraph closure dossier](./records/closures/elixent-execution/phase-09-agent-graph-state-channels-pure-reducers-7-stage-nodes-and-compiled-langgraph-stategraph.md), [Phase 10 CodeMirror 6 Multi-Hunk Ghost Upgrade & Unified Agent SSE Stream Route closure dossier](./records/closures/elixent-execution/phase-10-codemirror-6-multi-hunk-ghost-upgrade-and-unified-agent-sse-stream-route.md), [Phase 11 Agent Chat Panel, HITL Question Cards, Credit Balance Views & Incremental Editor Sync closure dossier](./records/closures/elixent-execution/phase-11-agent-chat-panel-hitl-question-cards-credit-balance-views-and-incremental-editor-sync.md), and [Phase 12 Final Purge of Legacy 5-Operation Modules, Test Suite Migration & Living Documentation Sync closure dossier](./records/closures/elixent-execution/phase-12-final-legacy-purge-test-suite-migration-and-living-docs-sync.md) |
 | [framework-migration/](./records/closures/framework-migration/) | Framework migration plan closure dossiers: [Phase 1 Archive Prior Plan, Packages & Session Middleware closure dossier](./records/closures/framework-migration/phase-01-archive-prior-plan-target-packages-and-session-middleware.md), [Phase 2 Migrate All 8 API Routes & OAuth Callback to Web-Standard Hono Routers closure dossier](./records/closures/framework-migration/phase-02-migrate-all-8-api-routes-and-oauth-callback-to-web-standard-hono-routers.md), [Phase 3 Decouple Server Actions & Mount Typed Hono RPC closure dossier](./records/closures/framework-migration/phase-03-decouple-server-actions-and-mount-typed-hono-rpc.md), [Phase 4 Wire Client Hooks & UI to Hono RPC Client & Strip Directives closure dossier](./records/closures/framework-migration/phase-04-wire-client-hooks-and-ui-to-hono-rpc-and-strip-directives.md), [Phase 5 Vite 6 SPA + TanStack Router & Unified Hono Server Entrypoint closure dossier](./records/closures/framework-migration/phase-05-vite-spa-tanstack-router-and-unified-hono-server.md), and [Phase 6 Final Next.js Purge, Test Suite Alignment & CI/E2E Closure dossier](./records/closures/framework-migration/phase-06-final-nextjs-purge-test-suite-alignment-and-ci-e2e-closure.md) |
 | [nextjs-decoupling/](./records/closures/nextjs-decoupling/) | Next.js decoupling and Clean Architecture plan closure dossiers: [Phase 1 closure dossier](./records/closures/nextjs-decoupling/phase-01-archive-plan-clean-compiler-env-and-vite-boundary-guard.md) · [Phase 2 closure dossier](./records/closures/nextjs-decoupling/phase-02-purge-middleware-relics-turbopack-facade-and-unify-rpc-contracts.md) · [Phase 2.5 closure dossier](./records/closures/nextjs-decoupling/phase-02-5-purge-vitest-bridge-fix-boundary-leaks-and-harden-rpc.md) · [Phase 2.6 closure dossier](./records/closures/nextjs-decoupling/phase-02-6-remediation-of-p1-p2-p25-audit-findings.md) · [Phase 3 closure dossier](./records/closures/nextjs-decoupling/phase-03-tanstack-router-validate-search-and-pure-spa-idioms.md) · [Phase 4 closure dossier](./records/closures/nextjs-decoupling/phase-04-living-architecture-docs-sync-and-final-closure.md) |
+| [architectural-evolution/](./records/closures/architectural-evolution/) | Architectural evolution execution plan closure dossiers: [Phase 0 prior-ADR conflict resolution & living documentation reconciliation dossier](./records/closures/architectural-evolution/phase-00-prior-adr-conflict-resolution-and-living-docs-reconciliation.md) |
 
 #### Completed Plans (`records/plans/`)
 

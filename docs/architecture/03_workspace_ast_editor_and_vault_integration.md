@@ -10,6 +10,8 @@
 
 ## 1. Unified Workspace Provider Contract (`IWorkspaceProvider Contract`)
 
+> **Amended by [ADR-011](./adrs/adr_011_multi_workspace_data_isolation_model.md) and [SRS-02](../specs/srs_02_multi_workspace_isolation_and_zk_vault_governance.md):** All `IWorkspaceProvider` operations are strictly scoped by `workspaceId`, extending the contract with `listWorkspaceTree`, `createWorkspaceFile`, and `deleteWorkspaceFile` across both open and closed workspace files.
+
 To decouple the architectural agent core (`src/core/agent/*`) from underlying storage medium details and enable executing the exact same state graph on the **Cloud Hono Server** (backed by PostgreSQL) and on **Electron Desktop** (backed by the local filesystem), agent nodes communicate exclusively through the standardized `IWorkspaceProvider` interface (`src/core/workspace/provider.ts`):
 
 ```typescript
@@ -117,6 +119,8 @@ export class EncryptedPayloadMissingError extends Error {
 
 ## 2. Hybrid AST and Lexical Search Engine (`Hybrid AST + Lexical/BM25 Engine`)
 
+> **Amended by [ADR-011](./adrs/adr_011_multi_workspace_data_isolation_model.md) and [SRS-02](../specs/srs_02_multi_workspace_isolation_and_zk_vault_governance.md):** Discovery and lexical/AST indexing operate strictly within the active `workspaceId` boundary across all open and closed files in the workspace tree (`listWorkspaceTree`, `createWorkspaceFile`, `deleteWorkspaceFile`).
+
 ### 2.1. Fence-Aware Heading Slicer (`Fence-Aware Heading Slicer`)
 
 Naive Regex slicing (`/^#{1,6}\s+/m`) suffers from a critical vulnerability: it captures `# comment` lines inside code blocks (` ```python ` or ` ```bash `) as section headings, corrupting section boundaries during merge operations.
@@ -170,6 +174,8 @@ The `document_writer_node` relies on `src/lib/sync/diff3.ts` and `src/lib/sync/s
    - The merged text is passed through `validateMarkdownSyntaxIntegrity` in `src/lib/sync/syntax-validator.ts` to verify that there are no unclosed code fences, broken Markdown tables, or truncated math delimiters. If validation fails, `diff3MergeSection` returns `status: "syntax_invalid"` with diagnostics.
 
 ## 4. Multi-Hunk Ghost Preview Architecture and Incremental Sync Contract (`Multi-Hunk Ghost & Incremental Sync Contract`)
+
+> **Amended by [ADR-015](./adrs/adr_015_two_tier_workspace_undo_and_turn_rollback.md) and [SRS-03](../specs/srs_03_editor_tabs_multi_ghost_review_and_two_tier_undo.md):** Multi-file ghost review and undo semantics are extended with `WorkspaceTabBar`, per-file `ghostHunksByFileId` state, `PendingEditsExitModal` navigation guards, and Two-Tier Workspace Undo (per-hunk CodeMirror undo + turn-linked workspace rollback).
 
 ### 4.1. CodeMirror 6 Multi-Hunk Ghost Extension & StateField (`Multi-Hunk Ghost Decorations`)
 
@@ -273,6 +279,8 @@ In Phase 11, the multi-hunk ghost extension and incremental sync contract are fu
 3. **`useEditorOrchestrator` (`src/hooks/use-editor-orchestrator.ts`):** Coordinates multi-hunk actions (`acceptGhostHunk`, `rejectGhostHunk`, `acceptAllGhostHunks`, `rejectAllGhostHunks`) with immediate IndexedDB writes and debounced sequential server synchronization via `useEditorAutosave`.
 
 ## 5. Zero-Knowledge Vault Boundary and Isolated Ephemeral References (`Zero-Knowledge Vault Boundary & Ephemeral References`)
+
+> **Amended by [ADR-016](./adrs/adr_016_zk_encryption_granularity_and_ephemeral_ai_bridge.md) and [SRS-02](../specs/srs_02_multi_workspace_isolation_and_zk_vault_governance.md):** Zero-Knowledge encryption is governed at the mandatory workspace-wide level with `allow_ai_on_encrypted_files = true` by default (superseding `allowAIOnEncryptedFiles === false` as the default posture below) and introduces the `vault_file_commit_required` gate for encrypted workspace mutations.
 
 To preserve the end-to-end encryption (`Zero-Knowledge`) guarantees implemented in `src/lib/crypto/*`, `src/lib/vault/*`, and `src/server/db/schema/vault.ts`:
 

@@ -126,6 +126,8 @@ export type NewCreditLedgerTransaction =
 
 ### 1.3. Cross-Session Project Decision Ledger Table (`src/server/db/schema/project-decision-ledger.ts`)
 
+> **Superseded by [ADR-012](./adrs/adr_012_json_decision_ledger_and_graph_traversal.md):** The `project_decision_ledger` PostgreSQL table is replaced by the workspace-native `decisions.ledger.json` file as the single source of truth for the decision DAG. The original table contract is preserved below for historical context.
+
 This table persists the Justification-Driven Assumption-Based Truth Maintenance System directed acyclic graph (`Justification-Driven ATMS DAG`), including the decision prompt, the selected option and its rationale (`selectionRationale`), all evaluated alternatives and their contextual rejection reasons (`evaluatedAlternatives`), concept tags resolved from the project-scoped dynamic taxonomy (`conceptTags`), and dependency links (`dependsOn` and `dependedBy`) scoped at the project level (`projectId`) so they remain available across all `thread_id` sessions (with project taxonomy mutations persisted under the reserved sentinel `decision_id = '__PROJECT_TAXONOMY__'`):
 
 ```typescript
@@ -221,6 +223,8 @@ export function getPgPool(): NeonPool | NodePgPool {
 ```
 
 ### 1.5. `PostgresSaver` Drizzle Schema (`src/server/db/schema/langgraph-checkpoints.ts`) and Migration `0013_migrate_to_credit_ledger.sql`
+
+> **Superseded by [ADR-009](./adrs/adr_009_native_graph_orchestration_engine.md):** The 4-table `PostgresSaver` schema (`langgraph-checkpoints.ts`) is replaced by the single-table encrypted `agent_checkpoints` store managed by the `Elixent Native Graph Engine`. The original Drizzle schema contract is preserved below for historical migration context.
 
 Because Stage 3 of the continuous integration pipeline (`.github/workflows/ci.yml` — `Stage 3: migration-integrity`, lines `136–142`) executes `node scripts/verify-migrations.mjs` followed by `npx drizzle-kit push --config drizzle.config.test.ts --force` (which reads `schema: "./src/server/db/schema/index.ts"`), creating the four `PostgresSaver` tables in the SQL migration file without defining them in the Drizzle schema would cause `drizzle-kit push --force` to drop them as unmanaged tables. Therefore, they **must** be defined in `src/server/db/schema/langgraph-checkpoints.ts` and exported from `src/server/db/schema/index.ts` in lockstep with migration file `0013_migrate_to_credit_ledger.sql`:
 
@@ -351,7 +355,7 @@ This transformation matrix is grounded in a direct inventory of the actual file 
 ### 3.2. Category 2: Modules Repurposed & Extended (`Refactor & Extend` / `Adapt & Repurpose`)
 
 > [!NOTE]
-> **Historical Migration Path Archival Note (`ADR-006`):** The tables and phased roadmap below (`§§3.2–4`) preserve the historical `LUGX v1.46.3` migration inventory verbatim. Following framework decoupling under [`ADR-006`](./adr_006_unified_vite_tanstack_hono_rpc_architecture.md), all legacy `src/app/**` route and page paths referenced in these historical migration tables were subsequently migrated to `src/server/routes/**` (Hono API/RPC routers) and `src/client/routes/**` (Vite 6 + TanStack Router SPA views).
+> **Historical Migration Path Archival Note (`ADR-006`):** The tables and phased roadmap below (`§§3.2–4`) preserve the historical `LUGX v1.46.3` migration inventory verbatim. Following framework decoupling under [`ADR-006`](./adrs/adr_006_unified_vite_tanstack_hono_rpc_architecture.md), all legacy `src/app/**` route and page paths referenced in these historical migration tables were subsequently migrated to `src/server/routes/**` (Hono API/RPC routers) and `src/client/routes/**` (Vite 6 + TanStack Router SPA views).
 
 | Actual Path in `LUGX v1.46.3` | Legacy Philosophy in `LUGX` | New Philosophy in `Elixent` |
 | :--- | :--- | :--- |

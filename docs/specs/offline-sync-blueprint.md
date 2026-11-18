@@ -62,6 +62,8 @@ export interface SyncMetadataRecord {
 }
 ```
 
+> **Runtime Extension Notice (Two-Tier Undo & Turn Rollback):** For the active `IDBOperation` schema extensions (`workspaceId`, `threadId`, `turnId`, `postTurnEtag`) supporting workspace-scoped undo and AI turn-linked rollback, see [`ADR-015`](../architecture/adrs/adr_015_two_tier_workspace_undo_and_turn_rollback.md) and [`SRS-03`](./srs_03_editor_tabs_multi_ghost_review_and_two_tier_undo.md).
+
 ---
 
 ## Phase 2: Connectivity & Network Resilience Layer

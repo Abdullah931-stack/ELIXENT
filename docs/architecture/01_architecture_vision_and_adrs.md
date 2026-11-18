@@ -72,6 +72,8 @@ In compliance with the architectural decision and trade-off documentation rules 
 
 ### 3.1. `ADR-001`: Adopting a Hybrid Architecture Combining `@langchain/langgraph` for Cyclic Orchestration and `Vercel AI SDK v6` for Generative Models
 
+> **Superseded by [ADR-009](./adrs/adr_009_native_graph_orchestration_engine.md):** `@langchain/langgraph` and `Vercel AI SDK v6` have been replaced by the zero-dependency `Elixent Native Graph Engine` paired with `Vercel AI SDK v7` (`ai`) for generative model invocations. The original `ADR-001` record is preserved below for historical context.
+
 - **Context & Problem:** The architectural agent must execute multi-loop autonomous investigation and auditing cycles (local search $\leftarrow$ assumption analysis $\leftarrow$ decision adjudication $\leftarrow$ conditional loopback to search or a Human-in-the-Loop `HITL` pause spanning hours or days $\leftarrow$ exact resumption from the interruption point), while maintaining smooth frontend streaming and avoiding dependency bloat in cloud server and serverless environments.
 - **Accepted Decision:**
   1. Adopt the isolated **`@langchain/langgraph`** package exclusively as a state machine (`StateGraph`) to manage cyclic control flow, conditional edges, persistent checkpoints (`Checkpoints`), and stateless human interrupts (`Stateless Interrupts`).
@@ -91,6 +93,11 @@ In compliance with the architectural decision and trade-off documentation rules 
 - **Migration Trigger:** Re-evaluate the `@langchain/langgraph` orchestration layer only if a future release of `Vercel AI SDK` introduces a native graph state machine supporting `Persistent Checkpointers` and `Stateless Resumable Interrupts` with zero external dependencies.
 
 ### 3.2. `ADR-002`: Adopting a Unified Decision Model Cascade (`POST /v1/decisions`) and Mathematical Triage via Adaptive Conformal Prediction (`Conformal APS Cascade`)
+
+> **Amended by [ADR-012](./adrs/adr_012_json_decision_ledger_and_graph_traversal.md), [ADR-013](./adrs/adr_013_epistemic_framing_decoupling_system2_system1.md), and [ADR-014](./adrs/adr_014_deterministic_change_weight_and_anti_domino_gate.md):**
+> - **Epistemic Framing ([ADR-013](./adrs/adr_013_epistemic_framing_decoupling_system2_system1.md)):** Neutral option enumeration (`neutralSummary`) is strictly decoupled from System-2 scoring; pre-scoring `rationaleAndPremises` is replaced by `technicalConstraints` and structured `workspaceEvidence` grounding.
+> - **Deterministic Change Weight & Anti-Domino Gate ([ADR-014](./adrs/adr_014_deterministic_change_weight_and_anti_domino_gate.md)):** Introduces the 4-source Change Weight $W(d)$ calculation and the deterministic Anti-Domino Gate before cascading reopens.
+> - **Workspace-Native Ledger ([ADR-012](./adrs/adr_012_json_decision_ledger_and_graph_traversal.md)):** `decisions.ledger.json` replaces the PostgreSQL `project_decision_ledger` table as the single source of truth for the decision DAG.
 
 - **Context & Problem:** While authoring or modifying an architectural document, the agent encounters dozens of design trade-offs and assumptions. Using heavy generative models (`LLMs`) to adjudicate every assumption consumes thousands of tokens and adds seconds of latency. Furthermore, asking a generative model to guess its own "confidence score" or set acceptance thresholds for another model yields statistically uncalibrated decisions, while single-pass classifiers are susceptible to rhetorical phrasing bias across option descriptions.
 - **Accepted Decision:**
@@ -114,6 +121,8 @@ In compliance with the architectural decision and trade-off documentation rules 
 - **Migration Trigger:** Once $\ge 1,000$ resolved architectural decisions accumulate in the `project_decision_ledger` table, replace the `Sliding Window Quantile` calibration model with a lightweight per-category `isotonic / quantile calibrator`.
 
 ### 3.3. `ADR-003`: Adopting Hybrid Structural Inspection (`AST Heading Tree + Lexical/BM25 Search`) and Excluding Vector Databases (`Vector RAG`)
+
+> **Amended by [ADR-010](./adrs/adr_010_replay_safe_node_boundary_topology.md) and [ADR-012](./adrs/adr_012_json_decision_ledger_and_graph_traversal.md):** During Stage 1 discovery (`search_discovery_node` per [ADR-010](./adrs/adr_010_replay_safe_node_boundary_topology.md)), the agent pairs the 4 AST/BM25 document inspection tools with the 4 `decisions.ledger.json` graph traversal tools ([ADR-012](./adrs/adr_012_json_decision_ledger_and_graph_traversal.md)).
 
 - **Context & Problem:** The agent must explore project documents and files to extract evidence and assumptions without reading entire files on every turn and without losing the structural hierarchy of paragraphs or tables.
 - **Accepted Decision:**
@@ -156,6 +165,10 @@ In compliance with the architectural decision and trade-off documentation rules 
 
 ### 3.5. `ADR-005`: Adopting Dual Persistent Storage (`Checkpointer + Project Store`) and Isolating the Zero-Knowledge Vault via `vault_ref://` Pointers
 
+> **Amended by [ADR-009](./adrs/adr_009_native_graph_orchestration_engine.md) and [ADR-012](./adrs/adr_012_json_decision_ledger_and_graph_traversal.md):**
+> - **Thread Checkpointer ([ADR-009](./adrs/adr_009_native_graph_orchestration_engine.md)):** The `PostgresSaver` 4-table schema is replaced by the single-table encrypted `agent_checkpoints` store managed by the `Elixent Native Graph Engine`.
+> - **Cross-Thread Decision Store ([ADR-012](./adrs/adr_012_json_decision_ledger_and_graph_traversal.md)):** The `project_decision_ledger` PostgreSQL table is replaced by the workspace-native `decisions.ledger.json` file.
+
 - **Context & Problem:**
   1. `LangGraph Checkpointer` (`PostgresSaver`) snapshots are scoped to a single conversation thread (`thread_id`). If a user starts a new conversation thread within the same project, architectural decisions (`master_ledger`) resolved in prior threads would be lost.
   2. If a user grants the agent permission to read an encrypted vault file (`allowAIOnEncryptedFiles = true`), storing the decrypted plaintext inside `AgentGraphState.search_report` would automatically persist plaintext or near-plaintext data into `PostgresSaver` tables at every super-step transition between nodes, violating the `Zero-Knowledge Vault` invariant.
@@ -174,8 +187,8 @@ In compliance with the architectural decision and trade-off documentation rules 
 
 ### 3.6. Standalone Framework Migration ADRs (Amending ADR-001 through ADR-005)
 
-- **`ADR-006`:** [Replacing Next.js 16 (App Router) with Unified Web-Standard Architecture (Vite 6 SPA + TanStack Router + Hono RPC)](./adr_006_unified_vite_tanstack_hono_rpc_architecture.md) — Establishes the active **Vite 6 SPA + TanStack Router + Hono RPC** architecture across the decoupled presentation and server layers (amending the §1.1 and §2 container architecture baseline).
-- **`ADR-007`:** [Enforcing Dual-Plane Contract Separation (ICloudControlPlane vs. IWorkspaceProvider) and Request-Scoped AsyncLocalStorage Context Isolation](./adr_007_dual_plane_separation_and_als_request_context.md) — Establishes request-scoped `AsyncLocalStorage` context isolation (`src/server/context/request-context.ts`) and separates Cloud Control Plane contracts from runtime-injected Workspace Plane providers.
+- **`ADR-006`:** [Replacing Next.js 16 (App Router) with Unified Web-Standard Architecture (Vite 6 SPA + TanStack Router + Hono RPC)](./adrs/adr_006_unified_vite_tanstack_hono_rpc_architecture.md) — Establishes the active **Vite 6 SPA + TanStack Router + Hono RPC** architecture across the decoupled presentation and server layers (amending the §1.1 and §2 container architecture baseline).
+- **`ADR-007`:** [Enforcing Dual-Plane Contract Separation (ICloudControlPlane vs. IWorkspaceProvider) and Request-Scoped AsyncLocalStorage Context Isolation](./adrs/adr_007_dual_plane_separation_and_als_request_context.md) — Establishes request-scoped `AsyncLocalStorage` context isolation (`src/server/context/request-context.ts`) and separates Cloud Control Plane contracts from runtime-injected Workspace Plane providers.
 
 ### 3.7. `ADR-008`: Local-First Cookie Identity Verification & Conditional React State Flushing on Conflict and Server Fetch
 

@@ -10,6 +10,8 @@
 
 ## 1. LangGraph.js StateGraph Architecture
 
+> **Superseded by [ADR-009](./adrs/adr_009_native_graph_orchestration_engine.md), [ADR-010](./adrs/adr_010_replay_safe_node_boundary_topology.md), and [SRS-01](../specs/srs_01_agent_orchestration_decision_graph_and_weight_engine.md):** `@langchain/langgraph` (`StateGraph`) is superseded by the `Elixent Native Graph Engine` executing **9 Replay-Safe Canonical Nodes** governed by **6 State-Predicate Gates (`G-01..G-06`)** with a single-table encrypted `agent_checkpoints` store. The original 7-stage LangGraph specification is preserved below as historical reference.
+
 The following diagram illustrates the complete architectural agent lifecycle within `@langchain/langgraph` across seven integrated stages, from receiving the user request to multi-hunk differential streaming:
 
 ```mermaid
@@ -204,6 +206,8 @@ All graph nodes that invoke external models are wrapped by the pre-execution fin
 
 ### 3.1. StateGraph Assembly, Checkpointers & Invocation Interfaces (`src/core/agent/graph.ts`)
 
+> **Superseded by [ADR-009](./adrs/adr_009_native_graph_orchestration_engine.md), [ADR-010](./adrs/adr_010_replay_safe_node_boundary_topology.md), and [SRS-01](../specs/srs_01_agent_orchestration_decision_graph_and_weight_engine.md):** `StateGraph` (`buildAgentWorkflow`) and `PostgresSaver` are replaced by the `Elixent Native Graph Engine` orchestrating 9 Replay-Safe Canonical Nodes with 6 State-Predicate Gates (`G-01..G-06`) and single-table `agent_checkpoints` persistence.
+
 - **StateGraph Builder (`buildAgentWorkflow`):** Instantiates `new StateGraph(AgentGraphAnnotation)`, registers all 14 canonical nodes across Stages 0 to 7, and binds 3 conditional routers (`toolsCondition`, `routeAfterAssumptions`, `resolutionGateRouter`).
 - **Production Checkpointer (`getProductionCheckpointer`):** Instantiates `PostgresSaver` backed by the global PostgreSQL pool (`getPgPool()`) and authenticated `EncryptedCheckpointSerializer` (AES-256-GCM) with `elixent:v1:checkpoint:${innerType}` AAD and active plaintext leak assertions (`assertNoVaultPlaintextLeak`).
 - **Factory & Singleton Architecture:**
@@ -213,6 +217,8 @@ All graph nodes that invoke external models are wrapped by the pre-execution fin
 ## 4. Unified Decisions API & Adaptive Conformal Prediction Cascade (`Unified Decisions API & Conformal APS Cascade`)
 
 ### 4.1. Programmatic Contract for `POST /v1/decisions`, Universal Concept Taxonomy & Dynamic Schema Factories
+
+> **Amended by [ADR-013](./adrs/adr_013_epistemic_framing_decoupling_system2_system1.md):** Pre-scoring `rationaleAndPremises` in `CanonicalOptionSchema` is replaced by neutral `technicalConstraints` and structured `workspaceEvidence` grounding to strictly decouple System-1 option enumeration from System-2 conformal scoring.
 
 To prevent the language model from drifting into arbitrary tag hallucination while avoiding rigid host-project coupling, the taxonomy is structured in two decoupled tiers:
 
@@ -327,6 +333,8 @@ $$\mathcal{C}_\alpha(x) = \left\{ a_k \in \mathcal{A}_{\text{valid}} : s(x, a_k)
 
 ## 5. Justification-Driven Truth Maintenance DAG & Relational Linker (`Justification-Driven ATMS DAG & Relational Linker`)
 
+> **Amended by [ADR-012](./adrs/adr_012_json_decision_ledger_and_graph_traversal.md) and [ADR-014](./adrs/adr_014_deterministic_change_weight_and_anti_domino_gate.md):** The cross-thread PostgreSQL `project_decision_ledger` table is replaced by the workspace-native `decisions.ledger.json` file ([ADR-012](./adrs/adr_012_json_decision_ledger_and_graph_traversal.md)), and override cascades are gated by deterministic Change Weight scoring (`computeDecisionChangeWeight`) and the Anti-Domino Gate (`evaluateAntiDominoGate`) per [ADR-014](./adrs/adr_014_deterministic_change_weight_and_anti_domino_gate.md).
+
 Decisions recorded in `state.master_ledger` are managed as a live **Justification-Driven Assumption-based Truth Maintenance System (`Justification-Driven ATMS DAG`)**. Rather than treating the ledger as an immutable blocklist or permanent lock-in, it operates as a causal dependency graph linking every decision to its `selectionRationale`, its `evaluatedAlternatives`, and the downstream decisions that depend on it (`dependedBy`), implemented deterministically in `src/core/agent/atms/` (`dag.ts`, `candidate-retriever.ts`, `relational-linker.ts`, `invalidation.ts`).
 
 ### 5.1. Two-Stage Candidate Retrieval & Relational Classification (`Two-Stage Candidate Retrieval & Relational Classification`)
@@ -345,6 +353,8 @@ To ensure logical dependencies between decisions are never missed when the langu
      - **`REFINES` (Compatible Sub-Specification):** The new point elaborates a sub-detail within the framework of confirmed decision $D_i$ without altering its foundation, linking to it as a dependent child (`dependsOn: [D_i.decisionId]`).
 
 ### 5.2. Contagious Promotion & Override Cascade BFS (`Contagious Promotion & Override Cascade BFS`)
+
+> **Amended by [ADR-014](./adrs/adr_014_deterministic_change_weight_and_anti_domino_gate.md):** Prior to executing `resolveATMSCascadeBFS`, candidate reopens are evaluated via `computeDecisionChangeWeight` and `evaluateAntiDominoGate` to prevent uncontrolled domino cascades across the `decisions.ledger.json` DAG ([ADR-012](./adrs/adr_012_json_decision_ledger_and_graph_traversal.md)).
 Based on the relational classification outputs in `atms_relational_linker_node`, the following deterministic function executes two directional cascades across the `ATMS` DAG:
 1. **Upward Dependency Promotion (via `dependsOn`):** If a new request depends on a prior decision whose status is `APPROVED_CONSERVATIVE`, that conservative decision (along with any conservative ancestors it depends on) is pulled, promoted to `CORE_ARCHITECTURAL` (`isLoadBearing: true`), and pushed with its preserved `evaluatedAlternatives` into the evaluation pipeline (`jev_structuring_node` $\rightarrow$ `decision_scorer_node`) to select the optimal alternative given current evidence—or escalated to the user if internally unresolvable.
 2. **Downward Dependent Cascade on Foundational Override (via `dependedBy`):** If the relation against a prior decision $D_i$ is classified as `REOPENS_OR_OVERRIDES`, $D_i$ is pulled for re-evaluation while a breadth-first search (`BFS`) traverses all downstream dependents in `dependedBy` to queue them for parallel re-evaluation and synchronized section updates, preventing architectural drift across document sections:

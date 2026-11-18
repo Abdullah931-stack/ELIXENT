@@ -23,6 +23,8 @@ In its legacy model, the **LUGX (`v1.46.3`)** platform relied on counting words 
 
 ### 2.1. Credit Unit and Precision-Lossless Mathematical Representation (`Micro-Credits & BigInt`)
 
+> **Amended by [ADR-009](./adrs/adr_009_native_graph_orchestration_engine.md) and [SRS-04](../specs/srs_04_multi_provider_ai_gateway_and_wallet_metering.md):** References to `LangGraph` state below are superseded by the `Elixent Native Graph Engine` (`agent_checkpoints`), which eliminates node-replay double-billing and introduces single-layer open-ceiling wallet-bounded metering.
+
 - **Standard Credit Valuation:** One credit unit ($1 \text{ Credit}$) is defined as a fixed, system-wide standard monetary unit.
 - **Fraction-Free Integer Representation:** All balances and arithmetic computations inside Redis and PostgreSQL are stored as exact integers denominated in **Micro-Credits (`Micro-Credits`)**, where:
   $$1 \text{ Credit} = 1,000,000 \text{ Micro-Credits}$$
@@ -115,6 +117,8 @@ The model registry in `src/config/models.config.json` is indexed by unique model
 
 ### 3.3. Idempotent Pre-Node Wrapper Preventing Double Billing in `LangGraph` (`Idempotent Pre-Node Wrapper`)
 
+> **Superseded / Amended by [ADR-009](./adrs/adr_009_native_graph_orchestration_engine.md) and [SRS-04](../specs/srs_04_multi_provider_ai_gateway_and_wallet_metering.md):** The `Elixent Native Graph Engine` resumes directly at the interrupted node boundary without re-executing prior lines, eliminating `@langchain/langgraph` node-replay double-billing and replacing `withMeteredNodeGate` replay workarounds with single-layer open-ceiling wallet-bounded metering. The `withMeteredNodeGate` design is preserved below for historical context.
+
 Because resuming a node after `interrupt()` in `@langchain/langgraph` re-executes the node function from its first line, every model-consuming node is wrapped with **`withMeteredNodeGate`** (`src/lib/metering/node-gate.ts`):
 
 1. **Deterministic Step Idempotency Key (`Deterministic StepKey`):**
@@ -178,6 +182,8 @@ If the reserved token slice is $100\%$ consumed during streaming before the Redi
 3. If the $500\text{ ms}$ timeout elapses or the extension is rejected due to credit exhaustion, the server immediately fires **`AbortController.abort()`** to sever the network connection with the external provider and halt GPU billing, then settles the operation at the exact last financially covered token.
 
 ## 5. Bifurcated Settlement Engine and Race-Free Cold Start Protocol (Bifurcated Settlement & Cold Start)
+
+> **Amended by [SRS-04](../specs/srs_04_multi_provider_ai_gateway_and_wallet_metering.md) (`ELIXENT-EXECUTION-PLAN-v1.1` Phase 1):** Legacy `lugx:*` Redis keys (`lugx:wallet:${userId}`, `lugx:pending_settlements:${userId}`, `lugx:dirty_wallets`) documented in `§5.1–§6` below are standardized to brand-agnostic `credit:*` keys (`credit:wallet:${userId}`, `credit:pending_settlements:${userId}`, `credit:dirty_wallets`).
 
 ### 5.1. Atomic Settlement and Asynchronous Draining via `scheduleAfterResponse()` (`Non-Blocking Durability`)
 

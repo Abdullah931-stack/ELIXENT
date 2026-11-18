@@ -4,6 +4,23 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.23.0] - 2026-11-18 (Phase 0: Prior-ADR Conflict Resolution & Living Documentation Reconciliation)
+
+### Architectural Decision Records, SRS Suite & Active Plan Onboarding
+- **Standalone ADR Registry (`docs/architecture/adrs/`):** Added [`ADR-009`](./architecture/adrs/adr_009_native_graph_orchestration_engine.md) through [`ADR-016`](./architecture/adrs/adr_016_zk_encryption_granularity_and_ephemeral_ai_bridge.md), and relocated [`ADR-006`](./architecture/adrs/adr_006_unified_vite_tanstack_hono_rpc_architecture.md) and [`ADR-007`](./architecture/adrs/adr_007_dual_plane_separation_and_als_request_context.md) into `docs/architecture/adrs/` with cross-document link synchronization across living architecture docs, audits, completed plans, and closure records.
+- **Subsystem Specifications (`docs/specs/`):** Added [`SRS-01`](./specs/srs_01_agent_orchestration_decision_graph_and_weight_engine.md) through [`SRS-04`](./specs/srs_04_multi_provider_ai_gateway_and_wallet_metering.md), relocated [`elixent_sync_and_execution_srs.md`](./specs/elixent_sync_and_execution_srs.md) into `docs/specs/`, and updated `SRS-02` (`§5`, `§6.2`) for pre-production clean-cut removal of `AAD.legacy` (`zk:v1:*` exclusive enforcement).
+- **Active Execution Plan (`docs/Plans/`):** Published [`elixent-architectural-evolution-execution-plan.md`](./Plans/elixent-architectural-evolution-execution-plan.md) (`ELIXENT-EXECUTION-PLAN-v1.1`, Phases 0–6; retained in `docs/Plans/` while Phases 1–6 remain active).
+
+### Prior Living Architecture & Blueprint Reconciliation (`Phase 0`)
+- **Platform Architecture Suite (`docs/architecture/01`–`05`):** Reconciled supersession and amendment notices across [`01_architecture_vision_and_adrs.md`](./architecture/01_architecture_vision_and_adrs.md) (`ADR-001`, `002`, `003`, `005`, `006`, `007`), [`02_agent_orchestration_and_decision_engine.md`](./architecture/02_agent_orchestration_and_decision_engine.md) (`§1`, `§3.1`, `§4.1`, `§5`, `§5.2`), [`03_workspace_ast_editor_and_vault_integration.md`](./architecture/03_workspace_ast_editor_and_vault_integration.md) (`§1`, `§2`, `§4`, `§5`), [`04_credit_metering_and_settlement_architecture.md`](./architecture/04_credit_metering_and_settlement_architecture.md) (`§2.1`, `§3.3`, `§5`), and [`05_data_contracts_and_lugx_migration_plan.md`](./architecture/05_data_contracts_and_lugx_migration_plan.md) (`§1.3`, `§1.5`, `§3.2`).
+- **ADR-006 & Sync Blueprint Alignment:** Updated `§1.1` in `adr_006_unified_vite_tanstack_hono_rpc_architecture.md` (`Elixent Native Graph Engine — ADR-009`), added the `IDBOperation` runtime extension notice in [`offline-sync-blueprint.md`](./specs/offline-sync-blueprint.md) (`§1.2`), and synchronized [`README.md`](../README.md) and [`docs/README.md`](./README.md).
+
+### Verification & Closure
+- **Verification Gates:** `npx tsc --noEmit` (`0` errors), `npm run lint` (`0` errors), `npm run audit:ci` (`0` vulnerabilities), `npm run docs:check` (100% synced), and `npm run lint:links` (`0` broken links). Test suites (`npm run test`, `npm run test:live`, `npm run test:e2e`) were skipped by explicit user authorization (documentation-only phase), preserving the [`METRICS.json`](./METRICS.json) baseline (`146` unit / `3,007` tests · `21` live / `105` tests · `14` E2E / `15` tests).
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/architectural-evolution/phase-00-prior-adr-conflict-resolution-and-living-docs-reconciliation.md`](./records/closures/architectural-evolution/phase-00-prior-adr-conflict-resolution-and-living-docs-reconciliation.md).
+
+---
+
 ## [0.22.0] - 2026-11-15 (Phase 4: Align Living Architecture Specs, Subsystem Docs, Guides & Technical Debt Register)
 
 ### Core Architecture Specs & Core JSDocs (`Sub-Agent 4.A`)
