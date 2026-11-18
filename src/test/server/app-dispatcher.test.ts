@@ -331,6 +331,14 @@ vi.mock("@/server/db", () => ({
           currentPeriodEnd: new Date(Date.now() + 86400000),
         })),
       },
+      workspaces: {
+        findFirst: vi.fn(async () => ({
+          id: "ws-default-app",
+          userId: "user-app-001",
+          name: "Default Workspace",
+          isEncrypted: false,
+        })),
+      },
     },
     update: vi.fn(() => ({
       set: () => ({
@@ -348,6 +356,7 @@ vi.mock("@/server/db", () => ({
         mockDbInsertValues(val);
         return {
           onConflictDoUpdate: (spec: unknown) => mockDbOnConflictDoUpdate(spec),
+          onConflictDoNothing: () => Promise.resolve(undefined),
         };
       },
     }),
@@ -357,11 +366,18 @@ vi.mock("@/server/db", () => ({
     files: {
       id: "files.id",
       userId: "files.user_id",
+      workspaceId: "files.workspace_id",
       version: "files.version",
       deletedAt: "files.deleted_at",
       updatedAt: "files.updated_at",
     },
     users: { id: "users.id" },
+    workspaces: {
+      id: "workspaces.id",
+      userId: "workspaces.user_id",
+      name: "workspaces.name",
+      isEncrypted: "workspaces.is_encrypted",
+    },
   },
 }));
 

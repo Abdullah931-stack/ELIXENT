@@ -19,7 +19,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vites
 import { eq, and } from "drizzle-orm";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
-import { testDb, cleanupTestUsers } from "@/test/test-db";
+import { testDb, cleanupTestUsers, ensureTestDefaultWorkspace } from "@/test/test-db";
 import { randomUUID } from "crypto";
 import { updateFileContent } from "@/server/actions/files";
 
@@ -76,6 +76,7 @@ describe("lost-update guard (W5)", () => {
         await testDb.insert(schema.files).values({
             id: fileId,
             userId: TEST_USER_ID,
+            workspaceId: await ensureTestDefaultWorkspace(TEST_USER_ID),
             title: "w5-plain.md",
             content: "v0",
             isFolder: false,
@@ -103,6 +104,7 @@ describe("lost-update guard (W5)", () => {
         await testDb.insert(schema.files).values({
             id: fileId,
             userId: TEST_USER_ID,
+            workspaceId: await ensureTestDefaultWorkspace(TEST_USER_ID),
             title: "w5-race.md",
             content: "v0",
             isFolder: false,
@@ -145,6 +147,7 @@ describe("lost-update guard (W5)", () => {
         await testDb.insert(schema.files).values({
             id: fileId,
             userId: TEST_USER_ID,
+            workspaceId: await ensureTestDefaultWorkspace(TEST_USER_ID),
             title: "w5-stale.md",
             content: "v0",
             isFolder: false,
@@ -179,6 +182,7 @@ describe("lost-update guard (W5)", () => {
         await testDb.insert(schema.files).values({
             id: fileId,
             userId: TEST_USER_ID,
+            workspaceId: await ensureTestDefaultWorkspace(TEST_USER_ID),
             title: "w5-seq.md",
             content: "v0",
             isFolder: false,

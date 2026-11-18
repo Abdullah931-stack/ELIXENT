@@ -15,6 +15,7 @@ test.describe("Scenario 4: Offline-First Sync & Interactive Conflict Resolution"
             .insert(schema.files)
             .values({
                 userId: authSession.userId,
+                workspaceId: schema.deriveDefaultWorkspaceId(authSession.userId),
                 title: "Sync Conflict Document",
                 isFolder: false,
                 content: "# Line 1: Original Title\nLine 2: Base content\nLine 3: Tail",

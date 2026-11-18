@@ -19,7 +19,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vites
 import { eq } from "drizzle-orm";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
-import { testDb, cleanupTestUsers } from "@/test/test-db";
+import { testDb, cleanupTestUsers, ensureTestDefaultWorkspace } from "@/test/test-db";
 import { randomUUID } from "crypto";
 import { generateETagSync } from "@/lib/sync/etag-generator.server";
 import { updateFileContent } from "@/server/actions/files";
@@ -122,6 +122,7 @@ describe("AI Atomic Document Save & Credit Settlement — Real PostgreSQL Execut
         await testDb.insert(schema.files).values({
             id: fileId,
             userId: TEST_USER_ID,
+            workspaceId: await ensureTestDefaultWorkspace(TEST_USER_ID),
             title: "Atomic Test Doc",
             content: initialContent,
             version: 1,
@@ -176,6 +177,7 @@ describe("AI Atomic Document Save & Credit Settlement — Real PostgreSQL Execut
         await testDb.insert(schema.files).values({
             id: fileId,
             userId: TEST_USER_ID,
+            workspaceId: await ensureTestDefaultWorkspace(TEST_USER_ID),
             title: "Race Test Doc",
             content: initialContent,
             version: 1,
@@ -274,6 +276,7 @@ describe("AI Atomic Document Save & Credit Settlement — Real PostgreSQL Execut
         await testDb.insert(schema.files).values({
             id: otherUserFileId,
             userId: OTHER_USER_ID,
+            workspaceId: await ensureTestDefaultWorkspace(OTHER_USER_ID),
             title: "Other User File",
             content: "# Private to other user",
             version: 1,

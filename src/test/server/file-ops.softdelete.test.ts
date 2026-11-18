@@ -27,7 +27,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vites
 import { eq, and, inArray, isNull, isNotNull, sql } from "drizzle-orm";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
-import { testDb, cleanupTestUsers } from "@/test/test-db";
+import { testDb, cleanupTestUsers, ensureTestDefaultWorkspace } from "@/test/test-db";
 import { getDescendantIds } from "@/server/actions/folders";
 import { deleteFile, restoreFile } from "@/server/actions/files";
 import { randomUUID } from "crypto";
@@ -115,7 +115,7 @@ afterAll(async () => {
 describe("soft delete lifecycle", () => {
     it("delete is a tombstone: row stays, reads become invisible", async () => {
         const file = fileOf("to-be-deleted.md");
-        await testDb.insert(schema.files).values(file);
+        await testDb.insert(schema.files).values({ ...file, workspaceId: await ensureTestDefaultWorkspace(TEST_USER_ID) });
 
         // Live read finds it
         const live = await testDb.query.files.findFirst({
@@ -181,8 +181,9 @@ describe("soft delete lifecycle", () => {
     });
 
     it("restoreFile clears the tombstone and the file reappears in reads", async () => {
+        const workspaceId = await ensureTestDefaultWorkspace(TEST_USER_ID);
         const file = fileOf("to-be-restored.md");
-        await testDb.insert(schema.files).values(file);
+        await testDb.insert(schema.files).values({ ...file, workspaceId });
         const delRes = await deleteFile(file.id);
         expect(delRes.success).toBe(true);
 
@@ -202,7 +203,7 @@ describe("soft delete lifecycle", () => {
         // Purged rows (physically deleted) are not restorable
         const goneId = randomUUID();
         const gone = fileOf("gone-forever.md");
-        await testDb.insert(schema.files).values({ ...gone, id: goneId, deletedAt: new Date() });
+        await testDb.insert(schema.files).values({ ...gone, id: goneId, workspaceId, deletedAt: new Date() });
         await testDb.delete(schema.files).where(eq(schema.files.id, goneId));
         const goneRes = await restoreFile(goneId);
         expect(goneRes.success).toBe(false);
@@ -211,7 +212,7 @@ describe("soft delete lifecycle", () => {
 
     it("live writes reject tombstoned rows (updateContent / rename / move)", async () => {
         const file = fileOf("frozen-while-deleted.md");
-        await testDb.insert(schema.files).values(file);
+        await testDb.insert(schema.files).values({ ...file, workspaceId: await ensureTestDefaultWorkspace(TEST_USER_ID) });
         const delRes = await deleteFile(file.id);
         expect(delRes.success).toBe(true);
 
@@ -244,22 +245,23 @@ describe("soft delete lifecycle", () => {
     });
 
     it("unique name index ignores tombstones — re-creating a deleted name never conflicts", async () => {
+        const workspaceId = await ensureTestDefaultWorkspace(TEST_USER_ID);
         // Tombstone a row whose name will be reused
         const old = fileOf("same-name.md");
-        await testDb.insert(schema.files).values(old);
+        await testDb.insert(schema.files).values({ ...old, workspaceId });
         const delRes = await deleteFile(old.id);
         expect(delRes.success).toBe(true);
 
         // Live row with the same name in the same folder
         const fresh = fileOf("same-name.md");
         await expect(
-            testDb.insert(schema.files).values(fresh)
+            testDb.insert(schema.files).values({ ...fresh, workspaceId })
         ).resolves.not.toThrow();
 
         // Live duplicate (same name, no tombstone) still conflicts
         const dup = fileOf("same-name.md");
         await expect(
-            testDb.insert(schema.files).values(dup)
+            testDb.insert(schema.files).values({ ...dup, workspaceId })
             // Drizzle wraps Postgres errors: match the wrapped "Failed query" or
             // the raw "duplicate key … unique constraint" message.
         ).rejects.toThrow(/unique|duplicate|violates|Failed query/i);
@@ -271,7 +273,13 @@ describe("soft delete lifecycle", () => {
         const childDoc1 = fileOf("App.tsx", subFolder.id);
         const childDoc2 = fileOf("README.md", rootFolder.id);
 
-        await testDb.insert(schema.files).values([rootFolder, subFolder, childDoc1, childDoc2]);
+        const workspaceId = await ensureTestDefaultWorkspace(TEST_USER_ID);
+        await testDb.insert(schema.files).values([
+            { ...rootFolder, workspaceId },
+            { ...subFolder, workspaceId },
+            { ...childDoc1, workspaceId },
+            { ...childDoc2, workspaceId },
+        ]);
 
         // Soft-delete parent folder and all descendants via production deleteFile server action
         const delResult = await deleteFile(rootFolder.id);
@@ -310,10 +318,12 @@ describe("soft delete lifecycle", () => {
 
 describe("purge job semantics", () => {
     it("bounded parameterized DELETE only removes rows past the retention window", async () => {
+        const workspaceId = await ensureTestDefaultWorkspace(TEST_USER_ID);
         // One row still within the 30-day window (must survive)
         const fresh = fileOf("fresh-tombstone.md");
         await testDb.insert(schema.files).values({
             ...fresh,
+            workspaceId,
             deletedAt: new Date(Date.now() - 10 * 24 * 3600 * 1000),
         });
 
@@ -321,6 +331,7 @@ describe("purge job semantics", () => {
         const expired = fileOf("expired-tombstone.md");
         await testDb.insert(schema.files).values({
             ...expired,
+            workspaceId,
             deletedAt: new Date(Date.now() - 40 * 24 * 3600 * 1000),
         });
 

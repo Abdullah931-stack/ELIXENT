@@ -17,7 +17,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { EditorAdapter } from "@/components/editor/markdown/types";
 import { useEditorOrchestrator } from "@/hooks/use-editor-orchestrator";
-import { testDb, cleanupTestUsers } from "@/test/test-db";
+import { testDb, cleanupTestUsers, ensureTestDefaultWorkspace } from "@/test/test-db";
 import * as schema from "@/server/db/schema";
 import { getUser } from "@/lib/supabase/server";
 
@@ -126,6 +126,7 @@ async function seedFile(): Promise<void> {
         .values({
             id: FILE_ID,
             userId: USER_ID,
+            workspaceId: await ensureTestDefaultWorkspace(USER_ID),
             title: "Test Note",
             content: "Original",
             version: 1,

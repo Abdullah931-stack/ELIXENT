@@ -15,7 +15,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vites
 import { eq } from "drizzle-orm";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
-import { testDb, cleanupTestUsers } from "@/test/test-db";
+import { testDb, cleanupTestUsers, ensureTestDefaultWorkspace } from "@/test/test-db";
 import { randomUUID } from "crypto";
 import { generateRestoredTitle, generateCopyTitle } from "@/lib/utils/file-naming";
 import { moveFile } from "@/server/actions/folders";
@@ -117,6 +117,7 @@ describe("Phase 3: Database & Production moveFile Integration Tests", () => {
         await testDb.insert(schema.files).values({
             id: folder1Id,
             userId: USER_A_ID,
+            workspaceId: await ensureTestDefaultWorkspace(USER_A_ID),
             title: "Folder 1",
             isFolder: true,
             parentFolderId: null,
@@ -137,11 +138,12 @@ describe("Phase 3: Database & Production moveFile Integration Tests", () => {
         const grandchildId = randomUUID();
         const greatgrandchildId = randomUUID();
 
+        const workspaceId = await ensureTestDefaultWorkspace(USER_A_ID);
         await testDb.insert(schema.files).values([
-            { id: rootId, userId: USER_A_ID, title: "root", isFolder: true, parentFolderId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null },
-            { id: childId, userId: USER_A_ID, title: "child", isFolder: true, parentFolderId: rootId, createdAt: new Date(), updatedAt: new Date(), deletedAt: null },
-            { id: grandchildId, userId: USER_A_ID, title: "grandchild", isFolder: true, parentFolderId: childId, createdAt: new Date(), updatedAt: new Date(), deletedAt: null },
-            { id: greatgrandchildId, userId: USER_A_ID, title: "greatgrandchild", isFolder: true, parentFolderId: grandchildId, createdAt: new Date(), updatedAt: new Date(), deletedAt: null },
+            { id: rootId, userId: USER_A_ID, workspaceId, title: "root", isFolder: true, parentFolderId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null },
+            { id: childId, userId: USER_A_ID, workspaceId, title: "child", isFolder: true, parentFolderId: rootId, createdAt: new Date(), updatedAt: new Date(), deletedAt: null },
+            { id: grandchildId, userId: USER_A_ID, workspaceId, title: "grandchild", isFolder: true, parentFolderId: childId, createdAt: new Date(), updatedAt: new Date(), deletedAt: null },
+            { id: greatgrandchildId, userId: USER_A_ID, workspaceId, title: "greatgrandchild", isFolder: true, parentFolderId: grandchildId, createdAt: new Date(), updatedAt: new Date(), deletedAt: null },
         ]);
 
         const res = await moveFile(rootId, greatgrandchildId);
@@ -159,8 +161,8 @@ describe("Phase 3: Database & Production moveFile Integration Tests", () => {
         const userADocId = randomUUID();
 
         await testDb.insert(schema.files).values([
-            { id: userBFolderId, userId: USER_B_ID, title: "User B Folder", isFolder: true, parentFolderId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null },
-            { id: userADocId, userId: USER_A_ID, title: "User A Doc", isFolder: false, parentFolderId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null },
+            { id: userBFolderId, userId: USER_B_ID, workspaceId: await ensureTestDefaultWorkspace(USER_B_ID), title: "User B Folder", isFolder: true, parentFolderId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null },
+            { id: userADocId, userId: USER_A_ID, workspaceId: await ensureTestDefaultWorkspace(USER_A_ID), title: "User A Doc", isFolder: false, parentFolderId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null },
         ]);
 
         const res = await moveFile(userADocId, userBFolderId);
@@ -169,6 +171,7 @@ describe("Phase 3: Database & Production moveFile Integration Tests", () => {
     });
 
     it("[DB] ADV-01: multiple deleted files with same name coexist and restore without collision", async () => {
+        const workspaceId = await ensureTestDefaultWorkspace(USER_A_ID);
         const file1Id = randomUUID();
         const file2Id = randomUUID();
 
@@ -176,6 +179,7 @@ describe("Phase 3: Database & Production moveFile Integration Tests", () => {
         await testDb.insert(schema.files).values({
             id: file1Id,
             userId: USER_A_ID,
+            workspaceId,
             title: "Document.md",
             content: "first version",
             isFolder: false,
@@ -189,6 +193,7 @@ describe("Phase 3: Database & Production moveFile Integration Tests", () => {
         await expect(testDb.insert(schema.files).values({
             id: file2Id,
             userId: USER_A_ID,
+            workspaceId,
             title: "Document.md",
             content: "second version",
             isFolder: false,
@@ -203,6 +208,7 @@ describe("Phase 3: Database & Production moveFile Integration Tests", () => {
         await testDb.insert(schema.files).values({
             id: liveFileId,
             userId: USER_A_ID,
+            workspaceId,
             title: "Document.md",
             content: "live active document",
             isFolder: false,
@@ -228,10 +234,12 @@ describe("Phase 3: Database & Production moveFile Integration Tests", () => {
         const parentFolderId = randomUUID();
         const fileId = randomUUID();
 
+        const workspaceId = await ensureTestDefaultWorkspace(USER_A_ID);
         await testDb.insert(schema.files).values([
             {
                 id: parentFolderId,
                 userId: USER_A_ID,
+                workspaceId,
                 title: "Deleted Parent Folder",
                 isFolder: true,
                 parentFolderId: null,
@@ -242,6 +250,7 @@ describe("Phase 3: Database & Production moveFile Integration Tests", () => {
             {
                 id: fileId,
                 userId: USER_A_ID,
+                workspaceId,
                 title: "Orphan Child File",
                 isFolder: false,
                 parentFolderId: parentFolderId,

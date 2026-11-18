@@ -14,7 +14,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vites
 import { eq } from "drizzle-orm";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
-import { testDb, cleanupTestUsers } from "@/test/test-db";
+import { testDb, cleanupTestUsers, ensureTestDefaultWorkspace } from "@/test/test-db";
 import { randomUUID } from "crypto";
 
 import {
@@ -137,6 +137,7 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
             await testDb.insert(schema.files).values({
                 id: userBFolderId,
                 userId: USER_B_ID,
+                workspaceId: await ensureTestDefaultWorkspace(USER_B_ID),
                 title: "User B Secret Folder",
                 isFolder: true,
                 parentFolderId: null,
@@ -157,6 +158,7 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
             await testDb.insert(schema.files).values({
                 id: userADocId,
                 userId: USER_A_ID,
+                workspaceId: await ensureTestDefaultWorkspace(USER_A_ID),
                 title: "User A Document",
                 isFolder: false,
                 content: "Secret content",
@@ -168,6 +170,7 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
             await testDb.insert(schema.files).values({
                 id: userBFolderId,
                 userId: USER_B_ID,
+                workspaceId: await ensureTestDefaultWorkspace(USER_B_ID),
                 title: "User B Folder",
                 isFolder: true,
                 createdAt: new Date(),
@@ -187,6 +190,7 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
             await testDb.insert(schema.files).values({
                 id: userADocId,
                 userId: USER_A_ID,
+                workspaceId: await ensureTestDefaultWorkspace(USER_A_ID),
                 title: "Doc to Move",
                 isFolder: false,
                 createdAt: new Date(),
@@ -197,6 +201,7 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
             await testDb.insert(schema.files).values({
                 id: userBFolderId,
                 userId: USER_B_ID,
+                workspaceId: await ensureTestDefaultWorkspace(USER_B_ID),
                 title: "User B Dropzone",
                 isFolder: true,
                 createdAt: new Date(),
@@ -216,6 +221,7 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
             await testDb.insert(schema.files).values({
                 id: userBDocId,
                 userId: USER_B_ID,
+                workspaceId: await ensureTestDefaultWorkspace(USER_B_ID),
                 title: "User B Private Notes",
                 isFolder: false,
                 content: "Confidential",
@@ -249,6 +255,7 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
             await testDb.insert(schema.files).values({
                 id: userBFolderId,
                 userId: USER_B_ID,
+                workspaceId: await ensureTestDefaultWorkspace(USER_B_ID),
                 title: "User B Inbox",
                 isFolder: true,
                 createdAt: new Date(),
@@ -325,6 +332,7 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
             await testDb.insert(schema.files).values({
                 id: fileId,
                 userId: USER_B_ID,
+                workspaceId: await ensureTestDefaultWorkspace(USER_B_ID),
                 title: "User B AI Target File",
                 isFolder: false,
                 content: "Base content",
@@ -357,6 +365,7 @@ describe("Phase 12: Cross-User Resource Isolation & Ownership Enforcement", () =
             await testDb.insert(schema.files).values({
                 id: userBFileId,
                 userId: USER_B_ID,
+                workspaceId: await ensureTestDefaultWorkspace(USER_B_ID),
                 title: "User B Private File",
                 isFolder: false,
                 content: "# Secret Heading\nSecret content",

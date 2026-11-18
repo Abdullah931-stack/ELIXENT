@@ -9,7 +9,7 @@
  */
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { inArray, like, or } from "drizzle-orm";
+import { and, eq, inArray, like, or } from "drizzle-orm";
 import * as schema from "@/server/db/schema";
 import {
     assertSafeTestDatabaseUrl,
@@ -79,10 +79,41 @@ export function assertPlaceholderUserIds(ids: readonly string[]): void {
 }
 
 /**
+ * Ensures a Default Workspace row exists for a test user and returns its ID.
+ */
+export async function ensureTestDefaultWorkspace(
+    userId: string,
+    dbClient = testDb
+): Promise<string> {
+    const workspaceId = schema.deriveDefaultWorkspaceId(userId);
+    await dbClient
+        .insert(schema.workspaces)
+        .values({
+            id: workspaceId,
+            userId,
+            name: "Default Workspace",
+        })
+        .onConflictDoNothing();
+
+    const existing = await dbClient
+        .select({ id: schema.workspaces.id })
+        .from(schema.workspaces)
+        .where(
+            and(
+                eq(schema.workspaces.userId, userId),
+                eq(schema.workspaces.name, "Default Workspace")
+            )
+        )
+        .limit(1);
+
+    return existing[0]?.id ?? workspaceId;
+}
+
+/**
  * Deletes ONLY the given test accounts from the users table.
  *
  * To avoid PostgreSQL cascading lock deadlocks (40P01) across foreign keys,
- * dependent rows in child tables (subscriptions, credit_ledger_transactions, project_decision_ledger, checkpoint_writes, checkpoint_blobs, checkpoints, files,
+ * dependent rows in child tables (subscriptions, credit_ledger_transactions, project_decision_ledger, checkpoint_writes, checkpoint_blobs, checkpoints, agent_checkpoints, files, workspaces,
  * user_vault_profiles) are deleted explicitly first before deleting from users.
  * A resilient retry loop with exponential backoff guards against transient lock contention.
  */
@@ -109,7 +140,9 @@ export async function cleanupTestUsers(
                 await testDb.delete(schema.checkpointWrites);
                 await testDb.delete(schema.checkpointBlobs);
                 await testDb.delete(schema.checkpoints);
+                await testDb.delete(schema.agentCheckpoints).where(inArray(schema.agentCheckpoints.userId, userIds));
                 await testDb.delete(schema.files).where(inArray(schema.files.userId, userIds));
+                await testDb.delete(schema.workspaces).where(inArray(schema.workspaces.userId, userIds));
                 await testDb.delete(schema.userVaultProfiles).where(inArray(schema.userVaultProfiles.userId, userIds));
             }
 

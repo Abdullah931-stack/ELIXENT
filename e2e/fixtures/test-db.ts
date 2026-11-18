@@ -47,6 +47,14 @@ export async function seedE2EUser(userId: string, email: string, displayName = "
             set: { displayName, updatedAt: new Date() },
         });
 
+    await e2eDb
+        .insert(schema.workspaces)
+        .values({
+            id: schema.deriveDefaultWorkspaceId(userId),
+            userId,
+            name: "Default Workspace",
+        })
+        .onConflictDoNothing();
 }
 
 /**
@@ -54,7 +62,9 @@ export async function seedE2EUser(userId: string, email: string, displayName = "
  */
 export async function cleanupE2EUser(userId: string) {
     try {
+        await e2eDb.delete(schema.agentCheckpoints).where(eq(schema.agentCheckpoints.userId, userId));
         await e2eDb.delete(schema.files).where(eq(schema.files.userId, userId));
+        await e2eDb.delete(schema.workspaces).where(eq(schema.workspaces.userId, userId));
         await e2eDb.delete(schema.creditLedgerTransactions).where(eq(schema.creditLedgerTransactions.userId, userId));
         await e2eDb.delete(schema.projectDecisionLedger).where(eq(schema.projectDecisionLedger.userId, userId));
         await e2eDb.delete(schema.checkpointWrites);

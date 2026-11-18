@@ -18,7 +18,7 @@ import { eq } from "drizzle-orm";
 import { CodeMirrorEditorAdapter } from "@/components/editor/markdown/editor-adapter";
 import { createMarkdownExtensions } from "@/components/editor/markdown/markdown-extensions";
 import { useAIStream } from "@/hooks/use-ai-stream";
-import { testDb, cleanupTestUsers } from "@/test/test-db";
+import { testDb, cleanupTestUsers, ensureTestDefaultWorkspace } from "@/test/test-db";
 import * as schema from "@/server/db/schema";
 
 vi.mock("@/lib/supabase/server", () => ({ getUser: vi.fn(async () => ({ id: USER_ID })) }));
@@ -71,6 +71,7 @@ async function seedUserAndFile(): Promise<Fixture> {
     await testDb.insert(schema.files).values({
         id: fileId,
         userId: USER_ID,
+        workspaceId: await ensureTestDefaultWorkspace(USER_ID),
         title: `Preview live ${fileId.slice(0, 8)}`,
         content: INITIAL,
         etag: "etag-v1",

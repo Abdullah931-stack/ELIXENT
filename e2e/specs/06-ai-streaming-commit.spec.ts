@@ -13,6 +13,7 @@ test.describe("Scenario 6: AI Streaming, Dynamic Ghost Preview & Atomic Commit",
             .insert(schema.files)
             .values({
                 userId: authSession.userId,
+                workspaceId: schema.deriveDefaultWorkspaceId(authSession.userId),
                 title: "AI Streaming Document",
                 isFolder: false,
                 content: "# Original Document Text\nNeeds AI improvement.",

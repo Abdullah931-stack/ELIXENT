@@ -26,7 +26,10 @@ import {
     updateFileContent,
 } from "@/server/actions/files";
 import { getUserCreditBalance } from "@/server/services/ai-settlement-service";
-import { createUserVaultProfile } from "@/server/actions/vault-actions";
+import {
+    createUserVaultProfile,
+    updateVaultAISetting,
+} from "@/server/actions/vault-actions";
 import { CloudPostgresWorkspaceProvider } from "@/core/workspace/cloud-provider";
 import { VaultAIAccessDeniedError, WorkspaceFileAccessDeniedError } from "@/core/workspace/provider";
 import { handleStripeWebhookPost as stripeWebhookPOST } from "@/server/routes/stripe.routes";
@@ -241,6 +244,11 @@ describe("LIVE: Cross-System Multi-System End-to-End Lifecycle on isolated branc
         // =========================================================================
         // STAGE 5: Zero-Knowledge AI Gatekeeper HTTP 403 Shield
         // =========================================================================
+        // Phase 2 defaults allowAIOnEncryptedFiles to true; explicitly opt out to test the 403 shield
+        const aiOptOutRes = await updateVaultAISetting(false);
+        expect(aiOptOutRes.success).toBe(true);
+        expect(aiOptOutRes.data!.allowAIOnEncryptedFiles).toBe(false);
+
         const ownerWorkspaceProvider = new CloudPostgresWorkspaceProvider({
             userId: USER_ID,
             db: testDb,

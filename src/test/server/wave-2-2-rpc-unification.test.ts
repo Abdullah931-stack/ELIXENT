@@ -87,9 +87,16 @@ vi.mock("@/server/db", () => {
     files: {
       id: "files.id",
       userId: "files.user_id",
+      workspaceId: "files.workspace_id",
       version: "files.version",
       deletedAt: "files.deleted_at",
       updatedAt: "files.updated_at",
+    },
+    workspaces: {
+      id: "workspaces.id",
+      userId: "workspaces.user_id",
+      name: "workspaces.name",
+      isEncrypted: "workspaces.is_encrypted",
     },
   };
 
@@ -98,6 +105,14 @@ vi.mock("@/server/db", () => {
       files: {
         findFirst: (...args: unknown[]) => mockFindFirst(...args),
         findMany: vi.fn().mockResolvedValue([]),
+      },
+      workspaces: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: "ws-default-w22",
+          userId: "user-w22-test",
+          name: "Default Workspace",
+          isEncrypted: false,
+        }),
       },
     },
     update: vi.fn(() => ({

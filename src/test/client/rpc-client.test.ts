@@ -383,7 +383,7 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
 
       const created = await createFile("Doc.md", null, false);
       expect(created).toEqual({ success: true, data: { id: "f_1" } });
-      expect(mockServerCreateFile).toHaveBeenCalledWith("Doc.md", null, false);
+      expect(mockServerCreateFile).toHaveBeenCalledWith("Doc.md", null, false, undefined);
 
       const updated = await updateFileContent("f_1", "New Content", { expectedVersion: 1 });
       expect(updated).toEqual({ success: true, version: 2 });
@@ -404,7 +404,7 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
       expect(mockServerRestoreFile).toHaveBeenCalledWith("f_1");
 
       await copyFile("f_1", "fld_1", 2);
-      expect(mockServerCopyFile).toHaveBeenCalledWith("f_1", "fld_1", 2, undefined);
+      expect(mockServerCopyFile).toHaveBeenCalledWith("f_1", "fld_1", 2, undefined, undefined);
 
       await getFile("f_1");
       expect(mockServerGetFile).toHaveBeenCalledWith("f_1");
@@ -445,10 +445,10 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
       expect(mockServerMoveFile).toHaveBeenCalledWith("f_1", "fld_2");
 
       await getFolderChildren("fld_1");
-      expect(mockServerGetFolderChildren).toHaveBeenCalledWith("fld_1");
+      expect(mockServerGetFolderChildren).toHaveBeenCalledWith("fld_1", undefined);
 
       await importFile("notes.txt", "Sample", "txt", null);
-      expect(mockServerImportFile).toHaveBeenCalledWith("notes.txt", "Sample", "txt", null, undefined);
+      expect(mockServerImportFile).toHaveBeenCalledWith("notes.txt", "Sample", "txt", null, undefined, undefined);
     });
 
     it("routes vault operations through Hono HTTP loopback transport", async () => {
@@ -846,7 +846,7 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
       const result = await createFile("Architecture Design.md", null, false);
 
       expect(result).toEqual(mockResult);
-      expect(mockServerCreateFile).toHaveBeenCalledWith("Architecture Design.md", null, false);
+      expect(mockServerCreateFile).toHaveBeenCalledWith("Architecture Design.md", null, false, undefined);
     });
 
     it("executes full RPC round-trip for vault profile through vitestLoopbackFetch", async () => {

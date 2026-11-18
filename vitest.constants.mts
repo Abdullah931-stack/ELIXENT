@@ -33,6 +33,7 @@ export const LIVE_TEST_FILES = [
     'src/test/infrastructure/redis-live-integration.test.ts',
     'src/test/server/schema-atomic-transactions.live.test.ts',
     'src/test/server/phase-08-ownership-and-cycles.test.ts',
+    'src/test/workspace/multi-workspace-isolation.live.test.ts',
 ];
 
 /**

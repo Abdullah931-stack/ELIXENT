@@ -9,10 +9,12 @@ test.describe("Scenario 2: File System, Folder Tree & Trash Lifecycle", () => {
         authSession,
     }) => {
         // 1. Create a parent folder and a nested document directly in DB for this session
+        const workspaceId = schema.deriveDefaultWorkspaceId(authSession.userId);
         const [parentFolder] = await e2eDb
             .insert(schema.files)
             .values({
                 userId: authSession.userId,
+                workspaceId,
                 title: "Projects",
                 isFolder: true,
                 parentFolderId: null,
@@ -23,6 +25,7 @@ test.describe("Scenario 2: File System, Folder Tree & Trash Lifecycle", () => {
             .insert(schema.files)
             .values({
                 userId: authSession.userId,
+                workspaceId,
                 title: "Specs",
                 isFolder: true,
                 parentFolderId: parentFolder.id,
@@ -33,6 +36,7 @@ test.describe("Scenario 2: File System, Folder Tree & Trash Lifecycle", () => {
             .insert(schema.files)
             .values({
                 userId: authSession.userId,
+                workspaceId,
                 title: "Roadmap",
                 isFolder: false,
                 parentFolderId: subFolder.id,
@@ -88,6 +92,7 @@ test.describe("Scenario 2: File System, Folder Tree & Trash Lifecycle", () => {
             .insert(schema.files)
             .values({
                 userId: authSession.userId,
+                workspaceId,
                 title: "Roadmap-Renamed",
                 isFolder: false,
                 parentFolderId: subFolder.id,

@@ -12,6 +12,7 @@ test.describe("Scenario 3: Native CodeMirror 6 Markdown & BiDi RTL", () => {
             .insert(schema.files)
             .values({
                 userId: authSession.userId,
+                workspaceId: schema.deriveDefaultWorkspaceId(authSession.userId),
                 title: "Arabic BiDi Test Document",
                 isFolder: false,
                 content: "# مرحبا بكم في محرر ماركداون\n\nهذا نص تجريبي باللغة العربية لاختبار الاتجاه التلقائي.\n\n```typescript\nconst message = 'LTR Code Block';\nconsole.log(message);\n```",

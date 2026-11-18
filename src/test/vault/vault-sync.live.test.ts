@@ -90,7 +90,7 @@ describe("LIVE: Encrypted Vault & Zero-Knowledge Security on isolated branch", (
     });
 
     it("creates vault profile and enforces Zero-Knowledge AI Gatekeeper (HTTP 403) on encrypted files", async () => {
-        // 1. Create real vault profile with allowAIOnEncryptedFiles = false (default)
+        // 1. Create real vault profile (Phase 2 defaults allowAIOnEncryptedFiles = true) and explicitly opt out for 403 test
         const profileRes = await createUserVaultProfile({
             encryptedMasterKey: "vault-enc-key-base64",
             recoveryEncryptedMasterKey: "vault-rec-key-base64",
@@ -99,6 +99,11 @@ describe("LIVE: Encrypted Vault & Zero-Knowledge Security on isolated branch", (
             kdfIterations: 600000,
         });
         expect(profileRes.success).toBe(true);
+        expect(profileRes.data!.allowAIOnEncryptedFiles).toBe(true);
+
+        const optOutRes = await updateVaultAISetting(false);
+        expect(optOutRes.success).toBe(true);
+        expect(optOutRes.data!.allowAIOnEncryptedFiles).toBe(false);
 
         // 2. Create file and convert to encrypted file with deterministic AAD binding
         const createRes = await createFile("Zero Knowledge Note");

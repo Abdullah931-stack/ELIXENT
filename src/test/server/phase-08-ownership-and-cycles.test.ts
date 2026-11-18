@@ -26,7 +26,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vites
 import { eq } from "drizzle-orm";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
-import { testDb, cleanupTestUsers } from "@/test/test-db";
+import { testDb, cleanupTestUsers, ensureTestDefaultWorkspace } from "@/test/test-db";
 import { randomUUID } from "crypto";
 
 import {
@@ -145,6 +145,7 @@ describe("Phase 8: Identity, Ownership, Cycle Detection & Concurrency Control", 
             const fileB = await testDb.insert(schema.files).values({
                 id: randomUUID(),
                 userId: USER_B,
+                workspaceId: await ensureTestDefaultWorkspace(USER_B),
                 title: "User B Secret Doc",
                 content: "confidential",
                 isFolder: false,

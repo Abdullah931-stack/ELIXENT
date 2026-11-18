@@ -231,10 +231,13 @@ describe("Real Loopback Hono RPC Client Wiring (hc<AppType> -> master app.fetch)
     const mockFile: FileRecord = {
       id: "550e8400-e29b-41d4-a716-446655440000",
       userId: "user-wire-test",
+      workspaceId: "550e8400-e29b-41d4-a716-446655440001",
       title: "Architecture.md",
       content: "# System Architecture",
       parentFolderId: null,
       isFolder: false,
+      isAiExcluded: false,
+      artifactRole: "document",
       isEncrypted: false,
       encryptionMetadata: null,
       etag: "w-etag-wire-1",

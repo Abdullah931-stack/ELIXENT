@@ -12,6 +12,7 @@ test.describe("Scenario 12: Vault Inactivity Auto-Lock, Multi-Modal Unlock & Dev
             .insert(schema.files)
             .values({
                 userId: authSession.userId,
+                workspaceId: schema.deriveDefaultWorkspaceId(authSession.userId),
                 title: "Locked Confidential Note",
                 isFolder: false,
                 content: "enc:iv_mock_123:auth_tag_456:ciphertext_789",

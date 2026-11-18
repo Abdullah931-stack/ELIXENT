@@ -17,7 +17,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vites
 import { eq, and } from "drizzle-orm";
 import * as schema from "@/server/db/schema";
 import { ensureTestDb, runMigrations, isTestDbAvailable } from "@/test/db.setup";
-import { testDb, cleanupTestUsers } from "@/test/test-db";
+import { testDb, cleanupTestUsers, ensureTestDefaultWorkspace } from "@/test/test-db";
 import { randomUUID } from "crypto";
 import { handleFileByIdPut as PUT } from "@/server/routes/files-api.routes";
 
@@ -115,7 +115,7 @@ describe("PUT /api/files/[id] version guard (F1)", () => {
     it("normal PUT advances version by 1 and persists content", async () => {
         const fileId = randomUUID();
         await testDb.insert(schema.files).values({
-            id: fileId, userId: TEST_USER_ID, title: "f1-plain.md", content: "v0",
+            id: fileId, userId: TEST_USER_ID, workspaceId: await ensureTestDefaultWorkspace(TEST_USER_ID), title: "f1-plain.md", content: "v0",
             isFolder: false, parentFolderId: null, etag: null,
             version: 1, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
         });
@@ -132,7 +132,7 @@ describe("PUT /api/files/[id] version guard (F1)", () => {
     it("concurrent same-version PUTs: exactly one lands, the other reports 412 conflict", async () => {
         const fileId = randomUUID();
         await testDb.insert(schema.files).values({
-            id: fileId, userId: TEST_USER_ID, title: "f1-race.md", content: "v0",
+            id: fileId, userId: TEST_USER_ID, workspaceId: await ensureTestDefaultWorkspace(TEST_USER_ID), title: "f1-race.md", content: "v0",
             isFolder: false, parentFolderId: null, etag: null,
             version: 3, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
         });
@@ -159,7 +159,7 @@ describe("PUT /api/files/[id] version guard (F1)", () => {
     it("stale PUT is rejected, never overwrites the fresh writer", async () => {
         const fileId = randomUUID();
         await testDb.insert(schema.files).values({
-            id: fileId, userId: TEST_USER_ID, title: "f1-stale.md", content: "v0",
+            id: fileId, userId: TEST_USER_ID, workspaceId: await ensureTestDefaultWorkspace(TEST_USER_ID), title: "f1-stale.md", content: "v0",
             isFolder: false, parentFolderId: null, etag: null,
             version: 5, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
         });

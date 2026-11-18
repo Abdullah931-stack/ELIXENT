@@ -198,12 +198,18 @@ vi.mock("@/server/db", () => ({
         return {
           onConflictDoUpdate: (conflictSpec: unknown) =>
             mockDbOnConflictDoUpdate(conflictSpec),
+          onConflictDoNothing: () => Promise.resolve(undefined),
         };
       },
     }),
   },
   schema: {
     users: { id: "users.id" },
+    workspaces: {
+      id: "workspaces.id",
+      userId: "workspaces.user_id",
+      name: "workspaces.name",
+    },
   },
 }));
 

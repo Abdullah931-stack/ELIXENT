@@ -16,6 +16,7 @@ test.describe("Scenarios 7 & 8: User AI Abort and Preview Reject (Browser User J
             .insert(schema.files)
             .values({
                 userId: authSession.userId,
+                workspaceId: schema.deriveDefaultWorkspaceId(authSession.userId),
                 title: "AI Abort Test Document",
                 isFolder: false,
                 content: "# Original Unaltered Content",
@@ -82,6 +83,7 @@ test.describe("Scenarios 7 & 8: User AI Abort and Preview Reject (Browser User J
             .insert(schema.files)
             .values({
                 userId: authSession.userId,
+                workspaceId: schema.deriveDefaultWorkspaceId(authSession.userId),
                 title: "AI Reject Test Document",
                 isFolder: false,
                 content: "# Safe Baseline Text",

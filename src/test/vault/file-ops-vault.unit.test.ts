@@ -13,6 +13,13 @@ vi.mock("@/server/db", () => ({
             files: {
                 findFirst: vi.fn(),
             },
+            workspaces: {
+                findFirst: vi.fn().mockResolvedValue({
+                    id: "ws-default-vault",
+                    name: "Default Workspace",
+                    isEncrypted: false,
+                }),
+            },
         },
         insert: vi.fn(),
         update: vi.fn(),
@@ -21,6 +28,7 @@ vi.mock("@/server/db", () => ({
         files: {
             id: "id",
             userId: "user_id",
+            workspaceId: "workspace_id",
             title: "title",
             content: "content",
             parentFolderId: "parent_folder_id",
@@ -32,6 +40,12 @@ vi.mock("@/server/db", () => ({
             deletedAt: "deleted_at",
             createdAt: "created_at",
             updatedAt: "updated_at",
+        },
+        workspaces: {
+            id: "id",
+            userId: "user_id",
+            name: "name",
+            isEncrypted: "is_encrypted",
         },
     },
 }));

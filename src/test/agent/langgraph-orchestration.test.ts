@@ -61,6 +61,8 @@ import type {
   IWorkspaceProvider,
   HeadingNode,
   SectionReadResult,
+  WorkspaceTreeEntry,
+  DecisionLedgerDocument,
 } from "@/core/workspace/provider";
 
 // ============================================================================
@@ -124,7 +126,12 @@ vi.mock("@/lib/metering/node-gate", async (importOriginal) => {
 // ============================================================================
 
 class MockHermeticWorkspaceProvider implements IWorkspaceProvider {
-  public listHeadingsTree = vi.fn().mockImplementation(async (fileIds: string[]) => {
+  public readonly workspaceId = "ws-test";
+  public readonly userId = "user-test";
+
+  public listWorkspaceTree = vi.fn().mockResolvedValue([] as WorkspaceTreeEntry[]);
+
+  public listHeadingsTree = vi.fn().mockImplementation(async (fileIds: string[] = []) => {
     const res: Record<string, HeadingNode[]> = {};
     for (const fileId of fileIds) {
       res[fileId] = [
@@ -146,15 +153,20 @@ class MockHermeticWorkspaceProvider implements IWorkspaceProvider {
 
   public readSectionByHeading = vi.fn().mockImplementation(
     async (fileId: string, headingSlug: string): Promise<SectionReadResult> => ({
+      fileId,
+      headingSlug,
       breadcrumb: `${fileId} > ${headingSlug}`,
       contentOrVaultRef: `Baseline text content for ${fileId}#${headingSlug}`,
       isVaultRef: false,
+      sectionHash: `hash_${fileId}_${headingSlug}`,
+      fileEtag: "etag-test",
+      fileVersion: 1,
     }),
   );
 
   public searchLexicalWithASTBreadcrumb = vi.fn().mockImplementation(
-    async (params: { fileIds: string[]; query: string; maxResults?: number }) => {
-      return params.fileIds.map((fileId) => ({
+    async (params: { fileIds?: string[]; query: string; maxResults?: number }) => {
+      return (params.fileIds ?? []).map((fileId) => ({
         fileId,
         fileName: `${fileId}.md`,
         headingSlug: "architecture-overview",
@@ -175,6 +187,41 @@ class MockHermeticWorkspaceProvider implements IWorkspaceProvider {
       replacementText: params.agentProposedSectionContent,
     },
   }));
+
+  public createWorkspaceFile = vi.fn().mockImplementation(
+    async (params: { relativePath: string; initialContent: string }): Promise<WorkspaceTreeEntry> => ({
+      fileId: `file-${params.relativePath}`,
+      parentFolderId: null,
+      title: params.relativePath,
+      relativePath: params.relativePath,
+      isFolder: false,
+      isEncrypted: false,
+      isAiExcluded: false,
+      artifactRole: "document",
+      etag: "etag-created",
+      version: 1,
+      updatedAt: new Date(0).toISOString(),
+    }),
+  );
+
+  public deleteWorkspaceFile = vi.fn().mockImplementation(
+    async (params: { fileId: string }): Promise<{ fileId: string; deletedAt: string }> => ({
+      fileId: params.fileId,
+      deletedAt: new Date(0).toISOString(),
+    }),
+  );
+
+  public readDecisionLedger = vi.fn().mockResolvedValue({
+    schemaVersion: "2.0",
+    workspaceId: "ws-test",
+    updatedAt: new Date(0).toISOString(),
+    decisions: {},
+  } satisfies DecisionLedgerDocument);
+
+  public writeDecisionLedger = vi.fn().mockResolvedValue({
+    etag: "etag-ledger",
+    version: 1,
+  });
 }
 
 // ============================================================================

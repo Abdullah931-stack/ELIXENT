@@ -30,6 +30,8 @@ vi.mock("@/server/auth/session", () => ({
     requireAuthenticatedUser: () => mockRequireAuthenticatedUser(),
 }));
 
+const mockWorkspaceFindFirst = vi.fn();
+
 vi.mock("@/server/db", () => {
     return {
         db: {
@@ -38,12 +40,19 @@ vi.mock("@/server/db", () => {
                     findFirst: (...args: unknown[]) => mockDbFindFirst(...args),
                     findMany: (...args: unknown[]) => mockDbFindMany(...args),
                 },
+                workspaces: {
+                    findFirst: (...args: unknown[]) => mockWorkspaceFindFirst(...args),
+                    findMany: vi.fn().mockResolvedValue([]),
+                },
             },
             insert: (...args: unknown[]) => {
                 mockDbInsert(...args);
                 return {
                     values: (val: unknown) => ({
                         returning: () => [val],
+                        onConflictDoNothing: () => ({
+                            returning: () => [val],
+                        }),
                     }),
                 };
             },
@@ -72,6 +81,7 @@ vi.mock("@/server/db", () => {
             files: {
                 id: "id",
                 userId: "user_id",
+                workspaceId: "workspace_id",
                 title: "title",
                 content: "content",
                 parentFolderId: "parent_folder_id",
@@ -83,6 +93,12 @@ vi.mock("@/server/db", () => {
                 deletedAt: "deleted_at",
                 createdAt: "created_at",
                 updatedAt: "updated_at",
+            },
+            workspaces: {
+                id: "id",
+                userId: "user_id",
+                name: "name",
+                isEncrypted: "is_encrypted",
             },
         },
     };
@@ -112,6 +128,13 @@ describe("Decoupled Files & Folders Actions (Wave 3.1)", () => {
         mockRequireAuthenticatedUser.mockResolvedValue(mockUser);
         mockDbFindFirst.mockResolvedValue(null);
         mockDbFindMany.mockResolvedValue([]);
+        mockWorkspaceFindFirst.mockReset();
+        mockWorkspaceFindFirst.mockResolvedValue({
+            id: "ws_default_test",
+            userId: mockUser.id,
+            name: "Default Workspace",
+            isEncrypted: false,
+        });
     });
 
     describe("createFile", () => {

@@ -12,6 +12,7 @@ test.describe("Scenario 9: System AI Provider Failure (Full Refund Policy)", () 
             .insert(schema.files)
             .values({
                 userId: authSession.userId,
+                workspaceId: schema.deriveDefaultWorkspaceId(authSession.userId),
                 title: "AI Failure Refund Document",
                 isFolder: false,
                 content: "# Text awaiting AI refinement",

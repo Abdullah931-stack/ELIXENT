@@ -42,11 +42,19 @@ vi.mock("@/server/db", () => {
                 findFirst: vi.fn().mockResolvedValue(null),
                 findMany: vi.fn().mockResolvedValue([]),
             },
+            workspaces: {
+                findFirst: vi.fn().mockResolvedValue({
+                    id: "ws-default-vault-import",
+                    name: "Default Workspace",
+                    isEncrypted: false,
+                }),
+            },
         },
         insert: vi.fn(() => ({
             values: vi.fn((vals) => {
                 insertedRecord = { ...vals };
                 return {
+                    onConflictDoNothing: vi.fn().mockResolvedValue([]),
                     returning: vi.fn().mockResolvedValue([
                         {
                             ...vals,
@@ -63,7 +71,25 @@ vi.mock("@/server/db", () => {
             }),
         })),
     };
-    return { db: mockDb };
+    return {
+        db: mockDb,
+        schema: {
+            files: {
+                id: "id",
+                userId: "user_id",
+                workspaceId: "workspace_id",
+                title: "title",
+                parentFolderId: "parent_folder_id",
+                deletedAt: "deleted_at",
+            },
+            workspaces: {
+                id: "id",
+                userId: "user_id",
+                name: "name",
+                isEncrypted: "is_encrypted",
+            },
+        },
+    };
 });
 
 describe("Vault Encrypted Import Integration Pipeline", () => {

@@ -37,11 +37,19 @@ vi.mock("@/server/db", () => {
                 findFirst: vi.fn().mockResolvedValue(null),
                 findMany: vi.fn().mockResolvedValue([]),
             },
+            workspaces: {
+                findFirst: vi.fn().mockResolvedValue({
+                    id: "ws-default-roundtrip",
+                    name: "Default Workspace",
+                    isEncrypted: false,
+                }),
+            },
         },
         insert: vi.fn(() => ({
             values: vi.fn((vals) => {
                 insertedRecord = { ...vals };
                 return {
+                    onConflictDoNothing: vi.fn().mockResolvedValue([]),
                     returning: vi.fn().mockResolvedValue([
                         {
                             ...vals,
@@ -65,6 +73,7 @@ vi.mock("@/server/db", () => {
             files: {
                 id: "id",
                 userId: "user_id",
+                workspaceId: "workspace_id",
                 title: "title",
                 content: "content",
                 parentFolderId: "parent_folder_id",
@@ -76,6 +85,12 @@ vi.mock("@/server/db", () => {
                 deletedAt: "deleted_at",
                 createdAt: "created_at",
                 updatedAt: "updated_at",
+            },
+            workspaces: {
+                id: "id",
+                userId: "user_id",
+                name: "name",
+                isEncrypted: "is_encrypted",
             },
         },
     };

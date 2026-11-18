@@ -19,6 +19,7 @@ test.describe("Scenario 11: Encrypted Vault Lifecycle & Zero-Knowledge Browser J
             .insert(schema.files)
             .values({
                 userId: authSession.userId,
+                workspaceId: schema.deriveDefaultWorkspaceId(authSession.userId),
                 title: "Confidential Project Blueprint",
                 isFolder: false,
                 content: "enc:iv_lifecycle_123:tag_456:ciphertext_789",

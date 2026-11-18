@@ -15,6 +15,7 @@ test.describe("Scenario 10: AI Concurrent Edit Collision (412 Precondition Faile
             .insert(schema.files)
             .values({
                 userId: authSession.userId,
+                workspaceId: schema.deriveDefaultWorkspaceId(authSession.userId),
                 title: "AI Collision Document",
                 isFolder: false,
                 content: "# Version 1 Original",

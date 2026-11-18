@@ -221,7 +221,7 @@ describe("Wave 3.2 Hono RPC Routes (src/server/routes/rpc.routes.ts)", () => {
 
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual(mockResult);
-      expect(mockCreateFile).toHaveBeenCalledWith("Doc.md", "fld_1", false);
+      expect(mockCreateFile).toHaveBeenCalledWith("Doc.md", "fld_1", false, undefined);
     });
 
     it("POST /files/create: rejects missing title with 400 Bad Request", async () => {
@@ -474,7 +474,7 @@ describe("Wave 3.2 Hono RPC Routes (src/server/routes/rpc.routes.ts)", () => {
       });
 
       expect(res.status).toBe(200);
-      expect(mockCopyFile).toHaveBeenCalledWith("f_copy_source", "fld_target", 1, override);
+      expect(mockCopyFile).toHaveBeenCalledWith("f_copy_source", "fld_target", 1, override, undefined);
     });
 
     it("POST /files/move: supports moving to folder or to root (null)", async () => {
@@ -513,6 +513,7 @@ describe("Wave 3.2 Hono RPC Routes (src/server/routes/rpc.routes.ts)", () => {
         "Hello World",
         "txt",
         null,
+        undefined,
         undefined
       );
     });
@@ -638,7 +639,7 @@ describe("Wave 3.2 Hono RPC Routes (src/server/routes/rpc.routes.ts)", () => {
       });
 
       expect(res.status).toBe(200);
-      expect(mockGetFolderChildren).toHaveBeenCalledWith("fld_sub_1");
+      expect(mockGetFolderChildren).toHaveBeenCalledWith("fld_sub_1", undefined);
     });
   });
 

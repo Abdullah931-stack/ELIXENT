@@ -13,6 +13,7 @@ test.describe("Scenario 13: Zero-Knowledge AI Shield & Default AI Enablement", (
             .insert(schema.files)
             .values({
                 userId: authSession.userId,
+                workspaceId: schema.deriveDefaultWorkspaceId(authSession.userId),
                 title: "Confidential Financials",
                 isFolder: false,
                 content: "enc:iv_mock:auth_tag_mock:ciphertext_mock",

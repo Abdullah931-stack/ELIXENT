@@ -37,6 +37,8 @@ import type {
   HeadingNode,
   SectionReadResult,
   LexicalMatchResult,
+  WorkspaceTreeEntry,
+  DecisionLedgerDocument,
 } from "@/core/workspace/provider";
 
 // Stage 0
@@ -163,7 +165,12 @@ function createTestDecisionNode(
 }
 
 class MockWorkspaceProvider implements IWorkspaceProvider {
-  listHeadingsTree = vi.fn().mockImplementation(async (fileIds: string[]) => {
+  readonly workspaceId = "ws-test";
+  readonly userId = "user-test";
+
+  listWorkspaceTree = vi.fn().mockResolvedValue([] as WorkspaceTreeEntry[]);
+
+  listHeadingsTree = vi.fn().mockImplementation(async (fileIds: string[] = []) => {
     const res: Record<string, HeadingNode[]> = {};
     for (const fileId of fileIds) {
       res[fileId] = [
@@ -185,15 +192,20 @@ class MockWorkspaceProvider implements IWorkspaceProvider {
 
   readSectionByHeading = vi.fn().mockImplementation(
     async (fileId: string, headingSlug: string): Promise<SectionReadResult> => ({
+      fileId,
+      headingSlug,
       breadcrumb: `${fileId} > ${headingSlug}`,
       contentOrVaultRef: `Base text for ${fileId}#${headingSlug}`,
       isVaultRef: false,
+      sectionHash: `hash_${fileId}_${headingSlug}`,
+      fileEtag: "etag-test",
+      fileVersion: 1,
     }),
   );
 
   searchLexicalWithASTBreadcrumb = vi.fn().mockImplementation(
-    async (params: { fileIds: string[]; query: string; maxResults?: number }) => {
-      return params.fileIds.map((fileId) => ({
+    async (params: { fileIds?: string[]; query: string; maxResults?: number }) => {
+      return (params.fileIds ?? []).map((fileId) => ({
         fileId,
         fileName: `${fileId}.md`,
         headingSlug: "system-overview",
@@ -214,6 +226,41 @@ class MockWorkspaceProvider implements IWorkspaceProvider {
       replacementText: params.agentProposedSectionContent,
     },
   }));
+
+  createWorkspaceFile = vi.fn().mockImplementation(
+    async (params: { relativePath: string; initialContent: string }): Promise<WorkspaceTreeEntry> => ({
+      fileId: `file-${params.relativePath}`,
+      parentFolderId: null,
+      title: params.relativePath,
+      relativePath: params.relativePath,
+      isFolder: false,
+      isEncrypted: false,
+      isAiExcluded: false,
+      artifactRole: "document",
+      etag: "etag-created",
+      version: 1,
+      updatedAt: new Date(0).toISOString(),
+    }),
+  );
+
+  deleteWorkspaceFile = vi.fn().mockImplementation(
+    async (params: { fileId: string }): Promise<{ fileId: string; deletedAt: string }> => ({
+      fileId: params.fileId,
+      deletedAt: new Date(0).toISOString(),
+    }),
+  );
+
+  readDecisionLedger = vi.fn().mockResolvedValue({
+    schemaVersion: "2.0",
+    workspaceId: "ws-test",
+    updatedAt: new Date(0).toISOString(),
+    decisions: {},
+  } satisfies DecisionLedgerDocument);
+
+  writeDecisionLedger = vi.fn().mockResolvedValue({
+    etag: "etag-ledger",
+    version: 1,
+  });
 }
 
 // ============================================================================
@@ -565,9 +612,14 @@ describe("Phase 9 - Wave 9.2: 7-Stage Graph Nodes & Routers", () => {
         };
 
         const sectionReadPayload: SectionReadResult = {
+          fileId: "arch.md",
+          headingSlug: "system-design",
           breadcrumb: "Overview > System Design",
           contentOrVaultRef: "The system uses event-driven CQRS pattern.",
           isVaultRef: false,
+          sectionHash: "hash_arch_system-design",
+          fileEtag: "etag-test",
+          fileVersion: 1,
         };
 
         const lexicalMatchesPayload: LexicalMatchResult[] = [

@@ -24,10 +24,21 @@ test.describe("Scenario 15: Cross-User Tenant Isolation & 404 Anti-Enumeration",
                 set: { displayName: "Foreign Tenant", updatedAt: new Date() },
             });
 
+        const foreignWorkspaceId = schema.deriveDefaultWorkspaceId(foreignUserId);
+        await e2eDb
+            .insert(schema.workspaces)
+            .values({
+                id: foreignWorkspaceId,
+                userId: foreignUserId,
+                name: "Default Workspace",
+            })
+            .onConflictDoNothing();
+
         const [foreignDoc] = await e2eDb
             .insert(schema.files)
             .values({
                 userId: foreignUserId,
+                workspaceId: foreignWorkspaceId,
                 title: "Foreign Top Secret",
                 isFolder: false,
                 content: "# Secret belonging exclusively to Tenant B",

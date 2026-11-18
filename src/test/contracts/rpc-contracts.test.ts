@@ -464,10 +464,13 @@ describe("Shared RPC Domain Contracts & Validation Schemas (src/types/rpc-contra
       const serverFile: FileRecord = {
         id: "f_wire_1",
         userId: "u_wire_1",
+        workspaceId: "ws_wire_1",
         title: "Wire Note.md",
         content: "# Content",
         parentFolderId: null,
         isFolder: false,
+        isAiExcluded: false,
+        artifactRole: "document",
         isEncrypted: false,
         encryptionMetadata: null,
         etag: "etag-wire-1",
