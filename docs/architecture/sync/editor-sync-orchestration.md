@@ -373,7 +373,7 @@ flowchart TD
 
 - **Context:** Decoupling cross-tab synchronization in `useEditorConflict` while sibling components (`VaultUnlockModal`, `FileContextMenu`, `SessionKeyStore`) continue broadcasting on the ambient channel (`textai_cross_tab_sync`).
 - **Chosen Architecture:** Retaining ambient broadcast parity (`textai_cross_tab_sync`) in `useEditorConflict` (via `broadcastCrossTabEvent` / `subscribeCrossTabSync`) until a holistic multi-tenant overhaul is executed repository-wide (recorded in TD-18).
-- **Rejected Alternative:** Enforcing strict user-scoped channel (`lugx_sync_${userId}`) in `useEditorConflict` alone. This creates a fragmented split-brain architecture where vault lock/unlock events broadcast by modals fail to be received by the editor hook.
+- **Rejected Alternative:** Enforcing strict user-scoped channel (`workspace_sync_${userId}`) in `useEditorConflict` alone. This creates a fragmented split-brain architecture where vault lock/unlock events broadcast by modals fail to be received by the editor hook.
 - **Trade-off Analysis:**
   | Evaluation Criteria | Chosen Solution (Ambient Parity) | Alternative (Fragmented User Scoping) |
   | :--- | :--- | :--- |
@@ -382,7 +382,7 @@ flowchart TD
   | **Refactoring Blast Radius** | Isolated to hook extraction without cascading regressions across 15+ UI files | High: requires touching every modal, context menu, and worker simultaneously |
 
 - **Migration Trigger (When to Switch):**
-  Migrate all broadcast channels across the entire application to unified `lugx_sync_${userId}` channels in a dedicated multi-tenant hardening milestone.
+  Migrate all broadcast channels across the entire application to unified `workspace_sync_${userId}` channels in a dedicated multi-tenant hardening milestone.
 
 ---
 
@@ -392,7 +392,7 @@ flowchart TD
 
 When the user types or modifies text while an AI stream or generation is active:
 1. **Instant Abort:** The orchestrator detects manual changes via `handleEditorChange` and immediately aborts the active stream via `aiStream.stopStream()`.
-2. **Quota Settlement (Explicit Settlement Policy):** Stopping an active generation is a *user decision*, so the reservation is settled as consumed via `commitAIReservation` (`stopStream` settles before aborting) — it is NOT refunded. See [`ai-quota-reservation-lifecycle.md`](../ai/ai-quota-reservation-lifecycle.md) §4-D.
+2. **Quota Settlement (Explicit Settlement Policy):** Stopping an active generation is a *user decision*, so the active lease is settled server-side for consumed tokens via `StreamGovernor.settle` / `executeSettleOperation` (`stopStream` aborts immediately without client settlement calls) — it is NOT refunded as an unused hold. See [`ai-quota-reservation-lifecycle.md`](../ai/ai-quota-reservation-lifecycle.md) §4-D.
 3. **Editor Generation Advance:** `editorGenerationRef` increments immediately, preventing any stale in-flight AI chunks or delayed commit responses from applying to the altered document.
 4. **Debounced AutoSave:** The user's manual modification proceeds cleanly without silent corrupt merges.
 
@@ -555,7 +555,7 @@ Invariants:
 4. **Green save dot = server truth.** `markServerPersisted(serverUpdatedAt)` fires on
    `bootstrap_server`, `apply`, and genuine `adopt_metadata`; eager-cold adoption leaves
    the dot red while user text remains dirty.
-5. **Hard-reload & Orphaned Reservation Recovery.** Server-side quota reservation status inspection and stale reservation expiration (`getAIReservationStatus(operationId)` and `expireStaleReservations()`) are consolidated inside `src/server/services/ai-settlement-service.ts` (session-derived and ownership-filtered), superseding the legacy `src/lib/ai/pending-operation-store.ts` and `src/server/actions/ai-ops.ts` modules (permanently deleted in Phase 12). Abandoned previews are never applied to the document nor treated as committed. See [`reference/phase-11-editor-orchestration-closure.md`](../../records/closures/phase-11-to-15-core-infrastructure/phase-11-editor-orchestration-closure.md).
+5. **Hard-reload & Orphaned Lease Recovery.** Pending Redis credit settlements are drained asynchronously via `flushPendingSettlementsToPostgres` (`src/server/services/ai-settlement-service.ts`) and `/api/cron/expire-reservations` (`src/server/routes/cron.routes.ts`), while ephemeral Redis leases (`credit:lease:${operationId}`) expire automatically via `LEASE_TTL_SECONDS`, superseding the legacy `src/lib/ai/pending-operation-store.ts`, `src/server/actions/ai-ops.ts`, and deleted word-quota functions. Abandoned previews are never applied to the document nor treated as committed. See [`phase-11-editor-orchestration-closure.md`](../../records/closures/phase-11-to-15-core-infrastructure/phase-11-editor-orchestration-closure.md).
 6. **UI layer integration (`src/client/routes/editor-page.tsx`).** During `hydrating` on an empty document, an animated
    backdrop overlay (`Loader2`) informs the user of active synchronization. When `fatal`,
    a dedicated error recovery card is presented with a direct action to return to `/workspace`.
@@ -675,7 +675,7 @@ To support multilingual and bidirectional authoring without performance regressi
    - `rtl`: Globally enforced right-to-left layout.
    - `ltr`: Globally enforced left-to-right layout.
 3. **Fenced Code Blocks LTR Locking:** When `lockCodeBlocksLTR` is enabled in `DirectionSettings`, `FencedCode` lines are locked to `dir="ltr"` and left alignment even in global RTL mode.
-4. **State & Shortcut Synchronization:** `directionSettings` are synced through `directionSettingsState` (StateField), persisted in `localStorage` (`lugx_editor_direction_pref`), and wired to the global `Ctrl + Alt + D` keyboard shortcut and toolbar `DirectionMenu`.
+4. **State & Shortcut Synchronization:** `directionSettings` are synced through `directionSettingsState` (StateField), persisted in `localStorage` (`editor_direction_pref`), and wired to the global `Ctrl + Alt + D` keyboard shortcut and toolbar `DirectionMenu`.
 
 ---
 
@@ -877,7 +877,7 @@ React editor state is **never** flushed unconditionally during routine sync cycl
   - **Vault Subsystem Total:** 10/10 test files, 178/178 tests passing (100% success rate).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 146 unit suites (3007 tests) · 21 live suites (105 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 146 unit suites (3000 tests) · 21 live suites (97 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
   - **TypeScript Typecheck:** `npx tsc --noEmit` exits with code 0 (zero errors).

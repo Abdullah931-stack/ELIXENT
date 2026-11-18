@@ -57,7 +57,7 @@ graph TD
 | `ConflictStore` (`conflict-store.ts`) | Durable IndexedDB conflict quarantine manager, persisting 412/409 conflict envelopes (`syncStatus = 'conflict'`) with local, server, and base snapshots across browser restarts |
 | `ConflictResolver` (`conflict-resolver.ts`) | Conflict detection, 3-way merge orchestration, ciphertext execution guard, and false conflict elimination |
 | `Diff3 Engine` (`diff3.ts`) | Deterministic Hunt-McIlroy / Pierce 3-way merge engine on plaintext tokens, eliminating line-erasure anomalies on repeated and empty lines |
-| `UserTabSync` (`tab-sync.ts` & `cross-tab-sync.ts`) | User-scoped cross-tab channel (`lugx_sync_${userId}`) preventing cross-tenant bleed, managing lock broadcasts and clean-state dirty guards |
+| `UserTabSync` (`tab-sync.ts` & `cross-tab-sync.ts`) | User-scoped cross-tab channel (`workspace_sync_${userId}`) preventing cross-tenant bleed, managing lock broadcasts and clean-state dirty guards |
 | `SyntaxValidator` (`syntax-validator.ts`) | Centralized post-merge Markdown syntax integrity verification (code fence pairing, GFM table alignment, null-byte prevention) |
 | `LogSanitizer` (`log-sanitizer.ts`) | Zero-Knowledge log/metric hygiene, token boundary regex masking, DAG cycle-breaking, and sanitized stack preservation |
 | `SyncErrorHandler` (`error-handler.ts`) | Centralized typed error management, recovery strategies, and listener callbacks with automatic log sanitization |
@@ -75,10 +75,10 @@ graph TD
 | `IndexedDBManager` | Local document & operations storage, offline vault profile caching, and device trust storage |
 | `ETagGenerator` | Deterministic SHA-256 ETag generation with canonical JSON key serialization (`CANONICAL_ENVELOPE_KEYS`) |
 | `SyncRollback` | State checkpoints & isolated failure recovery |
-| `Encryption` (`encryption.ts`) | Dual-tier hybrid encryption orchestration (`AES-GCM-256` + canonical AAD `lugx:v1:file:${userId}:${fileId}` with legacy fallback) |
-| `AAD Engine` (`src/lib/crypto/aad.ts`) | Typed canonical AAD context builders (`lugx:v1:<domain>:<userId>[:<resourceId>]`) and legacy fallback decorators |
+| `Encryption` (`encryption.ts`) | Dual-tier hybrid encryption orchestration (`AES-GCM-256` + canonical AAD `zk:v1:file:${userId}:${fileId}`) |
+| `AAD Engine` (`src/lib/crypto/aad.ts`) | Typed canonical AAD context builders (`zk:v1:<domain>:<userId>[:<resourceId>]`) enforcing `isCanonicalAAD` |
 | `Key Derivation & Normalizer` (`src/lib/crypto/key-derivation.ts`) | Unicode NFKC password normalization, fast HKDF-SHA-256 subkeys (documents, search, proof-of-possession) |
-| `Adaptive Recovery` (`src/lib/vault/recovery.ts`) | Zero-lockout dual-try recovery unwrap (`lugx:v1:recovery` -> `vault:seed`) and transparent re-wrapping migration |
+| `Vault Recovery` (`src/lib/vault/recovery.ts`) | Canonical recovery seed unwrap (`zk:v1:recovery:${userId}`) without legacy fallback shims |
 | `VaultManager` (`src/lib/vault/vault-manager.ts`) | Centralized vault lifecycle gateway, lock epoch concurrency protection & activity coordination |
 | `WebAuthn PRF Engine` (`webauthn-prf.ts`) | Hardware-bound biometrics key derivation via W3C Level 3 PRF extension & HKDF-SHA-256 |
 | `PIN KEK Engine` (`encryption.ts`) | 6-digit PIN KEK derivation (PBKDF2 600K iterations, $1,000,000$ combinations) |

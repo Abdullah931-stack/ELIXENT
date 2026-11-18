@@ -49,7 +49,7 @@ To prevent unintentional data leakage or uninspected transmission of client-side
    - If `fileId` is missing or invalid, the route immediately fails closed with HTTP `400 Bad Request` and error code `MISSING_FILE_ID`.
    - The route verifies document existence and user ownership against PostgreSQL (`schema.files`).
    - If `targetFile.isEncrypted = true`, the route checks `userVaultProfiles.allowAIOnEncryptedFiles`. If not explicitly enabled by the user, the stream is rejected with HTTP `403 Forbidden` (`AI_PROHIBITED_ON_ENCRYPTED_FILES`) with zero quota consumed and zero prompt data transmitted to Gemini.
-   - Quota reservation and settlement (`reserveAndUpdateUsage` / `reserveAIQuota` in `src/server/services/ai-settlement-service.ts` and `executeReserveOrExtend` / `executeSettleOperation` in `src/lib/metering/lua-scripts.ts`, orchestrated by `StreamGovernor` in `src/lib/metering/stream-governor.ts`) are coupled to the authenticated user and validated `fileId` context.
+   - Quota reservation and settlement (`StreamGovernor.initializeLease` in `src/lib/metering/stream-governor.ts`, `executeReserveOrExtend` / `executeSettleOperation` in `src/lib/metering/lua-scripts.ts`, and `flushPendingSettlementsToPostgres` / `getUserCreditBalance` in `src/server/services/ai-settlement-service.ts`) are coupled to the authenticated user and validated `fileId` context.
 
 2. **Governed Document Export & Plaintext Warning Modal (`ExportWarningModal` / `export-service.ts` / LUGX-004, LUGX-017):**
    - When exporting documents from the editor (`handleExport`), encrypted files trigger an interactive security modal (`ExportWarningModal`) before any unencrypted payload can be written to disk.
@@ -157,26 +157,23 @@ LUGX implements a zero-knowledge dual-tier hybrid encryption architecture offloa
   - Algorithm: **AES-GCM 256-bit** with CSPRNG 12-byte IV and 16-byte salt.
   - Key Derivation: **PBKDF2-HMAC-SHA256** with **600,000 iterations**.
   - Envelope Schema: `{ version: 1, algorithm: 'AES-GCM-256', keyId, iv, salt, ciphertext, kdfIterations }`.
-- **Standardized AAD Hierarchy (`lugx:v1:<domain>:<userId>[:<resourceId>]`)**:
-  - Documents: `AAD.file(userId, fileId)` -> `lugx:v1:file:${userId}:${fileId}` (with fallback to legacy `vault:file:...`).
-  - Password Wrap: `AAD.passwordWrap(userId)` -> `lugx:v1:pass:${userId}` (with fallback to legacy `vault:pass:...` and `master_key:...`).
-  - Recovery Seed Wrap: `AAD.recoveryWrap(userId)` -> `lugx:v1:recovery:${userId}` (with fallback to legacy `vault:seed:...` and `recovery_master_key:...`).
-  - Device Trust: `AAD.deviceWrap(userId, epoch)` -> `lugx:v1:device:${userId}:${epoch}`.
-  - Validation: `isCanonicalAAD(aad)` validates schema adherence. Decryption with tampered or mismatched AAD throws `InvalidCiphertextOrKeyError`.
+- **Standardized AAD Hierarchy (`zk:v1:<domain>:<userId>[:<resourceId>]`)**:
+  - Documents: `AAD.file(userId, fileId)` -> `zk:v1:file:${userId}:${fileId}`.
+  - Password Wrap: `AAD.passwordWrap(userId)` -> `zk:v1:pass:${userId}`.
+  - Recovery Seed Wrap: `AAD.recoveryWrap(userId)` -> `zk:v1:recovery:${userId}`.
+  - Device Trust: `AAD.deviceWrap(userId, epoch)` -> `zk:v1:device:${userId}:${epoch}`.
+  - Validation & Clean-Cut Enforcement: `isCanonicalAAD(aad)` validates strict `zk:v1:` prefix adherence. All `AAD.legacy` and `lugx:v1:*` / `vault:*` / `trusted_device:*` fallback branches were removed in `ELIXENT-EXECUTION-PLAN-v1.1` Phase 1; decryption with tampered or mismatched AAD throws `InvalidCiphertextOrKeyError`.
 
-### 4.4 Standard BIP-39 Wordlist, Adaptive Dual-Try Recovery & Subkeys (`src/lib/crypto/*`, `src/lib/vault/*`)
+### 4.4 Standard BIP-39 Wordlist, Canonical Recovery Unwrap & Subkeys (`src/lib/crypto/*`, `src/lib/vault/*`)
 - **Canonical BIP-0039 Wordlist (`src/lib/crypto/bip39-wordlist.ts`)**:
   - Strictly adheres to the 2,048 English wordlist defined in Bitcoin BIP-0039 (remediating LUGX-043).
   - Purged 4 non-standard corrupted words (`coal`, `paci`, `squad`, `squash`) and restored 4 missing canonical entries (`pact`, `paddle`, `squeeze`, `tragic`).
   - Word index lookup validated via `BIP39_STANDARD_WORD_MAP` in $O(1)$ time.
-- **Adaptive Dual-Try Recovery Migration (`src/lib/vault/recovery.ts` / LUGX-005)**:
-  - Resolves historical AAD mismatch between vault creation (`vault:seed:`) and unlock (`vault:recovery:`).
-  - **Try 1 (Canonical)**: Attempts unwrapping with `lugx:v1:recovery:${userId}`.
-  - **Try 2 (Legacy Fallback)**: On MAC failure, falls back to legacy `vault:seed:${userId}`.
-  - **Transparent Upgrading**: Upon legacy unwrap success, the Master Key is immediately re-wrapped under `lugx:v1:recovery:${userId}` with a fresh CSPRNG IV and persisted to IndexedDB and cloud PostgreSQL (`updateVaultRecoveryEnvelope`).
+- **Canonical Seed Recovery Unwrap (`src/lib/vault/recovery.ts`)**:
+  - `adaptiveUnwrapRecoverySeed` unwraps the recovery-encrypted master key exclusively using canonical AAD `AAD.recoveryWrap(userId)` (`zk:v1:recovery:${userId}`), returning `{ masterKey, wasMigrated: false }` on success or throwing `InvalidCiphertextOrKeyError` on MAC mismatch (all pre-production `vault:seed:` fallback migration loops were removed in Phase 1).
 - **Unicode Normalization & Fast HKDF Subkeys (`src/lib/crypto/key-derivation.ts`)**:
   - Unicode Normalization Form KC (`normalizePassword(NFKC)`): Normalizes user passwords prior to PBKDF2 key derivation, eliminating cross-platform character decomposition bugs (remediating LUGX-133).
-  - HKDF-SHA-256 Subkey Derivation: Derives subkeys for documents (`deriveDocumentKey`), search indices (`deriveSearchIndexKey`), and proof of possession (`deriveProofOfPossession`) without repeating CPU-heavy PBKDF2 operations.
+  - HKDF-SHA-256 Subkey Derivation: Derives subkeys for documents (`deriveDocumentKey` with `zk:v1:doc-key:${fileId}`), search indices (`deriveSearchIndexKey` with `zk:v1:search-key:${userId}`), and proof of possession (`deriveProofOfPossession` with `zk:v1:proof-of-possession:${nonce}`) without repeating CPU-heavy PBKDF2 operations.
 
 ```mermaid
 sequenceDiagram
@@ -185,29 +182,20 @@ sequenceDiagram
     participant Modal as VaultUnlockModal
     participant Rec as adaptiveUnwrapRecoverySeed
     participant Worker as CryptoWorkerBridge
-    participant Svr as VaultActions (Cloud DB)
 
     User->>Modal: Submit 12-Word Recovery Seed
     Modal->>Rec: adaptiveUnwrapRecoverySeed({seed, envelope, salt, userId})
     Rec->>Worker: mnemonicToSeed(seed, salt, 600K)
     Worker-->>Rec: KEK-Seed (32 bytes)
 
-    Note over Rec,Worker: Try 1: Canonical AAD (lugx:v1:recovery:userId)
+    Note over Rec,Worker: Canonical AAD (zk:v1:recovery:userId)
     Rec->>Worker: unwrapKeyRaw(KEK, ciphertext, IV, canonicalAAD)
     alt Canonical unwrap succeeds
         Worker-->>Rec: Master Key Bytes
         Rec-->>Modal: { masterKey, wasMigrated: false }
-    else Canonical MAC fails (Legacy vault)
+    else MAC / tag mismatch
         Worker-->>Rec: OperationError / MAC Mismatch
-        Note over Rec,Worker: Try 2: Legacy Fallback AAD (vault:seed:userId)
-        Rec->>Worker: unwrapKeyRaw(KEK, ciphertext, IV, legacyAAD)
-        Worker-->>Rec: Master Key Bytes
-        Note over Rec,Worker: Seamless Re-wrap with Canonical AAD
-        Rec->>Worker: wrapKeyRaw(KEK, masterKey, freshIV, canonicalAAD)
-        Worker-->>Rec: reWrappedEnvelope
-        Rec-->>Modal: { masterKey, wasMigrated: true, reWrappedEnvelope }
-        Modal->>Svr: updateVaultRecoveryEnvelope(reWrappedPayload)
-        Svr-->>Modal: Cloud Profile Updated
+        Rec-->>Modal: Throws InvalidCiphertextOrKeyError
     end
 ```
 
@@ -246,11 +234,11 @@ sequenceDiagram
 - **Real-Time Capability & Diagnostic Feedback (`checkWebAuthnSupportStatus`)**: Dynamically queries `isUserVerifyingPlatformAuthenticatorAvailable()` and `getClientCapabilities()` (supporting both `"extension:prf"` and `"prf"` keys). If unavailable, provides actionable feedback (e.g., reminding users to configure a Windows Hello PIN in OS settings or access via secure localhost/HTTPS).
 - **Device Trust Envelope Schema (`DeviceTrustEnvelope`)**: Persists wrapped key, salt, IV, epoch, and metadata with explicit discriminator `trustType: 'pin' | 'webauthn_prf'` and `credentialId`.
 - **Anti-Brute-Force & Expiration Defense**: Enforces a strict 5-attempt failed-unlock lockout limit (`failedAttempts >= 5`) for PIN envelopes and a 30-day expiration window (`expiresAt = trustedAt + 30 days`).
-- **Global Central Revocation (`revokeAllTrustedDevices`)**: Incrementing `deviceTrustEpoch` on the server atomically invalidates all local device trust envelopes (both PRF and PIN) across all devices simultaneously due to cryptographic AAD mismatch (`trusted_device:${userId}:${deviceTrustEpoch}`) upon unwrap.
+- **Global Central Revocation (`revokeAllTrustedDevices`)**: Incrementing `deviceTrustEpoch` on the server atomically invalidates all local device trust envelopes (both PRF and PIN) across all devices simultaneously due to cryptographic AAD mismatch (`zk:v1:device:${userId}:${deviceTrustEpoch}` via `AAD.deviceWrap`) upon unwrap.
 
 ### 4.9 Zero-Knowledge Operation & AI Streaming Guards
 
-- **Client-Side Re-Encrypted Copy Engine (`copyFile` / AUD-02)**: Copying an encrypted file decrypts in volatile RAM, generates a new UUID and fresh random IV, and re-encrypts with the target AAD (`vault:file:${userId}:${newFileId}`). Server-side `copyFile` strictly rejects copying encrypted files without valid client-side re-encryption.
+- **Client-Side Re-Encrypted Copy Engine (`copyFile` / AUD-02)**: Copying an encrypted file decrypts in volatile RAM, generates a new UUID and fresh random IV, and re-encrypts with the target AAD (`zk:v1:file:${userId}:${newFileId}`). Server-side `copyFile` strictly rejects copying encrypted files without valid client-side re-encryption.
 - **Zero-Knowledge Incremental Sync Guard (`useEditorAutosave` / `PUT /api/files/:id`)**: When accepting AI hunk replacements on an encrypted file, the client encrypts the updated document locally via `SyncCryptoGateway` before pushing via `PUT /api/files/:id`. The server strictly rejects writes to encrypted files if unencrypted content is supplied without valid `encryptionMetadata`.
 - **Conflict 412 Double-Encryption Prevention (AUD-03)**: Detects pre-authenticated ciphertext (`gcm:v1:...`) during server-version conflict resolution to eliminate double-encryption corruption loops.
 
@@ -294,21 +282,21 @@ The application itself never hard-deletes user content outside this route — al
 user-facing deletions are tombstones
 ([`records/incidents/test-database-safety.md`](../../records/incidents/test-database-safety.md)).
 
-### 5.3 Stale Quota Reservation Expiration (`src/server/routes/cron.routes.ts` / `/api/cron/expire-reservations` / TD-02)
+### 5.3 Pending Credit Settlement Sweeper (`src/server/routes/cron.routes.ts` / `/api/cron/expire-reservations` / TD-02)
 
-Automated expiration of leaked or orphaned in-flight AI quota reservations:
+Automated batch-draining of pending Redis credit settlements into PostgreSQL:
 
 | Property | Value |
 | :--- | :--- |
-| Stale threshold | 5 minutes (`STALE_THRESHOLD_MS = 5 * 60 * 1000`) past reservation timestamp |
-| Target status | Records with status `'RESERVED'` in `credit_ledger_transactions` |
-| Transition | Updated atomically to status `'EXPIRED_RELEASED'` (with credit refund to `users.credit_balance_micro`) via `expireStaleReservations` in `src/server/services/ai-settlement-service.ts` |
+| Grace period | 30 seconds (`DIRTY_SETTLEMENT_GRACE_MS = 30_000`) to avoid racing active post-response flushes |
+| Target keyspace | `credit:dirty_wallets` (Set) and `credit:pending_settlements:${userId}` (Hash) |
+| Transition | Drained atomically via `flushPendingSettlementsToPostgres` in `src/server/services/ai-settlement-service.ts` (`INSERT ... ON CONFLICT DO NOTHING` into `credit_ledger_transactions` + `users.creditBalanceMicro` adjustment); ephemeral Redis leases (`credit:lease:${operationId}`) expire automatically via `LEASE_TTL_SECONDS` |
 | Authorization | Shared secret: `Authorization: Bearer $CRON_SECRET`; verified via constant-time `crypto.timingSafeEqual` comparison (LUGX-136), failing closed with 401 when unset, mismatched, or malformed |
 | Concurrency Lock | Protected by `acquireCronLock("expire-reservations", 300)` with safe HTTP 200 `{ skipped: true }` overlap skipping |
-| Method Parity | Full support for both `GET` and `POST` methods (`export const POST = GET;`) |
-| Idempotency | Strictly idempotent; only transitions matching unfinalized reservations |
+| Method Parity | Full support for both `GET` and `POST` methods |
+| Idempotency | Strictly idempotent; drains only settled records exceeding the 30s grace window |
 | Scheduling | Invoked externally via GitHub Actions scheduled workflow `.github/workflows/cron.yml` (independent job with `--fail-with-body`) |
-| Response format | JSON `{ success: true, expiredCount: number, timestamp: string }` with HTTP 200 |
+| Response format | JSON `{ success: true, processedUsers: number, flushedOperations: number, netDeltaMicro: string, timestamp: string }` with HTTP 200 |
 
 ---
 

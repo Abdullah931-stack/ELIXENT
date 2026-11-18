@@ -2,10 +2,10 @@
 
 Living register of known technical debt, accepted risks, and deferred work.
 Each entry records the decision owner and the mitigation currently in place.
-Last reviewed: 2026-11-15 (v0.22.0 — Phase 4 Pure Vite 6 + Hono 4.13 Alignment & Next.js Decoupling Plan Closure).
+Last reviewed: 2026-11-18 (v0.24.0 — Phase 1 Baseline Pre-Flight Clean Cut, Prefix Standardization & Seam Fixes).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 146 unit suites (3007 tests) · 21 live suites (105 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 146 unit suites (3000 tests) · 21 live suites (97 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ---
@@ -211,7 +211,7 @@ Last reviewed: 2026-11-15 (v0.22.0 — Phase 4 Pure Vite 6 + Hono 4.13 Alignment
   - **LUGX-048 (Fatal Hydration on Decrypt Failure):** Decryption errors immediately transition hydration to `"fatal"`, freeze the editor (`adapter.setEditable(false)`), and surface an explicit error banner without exposing ciphertext.
   - **LUGX-054 (Stale Range Verification):** Verified `currentDoc.slice(from, to) === searchText` synchronously before executing single or multi-range replacements, aborting and re-indexing if the document changed.
   - **LUGX-055 (OCC Encryption Preconditions):** Passed `expectedVersion` and `expectedETag` to `toggleFileEncryption`, detecting and surfacing HTTP 412 conflicts gracefully.
-  - **LUGX-056 (Strict AAD Validation & Standardization):** Enforced non-empty trimmed string validation throwing informative errors on invalid IDs. In Phase 1, legacy ad-hoc `buildFileAAD` was formally superseded and pruned in favor of the canonical centralized factory `@/lib/crypto/aad` via `AAD.file(userId, fileId)` emitting format `lugx:v1:file:${userId}:${fileId}`.
+  - **LUGX-056 (Strict AAD Validation & Standardization):** Enforced non-empty trimmed string validation throwing informative errors on invalid IDs. Legacy ad-hoc `buildFileAAD` was pruned in favor of `@/lib/crypto/aad` via `AAD.file(userId, fileId)` (standardized to `zk:v1:file:${userId}:${fileId}` in `v0.24.0` Phase 1).
   - **LUGX-057 (Offline-First Vault Import Durability):** Pre-persisted imported vault files to IndexedDB with `isDirty: true` and `lastSyncedAt: 0` before server dispatch, marking clean only after server confirmation.
   - **Verification:** Covered by 5 dedicated regression test suites: `use-editor-autosave.test.ts`, `editor-security-hardening.test.ts`, `search-replace.stale-ranges.test.tsx`, `file-context-menu.encryption-conflict.test.tsx`, and `sidebar-import.vault.test.tsx`.
 
@@ -219,7 +219,7 @@ Last reviewed: 2026-11-15 (v0.22.0 — Phase 4 Pure Vite 6 + Hono 4.13 Alignment
 
 - **Debt:**
   - `useEditorOrchestrator` conflated document state management, AI streaming, initial hydration, and monolithic conflict handling (`handle412Conflict`, `handleResolveConflict`, `handleSyncConflict`, `handleRemoteUpdate`) alongside cross-tab event listeners into a single file exceeding 1,936 lines.
-  - Sibling components across the application (`VaultUnlockModal`, `FileContextMenu`, `SessionKeyStore`) broadcast cross-tab events on an ambient channel (`textai_cross_tab_sync`), whereas Phase 15 introduced a user-scoped channel pattern (`lugx_sync_${userId}`). Attempting isolated user scoping inside the editor conflict hook without updating all modals, context menus, and worker bridges caused dropped vault lock and unlock synchronization across browser tabs.
+  - Sibling components across the application (`VaultUnlockModal`, `FileContextMenu`, `SessionKeyStore`) broadcast cross-tab events on an ambient channel (`textai_cross_tab_sync`), whereas Phase 15 introduced a user-scoped channel pattern (`workspace_sync_${userId}`, standardized from `lugx_sync_${userId}` in `v0.24.0`). Attempting isolated user scoping inside the editor conflict hook without updating all modals, context menus, and worker bridges caused dropped vault lock and unlock synchronization across browser tabs.
 - **Resolution (Orchestrator Conflict Extraction):**
   - **Hook Extraction (`useEditorConflict`):** Extracted `useEditorConflict` (`src/hooks/use-editor-conflict.ts`, 996 lines) with pure callback and getter injection (`UseEditorConflictOptions`), isolating 412 conflict handling, inbound decryption, three-way resolution submission, and cross-tab event lifecycle synchronization.
   - **Orchestrator Reduction:** Reduced `src/hooks/use-editor-orchestrator.ts` from 1,936 lines to 1,327 lines (1,211 active executable lines), strictly delegating conflict states (`activeConflict`, `isConflictDialogOpen`, `isResolvingConflict`, `isBlockedByConflict`) and event dispatching to the standalone hook.
@@ -232,8 +232,8 @@ Last reviewed: 2026-11-15 (v0.22.0 — Phase 4 Pure Vite 6 + Hono 4.13 Alignment
 - **Accepted Debt (Ambient Broadcast Parity Across Vault Modals):**
   - **Decision Owner:** Project Owner & Systems Analyst.
   - **Decision Rationale:** To maintain 100% interoperability with existing UI modals (`VaultUnlockModal`, `TrustDeviceModal`, `FileContextMenu`), `useEditorConflict` broadcasts and subscribes on the ambient `textai_cross_tab_sync` channel via `broadcastCrossTabEvent` and `subscribeCrossTabSync`. Prematurely enforcing isolated user scoping in the editor hook alone created a split-brain architecture where vault lock/unlock events broadcast by ambient modals were silently ignored by the editor.
-  - **Mitigation Currently in Place:** `useEditorConflict` binds to the shared `subscribeCrossTabSync` listener and filters events by fileId and tabId (`senderTabId !== currentTabId`). Encryption operations strictly validate standardized user AAD bindings constructed via `AAD.file(userId, fileId)` (`lugx:v1:file:${userId}:${fileId}`) in volatile RAM, preventing cross-tenant data corruption.
-  - **Conditions to Revisit / Reverse:** A systematic multi-tenant overhaul milestone that simultaneously refactors all UI modals, context menus, and worker bridges to subscribe to user-scoped `lugx_sync_${userId}` channels.
+  - **Mitigation Currently in Place:** `useEditorConflict` binds to the shared `subscribeCrossTabSync` listener and filters events by fileId and tabId (`senderTabId !== currentTabId`). Encryption operations strictly validate standardized user AAD bindings constructed via `AAD.file(userId, fileId)` (`zk:v1:file:${userId}:${fileId}`) in volatile RAM, preventing cross-tenant data corruption.
+  - **Conditions to Revisit / Reverse:** A systematic multi-tenant overhaul milestone that simultaneously refactors all UI modals, context menus, and worker bridges to subscribe to user-scoped `workspace_sync_${userId}` channels.
 
 ## TD-19 — Multi-Tab Cross-Broadcast Race, 4-Line Visual Diff Duplication & Silent 412 Auto-Merge — ✅ RESOLVED (Release 1.46.1 / 2026-10-13)
 

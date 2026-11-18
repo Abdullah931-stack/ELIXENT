@@ -42,7 +42,7 @@
   - Dynamically togglable via the UI without reloading or state loss.
 - **Direction Settings Dropdown Menu (`DirectionMenu`):**
   - Sleek Radix UI dropdown in the editor toolbar (`AIToolbar`) with visual badges, mode indicators, and a toggle switch for code block LTR locking.
-  - Persists preference across sessions via `localStorage` (`lugx_editor_direction_pref`).
+  - Persists preference across sessions via `localStorage` (`editor_direction_pref`).
 - **Global Keyboard Shortcut (`Ctrl + Alt + D` / `Cmd + Alt + D`):**
   - Window-level key listener with `e.repeat` throttling allowing instant circular mode switching (`auto` ➔ `rtl` ➔ `ltr` ➔ `auto`).
 - **Unified Typography & Weight Consistency:**

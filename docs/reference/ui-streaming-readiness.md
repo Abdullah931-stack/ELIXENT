@@ -99,7 +99,7 @@ Requests to `/api/agent/stream` validate the JSON payload against `agentStreamRe
 2. **Mandatory fileId Check (LUGX-085):** Rejects missing/empty `fileId` with HTTP 400 (`MISSING_FILE_ID`).
 3. **Database Ownership & State:** Queries `schema.files` for `id = fileId` AND `userId = user.id` AND `deletedAt IS NULL`. Missing files return HTTP 404.
 4. **Zero-Knowledge Gatekeeper:** If `targetFile.isEncrypted`, queries `schema.userVaultProfiles`. If `allowAIOnEncryptedFiles` is not explicitly `true`, rejects with HTTP 403 (`AI_PROHIBITED_ON_ENCRYPTED_FILES`) before token consumption or quota reservation.
-5. **Quota Reservation:** Passes validated non-null `fileId` into `reserveAndUpdateUsage`.
+5. **Credit Lease Initialization:** Initializes the Redis lease via `StreamGovernor.initializeLease` / `executeReserveOrExtend`.
 
 ### 5.1 Meta Event
 Emitted immediately upon successful quota reservation before AI generation starts:
@@ -129,17 +129,16 @@ Emitted if an error occurs during stream transmission:
 
 ## 6. Failure Recovery & Quota Idempotency
 
-### 6.1 Server-Authoritative Quota Settlement (`v0.12.0` / Phase 12)
-Client financial authority is revoked: `refundAIReservation`, `commitAIReservation`, `reserveAIQuota`, and `reserveAndUpdateUsage` are strictly internal server functions encapsulated in `src/server/services/ai-settlement-service.ts` and cannot be invoked by clients. Settlement is driven authoritatively by `/api/agent/stream` (`StreamGovernor` in `src/lib/metering/stream-governor.ts`), `src/lib/metering/lua-scripts.ts`, and `src/server/services/ai-settlement-service.ts`:
-- **Pre-TTFT System Failure / Disconnect (`ttftMs === null`):** Server triggers internal `refundAIReservation(operationId, reason)` or `executeAtomicRefund`:
-  - **Condition:** Updates `status = 'ABORTED_REFUNDED'` WHERE `operation_id = operationId AND status = 'RESERVED'`.
-  - **Idempotency:** Subsequent calls find `status == 'ABORTED_REFUNDED'` or `'SETTLED'` and return `{ refunded: false, reason: "already_refunded" | "already_committed" }`, eliminating double-refund risks.
-  - **Micro-Credit Restoration:** Refunds the reserved micro-credit hold back to `users.credit_balance_micro` and the Redis wallet (`lugx:wallet:${userId}`).
-- **Post-TTFT Disconnect / Stream Completion (`ttftMs !== null`):** Server autonomously executes `commitAIReservation(operationId)` or `executeAtomicSettlement` before `{ type: "done" }` or upon socket disconnect, settling quota as consumed for generated tokens.
+### 6.1 Server-Authoritative Credit Settlement
+Client financial authority is revoked: `src/client/rpc-client.ts` exposes zero credit reservation or settlement functions, and legacy word-quota helpers (`reserveAIQuota`, `commitAIReservation`, `refundAIReservation`, `refundUsage`, `expireStaleReservations`, `getAIReservationStatus`, `reserveAndUpdateUsage`) were permanently removed from `src/server/services/ai-settlement-service.ts`. Settlement is driven authoritatively by `/api/agent/stream` (`StreamGovernor` in `src/lib/metering/stream-governor.ts`), `src/lib/metering/lua-scripts.ts`, and `src/server/services/ai-settlement-service.ts`:
+- **Pre-TTFT System Failure / Disconnect (`ttftMs === null`):** Server triggers `StreamGovernor.settle("ABORTED")` (`executeSettleOperation`):
+  - **Idempotency:** `StreamGovernor.settle` caches `this.settleResult`, while `flushPendingSettlementsToPostgres` uses `INSERT ... ON CONFLICT (operation_id) DO NOTHING`, eliminating double-refund risks.
+  - **Micro-Credit Restoration:** Refunds the unused reserved micro-credit hold back to the Redis wallet (`credit:wallet:${userId}`) and reconciles `users.credit_balance_micro` via `flushPendingSettlementsToPostgres`.
+- **Post-TTFT Disconnect / Stream Completion (`ttftMs !== null`):** Server autonomously executes `StreamGovernor.settle("SETTLED")` (`executeSettleOperation`) and `flushPendingSettlementsToPostgres`, settling consumed tokens and refunding any unconsumed surplus.
 - **Decoupled Incremental Document Sync (`useEditorAutosave`):** User acceptance applies hunks locally and syncs the updated document via `PUT /api/files/:id` independently of server-side quota settlement.
 
-### 6.2 Stale Reservation Sweeper (TTL)
-`expireStaleReservations()` in `src/server/services/ai-settlement-service.ts` queries all `credit_ledger_transactions` where `status = 'RESERVED'` and `createdAt <= cutoff` (5-minute TTL). It transitions them to `EXPIRED_RELEASED` and refunds the reserved micro-credit amount back to `users.credit_balance_micro`, ensuring abandoned client tabs do not leak quota balances. Authorized via `CRON_SECRET` on `/api/cron/expire-reservations`.
+### 6.2 Pending Settlement Sweeper (30s Grace Window)
+`handleExpireReservationsCron` in `src/server/routes/cron.routes.ts` scans `credit:dirty_wallets` in Redis under distributed lock (`acquireCronLock`) and drains pending settlement entries in `credit:pending_settlements:${userId}` older than `DIRTY_SETTLEMENT_GRACE_MS` (`30_000` ms) into PostgreSQL via `flushPendingSettlementsToPostgres`, while ephemeral leases (`credit:lease:${operationId}`) expire automatically via Redis TTL (`LEASE_TTL_SECONDS`). Authorized via `CRON_SECRET` on `/api/cron/expire-reservations`.
 
 ### 6.3 Streaming Terminality & Watchdogs (v1.5.0 Amendment)
 

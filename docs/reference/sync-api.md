@@ -284,7 +284,7 @@ As established in `src/types/problem-details.ts`, standardized API error envelop
 
 ```json
 {
-  "type": "urn:lugx:error:sync:conflict",
+  "type": "urn:elixent:error:sync:conflict",
   "title": "Conflict Detected",
   "status": 409,
   "detail": "ETag mismatch between local revision and remote version",
@@ -520,7 +520,7 @@ The sync system implements a deterministic Three-Way Merge protocol to resolve c
 6. **Verified State Transition:** Editor state (MarkdownEditor / EditorAdapter) and IndexedDB cache are only transitioned to clean (`isDirty: false`, `syncStatus = 'synced'`) after receiving 200 OK confirmation from the server. If local resolution is selected, `isDirty = true` and `syncStatus = 'dirty'` are preserved to trigger subsequent sync push.
 7. **Autosave Lockout:** Autosave is strictly inhibited whenever an unresolved conflict is active.
 8. **User-Scoped Multi-Tab Isolation & Storage-First Broadcast (`src/lib/sync/tab-sync.ts`, `src/lib/sync/cross-tab-sync.ts`, `src/hooks/use-editor-orchestrator.ts`, `src/hooks/use-sync.ts`):**
-   - Broadcast channels are scoped per authenticated user (`lugx_sync_${userId}`) to prevent cross-tenant event bleed, filtering echo messages (`senderTabId !== currentTabId`) and only advancing clean tab versions.
+   - Broadcast channels are scoped per authenticated user (`workspace_sync_${userId}`) to prevent cross-tenant event bleed, filtering echo messages (`senderTabId !== currentTabId`) and only advancing clean tab versions.
    - **Storage-First Sequential Broadcast:** `useEditorOrchestrator` strictly awaits local IndexedDB persistence (`await syncHook.saveLocal()`) before emitting `file_saved` events, eliminating asynchronous race conditions where sibling tabs read stale or uncommitted data from disk.
    - **Root Move Null-Preservation in `saveLocal`:** Inside `src/hooks/use-sync.ts`, `saveLocal` evaluates `file.parentFolderId !== undefined ? file.parentFolderId : (existingFile?.parentFolderId ?? null)`. Explicitly passing `parentFolderId: null` is strictly preserved, ensuring that moving documents or folders to the workspace root is persisted to IndexedDB without falling back to existing parent folder identifiers.
 9. **Conditional React State Flushing on Conflict and Server Fetch (v0.20.5 / `REQ-COND-FLUSH`):**

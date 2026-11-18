@@ -15,7 +15,7 @@ This specification details the end-to-end NDJSON (Newline-Delimited JSON) Stream
 ### Architectural Guarantees
 1. **Zero Document Model Mutation During Streaming**: Chunks stream exclusively into `EphemeralPreviewBuffer` and UI preview overlays. Neither document source state nor IndexedDB storage is modified until atomic commit.
 2. **Deterministic Single-Phase Commit**: Atomic server and local transaction commits occur strictly on stream completion.
-3. **Atomic Quota Reservation & Server-Authoritative Settlement (Phase 11)**: Quota refunds occur strictly on startup errors or pre-TTFT disconnects/failures (`ttftMs === null`). Post-TTFT disconnects (`ttftMs !== null`), normal stream completion, and user-initiated stops (`stopStream`), rejections, or retries settle quota as consumed without refund. Client financial authority is completely revoked: `refundAIReservation` and `commitAIReservation` are not exposed as Hono RPC Actions.
+3. **Atomic Quota Reservation & Server-Authoritative Settlement**: Pre-flight credit leases and post-stream settlements execute exclusively server-side via `StreamGovernor` (`src/lib/metering/stream-governor.ts`), `src/lib/metering/lua-scripts.ts`, and `src/server/services/ai-settlement-service.ts`. Client financial authority is completely revoked (`src/client/rpc-client.ts` exposes zero reservation or settlement mutations).
 4. **Multi-Byte UTF-8 & Line Boundary Preservation**: Resilient stream parsing protects against chunk slicing, surrogate splits, and network fragmentation.
 5. **Adversarial Resilience**: Line buffer flooding guards (`MAX_LINE_BUFFER_CHARS = 256KB`), payload ceiling guards (`MAX_INPUT_CHARS = 100,000`), DOM XSS immunity, and dynamic position tracking.
 
@@ -166,8 +166,8 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, AIStreamStatus[]> = {
 - **Protection**:
   - The settlement service computes a deterministic SHA-256 fingerprint:
     $$\text{requestHash} = \text{SHA-256}(\text{userId} : \text{operation} : \text{fileId} : \text{text})$$
-  - When `reserveAIQuota` encounters an existing `operationId`, it asserts that `existing.requestHash === incomingHash` and `existing.userId === incomingUserId`.
-  - If a mismatch is detected, the operation is rejected with `isReplayConflict: true`, and the `/api/agent/stream` route immediately returns `HTTP 409 Conflict` (`Replay attack detected: operationId reused with divergent payload`).
+  - `computeRequestHash(userId, operation, fileId, text)` in `src/server/services/ai-settlement-service.ts` computes the deterministic SHA-256 fingerprint, while `executeReserveOrExtend` and `flushPendingSettlementsToPostgres` enforce `credit:step_done:${stepKey}` and PostgreSQL `ON CONFLICT (operation_id) DO NOTHING` idempotency.
+  - Divergent or duplicate settlement writes are prevented by PostgreSQL `ON CONFLICT (operation_id) DO NOTHING` during `flushPendingSettlementsToPostgres`.
 
 ---
 

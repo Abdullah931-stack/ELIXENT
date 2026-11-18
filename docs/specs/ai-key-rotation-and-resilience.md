@@ -134,7 +134,7 @@ sequenceDiagram
 
 ### 4.3 In-Flight Deduplication & Double-Click Protection
 * **Client Mutex (`useAIStream`):** Rejects concurrent duplicate clicks if a stream is active in `reserved`, `streaming`, or `committing` state.
-* **Server Race Recovery (`reserveAndUpdateUsage`):** Catches PostgreSQL unique constraint collisions, reverses speculative usage increments, and returns winner's reservation.
+* **Server Idempotent Lease & Flush (`StreamGovernor.initializeLease` / `flushPendingSettlementsToPostgres`):** Uses Redis `credit:step_done:${stepKey}` idempotency receipts and PostgreSQL `INSERT ... ON CONFLICT (operation_id) DO NOTHING` to prevent double deductions.
 
 ### 4.4 AI Client (`src/lib/ai/client.ts`)
 * **Model Hierarchy Resolution (`getModelHierarchy`)**: Sourced from `models.config.json`, resolves `{ primary, fallbacks }` providing a complete multi-tier fallback chain.
@@ -181,7 +181,7 @@ suites because each sits on an async boundary that mocked tests do not exercise.
 | ID | Fix | File |
 |----|-----|------|
 | DEF-1 | `emitComplete` chains `Promise.resolve().then(onComplete).catch(...)`; a completion rejection resets the terminal latch and routes through `emitError`, guaranteeing **exactly one terminal callback** (error teardown: ghost cleared, refund issued, mutex released). | `src/lib/ai/stream-handler.ts` |
-| DEF-2 | Signal forwarded as SDK request options (`@google/generative-ai ^0.24`). Cancellation tears down the upstream socket. | `src/lib/ai/client.ts` |
+| DEF-2 | Signal forwarded as SDK request options (`ai` + `@ai-sdk/google` via `parseQualifiedModelId`). Cancellation tears down the upstream socket. | `src/lib/ai/client.ts` |
 | DEF-3 | Watchdogs armed post-reader: first-chunk (`FIRST_CHUNK_TIMEOUT_MS = 20s`) and absolute duration (`MAX_STREAM_DURATION_MS = 120s`); timeout fires `reader.cancel()` plus structured errors (`AI_STREAM_FIRST_CHUNK_TIMEOUT` / `AI_STREAM_DURATION_EXCEEDED`). Both overridable per call for ops/tests. | `src/lib/ai/stream-handler.ts` |
 | DEF-4 | `previewBuffer.append(sessionId, latestChunk)` — only the newest delta is appended; the accumulated view remains available via the callback's first argument. | `src/hooks/use-ai-stream.ts` |
 

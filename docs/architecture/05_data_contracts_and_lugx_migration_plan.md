@@ -319,22 +319,22 @@ export const checkpointWrites = pgTable(
 
 | Redis Key Pattern | Data Type | Time-To-Live (`TTL`) | Purpose & Atomic Operations Applied |
 | :--- | :--- | :--- | :--- |
-| **`lugx:wallet:${userId}`** | `String (Integer)` | `86,400s` ($24$ hours, renewed on every operation) | Real-time available user balance in Micro-Credits. Modified exclusively via atomic Lua scripts or `INCRBY`. |
-| **`lugx:lease:${operationId}`** | `Hash` | `120s` (renewed on every chunk extension) | Stores active lease chunk state: `userId`, `stepKey`, `reservedInputMicro`, `reservedOutputMicro`, `extensionCount`. |
-| **`lugx:step_done:${stepKey}`** | `String (JSON)` | `3,600s` ($1$ hour) | Stores the settlement receipt for a completed `LangGraph` step to prevent double-charging when a node replays after `interrupt()`. |
-| **`lugx:pending_settlements:${userId}`** | `Hash` | No `TTL` (drained via `scheduleAfterResponse()` and `Cron`) | Maps `operationId` to its settlement payload (`JSON` containing `created_at_ms`, `delta_micro`, and token metrics) awaiting flush to PostgreSQL. |
-| **`lugx:dirty_wallets`** | `Set` | No `TTL` | Set of `userId` identifiers that have pending records in `pending_settlements` awaiting asynchronous flush to PostgreSQL. |
+| **`credit:wallet:${userId}`** | `String (Integer)` | `86,400s` ($24$ hours, renewed on every operation) | Real-time available user balance in Micro-Credits. Modified exclusively via atomic Lua scripts or `INCRBY`. |
+| **`credit:lease:${operationId}`** | `Hash` | `120s` (renewed on every chunk extension) | Stores active lease chunk state: `userId`, `stepKey`, `reservedInputMicro`, `reservedOutputMicro`, `extensionCount`. |
+| **`credit:step_done:${stepKey}`** | `String (JSON)` | `3,600s` ($1$ hour) | Stores the settlement receipt for a completed step to prevent double-charging on replay. |
+| **`credit:pending_settlements:${userId}`** | `Hash` | No `TTL` (drained via `scheduleAfterResponse()` and `Cron`) | Maps `operationId` to its settlement payload (`JSON` containing `created_at_ms`, `delta_micro`, and token metrics) awaiting flush to PostgreSQL. |
+| **`credit:dirty_wallets`** | `Set` | No `TTL` | Set of `userId` identifiers that have pending records in `pending_settlements` awaiting asynchronous flush to PostgreSQL. |
 
 ### 2.1. Signatures of the Three Atomic `Lua` Scripts (`src/lib/metering/lua-scripts.ts`)
 
-1. **`reserve_or_extend.lua` (`reserve_or_topup_chunk.lua`):**
-   - **Inputs (`KEYS` & `ARGV`):** `KEYS[1] = lugx:wallet:${userId}`, `KEYS[2] = lugx:lease:${operationId}`, `KEYS[3] = lugx:step_done:${stepKey}`; `ARGV = [requiredInputMicro, desiredOutputMicro, minAllowedOutputMicro, isZeroDustAllowed, ttlSeconds]`.
+1. **`reserve_or_extend.lua` (`RESERVE_OR_EXTEND_LUA`):**
+   - **Inputs (`KEYS` & `ARGV`):** `KEYS[1] = credit:wallet:${userId}`, `KEYS[2] = credit:lease:${operationId}`, `KEYS[3] = credit:step_done:${stepKey}`; `ARGV = [requiredInputMicro, desiredOutputMicro, minAllowedOutputMicro, isZeroDustAllowed, ttlSeconds, userId, stepKey]`.
    - **Atomic Logic:** First verifies that `KEYS[3]` does not exist (`Idempotency`). Next checks whether `KEYS[1]` exists (returning `COLD_START_REQUIRED` to trigger the `Flush-First` protocol if absent). Then computes the reservable amount (applying the `Zero-Dust Drain` rule when the remaining balance covers the input cost plus a partial output allowance), atomically deducts it from `KEYS[1]`, and creates/updates `KEYS[2]` with `EXPIRE 120`.
-2. **`settle_operation.lua`:**
-   - **Inputs (`KEYS` & `ARGV`):** `KEYS[1] = lugx:wallet:${userId}`, `KEYS[2] = lugx:lease:${operationId}`, `KEYS[3] = lugx:pending_settlements:${userId}`, `KEYS[4] = lugx:dirty_wallets`, `KEYS[5] = lugx:step_done:${stepKey}`; `ARGV = [operationId, actualTotalCostMicro, settlementJsonWithTimestamp]`.
-   - **Atomic Logic:** Reads total reserved Micro-Credits from `KEYS[2]`, computes the difference ($\text{Refund} = \text{Reserved} - \text{Actual}$), refunds the unused surplus to `KEYS[1]` with `EXPIRE 86400`, deletes `KEYS[2]`, records the settlement entry in `KEYS[3]` via `HSET`, adds `userId` to `KEYS[4]` via `SADD`, and stamps `KEYS[5]`.
-3. **`stripe_dual_write.lua`:**
-   - **Atomic Logic:** Checks `redis.call('EXISTS', KEYS[1]) == 1`; if the wallet key is warm in Redis memory, executes `INCRBY KEYS[1] topupMicro` and refreshes `EXPIRE 86400`; otherwise returns `0` so the balance will be populated from PostgreSQL via `Flush-First Cold Start` on the next request.
+2. **`settle_operation.lua` (`SETTLE_OPERATION_LUA`):**
+   - **Inputs (`KEYS` & `ARGV`):** `KEYS[1] = credit:wallet:${userId}`, `KEYS[2] = credit:lease:${operationId}`, `KEYS[3] = credit:pending_settlements:${userId}`, `KEYS[4] = credit:dirty_wallets`, `KEYS[5] = credit:step_done:${stepKey}`; `ARGV = [operationId, actualTotalCostMicro, settlementJsonWithTimestamp, userId]`.
+   - **Atomic Logic:** Reads total reserved Micro-Credits from `KEYS[2]`, computes the difference ($\text{Refund} = \max(0, \text{Reserved} - \text{Actual})$), refunds the unused surplus to `KEYS[1]` with `EXPIRE 86400`, deletes `KEYS[2]`, records the settlement entry in `KEYS[3]` via `HSET`, adds `userId` to `KEYS[4]` via `SADD`, and stamps `KEYS[5]`.
+3. **`stripe_dual_write.lua` (`STRIPE_DUAL_WRITE_LUA`):**
+   - **Atomic Logic:** Checks `redis.call('EXISTS', KEYS[1]) == 1` on `credit:wallet:${userId}`; if the wallet key is warm in Redis memory, executes `INCRBY KEYS[1] topupMicro` and refreshes `EXPIRE 86400`; otherwise returns `applied: false` so the balance will be populated from PostgreSQL via `Flush-First Cold Start` on the next request.
 
 ## 3. Complete `LUGX v1.46.3` Codebase Transformation Matrix
 

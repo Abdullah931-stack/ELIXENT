@@ -183,29 +183,29 @@ If the reserved token slice is $100\%$ consumed during streaming before the Redi
 
 ## 5. Bifurcated Settlement Engine and Race-Free Cold Start Protocol (Bifurcated Settlement & Cold Start)
 
-> **Amended by [SRS-04](../specs/srs_04_multi_provider_ai_gateway_and_wallet_metering.md) (`ELIXENT-EXECUTION-PLAN-v1.1` Phase 1):** Legacy `lugx:*` Redis keys (`lugx:wallet:${userId}`, `lugx:pending_settlements:${userId}`, `lugx:dirty_wallets`) documented in `§5.1–§6` below are standardized to brand-agnostic `credit:*` keys (`credit:wallet:${userId}`, `credit:pending_settlements:${userId}`, `credit:dirty_wallets`).
+> **Phase 1 Standardization (`ELIXENT-EXECUTION-PLAN-v1.1` / [SRS-04](../specs/srs_04_multi_provider_ai_gateway_and_wallet_metering.md)):** All Redis metering keys in `src/lib/metering/constants.ts`, `lua-scripts.ts`, `node-gate.ts`, `cron.routes.ts`, and `ai-settlement-service.ts` use the brand-agnostic `credit:*` keyspace (`credit:wallet:${userId}`, `credit:lease:${operationId}`, `credit:step_done:${stepKey}`, `credit:pending_settlements:${userId}`, `credit:dirty_wallets`). `StreamGovernor.initializeLease(pessimisticInputTokens)` initializes pre-stream leases under `credit:lease:${operationId}`, and legacy word-quota reservation functions (`reserveAIQuota`, `commitAIReservation`, `refundAIReservation`, `refundUsage`, `expireStaleReservations`, `getAIReservationStatus`, `reserveAndUpdateUsage`) have been permanently removed from `src/server/services/ai-settlement-service.ts`.
 
 ### 5.1. Atomic Settlement and Asynchronous Draining via `scheduleAfterResponse()` (`Non-Blocking Durability`)
 
-1. **In Redis (`settle_operation.lua`):** Upon completion of a step or stream (or upon `Abort`, incorporating a minor `Ghost Abort Margin` to cover network teardown latency), a Lua script atomically computes the actual cost, refunds the unused surplus to `lugx:wallet:${userId}`, refreshes the wallet expiration (`EXPIRE 86400`), writes the settlement payload stamped with **`created_at_ms`** into `lugx:pending_settlements:${userId}`, and adds the user to `lugx:dirty_wallets`.
-2. **In `scheduleAfterResponse()`:** Immediately after closing the stream response to the user, the `scheduleAfterResponse()` callback pulls pending records from `lugx:pending_settlements:${userId}` and commits them to PostgreSQL in a single idempotent transaction:
+1. **In Redis (`settle_operation.lua`):** Upon completion of a step or stream (or upon `Abort`, incorporating a minor `Ghost Abort Margin` to cover network teardown latency), a Lua script atomically computes the actual cost, refunds the unused surplus to `credit:wallet:${userId}`, refreshes the wallet expiration (`EXPIRE 86400`), writes the settlement payload stamped with **`created_at_ms`** into `credit:pending_settlements:${userId}`, and adds the user to `credit:dirty_wallets`.
+2. **In `scheduleAfterResponse()`:** Immediately after closing the stream response to the user, the `scheduleAfterResponse()` callback pulls pending records from `credit:pending_settlements:${userId}` and commits them to PostgreSQL in a single idempotent transaction:
    `INSERT INTO credit_ledger_transactions ... ON CONFLICT (operation_id) DO NOTHING`
    deducting the net newly inserted amounts from `users.credit_balance_micro`, and then removes the committed keys from Redis via `HDEL`.
-3. **The $30$-Second Grace Guard in the Cron Job (`/api/cron/expire-reservations`):** The periodic Cron job cleans up expired orphan reservations (`TTL = 120s`) and drains pending records in `lugx:pending_settlements:${userId}` whose `created_at_ms` timestamp is **older than $30,000\text{ ms}$** only, preventing any race condition with an active `scheduleAfterResponse()` callback.
+3. **The $30$-Second Grace Guard in the Cron Job (`/api/cron/expire-reservations`):** The periodic Cron job cleans up expired orphan reservations (`TTL = 120s`) and drains pending records in `credit:pending_settlements:${userId}` whose `created_at_ms` timestamp is **older than $30,000\text{ ms}$** only, preventing any race condition with an active `scheduleAfterResponse()` callback.
 
 ### 5.2. Race-Free Flush-First Cold Start Protocol (`Flush-First Cold Start Protocol`)
 
-When a request arrives for a user whose wallet key `lugx:wallet:${userId}` is absent from Redis (due to `TTL` expiration or a cold start):
+When a request arrives for a user whose wallet key `credit:wallet:${userId}` is absent from Redis (due to `TTL` expiration or a cold start):
 
-- **It is strictly prohibited** to read the balance from PostgreSQL and manually subtract `lugx:pending_settlements` in memory (because a concurrent `scheduleAfterResponse()` callback may have just deducted the amount from PostgreSQL without having executed `HDEL` yet, which would cause a double deduction).
-- **Mandatory Rule (`Flush-First`):** The cold-start routine first checks `HLEN lugx:pending_settlements:${userId}`; if pending records exist, **it flushes them to PostgreSQL first (`INSERT ... ON CONFLICT DO NOTHING` + `HDEL`)**, and only then reads the updated, authoritative `users.credit_balance_micro` from PostgreSQL and populates Redis via `SETNX lugx:wallet:${userId}`.
+- **It is strictly prohibited** to read the balance from PostgreSQL and manually subtract `credit:pending_settlements` in memory (because a concurrent `scheduleAfterResponse()` callback may have just deducted the amount from PostgreSQL without having executed `HDEL` yet, which would cause a double deduction).
+- **Mandatory Rule (`Flush-First`):** The cold-start routine first checks `HLEN credit:pending_settlements:${userId}`; if pending records exist, **it flushes them to PostgreSQL first (`INSERT ... ON CONFLICT DO NOTHING` + `HDEL`)**, and only then reads the updated, authoritative `users.credit_balance_micro` from PostgreSQL and populates Redis via `SETNX credit:wallet:${userId}`.
 
 ### 5.3. Webhook Dual-Write Protocol for Stripe Top-Up Events (`Webhook Dual-Write Protocol`)
 
 When a payment or subscription renewal event is received in `src/server/routes/stripe.routes.ts` (mounted at `/api/stripe/webhook`):
 
 1. `users.credit_balance_micro` is updated and the event is recorded in `subscription_events` and `credit_ledger_transactions` inside a PostgreSQL transaction first.
-2. A Redis Lua script (`stripe_dual_write.lua`) is invoked to increment `lugx:wallet:${userId}` by the top-up amount via `INCRBY` **only if the key currently exists in memory (`EXISTS == 1`)**; otherwise, it is left to be hydrated via the `Flush-First Cold Start` protocol on the next user request.
+2. A Redis Lua script (`stripe_dual_write.lua`) is invoked to increment `credit:wallet:${userId}` by the top-up amount via `INCRBY` **only if the key currently exists in memory (`EXISTS == 1`)**; otherwise, it is left to be hydrated via the `Flush-First Cold Start` protocol on the next user request.
 
 ### 5.4. Client Credit Balance Views (`Dashboard & Account Pages`)
 
@@ -223,7 +223,7 @@ In Phase 11, user-facing quota displays were migrated from legacy word-count met
 | **`MTR-03`** | Disable Upstash Redis connectivity while sending a request to `/api/agent/stream`. | Enforces `Fail-Closed` policy and returns `503 Service Unavailable` immediately without invoking any external model. |
 | **`MTR-04`** | Account holds balance covering inputs plus $80$ output tokens only ($< L_{\min}$). | Opens the stream under the exception policy (`Zero-Dust Drain`), generates exactly $80$ tokens, and closes cleanly with $0$ micro-credits remaining. |
 | **`MTR-05`** | Balance runs out after `search_synthesizer_node` and before `decision_scorer_node`, followed by balance top-up and `Command({ resume })`. | Agent pauses via `interrupt('INSUFFICIENT_CREDITS')` before invoking the decision model; upon resume, the node executes and is billed exactly once (`StepKey`). |
-| **`MTR-06`** | Key `lugx:wallet:${userId}` expires from Redis while an unsettled record exists in `lugx:pending_settlements:${userId}`. | `Flush-First Cold Start` flushes the pending record to PostgreSQL first with `ON CONFLICT DO NOTHING` and then reads the net balance without double deduction. |
+| **`MTR-06`** | Key `credit:wallet:${userId}` expires from Redis while an unsettled record exists in `credit:pending_settlements:${userId}`. | `Flush-First Cold Start` flushes the pending record to PostgreSQL first with `ON CONFLICT DO NOTHING` and then reads the net balance without double deduction. |
 
 ---
 
@@ -231,7 +231,7 @@ In Phase 11, user-facing quota displays were migrated from legacy word-count met
 
 - **Implementation Modules:**
   - `src/lib/metering/cold-start.ts` — `ensureWalletLoadedFlushFirst`
-  - `src/lib/metering/stream-governor.ts` — `StreamGovernor` (500ms Local Hold & Abort)
+  - `src/lib/metering/stream-governor.ts` — `StreamGovernor` (`initializeLease`, 500ms Local Hold & Abort)
   - `src/lib/metering/node-gate.ts` — `withMeteredNodeGate` (Higher-Order Metered Node Gate)
   - `src/server/services/ai-settlement-service.ts` — `flushPendingSettlementsToPostgres`, `getUserCreditBalance`
   - `src/config/tiers.config.ts` — `creditAllocationMicro` and `creditsDisplay` per tier

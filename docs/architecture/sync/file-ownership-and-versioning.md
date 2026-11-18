@@ -80,7 +80,7 @@ Pre-generates UUIDs and computes strong SHA-256 ETags in-memory before issuing t
 - **2D Spatial Markdown Table Extractor (`pdf-table-extractor.ts`):** Geometrically clusters text coordinates into lines and columns, reorders RTL columns for Arabic, and formats tabular data into GitHub-Flavored Markdown tables with user toggle capability (`pdf-settings.ts`).
 - **Arabic Unicode Normalizer (`arabic-normalizer.ts`):** Performs lookahead de-spacing on disjointed Arabic characters, NFKC presentation forms un-shaping, and BiDi directionality preservation.
 - **On-Demand Bilingual OCR & Font Corruption Detector:** Detects Private Use Area (PUA) glyphs in corrupted embedded fonts (`pdf-corruption-detector.ts`) and triggers an on-demand bilingual OCR engine (`pdf-ocr-engine.ts` with `tesseract.js`).
-- **Direct Vault Encrypted Import:** Encrypts content directly on the client with AES-GCM-256 using deterministic canonical AAD via `AAD.file(userId, fileId)` (`lugx:v1:file:${userId}:${fileId}`) and optimistic IndexedDB cache persistence before server dispatch.
+- **Direct Vault Encrypted Import:** Encrypts content directly on the client with AES-GCM-256 using deterministic canonical AAD via `AAD.file(userId, fileId)` (`zk:v1:file:${userId}:${fileId}`) and optimistic IndexedDB cache persistence before server dispatch.
 - **Client-Server Encrypted ETag Parity:** For encrypted files (`isEncrypted === true`), `importFile` passes the structured `envelope` into `generateETagSync` matching `generateEncryptedETagSync`, guaranteeing client-server ETag parity and preventing spurious 412 Precondition Failed conflicts during subsequent sync polling.
 - **Server Ingestion Safeguards & Adversarial Defense:** Enforces a strict 10MB UTF-8 byte limit, checks magic bytes for disguised binaries (`isDisguisedBinary`), strips directory traversal patterns and invalid OS characters (`sanitizeFilename`), eliminates PostgreSQL null bytes (`\0`), counts words via an $O(1)$ memory streaming regex, and prevents infinite loops with a title deduplication circuit breaker (`counter <= 100`).
 
@@ -141,7 +141,7 @@ To guarantee high cohesion and single-responsibility isolation, file and directo
  - `src/test/vault/vault-import.integration.test.ts`: Integration test verifying direct client-encrypted vault import pipeline.
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 146 unit suites (3007 tests) · 21 live suites (105 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 146 unit suites (3000 tests) · 21 live suites (97 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ---

@@ -18,10 +18,10 @@
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/Node.js-22_LTS-339933?style=for-the-badge&logo=node.js" alt="Node.js 22 LTS" /></a>
   <a href="https://www.typescriptlang.org"><img src="https://img.shields.io/badge/TypeScript-5.0-3178C6?style=for-the-badge&logo=typescript" alt="TypeScript 5" /></a>
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
-  <a href="https://ai.google.dev"><img src="https://img.shields.io/badge/Gemini_AI-SDK_0.24-8E75B2?style=for-the-badge&logo=google" alt="Google Gemini AI" /></a>
+  <a href="https://ai-sdk.dev"><img src="https://img.shields.io/badge/Vercel_AI_SDK-v7_(@ai--sdk/google)-8E75B2?style=for-the-badge&logo=vercel" alt="Vercel AI SDK v7" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-146%20Suites%20·%203007%2F3007%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 3007 Passing" /></a>
-  <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-21%20Suites%20·%20105%2F105%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 105 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-146%20Suites%20·%203000%2F3000%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 3000 Passing" /></a>
+  <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-21%20Suites%20·%2097%2F97%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 97 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
 </p>
@@ -78,7 +78,7 @@
 - 🤖 **Resilient AI NDJSON Streaming:** High-performance inline preview card (`CMStreamingGhostWidget`) positioned at exact document offsets with 60fps in-place DOM updates, 3-state decision triggers (`Accept`, `Reject`, `Retry`), and a distributed 3-state circuit breaker with multi-key API rotation.
 - 💳 **Fail-Closed Stripe Subscriptions:** 8-state exhaustive webhook state machine with database-level uniqueness constraints preventing duplicate entitlements.
 - 🛡️ **Smart Hybrid Database Client:** Dual-protocol architecture supporting `@neondatabase/serverless` (HTTP/WebSocket) for Neon Cloud PostgreSQL and `pg.Pool` (TCP) for local Docker, CI, and development environments.
-- 🔒 **Zero-Knowledge Cloud Vault & Hybrid Encryption:** Client-side end-to-end encryption (`AES-GCM-256` with canonical AAD via `AAD.file(userId, fileId)` emitting `lugx:v1:file:${userId}:${fileId}` and WebAuthn PRF `AAD.deviceWrap(userId, epoch)` with Dual-Try backward compatibility), Web Worker-isolated key derivation (`PBKDF2-SHA256` with 600K iterations), WebAuthn PRF hardware biometrics, 6-digit Quick PIN, 12-word BIP-39 recovery seed, client-server encrypted import ETag parity, transparent local IndexedDB encryption, and dual-layer AI safety gatekeepers.
+- 🔒 **Zero-Knowledge Cloud Vault & Hybrid Encryption:** Client-side end-to-end encryption (`AES-GCM-256` with canonical AAD via `AAD.file(userId, fileId)` emitting `zk:v1:file:${userId}:${fileId}` and WebAuthn PRF `AAD.deviceWrap(userId, epoch)` emitting `zk:v1:device:${userId}:${epoch}` under clean-cut `zk:v1:*` enforcement), Web Worker-isolated key derivation (`PBKDF2-SHA256` with 600K iterations), WebAuthn PRF hardware biometrics, 6-digit Quick PIN, 12-word BIP-39 recovery seed, client-server encrypted import ETag parity, transparent local IndexedDB encryption, and dual-layer AI safety gatekeepers.
 - 📄 **Client-Side PDF & Multi-Modal Document Extraction:** 100% in-browser Web Worker text extraction (`pdfjs-dist`), 2D spatial clustering algorithm for automatic GitHub-Flavored Markdown tables, pure TypeScript Arabic Unicode normalization (de-spacing, un-shaping, BiDi correction), embedded font corruption detection (PUA range analysis), and on-demand bilingual OCR (`tesseract.js`).
 - 📡 **Dual-Mode Rate Limiting & Distributed Tracing:** Redis sliding-window limiters with Fail-Open resilience on public and file-sync operations, Fail-Closed protection on authentication RPC endpoints (`signInWithGoogle` by IP, `syncUserToDatabase` by user ID) and AI streaming quotas, distributed `X-Correlation-ID` context propagation across Hono RPC and REST Route Handlers with CRLF injection sanitization, and Zero-Knowledge log masking with token-boundary isolation.
 - ⏱️ **Automated Quota & Maintenance Sweepers:** Scheduled crons for 30-day soft-delete purges (`/api/cron/purge-deleted`) and automated reclamation of expired AI quota leases (`/api/cron/expire-reservations`), resolving orphaned pending leases without manual intervention.
@@ -145,7 +145,7 @@ _For the full comparative trade-off matrix, complexity analysis, and quantitativ
 | **Database & ORM**            | PostgreSQL (Neon Cloud / Local) · Drizzle ORM                | Smart Hybrid DB Client (`neon-http` / `pg.Pool`), Migrations 0001–0013 (`src/server/db/migrations/`)         |
 | **Authentication & Proxy**    | Supabase Auth SSR · Hono Session Middleware (`src/server/middleware/session-middleware.ts`) | Static fast-path bypass, test-only placeholders, `401` mutations / `303` navs, RFC 6265 dual sign-out clear, 2500ms watchdog |
 | **Offline Synchronization**   | Custom Engine · IndexedDB (`textai_db_${userId}`)            | 3-Way Merge, ETag optimistic locks (HTTP 412), Bounded Queue, GC, DLQ                                        |
-| **AI LLM Engine**             | Google Gemini SDK (`@google/generative-ai`)                  | NDJSON streaming, 2-phase quota reservation, 3-state circuit breaker                                         |
+| **AI LLM Engine**             | Vercel AI SDK v7 (`ai` + `@ai-sdk/google`)                   | NDJSON/SSE streaming, `parseQualifiedModelId`, `StreamGovernor` credit leases, 3-state circuit breaker |
 | **Client-Side Cryptography**  | Web Crypto API · Web Workers · BIP-39 · WebAuthn PRF         | PBKDF2-SHA256 600K worker, AES-GCM-256, hardware biometric trust, memory wiping                              |
 | **Payment & Billing**         | Stripe SDK · Webhook Signature Verification                  | 8-state fail-closed state machine, partial unique constraint idempotency                                     |
 | **Rate Limiting & Telemetry** | Upstash Redis · Sliding Window · Distributed Tracing         | Dual-mode rate limiting (Fail-Open sync, Fail-Closed AI), X-Correlation-ID tracking, ZK log masking          |
@@ -163,7 +163,7 @@ lugx/
 │       └── cron.yml               # Scheduled maintenance workflow (Daily 03:00 UTC & Quota sweepers)
 ├── docs/                          # Comprehensive technical documentation & governance
 │   ├── README.md                  # Master structural map and documentation index
-│   ├── CHANGELOG.md               # Versioned engineering changelog (Elixent v0.1.0 to v0.23.0; archived LUGX v1.0.0–v1.46.3)
+│   ├── CHANGELOG.md               # Versioned engineering changelog (Elixent v0.1.0 to v0.24.0; archived LUGX v1.0.0–v1.46.3)
 │   ├── TECHNICAL_DEBT_REGISTER.md # Living register of accepted debts and resolution history
 │   ├── DOCUMENTATION_GUIDELINES.md# Rules for authoring, linking, and updating documentation
 │   ├── Plans/                     # Active official execution plans (elixent-architectural-evolution-execution-plan.md)
@@ -311,8 +311,8 @@ npm run start
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 146 | 3007 | 100% ✅ |
-| **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 105 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 146 | 3000 | 100% ✅ |
+| **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 97 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
 
@@ -326,10 +326,10 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).               |
 
 ```bash
-# Execute unit/contract test suites (146 test files, 3007 tests)
+# Execute unit/contract test suites (146 test files, 3000 tests)
 npm run test
 
-# Execute live database integration test suites on isolated Neon branch (21 test files, 105 tests)
+# Execute live database integration test suites on isolated Neon branch (21 test files, 97 tests)
 npm run test:live
 
 # Execute browser-driven Playwright E2E tests (14 spec files, 15 user journeys)
@@ -484,7 +484,7 @@ flowchart TD
     Vault --> Worker["Crypto Web Worker (PBKDF2 600K / AES-GCM-256)<br/>Non-Extractable Keys · Buffer Zeroing (.fill(0))"]
 
     Worker --> IDBLocal["Encrypted Local IndexedDB (LocalDeviceKey)"]
-    Worker --> CloudCipher["Encrypted Envelope over TLS (AES-GCM-256)<br/>AAD: vault:file:${userId}:${fileId}"]
+    Worker --> CloudCipher["Encrypted Envelope over TLS (AES-GCM-256)<br/>AAD: zk:v1:file:${userId}:${fileId}"]
 
     Vault -.-> AIGate["AI Gatekeeper: HTTP 403 & UI Suppression<br/>Prevents Plaintext Leakage to AI Models"]
 
@@ -787,7 +787,7 @@ To connect the autonomous agent core with the human editor, Elixent Phase 11 int
 | **Tenant Resource Isolation**    | SQL ownership predicates (`WHERE id = :id AND user_id = :userId`)               | Prevents IDOR and resource enumeration by returning uniform `404 Not Found` for foreign IDs.                                                                                                                     |
 | **Financial Webhook Security**   | Cryptographic HMAC signature verification (`stripe.webhooks.constructEvent`)    | Mitigates replay attacks and validates webhook payload authenticity before DB mutation.                                                                                                                          |
 | **Database Injection Safety**    | Drizzle ORM parameterized SQL queries                                           | Eliminates SQL injection across all dynamic query and transaction paths.                                                                                                                                         |
-| **Zero-Knowledge Encryption**    | AES-GCM-256 · PBKDF2 600K Web Worker · WebAuthn PRF · BIP-39                    | End-to-end Zero-Knowledge storage, domain AAD (`vault:file:${userId}:${fileId}`), RAM zeroing.                                                                                                                   |
+| **Zero-Knowledge Encryption**    | AES-GCM-256 · PBKDF2 600K Web Worker · WebAuthn PRF · BIP-39                    | End-to-end Zero-Knowledge storage, domain AAD (`zk:v1:file:${userId}:${fileId}`), RAM zeroing.                                                                                                                   |
 | **Fail-Closed AI Protection**    | Upstash Redis fail-closed rate limiting on `/api/agent/stream` (30 req / 60s)   | Prevents unauthorized LLM credit consumption and protects infrastructure during Redis outages.                                                                                                                   |
 | **Secure Document Ingestion**    | Web Worker client-side extraction · 10MB text limit · Null-byte stripping       | Zero binary server processing, eliminates server-side PDF attack surface, protects DB.                                                                                                                           |
 

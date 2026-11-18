@@ -37,13 +37,9 @@ flowchart TD
 ### A. Client-Side In-Flight Mutex (`useAIStream`)
 - If an AI operation is already in an active non-terminal state (`reserved`, `streaming`, or `committing`), any subsequent rapid click or trigger is immediately dropped without making a duplicate network request.
 
-### B. Server-Side Race Speculative Recovery (`reserveAndUpdateUsage`)
-- When two concurrent requests with the same `operationId` bypass client deduplication (e.g. rapid network replay):
-  1. Both requests attempt `db.update(schema.usage)`.
-  2. Request 1 successfully inserts into `ai_reservations`.
-  3. Request 2 fails the unique constraint on `operation_id`.
-  4. **Speculative Usage Reversal:** In Request 2's catch block, the system automatically reverses the speculative increment made on `schema.usage` before returning the first reservation record.
-- **Guarantee:** Under any concurrency race, the user's quota is deducted **exactly once**.
+### B. Server-Side Reservation & Idempotent Lease Initialization (`StreamGovernor.initializeLease`)
+- Pre-stream credit reservation executes atomically in Redis via `StreamGovernor.initializeLease` (`src/lib/metering/stream-governor.ts`) and `executeReserveOrExtend` (`src/lib/metering/lua-scripts.ts`), guarded by `credit:step_done:${stepKey}` idempotency receipts and Flush-First cold-start hydration (`ensureWalletLoadedFlushFirst`).
+- Legacy word-quota PostgreSQL functions (`reserveAIQuota`, `commitAIReservation`, `refundAIReservation`, `refundUsage`, `expireStaleReservations`, `getAIReservationStatus`, `reserveAndUpdateUsage`) were permanently removed from `src/server/services/ai-settlement-service.ts` in `ELIXENT-EXECUTION-PLAN-v1.1` Phase 1.
 
 ---
 
@@ -96,32 +92,29 @@ flowchart TD
   - **Quota settlement:** the abort is a *user decision*, so the reservation is settled as consumed under the Explicit Settlement Policy (§4-D) — it is NOT refunded.
   - **Critical Rule:** The system **NEVER** silently resets user edits. All manual edits written by the user are preserved 100% without data loss.
 
-### C. Server-Authoritative Streaming Settlement & Revocation of Client Financial Authority (Phase 11)
-- **Zero Client Financial Authority:** Settlement functions (`refundAIReservation` and `commitAIReservation`) are strictly encapsulated inside `src/server/services/ai-settlement-service.ts` and cannot be invoked by clients directly. The client cannot manipulate reservation states via network calls; settlement is driven authoritatively by the Hono agent stream.
+### C. Server-Authoritative Streaming Settlement & Revocation of Client Financial Authority
+- **Zero Client Financial Authority:** Credit reservation and settlement are strictly encapsulated server-side inside `StreamGovernor` (`src/lib/metering/stream-governor.ts`), `src/lib/metering/lua-scripts.ts`, and `src/server/services/ai-settlement-service.ts` (`flushPendingSettlementsToPostgres`, `getUserCreditBalance`) and cannot be invoked by clients directly.
 - **Server Stream Lifecycle Settlement (`/api/agent/stream` in `src/server/routes/agent.routes.ts`):**
-  - **Normal Stream Completion:** The server autonomously commits the reservation (`commitAIReservation(operationId)`) *immediately prior* to enqueuing the terminal `{ type: "done" }` NDJSON frame.
-  - **Pre-TTFT Failures & Aborts (`ttftMs === null`):** If upstream generation fails before any token is emitted, or if the client disconnects before the first chunk, the server issues an atomic refund (`refundAIReservation(operationId, 'mid_stream_failure_pre_ttft' | 'disconnect_pre_generation')`).
-  - **Post-TTFT Failures & Aborts (`ttftMs !== null`):** If tokens have already been delivered across the wire and the connection is aborted or interrupted, the server commits the reservation to account for consumed upstream compute.
-- **Zero-Latency Client Stop:** The client hook (`useAIStream`) executes `abortController.abort()` with 0ms client-side latency, without dispatching any RPC settlement calls. The server stream handler (`cancel()` and `req.signal.aborted`) settles the state autonomously.
+  - **Normal Stream Completion:** The server settles consumed tokens atomically via `StreamGovernor.settle("SETTLED")` / `executeSettleOperation` and flushes pending settlements to PostgreSQL via `flushPendingSettlementsToPostgres`.
+  - **Pre-TTFT Failures & Aborts (`ttftMs === null`):** On startup or pre-output abort, `StreamGovernor.settle("ABORTED")` releases unused reserved credits back to `credit:wallet:${userId}` and records `ABORTED` settlement status.
+  - **Post-TTFT Failures & Aborts (`ttftMs !== null`):** If tokens have already been delivered across the wire and the connection is aborted or interrupted, the server settles consumed output tokens up to `coveredTokens` and refunds any remaining unconsumed surplus.
+- **Zero-Latency Client Stop:** The client hook (`useAIStream`) executes `abortController.abort()` with 0ms client-side latency, without dispatching any RPC settlement calls.
 
-### D. Replay Attack Defense & Request Fingerprint Validation (Phase 11)
-- **Deterministic Payload Fingerprinting:**
+### D. Replay Attack Defense & Request Fingerprint Validation
+- **Deterministic Payload Fingerprinting (`computeRequestHash`):**
   $$\text{requestHash} = \text{SHA-256}(\text{userId} : \text{operation} : \text{fileId} : \text{text})$$
-- **Integrity Validation:** When `reserveAIQuota` is called with an existing `operationId`:
-  1. The existing reservation's `requestHash` is verified against the incoming payload's fingerprint.
-  2. The reservation's `userId` is verified against the authenticated session.
-  3. If `operationId` is reused with divergent parameters, the reservation is rejected with `isReplayConflict: true`, and the stream endpoint returns **HTTP 409 Conflict**.
+- **Idempotent Settlement & Step Keys:** Pending settlements flushed via `flushPendingSettlementsToPostgres` use `INSERT ... ON CONFLICT (operation_id) DO NOTHING`, while Redis reservation steps enforce `credit:step_done:${stepKey}` idempotency receipts.
 
-### E. Explicit Settlement Policy (User Decisions) — v1.6.0 & Phase 11
-Quota refunds are reserved strictly for **system failures** occurring pre-TTFT. Any outcome driven by a **user decision** (accept, reject, retry, or post-TTFT stop) settles the reservation as consumed, as upstream AI tokens were already generated. Settlement is performed idempotently via `commitAIReservation(operationId)`.
+### E. Explicit Settlement Policy (User Decisions)
+System startup failures refund unconsumed reserves (`ABORTED` with `0` output cost), whereas consumed tokens during active streaming are settled atomically via `StreamGovernor.settle` and `executeSettleOperation`:
 
 | Outcome | Trigger | Quota action |
 |---|---|---|
-| Stream startup / upstream error pre-TTFT | System error | **Refund** (`refundAIReservation` on server) |
-| Client disconnect pre-TTFT (`ttftMs === null`) | Client disconnect | **Refund** (`refundAIReservation` on server) |
-| Upstream error post-TTFT (`ttftMs !== null`) | Mid-stream failure | **Settle as consumed** (`commitAIReservation` on server) |
-| Client disconnect post-TTFT (`ttftMs !== null`) | Client abort | **Settle as consumed** (`commitAIReservation` on server) |
-| Stream successfully finished | Successful completion | **Settle as consumed** (Committed before `done` frame) |
+| Stream startup / upstream error pre-TTFT | System error | **Refund unconsumed lease** (`StreamGovernor.settle("ABORTED")` on server) |
+| Client disconnect pre-TTFT (`ttftMs === null`) | Client disconnect | **Refund unconsumed lease** (`StreamGovernor.settle("ABORTED")` on server) |
+| Upstream error post-TTFT (`ttftMs !== null`) | Mid-stream failure | **Settle consumed tokens & refund surplus** (`StreamGovernor.settle` on server) |
+| Client disconnect post-TTFT (`ttftMs !== null`) | Client abort | **Settle consumed tokens & refund surplus** (`StreamGovernor.settle` on server) |
+| Stream successfully finished | Successful completion | **Settle consumed tokens** (`StreamGovernor.settle("SETTLED")` + `flushPendingSettlementsToPostgres`) |
 | User accepts preview (`acceptGhostHunk` / `acceptAllGhostHunks` / `commitPreview`) | User decision | **Document persisted** (atomic editor transaction followed by `useEditorAutosave` -> `PUT /api/files/:id` via `handleFileByIdPut` / `updateFileContent`; AI credits settled server-side via `ai-settlement-service.ts`) |
 | User rejects preview (`rejectPreview`) | User decision | **Settle as consumed** (Reservation committed; doc unchanged) |
 | User retries preview (`retryPreview`) | User decision | **Settle as consumed** (New session reserves fresh quota) |

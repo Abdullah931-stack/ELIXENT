@@ -22,7 +22,7 @@ Any acceptable architectural solution must rigorously satisfy the following five
 3. **Atomic Commit Invariance (Acceptance-Triggered):** Stream completion does NOT mutate the document. The sanitized output is parked in `preview_ready`, and only an explicit user **Accept** applies the AI transformation in exactly ONE atomic transaction targeting $[from, to]$ via `adapter.replaceRange(from, to, previewContent)` (server-first commit confirmed before the local write). **Reject** and **Retry** leave the document fully untouched.
 4. **Single-Action Undo Invariance:** Exactly one history entry is produced. A single `Ctrl+Z` (or undo command) restores the original document state and selection range prior to the AI invocation.
 5. **Deterministic Rollback Invariance:** If the stream fails, times out, is aborted by the user, or encounters an API error (429/500/503), the ephemeral visual state is purged in $O(1)$ time with zero side effects on the document content.
-6. **Explicit Settlement & Dual-Side Inversion Invariance (v1.6.0 & v1.29.2):** Quota refunds apply strictly to pre-TTFT aborts and system failures (startup errors, 412 conflicts). User-driven outcomes — Reject, Retry, Stop-mid-generation (`stopStream`), abandoning a completed preview, or post-TTFT disconnects — settle the reservation as consumed (`commitAIReservation`, idempotent, no document write). Client-side stop execution is instantaneous (< 50ms) with zero blocking network delays (TD-05).
+6. **Explicit Settlement & Dual-Side Inversion Invariance (v1.6.0 & v1.29.2):** Unconsumed holds are refunded on pre-TTFT aborts and system failures (startup errors, 412 conflicts). Consumed output tokens from post-TTFT disconnects, normal completions, or user-driven stop/reject/retry outcomes settle atomically server-side via `StreamGovernor.settle` / `executeSettleOperation` (`src/lib/metering/stream-governor.ts`, `src/lib/metering/lua-scripts.ts`). Client-side stop execution is instantaneous (< 50ms) with zero blocking network delays (TD-05).
 
 ---
 
@@ -61,15 +61,15 @@ sequenceDiagram
             Editor->>Editor: Push 1 Entry to History Stack (Undo Ready)
             Editor-->>User: Render Final Formatted Output
         else User clicks Reject or Retry
-            StreamHandler->>Backend: Settle quota as consumed (commitAIReservation)
+            StreamHandler->>Backend: Settle consumed lease server-side (StreamGovernor.settle)
             StreamHandler->>GhostExt: Teardown Ephemeral Preview (Doc Pristine)
         end
     else Stream Error / System Abort / Network Loss (TD-05 Protocol)
         Backend--xStreamHandler: Socket Error / Abort Event
         alt Pre-TTFT Disconnect (ttftMs === null)
-            Backend->>Backend: Auto-refund reservation (refundAIReservation)
+            Backend->>Backend: Auto-refund unconsumed lease (StreamGovernor.settle ABORTED)
         else Post-TTFT Disconnect (ttftMs !== null) or User Stop
-            Backend->>Backend: Autonomous commit (commitAIReservation)
+            Backend->>Backend: Autonomous settlement for consumed tokens (StreamGovernor.settle)
         end
         StreamHandler->>GhostExt: Immediate Teardown Ephemeral Preview
         StreamHandler->>Editor: Restore Target Selection & Unlock Editor

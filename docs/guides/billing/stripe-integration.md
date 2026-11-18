@@ -166,7 +166,7 @@ Authoritative webhook ingestion endpoint. Redundant duplicate aliases (`/api/web
 - **Terminal State Protection (LUGX-069):** A subscription in `canceled` state rejects stale `customer.subscription.updated` events, while `paused` status is non-terminal.
 - **Stripe Dual-Write Protocol (Phase 4):**
   - **Step 1 (PostgreSQL inside atomic ACID transaction):** Inserts a credit top-up record into `credit_ledger_transactions` (`operationId: stripe_topup_${eventId}`, `executionMode: "CREDIT_TOPUP"`, `status: "TOPUP_APPLIED"`, `deltaMicro: allocationMicro`) via `ON CONFLICT (operation_id) DO NOTHING`. If newly inserted, increments `users.creditBalanceMicro` by `allocationMicro`.
-  - **Step 2 (Upstash Redis after transaction commit):** Invokes `executeStripeDualWrite` to atomically increment `lugx:wallet:${userId}` via `INCRBY` strictly if the wallet key is live in memory (`EXISTS == 1`). If the wallet is cold, hydration occurs automatically on next access via the Flush-First Cold Start protocol.
+  - **Step 2 (Upstash Redis after transaction commit):** Invokes `executeStripeDualWrite` to atomically increment `credit:wallet:${userId}` via `INCRBY` strictly if the wallet key is live in memory (`EXISTS == 1`). If the wallet is cold, hydration occurs automatically on next access via the Flush-First Cold Start protocol.
 
 **Supported Events:**
 - `checkout.session.completed` — Upgrades tier, records subscription, and triggers dual-write credit allocation upon confirmed payment.

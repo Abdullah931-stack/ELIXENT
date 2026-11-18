@@ -148,7 +148,7 @@ In compliance with the architectural decision and trade-off documentation rules 
 - **Accepted Decision:**
   1. Convert the accounting unit to **Micro-Credits (`BigInt`)** metered on actual token usage (`Input`, `Cached Input`, `Output + Reasoning`).
   2. Execute pre-authorization reservations, real-time slice extensions (`Runway Extension`), and final settlement atomically within **Upstash Redis** via Lua scripts, enforcing a strict **Fail-Closed** policy whenever Redis is unreachable.
-  3. Append settlement ledger records with a `created_at_ms` timestamp into `lugx:pending_settlements:${userId}` in Redis, and flush them asynchronously after stream termination via **`scheduleAfterResponse()`** into the `credit_ledger_transactions` table in PostgreSQL (`INSERT ... ON CONFLICT (operation_id) DO NOTHING`).
+  3. Append settlement ledger records with a `created_at_ms` timestamp into `credit:pending_settlements:${userId}` in Redis, and flush them asynchronously after stream termination via **`scheduleAfterResponse()`** into the `credit_ledger_transactions` table in PostgreSQL (`INSERT ... ON CONFLICT (operation_id) DO NOTHING`).
   4. Enforce the **`Flush-First Cold Start`** protocol to prevent any double deduction if a wallet key expires from Redis concurrently with an in-flight `scheduleAfterResponse()` execution.
 - **Rejected Alternatives:**
   - _Direct PostgreSQL locks per streaming slice:_ Exhausts Neon/Postgres connections and adds high round-trip latency during token streaming.
