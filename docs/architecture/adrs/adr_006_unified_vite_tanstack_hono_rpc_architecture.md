@@ -5,8 +5,8 @@
 | **ADR Identifier** | `ADR-006` (`ELIXENT-ADR-006`) |
 | **Classification** | `STANDALONE ARCHITECTURAL DECISION RECORD (ADR)` |
 | **Version & Status** | `v1.2 — Accepted & Hardened (Phase 2.5 Boundary/RPC & Phase 3 Native SPA Routing Amendments)` |
-| **Supersedes / Amends** | Amends Cloud Runtime Framework specification in [01_architecture_vision_and_adrs.md](./01_architecture_vision_and_adrs.md) (§1.1 & §2) |
-| **Governing Execution Plan** | [elixent-framework-migration-execution-plan.md](../records/plans/elixent-framework-migration-execution-plan.md) (`ELIXENT-FRAMEWORK-MIGRATION-PLAN-v1.1`) |
+| **Supersedes / Amends** | Amends Cloud Runtime Framework specification in [01_architecture_vision_and_adrs.md](../01_architecture_vision_and_adrs.md) (§1.1 & §2) |
+| **Governing Execution Plan** | [elixent-framework-migration-execution-plan.md](../../records/plans/elixent-framework-migration-execution-plan.md) (`ELIXENT-FRAMEWORK-MIGRATION-PLAN-v1.1`) |
 | **Affected Repository Scope** | `src/server/**`, `src/client/**`, `src/hooks/**`, `src/components/**`, `vite.config.ts`, `playwright.config.ts`, `vitest*.config.mts` |
 
 ## 1. Context & Forensic Problem Diagnosis
@@ -21,7 +21,7 @@ Elixent operates across two distinct target environments that must share $100\%$
 | :--- | :--- | :--- |
 | **Operational Goal & Target Workflow** | Primary access and distribution hub: reviewing and authoring specifications in the browser, adjudicating architectural decisions, and generating execution prompts from any device after authentication. | Local intelligent engineering companion operating directly over the project's live Markdown documentation directory on disk alongside external coding agents (`Claude Code`, `Cursor`, CLI tools). |
 | **File Storage Medium & Vault Provider** | Cloud `PostgreSQL` (`Neon`) + client-side `Zero-Knowledge Vault` + encrypted `IndexedDB` cache accessed via `CloudPostgresWorkspaceProvider`. | Zero `PostgreSQL` dependency for documents; direct read/write access to the local Markdown folder on disk via `DesktopLocalFsWorkspaceProvider` and native `fs.watch`. |
-| **Agent Brain Execution Host (`LangGraph`)** | Executes inside the cloud `Node.js` server runtime (`Hono`) connected to the cloud database and Redis cluster. | Executes inside a persistent local `Node.js Utility Process` hosted by `Electron` with direct filesystem access. |
+| **Agent Brain Execution Host (`Elixent Native Graph Engine` — [ADR-009](./adr_009_native_graph_orchestration_engine.md))** | Executes inside the cloud `Node.js` server runtime (`Hono`) connected to the cloud database and Redis cluster. | Executes inside a persistent local `Node.js Utility Process` hosted by `Electron` with direct filesystem access. |
 | **Governing Engineering Invariant** | **Zero Architectural Drift (`Single Source Codebase`):** A single unified framework must host both runtimes, adapting only the RPC fetch transport (`HTTPS` vs. `Electron IPC / MessagePort`) and the injected `IWorkspaceProvider`. |
 
 ### 1.2. Six Structural Impediments of `Next.js 16` in the `Elixent` Codebase

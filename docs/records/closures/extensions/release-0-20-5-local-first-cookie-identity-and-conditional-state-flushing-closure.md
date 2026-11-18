@@ -13,15 +13,15 @@
 | **Classification** | `MAINTENANCE RELEASE CLOSURE REPORT` |
 | **Status** | `CLOSED / VERIFIED` ✅ |
 | **Closure Date** | `2026-11-14` |
-| **Governing Specification** | [`docs/architecture/elixent_sync_and_execution_srs.md`](../../../architecture/elixent_sync_and_execution_srs.md) (`ELIXENT-SRS-LOCAL-FIRST-SYNC-v2.0`) |
-| **Associated ADRs** | [`ADR-008: Local-First Cookie Identity Verification & Conditional React State Flushing`](../../../architecture/01_architecture_vision_and_adrs.md#37-adr-008-local-first-cookie-identity-verification--conditional-react-state-flushing-on-conflict-and-server-fetch) · [`ADR-006: Unified Vite TanStack Hono RPC Architecture`](../../../architecture/adr_006_unified_vite_tanstack_hono_rpc_architecture.md) · [`ADR-007: Dual-Plane Separation & ALS Request Context`](../../../architecture/adr_007_dual_plane_separation_and_als_request_context.md) |
+| **Governing Specification** | [`docs/specs/elixent_sync_and_execution_srs.md`](../../../specs/elixent_sync_and_execution_srs.md) (`ELIXENT-SRS-LOCAL-FIRST-SYNC-v2.0`) |
+| **Associated ADRs** | [`ADR-008: Local-First Cookie Identity Verification & Conditional React State Flushing`](../../../architecture/01_architecture_vision_and_adrs.md#37-adr-008-local-first-cookie-identity-verification--conditional-react-state-flushing-on-conflict-and-server-fetch) · [`ADR-006: Unified Vite TanStack Hono RPC Architecture`](../../../architecture/adrs/adr_006_unified_vite_tanstack_hono_rpc_architecture.md) · [`ADR-007: Dual-Plane Separation & ALS Request Context`](../../../architecture/adrs/adr_007_dual_plane_separation_and_als_request_context.md) |
 | **SSOT Architecture & Reference Suite** | [`editor-sync-orchestration.md`](../../../architecture/sync/editor-sync-orchestration.md) · [`three-way-conflict-resolution.md`](../../../architecture/sync/three-way-conflict-resolution.md) · [`sync-api.md`](../../../reference/sync-api.md) · [`01_architecture_vision_and_adrs.md`](../../../architecture/01_architecture_vision_and_adrs.md) · [`test-database-isolation.md`](../../../reference/test-database-isolation.md) · [`ci-pipeline.md`](../../../reference/ci-pipeline.md) |
 
 ---
 
 ## 1. Executive Summary
 
-Release v0.20.5 delivers the end-to-end remediation of the local-first cold-start identity blocking defects and the `baseSnapshot` corruption vectors during debounced autosave across **Elixent** (`v0.20.5`). Governed by specification [`ELIXENT-SRS-LOCAL-FIRST-SYNC-v2.0`](../../../architecture/elixent_sync_and_execution_srs.md), this release resolves two foundational architectural issues:
+Release v0.20.5 delivers the end-to-end remediation of the local-first cold-start identity blocking defects and the `baseSnapshot` corruption vectors during debounced autosave across **Elixent** (`v0.20.5`). Governed by specification [`ELIXENT-SRS-LOCAL-FIRST-SYNC-v2.0`](../../../specs/elixent_sync_and_execution_srs.md), this release resolves two foundational architectural issues:
 
 1. **Solution 1 (`REQ-LF-AUTH`): Local-First Initial Cookie Identity Verification & Provider-Agnostic Client Identity Seam:**
    - Eradicates the blocking network auth calls (`supabase.auth.getUser()`) that previously froze the editor and route views on mount.

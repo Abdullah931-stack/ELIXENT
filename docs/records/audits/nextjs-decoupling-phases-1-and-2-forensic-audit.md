@@ -11,7 +11,7 @@
 | **Auditing Architecture** | Distributed Three-Wave Multi-Agent Verification Topology (9 Specialized Subagents) |
 | **Audit Status** | **FINAL / AUTHORITATIVE RECORD** |
 | **Date of Record** | November 11, 2026 |
-| **Associated ADRs** | [`ADR-006: Unified Vite TanStack Hono RPC Architecture`](../../architecture/adr_006_unified_vite_tanstack_hono_rpc_architecture.md) · [`ADR-007: Dual-Plane Separation & ALS Request Context`](../../architecture/adr_007_dual_plane_separation_and_als_request_context.md) |
+| **Associated ADRs** | [`ADR-006: Unified Vite TanStack Hono RPC Architecture`](../../architecture/adrs/adr_006_unified_vite_tanstack_hono_rpc_architecture.md) · [`ADR-007: Dual-Plane Separation & ALS Request Context`](../../architecture/adrs/adr_007_dual_plane_separation_and_als_request_context.md) |
 | **SSOT Architecture Suite** | [`01_architecture_vision_and_adrs.md`](../../architecture/01_architecture_vision_and_adrs.md) · [`security-and-rate-limiting.md`](../../architecture/security/security-and-rate-limiting.md) · [`sync-api.md`](../../reference/sync-api.md) |
 
 ---
@@ -22,7 +22,7 @@ This engineering record provides an exhaustive forensic audit of the implementat
 
 The audit was executed via a **Three-Wave Multi-Agent Forensic Topology** deploying 9 specialized subagents:
 1. **Wave 1 (Granular Exploration & Code Inspection):** Five dedicated subagents conducted line-by-line static analysis and empirical execution checks targeting bundler guards, environment purification, session middleware, caller repointing across 15 suites, and RPC transport wiring.
-2. **Wave 2 (Architectural & Protocol Conformance):** Two senior architectural auditors evaluated the codebase against [`ADR-006`](../../architecture/adr_006_unified_vite_tanstack_hono_rpc_architecture.md), [`ADR-007`](../../architecture/adr_007_dual_plane_separation_and_als_request_context.md), `.agents/rules/global-rule.md` (Prohibition of Artificial Mocking), RFC 9110 (HTTP Semantics), RFC 6265 (Cookie State Management), and OWASP security standards.
+2. **Wave 2 (Architectural & Protocol Conformance):** Two senior architectural auditors evaluated the codebase against [`ADR-006`](../../architecture/adrs/adr_006_unified_vite_tanstack_hono_rpc_architecture.md), [`ADR-007`](../../architecture/adrs/adr_007_dual_plane_separation_and_als_request_context.md), `.agents/rules/global-rule.md` (Prohibition of Artificial Mocking), RFC 9110 (HTTP Semantics), RFC 6265 (Cookie State Management), and OWASP security standards.
 3. **Wave 3 (Adversarial Critique & Line-by-Line Disk Verification):** Two independent verification auditors scrutinized every reported defect, eliminated false positives, differentiated theoretical code smells from genuine runtime vulnerabilities, and cross-verified all citations against disk.
 
 ```mermaid
@@ -107,10 +107,10 @@ The audit identified **8 technical findings**, categorized by severity, exact so
 - **Root Cause:**
   Legacy component and hook test suites (`editor-orchestration.integration.test.ts`, `use-editor-conflict.test.ts`, `sidebar-import.vault.test.tsx`, `file-context-menu.encryption-conflict.test.tsx`) were originally constructed during the Next.js Server Actions era and directly mock server action modules (`vi.mock("@/server/actions/files")`). When Phase 2 enforced server action decoupling and mounted Hono RPC, the author introduced this test-only bridge to keep legacy unit tests passing without refactoring their mocking topologies.
 - **Expected Architectural Behavior:**
-  Per [`ADR-006`](../../architecture/adr_006_unified_vite_tanstack_hono_rpc_architecture.md), all client components and facade functions must communicate exclusively through typed Hono RPC (`hc<AppType>`). In test environments, the in-memory loopback transport `vitestLoopbackFetch` (lines `86–105`), which invokes `app.fetch(req)` with zero network overhead, should serve as the canonical transport seam, fully exercising Hono middleware, Zod validators, and serialization.
+  Per [`ADR-006`](../../architecture/adrs/adr_006_unified_vite_tanstack_hono_rpc_architecture.md), all client components and facade functions must communicate exclusively through typed Hono RPC (`hc<AppType>`). In test environments, the in-memory loopback transport `vitestLoopbackFetch` (lines `86–105`), which invokes `app.fetch(req)` with zero network overhead, should serve as the canonical transport seam, fully exercising Hono middleware, Zod validators, and serialization.
 - **Justification for Failure / Regression Classification:**
   1. **Direct Violation of Core Invariant:** Violates `.agents/rules/global-rule.md` §2 (*"Prohibition of Artificial Mocking: Using workarounds, stub/mock implementations, or fake mocks for real services is strictly prohibited"*).
-  2. **Direct Violation of ADR-007:** Breaches Invariant 1 of [`ADR-007`](../../architecture/adr_007_dual_plane_separation_and_als_request_context.md), which strictly forbids client code from importing `@/server/services/*` and `@/lib/supabase/server`.
+  2. **Direct Violation of ADR-007:** Breaches Invariant 1 of [`ADR-007`](../../architecture/adrs/adr_007_dual_plane_separation_and_als_request_context.md), which strictly forbids client code from importing `@/server/services/*` and `@/lib/supabase/server`.
   3. **False-Positive Test Suite Mirage:** Unit and component tests claiming to verify client RPC operations are not exercising RPC at all. They bypass `rpc.routes.ts`, `zValidator`, `bodyLimit`, status codes, and HTTP headers.
 - **Engineering & Security Impact:**
   - Server actions and database modules are statically referenced inside client source files via string concatenation, risking bundle pollution and dead code elimination failure.

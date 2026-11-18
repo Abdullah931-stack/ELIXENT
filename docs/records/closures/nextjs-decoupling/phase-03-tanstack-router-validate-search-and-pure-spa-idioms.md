@@ -7,8 +7,8 @@
 | **Status** | `CLOSED / VERIFIED` ✅ |
 | **Closure Date** | `2026-11-14` |
 | **Governing Plan** | [`docs/Plans/ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md`](../../plans/elixent-nextjs-decoupling-and-clean-architecture-plan.md) (`ELIXENT-NEXTJS-DECOUPLING-CLEAN-ARCH-PLAN-v1.5`) |
-| **Associated ADRs** | [`ADR-006: Unified Vite TanStack Hono RPC Architecture`](../../../architecture/adr_006_unified_vite_tanstack_hono_rpc_architecture.md) (`v1.2`) · [`ADR-007: Dual-Plane Separation & ALS Request Context`](../../../architecture/adr_007_dual_plane_separation_and_als_request_context.md) (`v1.1`) |
-| **SSOT Architecture & Reference Suite** | [`elixent_sync_and_execution_srs.md`](../../../architecture/elixent_sync_and_execution_srs.md) · [`04_credit_metering_and_settlement_architecture.md`](../../../architecture/04_credit_metering_and_settlement_architecture.md) · [`ui-streaming-readiness.md`](../../../reference/ui-streaming-readiness.md) |
+| **Associated ADRs** | [`ADR-006: Unified Vite TanStack Hono RPC Architecture`](../../../architecture/adrs/adr_006_unified_vite_tanstack_hono_rpc_architecture.md) (`v1.2`) · [`ADR-007: Dual-Plane Separation & ALS Request Context`](../../../architecture/adrs/adr_007_dual_plane_separation_and_als_request_context.md) (`v1.1`) |
+| **SSOT Architecture & Reference Suite** | [`elixent_sync_and_execution_srs.md`](../../../specs/elixent_sync_and_execution_srs.md) · [`04_credit_metering_and_settlement_architecture.md`](../../../architecture/04_credit_metering_and_settlement_architecture.md) · [`ui-streaming-readiness.md`](../../../reference/ui-streaming-readiness.md) |
 
 ---
 

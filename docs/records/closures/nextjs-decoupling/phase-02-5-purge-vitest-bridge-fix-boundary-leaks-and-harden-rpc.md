@@ -8,7 +8,7 @@
 | **Closure Date** | `2026-11-11` |
 | **Triggering Forensic Audit** | [`nextjs-decoupling-phases-1-and-2-forensic-audit.md`](../../audits/nextjs-decoupling-phases-1-and-2-forensic-audit.md) |
 | **Governing Plan** | [`docs/Plans/ELIXENT_NEXTJS_DECOUPLING_AND_CLEAN_ARCHITECTURE_PLAN.md`](../../plans/elixent-nextjs-decoupling-and-clean-architecture-plan.md) (`ELIXENT-NEXTJS-DECOUPLING-CLEAN-ARCH-PLAN-v1.3`) |
-| **Associated ADRs** | [`ADR-006: Unified Vite TanStack Hono RPC Architecture`](../../../architecture/adr_006_unified_vite_tanstack_hono_rpc_architecture.md) (`v1.1`) · [`ADR-007: Dual-Plane Separation & ALS Request Context`](../../../architecture/adr_007_dual_plane_separation_and_als_request_context.md) (`v1.1`) |
+| **Associated ADRs** | [`ADR-006: Unified Vite TanStack Hono RPC Architecture`](../../../architecture/adrs/adr_006_unified_vite_tanstack_hono_rpc_architecture.md) (`v1.1`) · [`ADR-007: Dual-Plane Separation & ALS Request Context`](../../../architecture/adrs/adr_007_dual_plane_separation_and_als_request_context.md) (`v1.1`) |
 | **SSOT Architecture & Reference Suite** | [`security-and-rate-limiting.md`](../../../architecture/security/security-and-rate-limiting.md) · [`sync-api.md`](../../../reference/sync-api.md) · [`stripe-integration.md`](../../../guides/billing/stripe-integration.md) · [`04_credit_metering_and_settlement_architecture.md`](../../../architecture/04_credit_metering_and_settlement_architecture.md) |
 
 ---

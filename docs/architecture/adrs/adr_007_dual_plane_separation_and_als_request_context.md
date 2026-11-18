@@ -5,8 +5,8 @@
 | **ADR Identifier** | `ADR-007` (`ELIXENT-ADR-007`) |
 | **Classification** | `STANDALONE ARCHITECTURAL DECISION RECORD (ADR)` |
 | **Version & Status** | `v1.1 — Accepted & Hardened (Phase 2.5 Middleware & Wire Contract Amendment)` |
-| **Supersedes / Amends** | Extends [03_workspace_ast_editor_and_vault_integration.md](./03_workspace_ast_editor_and_vault_integration.md) and [04_credit_metering_and_settlement_architecture.md](./04_credit_metering_and_settlement_architecture.md) |
-| **Governing Execution Plan** | [elixent-framework-migration-execution-plan.md](../records/plans/elixent-framework-migration-execution-plan.md) (`ELIXENT-FRAMEWORK-MIGRATION-PLAN-v1.1`) |
+| **Supersedes / Amends** | Extends [03_workspace_ast_editor_and_vault_integration.md](../03_workspace_ast_editor_and_vault_integration.md) and [04_credit_metering_and_settlement_architecture.md](../04_credit_metering_and_settlement_architecture.md) |
+| **Governing Execution Plan** | [elixent-framework-migration-execution-plan.md](../../records/plans/elixent-framework-migration-execution-plan.md) (`ELIXENT-FRAMEWORK-MIGRATION-PLAN-v1.1`) |
 | **Affected Repository Scope** | `src/server/context/request-context.ts`, `src/server/middleware/session-middleware.ts`, `src/lib/supabase/server.ts`, `src/server/routes/rpc.routes.ts`, `src/core/workspace/provider.ts` |
 
 ## 1. Context & Problem Statement
