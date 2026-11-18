@@ -41,11 +41,42 @@ function getMaxRetryAttempts(): number {
 // Modern Vercel AI SDK v7 Gateway Implementations
 // =========================================================================
 
+export interface ParsedQualifiedModelId {
+    provider: string;
+    providerModelName: string;
+    qualifiedModelId: string;
+}
+
+/**
+ * Parses a provider-qualified model identifier (e.g. `"google/gemini-3.8-flash"`)
+ * into its provider namespace, provider-native model name, and canonical qualified ID.
+ * Unprefixed model IDs default to the `"google"` provider.
+ */
+export function parseQualifiedModelId(qualifiedModelId: string): ParsedQualifiedModelId {
+    const trimmed = qualifiedModelId.trim();
+    const slashIndex = trimmed.indexOf("/");
+    if (slashIndex > 0 && slashIndex < trimmed.length - 1) {
+        return {
+            provider: trimmed.slice(0, slashIndex),
+            providerModelName: trimmed.slice(slashIndex + 1),
+            qualifiedModelId: trimmed,
+        };
+    }
+
+    return {
+        provider: "google",
+        providerModelName: trimmed,
+        qualifiedModelId: trimmed,
+    };
+}
+
 /**
  * Helper to obtain an initialized Google model instance with a rotated key.
  *
- * - Uses `getApiKeyForRequest(modelId)`.
+ * - Parses `qualifiedModelId` via `parseQualifiedModelId(modelId)`.
+ * - Uses `getApiKeyForRequest(parsed.qualifiedModelId)`.
  * - Calls `createGoogleGenerativeAI({ apiKey })`.
+ * - Invokes `provider(parsed.providerModelName)`.
  * - Returns `{ provider, modelInstance, keyIndex, keyInfo }`.
  */
 export async function getGoogleModel(
@@ -57,9 +88,10 @@ export async function getGoogleModel(
     keyIndex: number;
     keyInfo: KeyInfo;
 }> {
-    const keyInfo = existingKeyInfo || (await getApiKeyForRequest(modelId));
+    const parsed = parseQualifiedModelId(modelId);
+    const keyInfo = existingKeyInfo || (await getApiKeyForRequest(parsed.qualifiedModelId));
     const provider = createGoogleGenerativeAI({ apiKey: keyInfo.key });
-    const modelInstance = provider(modelId);
+    const modelInstance = provider(parsed.providerModelName);
     return {
         provider,
         modelInstance,
@@ -92,16 +124,18 @@ export async function executeStructuredGeneration<T>(options: {
         throw abortErr;
     }
 
-    const circuitState = await getModelCircuitState(options.modelId);
+    const qualifiedModelId = parseQualifiedModelId(options.modelId).qualifiedModelId;
+
+    const circuitState = await getModelCircuitState(qualifiedModelId);
     if (circuitState === "open") {
-        throw new CircuitBreakerOpenError(options.modelId);
+        throw new CircuitBreakerOpenError(qualifiedModelId);
     }
 
     let isProbe = false;
     if (circuitState === "half-open") {
-        const wonProbe = await tryAcquireHalfOpenProbe(options.modelId);
+        const wonProbe = await tryAcquireHalfOpenProbe(qualifiedModelId);
         if (!wonProbe) {
-            throw new CircuitBreakerOpenError(options.modelId);
+            throw new CircuitBreakerOpenError(qualifiedModelId);
         }
         isProbe = true;
     }
@@ -112,7 +146,7 @@ export async function executeStructuredGeneration<T>(options: {
 
     while (retries > 0) {
         if (options.abortSignal?.aborted) {
-            if (isProbe) releaseProbeLock(options.modelId).catch(() => {});
+            if (isProbe) releaseProbeLock(qualifiedModelId).catch(() => {});
             const abortErr = new Error("The operation was aborted");
             abortErr.name = "AbortError";
             throw abortErr;
@@ -120,7 +154,7 @@ export async function executeStructuredGeneration<T>(options: {
 
         try {
             const { modelInstance, keyIndex, keyInfo } = await getGoogleModel(
-                options.modelId,
+                qualifiedModelId,
                 currentKeyInfo ?? undefined
             );
             currentKeyInfo = keyInfo;
@@ -134,7 +168,7 @@ export async function executeStructuredGeneration<T>(options: {
             });
 
             await confirmApiKeyUsage(keyIndex);
-            await recordModelSuccess(options.modelId);
+            await recordModelSuccess(qualifiedModelId);
 
             return {
                 object: result.output as T,
@@ -144,35 +178,35 @@ export async function executeStructuredGeneration<T>(options: {
                     totalTokens: result.usage?.totalTokens ?? 0,
                 },
                 finishReason: String(result.finishReason ?? "stop"),
-                modelId: options.modelId,
+                modelId: qualifiedModelId,
             };
         } catch (error: unknown) {
             lastError = error as Error;
             const classification = classifyGeminiError(error);
 
             if (options.abortSignal?.aborted || classification.category === "cancelled") {
-                if (isProbe) releaseProbeLock(options.modelId).catch(() => {});
+                if (isProbe) releaseProbeLock(qualifiedModelId).catch(() => {});
                 const abortErr = new Error("The operation was aborted");
                 abortErr.name = "AbortError";
                 throw abortErr;
             }
 
             if (classification.category === "invalid_request") {
-                if (isProbe) releaseProbeLock(options.modelId).catch(() => {});
+                if (isProbe) releaseProbeLock(qualifiedModelId).catch(() => {});
                 throw error;
             }
 
             if (classification.category === "overload" || is503OrOverloadError(error)) {
-                await recordModelFailure(options.modelId).catch(() => {});
+                await recordModelFailure(qualifiedModelId).catch(() => {});
                 if (isProbe) {
-                    releaseProbeLock(options.modelId).catch(() => {});
+                    releaseProbeLock(qualifiedModelId).catch(() => {});
                     isProbe = false;
                 }
                 throw error;
             }
 
             if (isProbe) {
-                releaseProbeLock(options.modelId).catch(() => {});
+                releaseProbeLock(qualifiedModelId).catch(() => {});
                 isProbe = false;
             }
 
@@ -185,12 +219,12 @@ export async function executeStructuredGeneration<T>(options: {
                 continue;
             }
 
-            await recordModelFailure(options.modelId).catch(() => {});
+            await recordModelFailure(qualifiedModelId).catch(() => {});
             throw error;
         }
     }
 
-    await recordModelFailure(options.modelId).catch(() => {});
+    await recordModelFailure(qualifiedModelId).catch(() => {});
     throw lastError || new Error("Failed to execute structured generation after maximum retries");
 }
 
@@ -220,16 +254,18 @@ export async function executeToolAgentGeneration(options: {
         throw abortErr;
     }
 
-    const circuitState = await getModelCircuitState(options.modelId);
+    const qualifiedModelId = parseQualifiedModelId(options.modelId).qualifiedModelId;
+
+    const circuitState = await getModelCircuitState(qualifiedModelId);
     if (circuitState === "open") {
-        throw new CircuitBreakerOpenError(options.modelId);
+        throw new CircuitBreakerOpenError(qualifiedModelId);
     }
 
     let isProbe = false;
     if (circuitState === "half-open") {
-        const wonProbe = await tryAcquireHalfOpenProbe(options.modelId);
+        const wonProbe = await tryAcquireHalfOpenProbe(qualifiedModelId);
         if (!wonProbe) {
-            throw new CircuitBreakerOpenError(options.modelId);
+            throw new CircuitBreakerOpenError(qualifiedModelId);
         }
         isProbe = true;
     }
@@ -240,7 +276,7 @@ export async function executeToolAgentGeneration(options: {
 
     while (retries > 0) {
         if (options.abortSignal?.aborted) {
-            if (isProbe) releaseProbeLock(options.modelId).catch(() => {});
+            if (isProbe) releaseProbeLock(qualifiedModelId).catch(() => {});
             const abortErr = new Error("The operation was aborted");
             abortErr.name = "AbortError";
             throw abortErr;
@@ -248,7 +284,7 @@ export async function executeToolAgentGeneration(options: {
 
         try {
             const { modelInstance, keyIndex, keyInfo } = await getGoogleModel(
-                options.modelId,
+                qualifiedModelId,
                 currentKeyInfo ?? undefined
             );
             currentKeyInfo = keyInfo;
@@ -263,7 +299,7 @@ export async function executeToolAgentGeneration(options: {
             });
 
             await confirmApiKeyUsage(keyIndex);
-            await recordModelSuccess(options.modelId);
+            await recordModelSuccess(qualifiedModelId);
 
             return {
                 text: result.text,
@@ -276,35 +312,35 @@ export async function executeToolAgentGeneration(options: {
                     totalTokens: result.usage?.totalTokens ?? 0,
                 },
                 finishReason: String(result.finishReason ?? "stop"),
-                modelId: options.modelId,
+                modelId: qualifiedModelId,
             };
         } catch (error: unknown) {
             lastError = error as Error;
             const classification = classifyGeminiError(error);
 
             if (options.abortSignal?.aborted || classification.category === "cancelled") {
-                if (isProbe) releaseProbeLock(options.modelId).catch(() => {});
+                if (isProbe) releaseProbeLock(qualifiedModelId).catch(() => {});
                 const abortErr = new Error("The operation was aborted");
                 abortErr.name = "AbortError";
                 throw abortErr;
             }
 
             if (classification.category === "invalid_request") {
-                if (isProbe) releaseProbeLock(options.modelId).catch(() => {});
+                if (isProbe) releaseProbeLock(qualifiedModelId).catch(() => {});
                 throw error;
             }
 
             if (classification.category === "overload" || is503OrOverloadError(error)) {
-                await recordModelFailure(options.modelId).catch(() => {});
+                await recordModelFailure(qualifiedModelId).catch(() => {});
                 if (isProbe) {
-                    releaseProbeLock(options.modelId).catch(() => {});
+                    releaseProbeLock(qualifiedModelId).catch(() => {});
                     isProbe = false;
                 }
                 throw error;
             }
 
             if (isProbe) {
-                releaseProbeLock(options.modelId).catch(() => {});
+                releaseProbeLock(qualifiedModelId).catch(() => {});
                 isProbe = false;
             }
 
@@ -317,12 +353,12 @@ export async function executeToolAgentGeneration(options: {
                 continue;
             }
 
-            await recordModelFailure(options.modelId).catch(() => {});
+            await recordModelFailure(qualifiedModelId).catch(() => {});
             throw error;
         }
     }
 
-    await recordModelFailure(options.modelId).catch(() => {});
+    await recordModelFailure(qualifiedModelId).catch(() => {});
     throw lastError || new Error("Failed to execute tool agent generation after maximum retries");
 }
 
@@ -342,21 +378,23 @@ export async function executeStreamingGeneration(options: {
         throw abortErr;
     }
 
-    const circuitState = await getModelCircuitState(options.modelId);
+    const qualifiedModelId = parseQualifiedModelId(options.modelId).qualifiedModelId;
+
+    const circuitState = await getModelCircuitState(qualifiedModelId);
     if (circuitState === "open") {
-        throw new CircuitBreakerOpenError(options.modelId);
+        throw new CircuitBreakerOpenError(qualifiedModelId);
     }
 
     let isProbe = false;
     if (circuitState === "half-open") {
-        const wonProbe = await tryAcquireHalfOpenProbe(options.modelId);
+        const wonProbe = await tryAcquireHalfOpenProbe(qualifiedModelId);
         if (!wonProbe) {
-            throw new CircuitBreakerOpenError(options.modelId);
+            throw new CircuitBreakerOpenError(qualifiedModelId);
         }
         isProbe = true;
     }
 
-    const { modelInstance, keyIndex } = await getGoogleModel(options.modelId);
+    const { modelInstance, keyIndex } = await getGoogleModel(qualifiedModelId);
 
     try {
         const streamResult = streamText({
@@ -367,17 +405,17 @@ export async function executeStreamingGeneration(options: {
             onFinish: async () => {
                 try {
                     await confirmApiKeyUsage(keyIndex);
-                    await recordModelSuccess(options.modelId);
+                    await recordModelSuccess(qualifiedModelId);
                 } catch {
                     // Suppress confirmation errors
                 }
             },
             onError: async ({ error }) => {
                 if (isProbe) {
-                    releaseProbeLock(options.modelId).catch(() => {});
+                    releaseProbeLock(qualifiedModelId).catch(() => {});
                 }
                 if (is503OrOverloadError(error)) {
-                    recordModelFailure(options.modelId).catch(() => {});
+                    recordModelFailure(qualifiedModelId).catch(() => {});
                 } else if (shouldRotateOnError(error)) {
                     forceKeyRotationAndGetKey(error).catch(() => {});
                 }
@@ -387,10 +425,10 @@ export async function executeStreamingGeneration(options: {
         return streamResult;
     } catch (err) {
         if (isProbe) {
-            releaseProbeLock(options.modelId).catch(() => {});
+            releaseProbeLock(qualifiedModelId).catch(() => {});
         }
         if (is503OrOverloadError(err)) {
-            await recordModelFailure(options.modelId).catch(() => {});
+            await recordModelFailure(qualifiedModelId).catch(() => {});
         } else if (shouldRotateOnError(err)) {
             await forceKeyRotationAndGetKey(err).catch(() => {});
         }

@@ -1,3 +1,4 @@
+import { ensureWalletLoadedFlushFirst } from "./cold-start";
 import {
   L_MIN_TOKENS,
   LEASE_TTL_SECONDS,
@@ -48,6 +49,8 @@ export class StreamGovernor {
   private totalTokensProduced: number = 0;
   private totalTokensReserved: number;
   private coveredTokens: number;
+  private initializedInputTokens: number = 0;
+  private initializedInputCostMicro: bigint | null = null;
 
   private isAbortedFlag: boolean = false;
   private isInHoldFlag: boolean = false;
@@ -95,6 +98,94 @@ export class StreamGovernor {
         { once: true }
       );
     }
+  }
+
+  /**
+   * Initializes the streaming credit lease before generation begins (`SRS-04` §3.2).
+   * Ensures the user's wallet is warm via flush-first cold-start loading, reserves
+   * pessimistic input cost plus an initial output slice under `credit:lease:${operationId}`,
+   * and updates `totalTokensReserved` and `coveredTokens` from the confirmed Redis result.
+   */
+  async initializeLease(
+    pessimisticInputTokens = 0
+  ): Promise<{ canAfford: boolean; reservedTokens: number; reservedMicro: bigint }> {
+    if (this.isAborted() || this.settleResult !== null) {
+      return { canAfford: false, reservedTokens: 0, reservedMicro: BigInt(0) };
+    }
+
+    await ensureWalletLoadedFlushFirst(this.userId, this.options.customRedis);
+
+    const safeInputTokens = Math.max(
+      0,
+      Number.isFinite(pessimisticInputTokens) ? Math.floor(pessimisticInputTokens) : 0
+    );
+    const requiredInputMicro =
+      this.options.inputCostMicro !== undefined
+        ? BigInt(this.options.inputCostMicro)
+        : tokensToMicroCredits(safeInputTokens, this.modelEntry.creditsPer1kInput);
+
+    const isFreeOutput = this.modelEntry.creditsPer1kOutput <= 0;
+    const desiredOutputMicro = isFreeOutput
+      ? BigInt(0)
+      : tokensToMicroCredits(
+          this.extensionChunkTokens,
+          this.modelEntry.creditsPer1kOutput
+        );
+    const minAllowedOutputMicro = isFreeOutput
+      ? BigInt(0)
+      : tokensToMicroCredits(1, this.modelEntry.creditsPer1kOutput);
+
+    const reserveParams = {
+      userId: this.userId,
+      operationId: this.operationId,
+      stepKey: this.stepKey,
+      requiredInputMicro,
+      desiredOutputMicro,
+      minAllowedOutputMicro,
+      isZeroDustAllowed: true,
+      leaseTtlSeconds: LEASE_TTL_SECONDS,
+    };
+
+    let res = await executeReserveOrExtend(reserveParams, this.options.customRedis);
+    if (res.status === "COLD_START_REQUIRED") {
+      await ensureWalletLoadedFlushFirst(this.userId, this.options.customRedis);
+      res = await executeReserveOrExtend(reserveParams, this.options.customRedis);
+    }
+
+    if (res.status !== "SUCCESS") {
+      this.totalTokensReserved = 0;
+      this.coveredTokens = 0;
+      return { canAfford: false, reservedTokens: 0, reservedMicro: BigInt(0) };
+    }
+
+    let grantedTokens = 0;
+    if (isFreeOutput) {
+      grantedTokens = this.extensionChunkTokens;
+    } else if (BigInt(res.reservedOutputMicro) >= desiredOutputMicro) {
+      grantedTokens = this.extensionChunkTokens;
+    } else {
+      const microPerToken = this.modelEntry.creditsPer1kOutput * 1000;
+      if (microPerToken > 0) {
+        grantedTokens = Math.floor(res.reservedOutputMicro / microPerToken);
+      }
+    }
+
+    if (!isFreeOutput && grantedTokens <= 0) {
+      this.totalTokensReserved = 0;
+      this.coveredTokens = 0;
+      return { canAfford: false, reservedTokens: 0, reservedMicro: BigInt(0) };
+    }
+
+    this.totalTokensReserved = grantedTokens;
+    this.coveredTokens = grantedTokens;
+    this.initializedInputTokens = safeInputTokens;
+    this.initializedInputCostMicro = requiredInputMicro;
+
+    return {
+      canAfford: true,
+      reservedTokens: grantedTokens,
+      reservedMicro: BigInt(Math.max(0, Math.floor(res.totalReservedMicro))),
+    };
   }
 
   /**
@@ -313,11 +404,20 @@ export class StreamGovernor {
       this.modelEntry.creditsPer1kOutput
     );
 
+    const resolvedInputTokens =
+      this.options.inputTokens ?? this.initializedInputTokens;
+
     const inputCostMicro =
       this.options.inputCostMicro !== undefined
         ? BigInt(this.options.inputCostMicro)
-        : tokensToMicroCredits(
-            this.options.inputTokens ?? 0,
+        : this.options.inputTokens !== undefined
+        ? tokensToMicroCredits(
+            this.options.inputTokens,
+            this.modelEntry.creditsPer1kInput
+          )
+        : this.initializedInputCostMicro ??
+          tokensToMicroCredits(
+            resolvedInputTokens,
             this.modelEntry.creditsPer1kInput
           );
 
@@ -331,7 +431,7 @@ export class StreamGovernor {
       stepKey: this.stepKey,
       modelId: this.modelId,
       executionMode: this.modelEntry.executionMode,
-      inputTokens: this.options.inputTokens ?? 0,
+      inputTokens: resolvedInputTokens,
       cachedInputTokens: 0,
       outputTokens: consumedOutputTokens,
       reasoningTokens: 0,
