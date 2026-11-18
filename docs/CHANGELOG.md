@@ -4,6 +4,12 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.24.1] - 2026-11-18 (Dev Toolchain Security Audit Governance — `TD-21`)
+
+- **Dev-Only Advisory Allowlist (`scripts/ci-audit.mjs`, `docs/TECHNICAL_DEBT_REGISTER.md`, `package-lock.json`):** Retained non-breaking dev toolchain lockfile updates (`vite@6.4.6`, `typescript-eslint@8.73.0`, hoisted `fdir@6.5.0` and `picomatch@4.0.7`), registered unpatched upstream `picomatch <= 4.0.7` ReDoS advisory `GHSA-FC5Q-39XC-VJPF` (`CWE-1333`, source `1247710`) in `ALLOWLIST` strictly scoped to `dev` under [`TD-21`](./TECHNICAL_DEBT_REGISTER.md#td-21--latent-upstream-redos-in-dev-toolchain-picomatch--407--accepted-debt-2026-11-18), and preserved the zero-tolerance fail-closed production audit gate (`--omit=dev = 0`). Verified with `npm run audit:ci`, `npm run lint`, `npx tsc --noEmit`, `npm run test` (`146` unit suites / `3,000` tests passing), `npm run docs:check`, and `npm run lint:links` (`0` broken links).
+
+---
+
 ## [0.24.0] - 2026-11-18 (Phase 1: Baseline Pre-Flight Clean Cut, Prefix Standardization & Seam Fixes)
 
 ### Clean-Cut Cryptographic, Sync & Parser Prefix Standardization (`Waves 1.1–1.2`)

@@ -20,7 +20,20 @@ import { execSync } from "node:child_process";
  * Known, audited, latent upstream advisories permitted exclusively in devDependencies.
  * Each entry must be documented in docs/TECHNICAL_DEBT_REGISTER.md.
  */
-const ALLOWLIST = new Map();
+const ALLOWLIST = new Map([
+  [
+    "GHSA-FC5Q-39XC-VJPF",
+    {
+      advisorySource: "1247710",
+      package: "picomatch",
+      severity: "high",
+      scope: "dev", // Strictly prohibited from production runtime (--omit=dev fails closed)
+      debtId: "TD-21",
+      reason:
+        "ReDoS (CWE-1333) via single-branch repeated extglobs in dev toolchain (vite/vitest/typescript-eslint); no patched picomatch release published yet (<=4.0.7); zero production attack surface.",
+    },
+  ],
+]);
 
 // =============================================================================
 // Helper Functions

@@ -2,7 +2,7 @@
 
 Living register of known technical debt, accepted risks, and deferred work.
 Each entry records the decision owner and the mitigation currently in place.
-Last reviewed: 2026-11-18 (v0.24.0 — Phase 1 Baseline Pre-Flight Clean Cut, Prefix Standardization & Seam Fixes).
+Last reviewed: 2026-11-18 (v0.24.0 — TD-21 Dev Toolchain Security Advisory Registered; Phase 1 Baseline).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
 **Active Verification Baseline:** 146 unit suites (3000 tests) · 21 live suites (97 tests) · 14 E2E specs (15 journeys) — 100% Passing.
@@ -265,6 +265,22 @@ Last reviewed: 2026-11-18 (v0.24.0 — Phase 1 Baseline Pre-Flight Clean Cut, Pr
     1. Provisioning a dedicated, stable paid-tier Google Gemini API key or enterprise quota.
     2. Completing the planned architectural overhaul of the AI client layer (e.g. migration to Vercel AI SDK with multi-provider failover).
     3. Re-enabling the live execution of `src/test/ai/ai-live-e2e.live.test.ts` inside Stage 7 of `.github/workflows/ci.yml`.
+
+## TD-21 — Latent Upstream ReDoS in Dev Toolchain (`picomatch` <= 4.0.7) — ACCEPTED DEBT (2026-11-18)
+
+- **Debt:** Security advisory `GHSA-fc5q-39xc-vjpf` (npm advisory source `1247710`, CVSS 7.5 High, `CWE-1333`) reports a Regular Expression Denial of Service (ReDoS) vulnerability through single-branch repeated extglobs in `picomatch <= 4.0.7` (currently `4.0.7` installed). The package is pulled strictly as a transitive `devDependencies` dependency of `vite@6.4.6`, `vitest@5.0.5` / `@vitest/coverage-v8@5.0.5`, and `typescript-eslint@8.73.0` (via `fdir@6.5.0`, `tinyglobby@0.2.17`, and `@typescript-eslint/typescript-estree@8.73.0`).
+- **Accepted Debt (`devDependencies` Allowlist Only):**
+  - **Decision Owner:** Project Owner & Systems Architect.
+  - **Decision Rationale:** As of 2026-11-18, no upstream patched release of `picomatch` has been published (`npm audit` flags `<=4.0.7`, and `npm audit fix --force` proposes destructive breaking downgrades to `vitest@3.1.4`, `vite@6.2.7`, and `typescript-eslint@8.47.0`). Production runtime dependencies (`npm audit --omit=dev` / `npm ls --omit=dev picomatch tinyglobby fdir`) have **0 occurrences** and **0 vulnerabilities**, and the project source (`src/`, `scripts/`, `e2e/`) contains zero direct imports or untrusted user-supplied glob inputs.
+  - **Mitigation Currently in Place:**
+    - `GHSA-FC5Q-39XC-VJPF` is registered in `ALLOWLIST` in `scripts/ci-audit.mjs` strictly scoped to `dev`.
+    - Step 1 of `scripts/ci-audit.mjs` (`npm audit --json --omit=dev`) continues to enforce a zero-tolerance fail-closed gate on production runtime dependencies; any accidental introduction of `picomatch` into `dependencies` will immediately fail CI.
+    - All glob patterns evaluated by `vite`, `vitest`, and `typescript-eslint` originate exclusively from static, repository-controlled configuration files (`vite.config.ts`, `vitest.config.mts`, `eslint.config.mjs`).
+  - **Conditions to Revisit / Reverse:**
+    1. Upstream maintainers publish an official patched release of `picomatch` resolving `GHSA-fc5q-39xc-vjpf`.
+    2. Upgrade `picomatch` cleanly (via `npm update picomatch` or an explicit `overrides` entry in `package.json` if parent ranges still permit `<=4.0.7`).
+    3. Remove `GHSA-FC5Q-39XC-VJPF` from `ALLOWLIST` in `scripts/ci-audit.mjs`, mark `TD-21` as resolved, and verify `npm run audit:ci` passes with an empty allowlist (`0` vulnerabilities).
+
 
 
 
