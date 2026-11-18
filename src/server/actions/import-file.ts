@@ -12,6 +12,11 @@ import { generateETagSync, normalizeMarkdownSource } from "@/lib/sync/etag-gener
 import { randomUUID } from "crypto";
 import { sanitizeFilename } from "@/lib/exporters/utils/validator";
 import { isDisguisedBinary } from "@/lib/parsers/file-validator";
+import {
+    resolveOrEnsureWorkspaceId,
+    isWorkspaceEncrypted,
+    WorkspaceNotFoundError,
+} from "./workspaces";
 
 export interface ImportFileResult {
     success: boolean;
@@ -24,6 +29,7 @@ export interface ImportFileResult {
         etag: string;
     };
     error?: string;
+    statusCode?: number;
 }
 
 export interface ImportEncryptionOptions {
@@ -49,7 +55,8 @@ export async function importFile(
     textContent: string,
     fileType: 'pdf' | 'md' | 'txt',
     parentFolderId: string | null = null,
-    encryption?: ImportEncryptionOptions
+    encryption?: ImportEncryptionOptions,
+    workspaceId?: string
 ): Promise<ImportFileResult> {
     try {
         const user = await getUser();
@@ -92,9 +99,40 @@ export async function importFile(
             if (!parent.isFolder) {
                 return { success: false, error: "Parent destination must be a folder" };
             }
+
+            if (workspaceId && parent.workspaceId !== workspaceId) {
+                return {
+                    success: false,
+                    statusCode: 403,
+                    error: "CROSS_WORKSPACE_ACCESS_FORBIDDEN",
+                };
+            }
+        }
+
+        let targetWorkspaceId: string;
+        try {
+            targetWorkspaceId = await resolveOrEnsureWorkspaceId(
+                user.id,
+                workspaceId,
+                parentFolderId
+            );
+        } catch (err) {
+            if (err instanceof WorkspaceNotFoundError) {
+                return { success: false, statusCode: 404, error: err.message };
+            }
+            throw err;
         }
 
         const isEncrypted = Boolean(encryption?.isEncrypted);
+        if (await isWorkspaceEncrypted(user.id, targetWorkspaceId)) {
+            if (!isEncrypted || !encryption?.encryptionMetadata?.iv) {
+                return {
+                    success: false,
+                    statusCode: 400,
+                    error: "WORKSPACE_ENCRYPTION_REQUIRED",
+                };
+            }
+        }
         let finalContent: string;
         let wordCount = 0;
         let newFileId: string;
@@ -154,6 +192,7 @@ export async function importFile(
         const siblings = await db.query.files.findMany({
             where: and(
                 eq(files.userId, user.id),
+                eq(files.workspaceId, targetWorkspaceId),
                 parentFolderId ? eq(files.parentFolderId, parentFolderId) : isNull(files.parentFolderId),
                 isNull(files.deletedAt)
             ),
@@ -191,6 +230,7 @@ export async function importFile(
             .values({
                 id: newFileId,
                 userId: user.id,
+                workspaceId: targetWorkspaceId,
                 title,
                 content: finalContent,
                 parentFolderId,

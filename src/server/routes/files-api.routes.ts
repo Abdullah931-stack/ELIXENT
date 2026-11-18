@@ -29,6 +29,7 @@ import {
   addCorrelationHeader,
 } from "@/lib/utils/correlation";
 import { getDescendantIds } from "@/server/actions/folders";
+import { isWorkspaceEncrypted } from "@/server/actions/workspaces";
 import { syncPullRequestSchema } from "@/types/sync-contracts";
 import { documentStoragePayloadSchema } from "@/types/storage-payload";
 import { createProblemDetails } from "@/types/problem-details";
@@ -268,9 +269,12 @@ export async function handleFilesSyncGet(request: Request): Promise<Response> {
     // Format response
     const responseFiles = resultFiles.map((file) => ({
       id: file.id,
+      workspaceId: file.workspaceId,
       title: file.title,
       content: file.content,
       isEncrypted: file.isEncrypted,
+      isAiExcluded: file.isAiExcluded,
+      artifactRole: file.artifactRole,
       encryptionMetadata: file.encryptionMetadata,
       etag: file.etag,
       version: file.version,
@@ -368,9 +372,12 @@ export async function handleFileByIdGet(
 
     const responseData = {
       id: file.id,
+      workspaceId: file.workspaceId,
       title: file.title,
       content: file.content,
       isEncrypted: file.isEncrypted,
+      isAiExcluded: file.isAiExcluded,
+      artifactRole: file.artifactRole,
       encryptionMetadata: file.encryptionMetadata,
       etag: file.etag,
       version: file.version,
@@ -656,6 +663,23 @@ export async function handleFileByIdPut(
         ? encryptionMetadata
         : currentFile.encryptionMetadata
       : null;
+
+    // SRS-02 §4.1: Encrypted workspaces require all writes to remain encrypted with valid metadata
+    if (
+      (await isWorkspaceEncrypted(user.id, currentFile.workspaceId)) &&
+      (!effectiveIsEncrypted || !effectiveMetadata?.iv)
+    ) {
+      const res = Response.json(
+        {
+          error: "Encrypted workspace requires all files to be encrypted",
+          code: "WORKSPACE_ENCRYPTION_REQUIRED",
+          correlationId,
+        },
+        { status: 400 }
+      );
+      addCorrelationHeader(res.headers, correlationId);
+      return res;
+    }
 
     // Zero-Knowledge Boundary Guard: Encrypted files require valid encryptionMetadata with an IV
     if (effectiveIsEncrypted && (!effectiveMetadata || !effectiveMetadata.iv)) {

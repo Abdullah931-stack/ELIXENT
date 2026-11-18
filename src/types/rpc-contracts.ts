@@ -30,10 +30,13 @@ export interface FileEncryptionMetadata {
 export interface FileRecord {
   id: string;
   userId: string;
+  workspaceId: string;
   title: string;
   content: string | null;
   parentFolderId: string | null;
   isFolder: boolean;
+  isAiExcluded: boolean;
+  artifactRole: "document" | "decision_ledger";
   isEncrypted: boolean;
   encryptionMetadata: FileEncryptionMetadata | null;
   etag: string | null;

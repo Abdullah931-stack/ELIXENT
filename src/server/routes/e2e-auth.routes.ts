@@ -6,6 +6,7 @@ import {
   type User,
 } from "@supabase/supabase-js";
 import { db, schema } from "@/server/db";
+import { deriveDefaultWorkspaceId } from "@/server/db/schema/files";
 
 interface SessionCookieRecord {
   name: string;
@@ -150,6 +151,15 @@ async function upsertE2EUserRecord(input: E2EUserTierInput): Promise<void> {
         updatedAt: new Date(),
       },
     });
+
+  await db
+    .insert(schema.workspaces)
+    .values({
+      id: deriveDefaultWorkspaceId(input.userId),
+      userId: input.userId,
+      name: "Default Workspace",
+    })
+    .onConflictDoNothing();
 }
 
 async function establishSsrSessionCookies(

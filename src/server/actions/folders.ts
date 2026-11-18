@@ -132,6 +132,15 @@ export async function moveFile(
                 return { success: false, status: "error", error: "Target destination is not a folder" };
             }
 
+            if (parent.workspaceId !== target.workspaceId) {
+                return {
+                    success: false,
+                    status: "forbidden",
+                    statusCode: 403,
+                    error: "CROSS_WORKSPACE_ACCESS_FORBIDDEN",
+                };
+            }
+
             // Descendant / cycle check: If target is a folder, verify destination is not inside target
             if (target.isFolder) {
                 let currentAncestorId: string | null = parent.parentFolderId;
@@ -197,7 +206,8 @@ export async function moveFile(
  * Get children files and folders of a specific parent folder.
  */
 export async function getFolderChildren(
-    folderId: string | null
+    folderId: string | null,
+    workspaceId?: string
 ): Promise<FileOpResult<typeof schema.files.$inferSelect[]>> {
     try {
         let user;
@@ -207,14 +217,20 @@ export async function getFolderChildren(
             return { success: false, status: "unauthorized", error: "Authentication required" };
         }
 
+        const conditions = [
+            eq(schema.files.userId, user.id),
+            folderId
+                ? eq(schema.files.parentFolderId, folderId)
+                : isNull(schema.files.parentFolderId),
+            isNull(schema.files.deletedAt),
+        ];
+
+        if (workspaceId) {
+            conditions.push(eq(schema.files.workspaceId, workspaceId));
+        }
+
         const children = await db.query.files.findMany({
-            where: and(
-                eq(schema.files.userId, user.id),
-                folderId
-                    ? eq(schema.files.parentFolderId, folderId)
-                    : isNull(schema.files.parentFolderId),
-                isNull(schema.files.deletedAt)
-            ),
+            where: and(...conditions),
             orderBy: (files, { desc }) => [desc(files.isFolder), desc(files.updatedAt)],
         });
 

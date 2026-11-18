@@ -47,6 +47,7 @@ import {
   updateVaultPasswordSchema,
   updateVaultRecoveryEnvelopeSchema,
   trimmedTitleSchema,
+  uuidStringSchema,
   type UpdateFileOptions,
   type DeleteFileOptions,
   type ImportEncryptionOptions,
@@ -226,12 +227,14 @@ export const rpcRoutes = new Hono()
         title: trimmedTitleSchema,
         parentFolderId: z.string().nullable().optional(),
         isFolder: z.boolean().optional(),
+        workspaceId: z.string().uuid().optional(),
       })
     ),
     async (c) => {
-      const { title, parentFolderId, isFolder } = c.req.valid("json");
-      const result = await createFile(title, parentFolderId, isFolder);
-      return c.json(result);
+      const { title, parentFolderId, isFolder, workspaceId } = c.req.valid("json");
+      const result = await createFile(title, parentFolderId, isFolder, workspaceId);
+      const status = result.statusCode === 400 ? 400 : result.statusCode === 403 ? 403 : 200;
+      return c.json(result, status);
     }
   )
   .post(
@@ -256,7 +259,8 @@ export const rpcRoutes = new Hono()
     async (c) => {
       const input = c.req.valid("json");
       const result = await handleToggleFileEncryption(input);
-      return c.json(result);
+      const status = result.statusCode === 400 ? 400 : result.statusCode === 403 ? 403 : 200;
+      return c.json(result, status);
     }
   )
   .post(
@@ -265,7 +269,8 @@ export const rpcRoutes = new Hono()
     async (c) => {
       const input = c.req.valid("json");
       const result = await handleToggleFileEncryption(input);
-      return c.json(result);
+      const status = result.statusCode === 400 ? 400 : result.statusCode === 403 ? 403 : 200;
+      return c.json(result, status);
     }
   )
   .post(
@@ -321,10 +326,11 @@ export const rpcRoutes = new Hono()
         newParentFolderId: z.string().nullable().optional(),
         depth: z.number().optional(),
         encryptedOverride: encryptedOverrideSchema.optional(),
+        workspaceId: z.string().uuid().optional(),
       })
     ),
     async (c) => {
-      const { fileId, newParentFolderId, depth, encryptedOverride } = c.req.valid("json");
+      const { fileId, newParentFolderId, depth, encryptedOverride, workspaceId } = c.req.valid("json");
       const result = await copyFile(
         fileId,
         newParentFolderId,
@@ -333,9 +339,11 @@ export const rpcRoutes = new Hono()
           newFileId?: string;
           content?: string;
           encryptionMetadata?: FileEncryptionMetadata | null;
-        }
+        },
+        workspaceId
       );
-      return c.json(result);
+      const status = result.statusCode === 400 ? 400 : result.statusCode === 403 ? 403 : 200;
+      return c.json(result, status);
     }
   )
   .post(
@@ -349,8 +357,28 @@ export const rpcRoutes = new Hono()
     ),
     async (c) => {
       const { fileId, newParentFolderId } = c.req.valid("json");
-      const result = await moveFile(fileId, newParentFolderId);
-      return c.json(result);
+      try {
+        const result = await moveFile(fileId, newParentFolderId);
+        const status = result.status === "forbidden" || result.statusCode === 403 ? 403 : 200;
+        return c.json(result, status);
+      } catch (err) {
+        const e = err as { name?: string; code?: string; message?: string };
+        if (
+          e?.name === "CrossWorkspaceAccessForbiddenError" ||
+          e?.code === "CROSS_WORKSPACE_ACCESS_FORBIDDEN"
+        ) {
+          return c.json(
+            {
+              success: false,
+              status: "forbidden" as const,
+              statusCode: 403,
+              error: e.message || "CROSS_WORKSPACE_ACCESS_FORBIDDEN",
+            },
+            403
+          );
+        }
+        throw err;
+      }
     }
   )
   .post(
@@ -372,29 +400,35 @@ export const rpcRoutes = new Hono()
         fileType: z.enum(["pdf", "md", "txt"]),
         parentFolderId: z.string().nullable().optional(),
         encryption: importEncryptionSchema.optional(),
+        workspaceId: z.string().uuid().optional(),
       })
     ),
     async (c) => {
-      const { fileName, textContent, fileType, parentFolderId, encryption } = c.req.valid("json");
+      const { fileName, textContent, fileType, parentFolderId, encryption, workspaceId } = c.req.valid("json");
       const result = await importFile(
         fileName,
         textContent,
         fileType,
         parentFolderId ?? null,
-        encryption as ImportEncryptionOptions
+        encryption as ImportEncryptionOptions,
+        workspaceId
       );
+      const status = result.statusCode === 400 ? 400 : result.statusCode === 403 ? 403 : 200;
       if (
         "creditBalanceMicro" in result &&
         (result as { creditBalanceMicro?: unknown }).creditBalanceMicro !== undefined
       ) {
-        return c.json({
-          ...result,
-          creditBalanceMicro: String(
-            (result as { creditBalanceMicro?: unknown }).creditBalanceMicro
-          ),
-        });
+        return c.json(
+          {
+            ...result,
+            creditBalanceMicro: String(
+              (result as { creditBalanceMicro?: unknown }).creditBalanceMicro
+            ),
+          },
+          status
+        );
       }
-      return c.json(result);
+      return c.json(result, status);
     }
   )
   .post(
@@ -416,11 +450,29 @@ export const rpcRoutes = new Hono()
     }
   )
   .get("/files/list", async (c) => {
-    const result = await getUserFiles();
+    const rawWorkspaceId = c.req.query("workspaceId");
+    let workspaceId: string | undefined;
+    if (rawWorkspaceId !== undefined && rawWorkspaceId !== "") {
+      const parsed = uuidStringSchema.safeParse(rawWorkspaceId);
+      if (!parsed.success) {
+        return c.json({ success: false, status: "error" as const, statusCode: 400, error: "Invalid workspaceId" }, 400);
+      }
+      workspaceId = parsed.data;
+    }
+    const result = await getUserFiles(workspaceId);
     return c.json(result);
   })
   .get("/files/list-root", async (c) => {
-    const result = await getRootFiles();
+    const rawWorkspaceId = c.req.query("workspaceId");
+    let workspaceId: string | undefined;
+    if (rawWorkspaceId !== undefined && rawWorkspaceId !== "") {
+      const parsed = uuidStringSchema.safeParse(rawWorkspaceId);
+      if (!parsed.success) {
+        return c.json({ success: false, status: "error" as const, statusCode: 400, error: "Invalid workspaceId" }, 400);
+      }
+      workspaceId = parsed.data;
+    }
+    const result = await getRootFiles(workspaceId);
     return c.json(result);
   })
   .get("/files/list-deleted", async (c) => {
@@ -433,11 +485,12 @@ export const rpcRoutes = new Hono()
       "json",
       z.object({
         folderId: z.string().nullable(),
+        workspaceId: z.string().uuid().optional(),
       })
     ),
     async (c) => {
-      const { folderId } = c.req.valid("json");
-      const result = await getFolderChildren(folderId);
+      const { folderId, workspaceId } = c.req.valid("json");
+      const result = await getFolderChildren(folderId, workspaceId);
       return c.json(result);
     }
   )

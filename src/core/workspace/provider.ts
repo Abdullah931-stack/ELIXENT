@@ -18,6 +18,34 @@ export type { LexicalMatchResult } from "@/core/workspace/lexical-bm25";
 export type { SectionMergeOutcome } from "@/lib/sync/diff3";
 
 /**
+ * Entry describing a non-deleted, non-AI-excluded file or folder in a workspace.
+ */
+export interface WorkspaceTreeEntry {
+  readonly fileId: string;
+  readonly parentFolderId: string | null;
+  readonly title: string;
+  readonly relativePath: string;
+  readonly isFolder: boolean;
+  readonly isEncrypted: boolean;
+  readonly isAiExcluded: boolean;
+  readonly artifactRole: "document" | "decision_ledger";
+  readonly etag: string;
+  readonly version: number;
+  readonly updatedAt: string;
+}
+
+/**
+ * Canonical workspace decision ledger JSON structure (v2.0).
+ */
+export interface DecisionLedgerDocument {
+  schemaVersion: string;
+  workspaceId: string;
+  updatedAt: string;
+  decisions: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+/**
  * Result structure returned when reading a single section by its heading slug.
  *
  * For unencrypted documents, `contentOrVaultRef` contains the verbatim section plaintext.
@@ -25,9 +53,14 @@ export type { SectionMergeOutcome } from "@/lib/sync/diff3";
  * (`vault_ref://${fileId}#${headingSlug}`) and `isVaultRef` is set to `true`.
  */
 export interface SectionReadResult {
+  readonly fileId: string;
+  readonly headingSlug: string;
   breadcrumb: string;
   contentOrVaultRef: string;
   isVaultRef: boolean;
+  readonly sectionHash: string;
+  readonly fileEtag: string;
+  readonly fileVersion: number;
 }
 
 /**
@@ -54,16 +87,26 @@ export interface AgentStreamRequestPayload {
  * lexical retrieval, and isolated three-way section merges.
  */
 export interface IWorkspaceProvider {
+  readonly workspaceId: string;
+  readonly userId: string;
+
   /**
-   * Retrieves the AST heading hierarchy for the specified file identifiers.
+   * Lists all non-deleted, non-AI-excluded files and folders in the active workspace.
+   */
+  listWorkspaceTree(): Promise<WorkspaceTreeEntry[]>;
+
+  /**
+   * Retrieves the AST heading hierarchy for the specified file identifiers
+   * (or all non-excluded markdown documents in the workspace if omitted/empty).
    *
-   * @param fileIds - Array of target workspace file IDs.
+   * @param fileIds - Optional array of target workspace file IDs.
    * @returns Record mapping each file ID to its array of HeadingNode elements.
    * @throws {WorkspaceFileAccessDeniedError} If any fileId is not found or access denied.
+   * @throws {CrossWorkspaceAccessForbiddenError} If any fileId belongs to another workspace.
    * @throws {VaultAIAccessDeniedError} If any file is encrypted and AI access is not allowed.
    * @throws {EncryptedPayloadMissingError} If any encrypted file lacks decrypted plaintext.
    */
-  listHeadingsTree(fileIds: string[]): Promise<Record<string, HeadingNode[]>>;
+  listHeadingsTree(fileIds?: string[]): Promise<Record<string, HeadingNode[]>>;
 
   /**
    * Reads a single heading section and its subordinate body content.
@@ -95,7 +138,7 @@ export interface IWorkspaceProvider {
    * @throws {EncryptedPayloadMissingError} If encrypted file lacks decrypted plaintext.
    */
   searchLexicalWithASTBreadcrumb(params: {
-    fileIds: string[];
+    fileIds?: string[];
     query: string;
     maxResults?: number;
   }): Promise<LexicalMatchResult[]>;
@@ -109,6 +152,7 @@ export interface IWorkspaceProvider {
    * @param params - Merge parameters including file ID, heading slug, base, proposed, and live text.
    * @returns SectionMergeOutcome detailing merge status, hunk ranges, and merged content.
    * @throws {WorkspaceFileAccessDeniedError} If file is not found or access denied.
+   * @throws {CrossWorkspaceAccessForbiddenError} If file belongs to another workspace.
    * @throws {VaultAIAccessDeniedError} If file is encrypted and AI access is disabled.
    */
   mergeSectionThreeWay(params: {
@@ -118,6 +162,34 @@ export interface IWorkspaceProvider {
     agentProposedSectionContent: string;
     liveDocumentContent: string;
   }): Promise<SectionMergeOutcome>;
+
+  /**
+   * Creates a new Markdown file (and any missing parent folders) inside the active workspaceId.
+   */
+  createWorkspaceFile(params: {
+    relativePath: string;
+    initialContent: string;
+  }): Promise<WorkspaceTreeEntry>;
+
+  /**
+   * Soft-deletes a document file inside workspaceId; blocks deleting decisions.ledger.json.
+   */
+  deleteWorkspaceFile(params: {
+    fileId: string;
+  }): Promise<{ fileId: string; deletedAt: string }>;
+
+  /**
+   * Reads the workspace's canonical decisions.ledger.json document (initializing v2.0 if absent).
+   */
+  readDecisionLedger(): Promise<DecisionLedgerDocument>;
+
+  /**
+   * Atomically writes the updated decisions.ledger.json document with optional OCC checks.
+   */
+  writeDecisionLedger(
+    document: DecisionLedgerDocument,
+    options?: { expectedVersion?: number; expectedEtag?: string }
+  ): Promise<{ etag: string; version: number }>;
 }
 
 // ============================================================================
@@ -180,5 +252,33 @@ export class EncryptedPayloadMissingError extends Error {
     super(message);
     this.name = "EncryptedPayloadMissingError";
     Object.setPrototypeOf(this, EncryptedPayloadMissingError.prototype);
+  }
+}
+
+/**
+ * Thrown when a requested file belongs to a different workspace than the active provider.
+ */
+export class CrossWorkspaceAccessForbiddenError extends Error {
+  readonly status = 403;
+  readonly code = "CROSS_WORKSPACE_ACCESS_FORBIDDEN";
+
+  constructor(message = "Cross-workspace file access is forbidden") {
+    super(message);
+    this.name = "CrossWorkspaceAccessForbiddenError";
+    Object.setPrototypeOf(this, CrossWorkspaceAccessForbiddenError.prototype);
+  }
+}
+
+/**
+ * Thrown when a decision ledger write fails optimistic concurrency control (version/etag mismatch).
+ */
+export class DecisionLedgerConflictError extends Error {
+  readonly status = 409;
+  readonly code = "DECISION_LEDGER_CONFLICT";
+
+  constructor(message = "Decision ledger optimistic concurrency conflict") {
+    super(message);
+    this.name = "DecisionLedgerConflictError";
+    Object.setPrototypeOf(this, DecisionLedgerConflictError.prototype);
   }
 }

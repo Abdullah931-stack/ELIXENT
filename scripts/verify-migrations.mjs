@@ -147,6 +147,7 @@ async function main() {
         // 4. Verify all critical tables exist
         const requiredTables = [
             "users",
+            "workspaces",
             "files",
             "subscriptions",
             "credit_ledger_transactions",
@@ -155,6 +156,7 @@ async function main() {
             "checkpoints",
             "checkpoint_blobs",
             "checkpoint_writes",
+            "agent_checkpoints",
             "subscription_events",
             "user_vault_profiles",
         ];
@@ -180,7 +182,11 @@ async function main() {
         const indexNames = new Set(indexes.map((i) => i.indexname));
 
         const requiredIndexes = [
-            "idx_files_user_parent_title_live",
+            "idx_workspaces_user_name",
+            "idx_workspaces_user_updated",
+            "idx_files_workspace_parent_title_live",
+            "idx_files_workspace_deleted",
+            "idx_agent_checkpoints_workspace_thread",
             "idx_credit_ledger_user_created",
             "idx_credit_ledger_thread",
             "idx_project_decision_user_project",

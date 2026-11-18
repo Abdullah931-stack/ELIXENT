@@ -11,7 +11,7 @@ export const userVaultProfiles = pgTable("user_vault_profiles", {
     kdfIterations: integer("kdf_iterations").default(600000).notNull(),
     keyVersion: integer("key_version").default(1).notNull(),
     deviceTrustEpoch: integer("device_trust_epoch").default(1).notNull(),
-    allowAIOnEncryptedFiles: boolean("allow_ai_on_encrypted_files").default(false).notNull(),
+    allowAIOnEncryptedFiles: boolean("allow_ai_on_encrypted_files").default(true).notNull(),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

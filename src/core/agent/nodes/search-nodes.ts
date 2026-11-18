@@ -28,6 +28,8 @@ import {
   type HeadingNode,
   type LexicalMatchResult,
   type SectionReadResult,
+  type WorkspaceTreeEntry,
+  type DecisionLedgerDocument,
 } from "@/core/workspace/provider";
 import { CloudPostgresWorkspaceProvider } from "@/core/workspace/cloud-provider";
 import { getApiKeys } from "@/lib/ai/key-rotation";
@@ -43,13 +45,20 @@ export const SEARCH_AGENT_STEP_CEILING = 6;
  * Fallback in-memory workspace provider for offline test environments.
  */
 class FallbackWorkspaceProvider implements IWorkspaceProvider {
+  public readonly workspaceId = "default-workspace";
+  public readonly userId = "default_user";
+
+  async listWorkspaceTree(): Promise<WorkspaceTreeEntry[]> {
+    return [];
+  }
+
   /**
    * Returns fallback headings tree.
    *
-   * @param fileIds - Array of file identifiers.
+   * @param fileIds - Optional array of file identifiers.
    * @returns Record mapping file IDs to heading nodes.
    */
-  async listHeadingsTree(fileIds: string[]): Promise<Record<string, HeadingNode[]>> {
+  async listHeadingsTree(fileIds: string[] = []): Promise<Record<string, HeadingNode[]>> {
     const result: Record<string, HeadingNode[]> = {};
     for (const fileId of fileIds) {
       result[fileId] = [
@@ -78,9 +87,14 @@ class FallbackWorkspaceProvider implements IWorkspaceProvider {
    */
   async readSectionByHeading(fileId: string, headingSlug: string): Promise<SectionReadResult> {
     return {
+      fileId,
+      headingSlug,
       breadcrumb: headingSlug,
       contentOrVaultRef: `Section content for ${fileId}#${headingSlug}`,
       isVaultRef: false,
+      sectionHash: "fallback_section_hash",
+      fileEtag: "fallback_etag",
+      fileVersion: 1,
     };
   }
 
@@ -91,11 +105,11 @@ class FallbackWorkspaceProvider implements IWorkspaceProvider {
    * @returns Array of lexical matches.
    */
   async searchLexicalWithASTBreadcrumb(params: {
-    fileIds: string[];
+    fileIds?: string[];
     query: string;
     maxResults?: number;
   }): Promise<LexicalMatchResult[]> {
-    return params.fileIds.map((fileId) => ({
+    return (params.fileIds ?? []).map((fileId) => ({
       fileId,
       fileName: `${fileId}.md`,
       headingSlug: "system-overview",
@@ -123,6 +137,49 @@ class FallbackWorkspaceProvider implements IWorkspaceProvider {
         replacementText: String(params.agentProposedSectionContent ?? ""),
       },
     };
+  }
+
+  async createWorkspaceFile(params: {
+    relativePath: string;
+    initialContent: string;
+  }): Promise<WorkspaceTreeEntry> {
+    const title = params.relativePath.split("/").filter(Boolean).pop() ?? "untitled.md";
+    return {
+      fileId: `fallback_${title}`,
+      parentFolderId: null,
+      title,
+      relativePath: params.relativePath,
+      isFolder: false,
+      isEncrypted: false,
+      isAiExcluded: false,
+      artifactRole: "document",
+      etag: "fallback_etag",
+      version: 1,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async deleteWorkspaceFile(params: { fileId: string }): Promise<{ fileId: string; deletedAt: string }> {
+    return {
+      fileId: params.fileId,
+      deletedAt: new Date().toISOString(),
+    };
+  }
+
+  async readDecisionLedger(): Promise<DecisionLedgerDocument> {
+    return {
+      schemaVersion: "2.0",
+      workspaceId: this.workspaceId,
+      updatedAt: new Date().toISOString(),
+      decisions: {},
+    };
+  }
+
+  async writeDecisionLedger(
+    _document: DecisionLedgerDocument,
+    _options?: { expectedVersion?: number; expectedEtag?: string }
+  ): Promise<{ etag: string; version: number }> {
+    return { etag: "fallback_etag", version: 1 };
   }
 }
 

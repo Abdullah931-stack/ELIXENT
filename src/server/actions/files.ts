@@ -5,6 +5,11 @@ import { generateETagSync, normalizeMarkdownSource } from "@/lib/sync/etag-gener
 import { randomUUID } from "crypto";
 import { generateRestoredTitle, generateCopyTitle } from "@/lib/utils/file-naming";
 import { getDescendantIds, isDescendantOf } from "./folders";
+import {
+    resolveOrEnsureWorkspaceId,
+    isWorkspaceEncrypted,
+    WorkspaceNotFoundError,
+} from "./workspaces";
 
 export interface UpdateFileOptions {
     expectedVersion?: number;
@@ -22,6 +27,7 @@ export interface FileOpResult<T = typeof schema.files.$inferSelect> {
     data?: T;
     error?: string;
     status?: "conflict" | "unauthorized" | "not_found" | "forbidden" | "error";
+    statusCode?: number;
     etag?: string;
     version?: number;
     correlationId?: string;
@@ -43,7 +49,14 @@ export interface FileOpResult<T = typeof schema.files.$inferSelect> {
 export async function createFile(
     title: string,
     parentFolderId?: string | null,
-    isFolder = false
+    isFolder = false,
+    workspaceId?: string,
+    encryption?: {
+        fileId?: string;
+        content?: string;
+        isEncrypted?: boolean;
+        encryptionMetadata?: FileEncryptionMetadata | null;
+    }
 ): Promise<FileOpResult> {
     try {
         let user;
@@ -72,20 +85,83 @@ export async function createFile(
             if (!parent.isFolder) {
                 return { success: false, status: "error", error: "Target parent is not a folder" };
             }
+
+            if (workspaceId && parent.workspaceId !== workspaceId) {
+                return {
+                    success: false,
+                    status: "forbidden",
+                    statusCode: 403,
+                    error: "CROSS_WORKSPACE_ACCESS_FORBIDDEN",
+                };
+            }
         }
 
-        const newId = randomUUID();
+        let targetWorkspaceId: string;
+        try {
+            targetWorkspaceId = await resolveOrEnsureWorkspaceId(
+                user.id,
+                workspaceId,
+                parentFolderId
+            );
+        } catch (err) {
+            if (err instanceof WorkspaceNotFoundError) {
+                return { success: false, status: "not_found", statusCode: 404, error: err.message };
+            }
+            throw err;
+        }
+
+        const workspaceEncrypted = await isWorkspaceEncrypted(user.id, targetWorkspaceId);
+        const isEncrypted = !isFolder && Boolean(encryption?.isEncrypted);
+        const encryptionMetadata = isEncrypted ? (encryption?.encryptionMetadata ?? null) : null;
+
+        if (workspaceEncrypted && !isFolder && (!isEncrypted || !encryptionMetadata?.iv)) {
+            return {
+                success: false,
+                status: "error",
+                statusCode: 400,
+                error: "WORKSPACE_ENCRYPTION_REQUIRED",
+            };
+        }
+
+        if (isEncrypted && (!encryptionMetadata || !encryptionMetadata.iv)) {
+            return {
+                success: false,
+                status: "error",
+                statusCode: 400,
+                error: "Encrypted files require valid encryptionMetadata with an IV",
+            };
+        }
+
+        const newId = encryption?.fileId?.trim() || randomUUID();
         const now = new Date();
-        const initialEtag = generateETagSync({ id: newId, content: "", updatedAt: now });
+        const initialContent = isFolder ? "" : (encryption?.content ?? "");
+        const initialEtag = generateETagSync({
+            id: newId,
+            content: initialContent,
+            updatedAt: now,
+            isEncrypted,
+            envelope: isEncrypted && encryptionMetadata ? {
+                version: 1,
+                algorithm: "AES-GCM-256",
+                keyId: encryptionMetadata.keyId ?? "master-v1",
+                salt: encryptionMetadata.salt ?? "",
+                iv: encryptionMetadata.iv,
+                kdfIterations: encryptionMetadata.kdfIterations ?? 600000,
+                ciphertext: initialContent,
+            } : undefined,
+        });
 
         const [newFile] = await db
             .insert(schema.files)
             .values({
                 id: newId,
                 userId: user.id,
+                workspaceId: targetWorkspaceId,
                 title: sanitizedTitle,
-                content: "",
+                content: initialContent,
                 isFolder,
+                isEncrypted,
+                encryptionMetadata,
                 parentFolderId: parentFolderId || null,
                 etag: initialEtag,
                 version: 1,
@@ -313,6 +389,16 @@ export async function toggleFileEncryption(
                 success: false,
                 status: "error",
                 error: "Encrypted files require valid encryptionMetadata with an IV",
+            };
+        }
+
+        // SRS-02 §4.1: Encrypted workspaces forbid per-file decryption; must use decryptEntireWorkspace
+        if (!isEncrypted && (await isWorkspaceEncrypted(user.id, currentFile.workspaceId))) {
+            return {
+                success: false,
+                status: "error",
+                statusCode: 400,
+                error: "WORKSPACE_ENCRYPTION_REQUIRED",
             };
         }
 
@@ -584,6 +670,7 @@ export async function restoreFile(
             const duplicate = await db.query.files.findFirst({
                 where: and(
                     eq(schema.files.userId, user.id),
+                    eq(schema.files.workspaceId, target.workspaceId),
                     finalParentId
                         ? eq(schema.files.parentFolderId, finalParentId)
                         : isNull(schema.files.parentFolderId),
@@ -654,7 +741,8 @@ export async function copyFile(
         newFileId?: string;
         content?: string;
         encryptionMetadata?: FileEncryptionMetadata | null;
-    }
+    },
+    workspaceId?: string
 ): Promise<FileOpResult> {
     try {
         const MAX_DEPTH = 20;
@@ -685,16 +773,16 @@ export async function copyFile(
         }
 
         // Zero-knowledge security guard: If file is encrypted, strictly require complete client-side re-encrypted payload
-        if (original.isEncrypted) {
-            const hasValidNewFileId = typeof encryptedOverride?.newFileId === "string" && encryptedOverride.newFileId.trim().length > 0;
-            const hasValidContent = typeof encryptedOverride?.content === "string" && encryptedOverride.content.length > 0;
-            const hasValidMetadata = Boolean(
-                encryptedOverride?.encryptionMetadata &&
-                typeof encryptedOverride.encryptionMetadata === "object" &&
-                typeof encryptedOverride.encryptionMetadata.iv === "string" &&
-                encryptedOverride.encryptionMetadata.iv.length > 0
-            );
+        const hasValidNewFileId = typeof encryptedOverride?.newFileId === "string" && encryptedOverride.newFileId.trim().length > 0;
+        const hasValidContent = typeof encryptedOverride?.content === "string" && encryptedOverride.content.length > 0;
+        const hasValidMetadata = Boolean(
+            encryptedOverride?.encryptionMetadata &&
+            typeof encryptedOverride.encryptionMetadata === "object" &&
+            typeof encryptedOverride.encryptionMetadata.iv === "string" &&
+            encryptedOverride.encryptionMetadata.iv.length > 0
+        );
 
+        if (original.isEncrypted) {
             if (!encryptedOverride || !hasValidNewFileId || !hasValidContent || !hasValidMetadata) {
                 return {
                     success: false,
@@ -709,6 +797,7 @@ export async function copyFile(
             ? newParentFolderId
             : original.parentFolderId;
 
+        let destParentWorkspaceId: string | undefined;
         if (targetParentId) {
             const destParent = await db.query.files.findFirst({
                 where: and(
@@ -726,6 +815,17 @@ export async function copyFile(
                 return { success: false, status: "error", error: "Destination must be a folder" };
             }
 
+            if (workspaceId && destParent.workspaceId !== workspaceId) {
+                return {
+                    success: false,
+                    status: "forbidden",
+                    statusCode: 403,
+                    error: "CROSS_WORKSPACE_ACCESS_FORBIDDEN",
+                };
+            }
+
+            destParentWorkspaceId = destParent.workspaceId;
+
             // LUGX-072: Prevent copying folder into itself or any of its descendants
             if (original.isFolder) {
                 if (targetParentId === fileId) {
@@ -738,6 +838,32 @@ export async function copyFile(
             }
         }
 
+        let targetWorkspaceId: string;
+        try {
+            targetWorkspaceId = workspaceId
+                ? await resolveOrEnsureWorkspaceId(user.id, workspaceId, targetParentId)
+                : (destParentWorkspaceId ?? original.workspaceId);
+        } catch (err) {
+            if (err instanceof WorkspaceNotFoundError) {
+                return { success: false, status: "not_found", statusCode: 404, error: err.message };
+            }
+            throw err;
+        }
+
+        const targetWorkspaceEncrypted = await isWorkspaceEncrypted(user.id, targetWorkspaceId);
+        if (targetWorkspaceEncrypted && !original.isFolder) {
+            if (!encryptedOverride || !hasValidNewFileId || !hasValidContent || !hasValidMetadata) {
+                return {
+                    success: false,
+                    status: "error",
+                    statusCode: 400,
+                    error: "WORKSPACE_ENCRYPTION_REQUIRED",
+                };
+            }
+        }
+
+        const effectiveIsEncrypted = original.isEncrypted || (targetWorkspaceEncrypted && !original.isFolder);
+
         // Find first non-colliding copy title
         let copyTitle = generateCopyTitle(original.title, 1);
         let copyCounter = 1;
@@ -746,6 +872,7 @@ export async function copyFile(
             const existingLive = await db.query.files.findFirst({
                 where: and(
                     eq(schema.files.userId, user.id),
+                    eq(schema.files.workspaceId, targetWorkspaceId),
                     targetParentId
                         ? eq(schema.files.parentFolderId, targetParentId)
                         : isNull(schema.files.parentFolderId),
@@ -759,7 +886,7 @@ export async function copyFile(
             copyTitle = generateCopyTitle(original.title, copyCounter);
         }
 
-        const newFileId = (original.isEncrypted && encryptedOverride?.newFileId)
+        const newFileId = (effectiveIsEncrypted && encryptedOverride?.newFileId)
             ? encryptedOverride.newFileId
             : randomUUID();
         const now = new Date();
@@ -768,7 +895,7 @@ export async function copyFile(
             ? null
             : (encryptedOverride?.content !== undefined ? encryptedOverride.content : (original.content || ""));
 
-        const finalMetadata = original.isEncrypted
+        const finalMetadata = effectiveIsEncrypted
             ? (encryptedOverride?.encryptionMetadata !== undefined ? encryptedOverride.encryptionMetadata : original.encryptionMetadata)
             : null;
 
@@ -778,8 +905,8 @@ export async function copyFile(
                 id: newFileId,
                 content: finalContent || "",
                 updatedAt: now,
-                isEncrypted: original.isEncrypted,
-                envelope: original.isEncrypted && finalMetadata ? {
+                isEncrypted: effectiveIsEncrypted,
+                envelope: effectiveIsEncrypted && finalMetadata ? {
                     version: 1,
                     algorithm: 'AES-GCM-256',
                     keyId: finalMetadata.keyId ?? 'master-v1',
@@ -795,11 +922,12 @@ export async function copyFile(
             .values({
                 id: newFileId,
                 userId: user.id,
+                workspaceId: targetWorkspaceId,
                 title: copyTitle,
                 content: finalContent,
                 isFolder: original.isFolder,
                 parentFolderId: targetParentId,
-                isEncrypted: original.isEncrypted,
+                isEncrypted: effectiveIsEncrypted,
                 encryptionMetadata: finalMetadata,
                 etag: newEtag,
                 version: 1,
@@ -819,10 +947,10 @@ export async function copyFile(
             });
 
             for (const child of children) {
-                if (child.isEncrypted) {
+                if (child.isEncrypted || targetWorkspaceEncrypted) {
                     continue; // Skip encrypted children in bulk server copy without client keys
                 }
-                await copyFile(child.id, copiedFile.id, sanitizedDepth + 1);
+                await copyFile(child.id, copiedFile.id, sanitizedDepth + 1, undefined, targetWorkspaceId);
             }
         }
 
@@ -869,7 +997,9 @@ export async function getFile(fileId: string): Promise<FileOpResult> {
 /**
  * Get all active files and folders for authenticated user.
  */
-export async function getUserFiles(): Promise<FileOpResult<typeof schema.files.$inferSelect[]>> {
+export async function getUserFiles(
+    workspaceId?: string
+): Promise<FileOpResult<typeof schema.files.$inferSelect[]>> {
     try {
         let user;
         try {
@@ -878,11 +1008,17 @@ export async function getUserFiles(): Promise<FileOpResult<typeof schema.files.$
             return { success: false, status: "unauthorized", error: "Authentication required" };
         }
 
+        const conditions = [
+            eq(schema.files.userId, user.id),
+            isNull(schema.files.deletedAt),
+        ];
+
+        if (workspaceId) {
+            conditions.push(eq(schema.files.workspaceId, workspaceId));
+        }
+
         const files = await db.query.files.findMany({
-            where: and(
-                eq(schema.files.userId, user.id),
-                isNull(schema.files.deletedAt)
-            ),
+            where: and(...conditions),
             orderBy: (files, { desc }) => [desc(files.isFolder), desc(files.updatedAt)],
         });
 
@@ -897,7 +1033,9 @@ export async function getUserFiles(): Promise<FileOpResult<typeof schema.files.$
 /**
  * Get root level files and folders for authenticated user.
  */
-export async function getRootFiles(): Promise<FileOpResult<typeof schema.files.$inferSelect[]>> {
+export async function getRootFiles(
+    workspaceId?: string
+): Promise<FileOpResult<typeof schema.files.$inferSelect[]>> {
     try {
         let user;
         try {
@@ -906,12 +1044,18 @@ export async function getRootFiles(): Promise<FileOpResult<typeof schema.files.$
             return { success: false, status: "unauthorized", error: "Authentication required" };
         }
 
+        const conditions = [
+            eq(schema.files.userId, user.id),
+            isNull(schema.files.parentFolderId),
+            isNull(schema.files.deletedAt),
+        ];
+
+        if (workspaceId) {
+            conditions.push(eq(schema.files.workspaceId, workspaceId));
+        }
+
         const files = await db.query.files.findMany({
-            where: and(
-                eq(schema.files.userId, user.id),
-                isNull(schema.files.parentFolderId),
-                isNull(schema.files.deletedAt)
-            ),
+            where: and(...conditions),
             orderBy: (files, { desc }) => [desc(files.isFolder), desc(files.updatedAt)],
         });
 
