@@ -6,10 +6,12 @@ Phase 3 and Phase 8 establish end-to-end server-side ownership enforcement, hier
 
 ### Key Guarantees
 1. **Server-Derived Identity & Resource Guards (`src/server/auth/session.ts`):** All file operations derive user identity directly from `requireAuthenticatedUser()` on the server. Resource ownership is validated via `requireOwnedFile(fileId, userId)` with UUID validation, returning uniform `404 Not Found` for unowned or missing files to prevent resource enumeration attacks. Client-provided `userId` parameters are strictly rejected or stripped.
-2. **Parent Ownership & Tree Integrity:** Creating, moving, copying, or importing files requires validating that the target parent folder exists, is owned by the authenticated user, is not soft-deleted, and is a valid directory (`isFolder === true`).
-3. **Unbounded Cycle & Descendant Protection:** The system detects and rejects cycles (e.g. moving a folder into itself, circular directory loops, or moving into any descendant) with HTTP `409 Conflict`.
-4. **Mandatory Preconditions (`If-Match` / `expectedVersion`):** Mutating or deleting a file requires an `If-Match` ETag header or `expectedVersion` in the payload. Missing preconditions return HTTP `428 Precondition Required`, while version mismatches return HTTP `412 Precondition Failed` with current `serverVersion` payload.
-5. **Atomic Concurrency & ETag Mutation:** Comparison of version/ETag and version increment are executed in a single atomic SQL transaction.
+2. **Multi-Workspace Isolation & Default Resolution (`src/server/actions/workspaces.ts`):** Every file and folder belongs to a user-owned `workspaceId` (`workspaces` table). `createFile`, `copyFile`, `getUserFiles`, `getRootFiles`, `getFolderChildren`, and `importFile` accept an optional `workspaceId` and resolve via `resolveOrEnsureWorkspaceId(userId, workspaceId, parentFolderId)` (explicit owned workspace -> parent folder workspace inheritance -> deterministic `'Default Workspace'`). Cross-workspace parent folder assignments in `createFile`, `copyFile`, `importFile`, and `moveFile` fail closed with HTTP `403 CROSS_WORKSPACE_ACCESS_FORBIDDEN`. `deleteWorkspace` forbids deleting `deriveDefaultWorkspaceId(userId)` or any `'Default Workspace'` row (`403`).
+3. **Workspace-Wide Zero-Knowledge Encryption Governance (`400 WORKSPACE_ENCRYPTION_REQUIRED`):** Inside an encrypted workspace (`workspace.isEncrypted === true`), `createFile` (non-folder), `copyFile` (non-folder), `importFile`, `toggleFileEncryption(false)`, and `PUT /api/files/:id` reject unencrypted writes or missing `encryptionMetadata.iv` with HTTP `400 WORKSPACE_ENCRYPTION_REQUIRED`. Removing encryption requires all-or-nothing atomic decryption via `decryptEntireWorkspace(workspaceId, decryptedFilesPayload)` with `expectedVersion` / `expectedETag` OCC (`409` rollback).
+4. **Parent Ownership & Tree Integrity:** Creating, moving, copying, or importing files requires validating that the target parent folder exists, is owned by the authenticated user, is not soft-deleted, is a valid directory (`isFolder === true`), and belongs to the target `workspaceId`.
+5. **Unbounded Cycle & Descendant Protection:** The system detects and rejects cycles (e.g. moving a folder into itself, circular directory loops, or moving into any descendant) with HTTP `409 Conflict`.
+6. **Mandatory Preconditions (`If-Match` / `expectedVersion`):** Mutating or deleting a file requires an `If-Match` ETag header or `expectedVersion` in the payload. Missing preconditions return HTTP `428 Precondition Required`, while version mismatches return HTTP `412 Precondition Failed` with current `serverVersion` payload.
+7. **Atomic Concurrency & ETag Mutation:** Comparison of version/ETag and version increment are executed in a single atomic SQL transaction.
 
 ---
 
@@ -17,9 +19,11 @@ Phase 3 and Phase 8 establish end-to-end server-side ownership enforcement, hier
 
 | Status Code | Reason | Behavior |
 | :--- | :--- | :--- |
+| `400 Bad Request` | Invalid payload or unencrypted write in encrypted workspace | Returns `WORKSPACE_ENCRYPTION_REQUIRED` when writing plaintext or disabling per-file encryption inside an encrypted workspace. |
 | `401 Unauthorized` | Missing/expired server session | Fails closed before executing database queries via `requireAuthenticatedUser()`. |
-| `404 Not Found` | Target file/folder does not exist, is soft-deleted, or belongs to another user | Unified anti-enumeration response preventing discovery of foreign resources via `requireOwnedFile()`. |
-| `409 Conflict` | Semantic collision or cycle | Triggered when moving a folder into itself, into a descendant, or detecting circular folder loops. |
+| `403 Forbidden` | Cross-workspace access or protected default workspace | Returned on cross-workspace `moveFile` / parent folder mismatch (`CROSS_WORKSPACE_ACCESS_FORBIDDEN`) or attempting to delete the default workspace. |
+| `404 Not Found` | Target file/folder/workspace does not exist, is soft-deleted, or belongs to another user | Unified anti-enumeration response preventing discovery of foreign resources via `requireOwnedFile()` or `WorkspaceNotFoundError`. |
+| `409 Conflict` | Semantic collision or cycle | Triggered when moving a folder into itself, into a descendant, detecting circular folder loops, duplicate workspace name, or `decryptEntireWorkspace` version mismatch. |
 | `412 Precondition Failed` | Stale ETag or version mismatch | Returns `412` with current `serverVersion` data for conflict resolution (applies to `PUT` and `DELETE`). |
 | `428 Precondition Required` | Missing `If-Match` and `expectedVersion` | Enforces optimistic locking protocol on all mutations and deletions. |
 | `429 Too Many Requests` | Rate limit threshold exceeded | Protected by `fileApiRateLimiter`. |
@@ -120,15 +124,18 @@ The signature `getDescendantIds(folderId: string, userId: string, includeDeleted
 - **Atomic Metadata & ETag Update**: Inverts `isEncrypted`, sets/clears structured `encryptionMetadata`, updates normalized content, computes strong SHA-256 ETag, and increments version atomically in a single SQL operation.
 
 ### L. Modular Action Architecture & Domain Separation (`src/server/actions/*`)
-To guarantee high cohesion and single-responsibility isolation, file and directory operations are divided into two dedicated Hono RPC domain action modules (exposed via `src/server/routes/rpc.routes.ts`):
-- **`src/server/actions/files.ts`:** Governs individual file life cycles, including `createFile`, `updateFileContent`, `toggleFileEncryption`, `renameFile`, `deleteFile`, `restoreFile`, and `copyFile`.
-- **`src/server/actions/folders.ts`:** Governs folder hierarchy graph logic, including `moveFile`, `getFolderChildren`, `getDescendantIds`, and `isDescendantOf`.
-- **Direct Domain Imports:** Hono RPC handlers (`src/server/routes/rpc.routes.ts`) and internal server routes import domain operations directly from `@/server/actions/files` and `@/server/actions/folders`. The legacy `src/server/actions/file-ops.ts` facade was permanently purged.
+To guarantee high cohesion and single-responsibility isolation, file, folder, and workspace operations are divided into dedicated domain action modules:
+- **`src/server/actions/workspaces.ts`:** Governs workspace ownership and lifecycle (`resolveOrEnsureWorkspaceId`, `isWorkspaceEncrypted`, `listUserWorkspaces`, `createWorkspace`, `updateWorkspace`, `deleteWorkspace`, `decryptEntireWorkspace`).
+- **`src/server/actions/files.ts`:** Governs individual file life cycles (`createFile`, `updateFileContent`, `toggleFileEncryption`, `renameFile`, `deleteFile`, `restoreFile`, `copyFile`, `getFile`, `getUserFiles`, `getRootFiles`, `getDeletedFiles`).
+- **`src/server/actions/folders.ts`:** Governs folder hierarchy graph logic (`moveFile`, `getFolderChildren`, `getDescendantIds`, `isDescendantOf`).
+- **Direct Domain Imports:** Hono RPC handlers (`src/server/routes/rpc.routes.ts`) and internal server routes import domain operations directly from `@/server/actions/files`, `@/server/actions/folders`, and `@/server/actions/workspaces`. The legacy `src/server/actions/file-ops.ts` facade was permanently purged.
 
 ---
 
 ## 4. Verification & Testing Evidence
  
+ - `src/test/workspace/multi-workspace-isolation.test.ts`: Unit and cross-contract tests verifying `deriveDefaultWorkspaceId`, `resolveOrEnsureWorkspaceId`, `deleteWorkspace` protection, `decryptEntireWorkspace` atomic rollback/commit, `CloudPostgresWorkspaceProvider` (`403 CrossWorkspaceAccessForbiddenError`, `409 DecisionLedgerConflictError`, `403 DECISION_LEDGER_DELETE_FORBIDDEN`, `mergeSectionThreeWay` closed-file OCC), `400 WORKSPACE_ENCRYPTION_REQUIRED` across actions/REST/RPC, and `exportWorkspaceAsZip`.
+ - `src/test/workspace/multi-workspace-isolation.live.test.ts`: Real PostgreSQL live integration suite on the isolated Neon test branch verifying `idx_files_workspace_parent_title_live`, `agent_checkpoints` cascade delete, `user_vault_profiles.allow_ai_on_encrypted_files` DB default (`true`), `decryptEntireWorkspace` SQL transaction rollback, cross-workspace `403`, and `400 WORKSPACE_ENCRYPTION_REQUIRED`.
  - `src/test/server/phase-08-ownership-and-cycles.test.ts`: 18 tests verifying server session enforcement, UUID validation, cross-tenant 404 shielding, cycle detection, copy depth bounds, 412 deletion preconditions, and test route isolation.
  - `src/test/server/cross-user-ownership.test.ts`: 11 integration tests verifying cross-user isolation across `createFile`, `copyFile`, `moveFile`, `getFile`, `updateFileContent`, `deleteFile`, `importFile`, AI reservations, streaming, and atomic UPSERT user sync.
  - `src/test/server/file-ops.ownership.test.ts`: Covers cross-user parent validation, cycle detection across arbitrary hierarchy depth, and precondition enforcement (428/412) in `src/server/actions/files.ts` and `src/server/actions/folders.ts`.
@@ -141,7 +148,7 @@ To guarantee high cohesion and single-responsibility isolation, file and directo
  - `src/test/vault/vault-import.integration.test.ts`: Integration test verifying direct client-encrypted vault import pipeline.
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 146 unit suites (3000 tests) · 21 live suites (97 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 147 unit suites (3027 tests) · 22 live suites (101 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ---

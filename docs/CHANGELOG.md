@@ -4,6 +4,26 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.25.0] - 2026-11-18 (Phase 2: Multi-Workspace Isolation, `decisions.ledger.json` Storage & ZK Governance)
+
+### Database Schema, Migrations & Isolation Guards (`ADR-011`, `SRS-02`)
+- **Multi-Workspace & Native Checkpoint Schema (`src/server/db/schema/workspaces.ts`, `files.ts`, `agent-checkpoints.ts`, `vault.ts`, `0014_multi_workspace_and_native_engine.sql`):** Added `workspaces` (`idx_workspaces_user_name`, `idx_workspaces_user_updated`), `agent_checkpoints` (`idx_agent_checkpoints_workspace_thread`), `deriveDefaultWorkspaceId(userId)`, `files.workspaceId` (`NOT NULL`), `files.isAiExcluded`, `files.artifactRole` (`'document' | 'decision_ledger'`), partial unique index `idx_files_workspace_parent_title_live`, `idx_files_workspace_deleted`, and `user_vault_profiles.allow_ai_on_encrypted_files DEFAULT true`. Updated `scripts/verify-migrations.mjs` to assert `workspaces`, `agent_checkpoints`, and all `0014` indexes.
+
+### Workspace Provider & `decisions.ledger.json` Storage (`src/core/workspace/`)
+- **Tenant-Isolated Provider Contract (`provider.ts`, `cloud-provider.ts`, `src/core/agent/nodes/search-nodes.ts`):** Extended `IWorkspaceProvider` and `CloudPostgresWorkspaceProvider` with `workspaceId` scoping, `CrossWorkspaceAccessForbiddenError` (`403`), `listWorkspaceTree`, `createWorkspaceFile`, `deleteWorkspaceFile` (protecting `decisions.ledger.json`), and `readDecisionLedger`/`writeDecisionLedger` (`DecisionLedgerConflictError` `409`). Enriched `SectionReadResult` with `fileId`, `headingSlug`, `sectionHash`, `fileEtag`, and `fileVersion`, and persisted clean unencrypted closed-file `mergeSectionThreeWay` edits with `schema.files.version` optimistic concurrency (`409 FILE_VERSION_CONFLICT`).
+
+### Workspace Actions, REST/RPC Routes & Full-Workspace ZIP Export
+- **Workspace Actions & Governance (`src/server/actions/workspaces.ts`, `files.ts`, `folders.ts`, `import-file.ts`):** Added `resolveOrEnsureWorkspaceId`, `isWorkspaceEncrypted`, `listUserWorkspaces`, `createWorkspace`, `updateWorkspace`, `deleteWorkspace` (blocking deletion of both `deriveDefaultWorkspaceId(user.id)` and `"Default Workspace"`), and transactional `decryptEntireWorkspace`; enforced `403 CROSS_WORKSPACE_ACCESS_FORBIDDEN` and `400 WORKSPACE_ENCRYPTION_REQUIRED` across file/folder/import mutations.
+- **Sync REST, Typed RPC & Test Harnesses (`src/server/routes/files-api.routes.ts`, `rpc.routes.ts`, `e2e-auth.routes.ts`, `src/types/rpc-contracts.ts`, `src/test/test-db.ts`, `e2e/fixtures/test-db.ts`):** Included `workspaceId`, `isAiExcluded`, and `artifactRole` in `FileRecord` and `/api/files/*` responses, propagated `workspaceId` and `400`/`403` statuses on `/api/rpc/files/*`, seeded `"Default Workspace"` via `upsertE2EUserRecord` and `ensureTestDefaultWorkspace`, and ordered child cleanup for `agentCheckpoints`, `files`, and `workspaces`.
+- **Full-Workspace ZIP Exporter (`src/lib/export/workspace-zip-exporter.ts`):** Implemented `exportWorkspaceAsZip`, `buildZipArchive` (STORE method `0`, IEEE 802.3 CRC-32 `computeCrc32`, UTF-8 flag `0x0800`), fail-closed `ENCRYPTED_EXPORT_UNCONFIRMED` guard (`options.confirmedPlaintextExport !== true`), `VAULT_LOCKED` / `DECRYPTION_FAILED` guards, and `decisions.ledger.json` `affectedSections[].relativePath` path enrichment.
+
+### Verification & Closure
+- **Multi-Workspace Unit & Live Suites (`src/test/workspace/`):** Added `multi-workspace-isolation.test.ts` and `multi-workspace-isolation.live.test.ts` (registered as suite #22 in `vitest.constants.mts`).
+- **Verification Baseline:** `npx tsc --noEmit` (`0` errors), `npm run lint` (`0` errors, `0` warnings), `npm run audit:ci` (`0` vulnerabilities; `TD-21` dev allowlist active), `npm run test:ci-gate` (`30/30`), `npm run test` (`147` unit suites / `3,027` tests passing), `npm run test:live` (`22` live suites / `101` tests passing), `npm run test:e2e` (`14` specs / `15` journeys passing), `npm run docs:check` (100% synced), and `npm run lint:links` (`0` broken links).
+- **Phase Closure Dossier:** Documented in [`docs/records/closures/architectural-evolution/phase-02-multi-workspace-isolation-decision-ledger-storage-and-zk-governance.md`](./records/closures/architectural-evolution/phase-02-multi-workspace-isolation-decision-ledger-storage-and-zk-governance.md).
+
+---
+
 ## [0.24.1] - 2026-11-18 (Dev Toolchain Security Audit Governance — `TD-21`)
 
 - **Dev-Only Advisory Allowlist (`scripts/ci-audit.mjs`, `docs/TECHNICAL_DEBT_REGISTER.md`, `package-lock.json`):** Retained non-breaking dev toolchain lockfile updates (`vite@6.4.6`, `typescript-eslint@8.73.0`, hoisted `fdir@6.5.0` and `picomatch@4.0.7`), registered unpatched upstream `picomatch <= 4.0.7` ReDoS advisory `GHSA-FC5Q-39XC-VJPF` (`CWE-1333`, source `1247710`) in `ALLOWLIST` strictly scoped to `dev` under [`TD-21`](./TECHNICAL_DEBT_REGISTER.md#td-21--latent-upstream-redos-in-dev-toolchain-picomatch--407--accepted-debt-2026-11-18), and preserved the zero-tolerance fail-closed production audit gate (`--omit=dev = 0`). Verified with `npm run audit:ci`, `npm run lint`, `npx tsc --noEmit`, `npm run test` (`146` unit suites / `3,000` tests passing), `npm run docs:check`, and `npm run lint:links` (`0` broken links).

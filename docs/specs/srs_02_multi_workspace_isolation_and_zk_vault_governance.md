@@ -6,7 +6,7 @@
 | **Classification**          | `SOFTWARE REQUIREMENTS SPECIFICATION (SUBSYSTEM 2 OF 4)`                                                                                                                                                                                                                                                                                                             |
 | **Governing ADRs**          | [`ADR-011`](../architecture/adrs/adr_011_multi_workspace_data_isolation_model.md), [`ADR-012`](../architecture/adrs/adr_012_json_decision_ledger_and_graph_traversal.md), [`ADR-016`](../architecture/adrs/adr_016_zk_encryption_granularity_and_ephemeral_ai_bridge.md)                                                                                             |
 | **Reference Baseline**      | `Elixent v0.22.0` (`Vite 6 SPA + TanStack Router + Hono RPC`)                                                                                                                                                                                                                                                                                                        |
-| **Target Repository Scope** | `../../src/server/db/schema/workspaces.ts` (Planned / New), `../../src/server/db/schema/files.ts`, `../../src/server/db/schema/vault.ts`, `../../src/core/workspace/**`, `../../src/lib/vault/**`, `../../src/lib/crypto/aad.ts`, `../../src/lib/export/workspace-zip-exporter.ts` (Planned / New), `../../src/lib/sync/**`, `../../src/server/routes/rpc.routes.ts` |
+| **Target Repository Scope** | `../../src/server/db/schema/workspaces.ts`, `../../src/server/db/schema/files.ts`, `../../src/server/db/schema/vault.ts`, `../../src/core/workspace/**`, `../../src/lib/vault/**`, `../../src/lib/crypto/aad.ts`, `../../src/lib/export/workspace-zip-exporter.ts`, `../../src/lib/sync/**`, `../../src/server/routes/rpc.routes.ts` |
 | **Status**                  | `APPROVED FOR IMPLEMENTATION (v1.1 Audited)`                                                                                                                                                                                                                                                                                                                         |
 
 ## 1. Purpose, Scope & Architectural Traceability
@@ -15,7 +15,7 @@ This Software Requirements Specification (**SRS-02**) defines the database schem
 
 | Requirement Group         | Governing ADR                                                                                  | Target Source Modules                                                                                                                                                                                                                                     | Core Engineering Objective                                                                                                                                                                                                                                                |
 | :------------------------ | :--------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **`REQ-WS-01 .. 06`**     | [`ADR-011`](../architecture/adrs/adr_011_multi_workspace_data_isolation_model.md)              | `../../src/server/db/schema/workspaces.ts` (Planned / New), `../../src/server/db/schema/files.ts`, `../../src/core/workspace/provider.ts`, `../../src/core/workspace/cloud-provider.ts`, `../../src/lib/export/workspace-zip-exporter.ts` (Planned / New) | Enforce multi-workspace data isolation, workspace-scoped filename uniqueness, full-workspace agent access (open + closed files), file creation/deletion tools, and hierarchical `.zip` archive export.                                                                    |
+| **`REQ-WS-01 .. 06`**     | [`ADR-011`](../architecture/adrs/adr_011_multi_workspace_data_isolation_model.md)              | `../../src/server/db/schema/workspaces.ts`, `../../src/server/db/schema/files.ts`, `../../src/core/workspace/provider.ts`, `../../src/core/workspace/cloud-provider.ts`, `../../src/lib/export/workspace-zip-exporter.ts` | Enforce multi-workspace data isolation, workspace-scoped filename uniqueness, full-workspace agent access (open + closed files), file creation/deletion tools, and hierarchical `.zip` archive export.                                                                    |
 | **`REQ-ZK-01 .. 05`**     | [`ADR-016`](../architecture/adrs/adr_016_zk_encryption_granularity_and_ephemeral_ai_bridge.md) | `../../src/server/db/schema/vault.ts`, `../../src/lib/sync/sync-crypto-gateway.ts`, `../../src/lib/vault/ephemeral-memory-map.ts`, `../../src/server/routes/agent.routes.ts`                                                                              | Enforce mandatory total encryption inside encrypted workspaces with all-or-nothing decryption confirmation, enable AI on encrypted files by default (`allowAIOnEncryptedFiles = true`), and implement the `ephemeralVaultPayloads` / `vault_file_commit_required` bridge. |
 | **`REQ-PREFIX-01 .. 03`** | Direct Engineering Requirement                                                                 | `../../src/lib/crypto/aad.ts`, `../../src/lib/sync/session-key-store.ts`, `../../src/lib/sync/cross-tab-sync.ts`, `../../src/lib/sync/idb-types.ts`                                                                                                       | Replace legacy project-named prefixes (`lugx:v1:*`, `lugx_vault_session_v1`, `lugx_sync_*`) with permanent, brand-agnostic functional prefixes (`zk:v1:*`, `vault_session_v1`, `workspace_sync_*`).                                                                       |
 
@@ -23,7 +23,7 @@ This Software Requirements Specification (**SRS-02**) defines the database schem
 
 ### 2.1. Sovereign `workspaces` Table Schema (`REQ-WS-01`)
 
-File: `../../src/server/db/schema/workspaces.ts` (Planned / New)
+File: `../../src/server/db/schema/workspaces.ts`
 
 ```typescript
 import {
@@ -130,6 +130,9 @@ export interface SectionReadResult {
   readonly breadcrumb: string;
   readonly contentOrVaultRef: string;
   readonly isVaultRef: boolean;
+  readonly sectionHash: string;
+  readonly fileEtag: string;
+  readonly fileVersion: number;
 }
 
 export interface IWorkspaceProvider {
@@ -178,9 +181,10 @@ export interface IWorkspaceProvider {
   /** Reads the workspace's canonical decisions.ledger.json document (initializing v2.0 if absent) */
   readDecisionLedger(): Promise<DecisionLedgerDocument>;
 
-  /** Atomically writes the updated decisions.ledger.json document */
+  /** Atomically writes the updated decisions.ledger.json document with optional OCC checks */
   writeDecisionLedger(
     document: DecisionLedgerDocument,
+    options?: { expectedVersion?: number; expectedEtag?: string },
   ): Promise<{ etag: string; version: number }>;
 }
 ```
@@ -199,11 +203,11 @@ In `CloudPostgresWorkspaceProvider` (`../../src/core/workspace/cloud-provider.ts
 
 ### 3.3. Full-Workspace `.zip` Archive Export (`REQ-WS-06`)
 
-File: `../../src/lib/export/workspace-zip-exporter.ts` (Planned / New)
+File: `../../src/lib/export/workspace-zip-exporter.ts`
 
-- Exposes `exportWorkspaceAsZip(workspaceId: string): Promise<Blob>`:
+- Exposes `exportWorkspaceAsZip(workspaceId: string, options?: WorkspaceZipExportOptions): Promise<Blob>`:
   1. Reconstructs the full folder hierarchy (`parentFolderId` tree) inside the `.zip` archive using each file's `relativePath`.
-  2. For encrypted files (`isEncrypted === true`), decrypts content locally via `SyncCryptoGateway` (`../../src/lib/sync/sync-crypto-gateway.ts`) when the vault is unlocked (after displaying `ExportWarningModal` in `../../src/components/export/export-warning-modal.tsx`).
+  2. Fails closed with `WorkspaceZipExportError('ENCRYPTED_EXPORT_UNCONFIRMED')` if any active file has `isEncrypted === true` and `options.confirmedPlaintextExport !== true`, then decrypts content locally via `SyncCryptoGateway` (`../../src/lib/sync/sync-crypto-gateway.ts`) when the vault is unlocked (after displaying `ExportWarningModal` in `../../src/components/export/export-warning-modal.tsx`).
   3. Includes `decisions.ledger.json` at the root of the `.zip` archive with every `affectedSections` entry containing `{ fileId, relativePath, headingSlug }`.
 
 ## 4. Zero-Knowledge Encryption Governance & Ephemeral AI Bridge (`ADR-016`)

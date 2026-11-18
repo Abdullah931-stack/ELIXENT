@@ -44,10 +44,37 @@ export interface SectionMergeOutcome {
   diagnostics?: string[];
 }
 
+export interface WorkspaceTreeEntry {
+  readonly fileId: string;
+  readonly parentFolderId: string | null;
+  readonly title: string;
+  readonly relativePath: string;
+  readonly isFolder: boolean;
+  readonly isEncrypted: boolean;
+  readonly isAiExcluded: boolean;
+  readonly artifactRole: "document" | "decision_ledger";
+  readonly etag: string;
+  readonly version: number;
+  readonly updatedAt: string;
+}
+
+export interface DecisionLedgerDocument {
+  schemaVersion: string;
+  workspaceId: string;
+  updatedAt: string;
+  decisions: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 export interface SectionReadResult {
+  readonly fileId: string;
+  readonly headingSlug: string;
   breadcrumb: string;
   contentOrVaultRef: string;
   isVaultRef: boolean;
+  readonly sectionHash: string;
+  readonly fileEtag: string;
+  readonly fileVersion: number;
 }
 
 export interface AgentStreamRequestPayload {
@@ -61,10 +88,16 @@ export interface AgentStreamRequestPayload {
 }
 
 export interface IWorkspaceProvider {
-  /** Return the complete heading tree for target files without loading full document bodies */
-  listHeadingsTree(fileIds: string[]): Promise<Record<string, HeadingNode[]>>;
+  readonly workspaceId: string;
+  readonly userId: string;
 
-  /** Read the body of a specific section via file ID and heading slug (respecting vault isolation and recording the base ancestor snapshot for 3-way merge) */
+  /** Lists all non-deleted, non-AI-excluded files and folders in the active workspace */
+  listWorkspaceTree(): Promise<WorkspaceTreeEntry[]>;
+
+  /** Return the complete heading tree for target files (or all non-excluded workspace files if omitted) */
+  listHeadingsTree(fileIds?: string[]): Promise<Record<string, HeadingNode[]>>;
+
+  /** Read the body of a specific section via file ID and heading slug (respecting vault isolation and returning SHA-256 sectionHash + file ETag/version) */
   readSectionByHeading(
     fileId: string,
     headingSlug: string,
@@ -72,7 +105,7 @@ export interface IWorkspaceProvider {
 
   /** Hybrid search (lexical BM25 / Regex) within paragraphs and tables with parent heading breadcrumb attached */
   searchLexicalWithASTBreadcrumb(params: {
-    fileIds: string[];
+    fileIds?: string[];
     query: string;
     maxResults?: number;
   }): Promise<LexicalMatchResult[]>;
@@ -85,6 +118,26 @@ export interface IWorkspaceProvider {
     agentProposedSectionContent: string;
     liveDocumentContent: string;
   }): Promise<SectionMergeOutcome>;
+
+  /** Creates a new Markdown file (and any missing parent folders) inside the active workspaceId */
+  createWorkspaceFile(params: {
+    relativePath: string;
+    initialContent: string;
+  }): Promise<WorkspaceTreeEntry>;
+
+  /** Soft-deletes a document file inside workspaceId; blocks deleting decisions.ledger.json */
+  deleteWorkspaceFile(params: {
+    fileId: string;
+  }): Promise<{ fileId: string; deletedAt: string }>;
+
+  /** Reads the workspace's canonical decisions.ledger.json document (initializing v2.0 if absent) */
+  readDecisionLedger(): Promise<DecisionLedgerDocument>;
+
+  /** Atomically writes the updated decisions.ledger.json document with optional OCC checks */
+  writeDecisionLedger(
+    document: DecisionLedgerDocument,
+    options?: { expectedVersion?: number; expectedEtag?: string },
+  ): Promise<{ etag: string; version: number }>;
 }
 
 // Custom Workspace Domain Errors
@@ -107,15 +160,25 @@ export class EncryptedPayloadMissingError extends Error {
   readonly status = 400;
   readonly code = "ENCRYPTED_PAYLOAD_MISSING";
 }
+
+export class CrossWorkspaceAccessForbiddenError extends Error {
+  readonly status = 403;
+  readonly code = "CROSS_WORKSPACE_ACCESS_FORBIDDEN";
+}
+
+export class DecisionLedgerConflictError extends Error {
+  readonly status = 409;
+  readonly code = "DECISION_LEDGER_CONFLICT";
+}
 ```
 
 ### 1.1. Interface Implementations (`Cloud vs. Desktop Implementations`)
 
 | Operational Dimension | Cloud Implementation (`CloudPostgresWorkspaceProvider`) | Desktop Implementation (`DesktopLocalFsWorkspaceProvider`) |
 | :--- | :--- | :--- |
-| **File Source** | PostgreSQL `files` table (`src/server/db/schema/files.ts`) for standard plaintext files + transient memory map (`EphemeralVaultMemoryMap`) passed in the request for encrypted files and live editor snapshots (`liveDocumentSnapshots`). | Local filesystem (`node:fs/promises`) + local `SQLite` index in Electron. |
-| **Permission Verification** | Verification of `files.userId === session.userId` and verification of `userVaultProfiles.allowAIOnEncryptedFiles`. | Local OS permissions for the open workspace directory. |
-| **Lexical Search Engine** | Fast in-memory `BM25 / Regex` scanner over the targeted files (`targetFileIds`). | `SQLite FTS5` index + `Tree-sitter` AST for large code repositories. |
+| **File Source** | PostgreSQL `files` table (`src/server/db/schema/files.ts`) scoped strictly to `(userId, workspaceId)`, excluding `deletedAt IS NOT NULL` and `isAiExcluded = true`, plus transient `EphemeralVaultMemoryMap` and `liveDocumentSnapshots` (for open editor tabs). Closed unencrypted clean merges persist directly to `schema.files` with `eq(schema.files.version, file.version)` OCC (`409 FILE_VERSION_CONFLICT`). | Local filesystem (`node:fs/promises`) + local `SQLite` index in Electron. |
+| **Permission & Workspace Verification** | Verifies `files.userId === userId` (`404 WorkspaceFileAccessDeniedError` on missing/excluded), enforces `files.workspaceId === this.workspaceId` (`403 CrossWorkspaceAccessForbiddenError` on cross-workspace access), blocks `decision_ledger` deletion (`403 DECISION_LEDGER_DELETE_FORBIDDEN`), enforces OCC on `writeDecisionLedger` (`409 DecisionLedgerConflictError`), and checks `userVaultProfiles.allowAIOnEncryptedFiles` (`403 VaultAIAccessDeniedError`). | Local OS permissions for the open workspace directory. |
+| **Lexical Search Engine** | Fast in-memory `BM25 / Regex` scanner over `fileIds` (or all non-excluded workspace documents when `fileIds` is omitted). | `SQLite FTS5` index + `Tree-sitter` AST for large code repositories. |
 
 ## 2. Hybrid AST and Lexical Search Engine (`Hybrid AST + Lexical/BM25 Engine`)
 

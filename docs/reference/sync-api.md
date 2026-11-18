@@ -35,14 +35,17 @@ Response shape from `src/server/routes/files-api.routes.ts` (mounted at `/api/fi
   "files": [
     {
       "id": "file-uuid",
+      "workspaceId": "workspace-uuid",
       "title": "Document Title",
       "content": "file content...",
+      "isEncrypted": false,
+      "isAiExcluded": false,
+      "artifactRole": "document",
+      "encryptionMetadata": null,
       "etag": "abc123def456",
       "version": 5,
       "parentFolderId": "folder-uuid",
       "isFolder": false,
-      "isEncrypted": false,
-      "encryptionMetadata": null,
       "deletedAt": null,
       "updatedAt": "2026-02-01T12:00:00.000Z",
       "createdAt": "2026-01-15T09:30:00.000Z"
@@ -105,13 +108,20 @@ Vary: If-None-Match
 
 {
   "id": "abc123",
-  "content": "file content...",
+  "workspaceId": "workspace-uuid",
   "title": "Document Title",
+  "content": "file content...",
   "isEncrypted": false,
+  "isAiExcluded": false,
+  "artifactRole": "document",
   "encryptionMetadata": null,
   "etag": "new-etag-value",
   "version": 5,
-  "updatedAt": "2026-02-01T12:00:00Z"
+  "parentFolderId": null,
+  "isFolder": false,
+  "deletedAt": null,
+  "updatedAt": "2026-02-01T12:00:00Z",
+  "createdAt": "2026-01-15T09:30:00Z"
 }
 ```
 
@@ -268,9 +278,10 @@ Error bodies are structured JSON produced by the handlers; all error responses i
 |--------|----------------------|---------|
 | 400 | `{ "error": "Invalid or missing file ID", "correlationId": "<uuid>" }` | Empty/whitespace ID, dot segments (`.` / `..`), embedded `/` or `\`, multi-segment `/api/files/:id/extra`, malformed `%`-encoding, or reserved route segments (`api`, `files`, `sync`, `upload`) (`resolveFileId`) |
 | 400 | `{ "error": "Encrypted files require valid encryptionMetadata with an IV", "correlationId": "<uuid>" }` | PUT on encrypted file without valid `encryptionMetadata.iv` |
+| 400 | `{ "error": "Encrypted workspace requires all files to be encrypted", "code": "WORKSPACE_ENCRYPTION_REQUIRED", "correlationId": "<uuid>" }` | PUT/create/import/copy/toggle into an encrypted workspace (`workspaces.isEncrypted === true`) without encryption enabled or valid `encryptionMetadata.iv` |
 | 400 | `{ "error": "<validation message>", "correlationId": "<uuid>" }` | Invalid request parameters or updating a folder's content |
 | 401 | `{ "error": "Authentication required", "correlationId": "<uuid>" }` | Missing/expired server session |
-| 403 | `{ "error": "<forbidden message>", "correlationId": "<uuid>" }` | Not authorized |
+| 403 | `{ "error": "<forbidden message>", "code": "CROSS_WORKSPACE_ACCESS_FORBIDDEN", "correlationId": "<uuid>" }` | Cross-workspace parent folder or copy target (`moveFile` / `createFile` / `copyFile` / `importFile` across `workspaceId` boundaries) or unauthorized operation |
 | 404 | `{ "error": "File not found", "correlationId": "<uuid>" }` | File missing, foreign tenant, or soft-deleted |
 | 409 | `{ "error": "<conflict message>", "correlationId": "<uuid>" }` | Semantic conflict or folder hierarchy cycle |
 | 412 | `{ "error": "Precondition Failed: version mismatch", "correlationId": "<uuid>", "serverVersion": { etag, version, content, isEncrypted, encryptionMetadata, updatedAt } }` | Stale ETag or version on PUT or DELETE |
@@ -539,7 +550,7 @@ The sync system implements a deterministic Three-Way Merge protocol to resolve c
 
 ## Zero-Knowledge Vault Domain Operations & Hono RPC Endpoints
 
-> **Architecture Note:** All domain operation modules in `src/server/actions/*` (`files.ts`, `folders.ts`, `vault-actions.ts`, `auth-actions.ts`, `import-file.ts`) are decoupled from framework runtime dependencies and mounted as end-to-end typed Hono RPC routes under `/api/rpc/*` (`src/server/routes/rpc.routes.ts`). All client hooks (`useEditorOrchestrator`, `useEditorConflict`, `useSync`), routes, and UI components (`Sidebar`, `FileContextMenu`, `FolderPickerModal`, `FileTreeItem`, Vault modals) invoke operations exclusively via `@/client/rpc-client` (`hc<AppType>` with zero server imports or dynamic loopback loaders; Vitest injects `vitestLoopbackFetch` externally in `vitest.setup.ts`). Wire DTOs (`src/types/rpc-contracts.ts`) model JSON-serialized dates via `WireTimestamp` (`string | Date`) and `UserProfileRecord.creditBalanceMicro` as a decimal `string`. Internal navigation routes through `AppLink` (`src/components/ui/app-link.tsx`).
+> **Architecture Note:** All domain operation modules in `src/server/actions/*` (`files.ts`, `folders.ts`, `workspaces.ts`, `vault-actions.ts`, `auth-actions.ts`, `import-file.ts`) are decoupled from framework runtime dependencies and active file/folder/vault/auth/import operations are mounted as end-to-end typed Hono RPC routes under `/api/rpc/*` (`src/server/routes/rpc.routes.ts`). All client hooks (`useEditorOrchestrator`, `useEditorConflict`, `useSync`), routes, and UI components (`Sidebar`, `FileContextMenu`, `FolderPickerModal`, `FileTreeItem`, Vault modals) invoke operations exclusively via `@/client/rpc-client` (`hc<AppType>` with zero server imports or dynamic loopback loaders; Vitest injects `vitestLoopbackFetch` externally in `vitest.setup.ts`). Wire DTOs (`src/types/rpc-contracts.ts`) include `FileRecord` fields (`workspaceId`, `isAiExcluded`, `artifactRole`), model JSON-serialized dates via `WireTimestamp` (`string | Date`), and serialize `UserProfileRecord.creditBalanceMicro` as a decimal `string`. File RPC endpoints (`/files/create`, `/files/copy`, `/files/move`, `/files/import`, `/files/list`, `/files/list-root`, `/files/children`, `/files/toggle-encryption`, `/files/encryption`) support `workspaceId` scoping and propagate HTTP `400` (`WORKSPACE_ENCRYPTION_REQUIRED`) and `403` (`CROSS_WORKSPACE_ACCESS_FORBIDDEN`) status codes. Internal navigation routes through `AppLink` (`src/components/ui/app-link.tsx`).
 
 ### 1. `toggleFileEncryption` (`src/server/actions/files.ts`, RPC: `POST /api/rpc/files/toggle-encryption`)
 Converts a file between plaintext and encrypted states:

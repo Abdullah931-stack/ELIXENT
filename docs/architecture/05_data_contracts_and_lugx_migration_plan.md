@@ -224,7 +224,7 @@ export function getPgPool(): NeonPool | NodePgPool {
 
 ### 1.5. `PostgresSaver` Drizzle Schema (`src/server/db/schema/langgraph-checkpoints.ts`) and Migration `0013_migrate_to_credit_ledger.sql`
 
-> **Superseded by [ADR-009](./adrs/adr_009_native_graph_orchestration_engine.md):** The 4-table `PostgresSaver` schema (`langgraph-checkpoints.ts`) is replaced by the single-table encrypted `agent_checkpoints` store managed by the `Elixent Native Graph Engine`. The original Drizzle schema contract is preserved below for historical migration context.
+> **Superseded by [ADR-009](./adrs/adr_009_native_graph_orchestration_engine.md):** The 4-table `PostgresSaver` schema (`langgraph-checkpoints.ts`) is replaced by the single-table encrypted `agent_checkpoints` store (`src/server/db/schema/agent-checkpoints.ts`, deployed in migration `0014_multi_workspace_and_native_engine.sql`). The original Drizzle schema contract is preserved below for historical migration context (`langgraph-checkpoints.ts` exports remain in `src/server/db/schema/index.ts` until Phase 3 LangGraph removal).
 
 Because Stage 3 of the continuous integration pipeline (`.github/workflows/ci.yml` — `Stage 3: migration-integrity`, lines `136–142`) executes `node scripts/verify-migrations.mjs` followed by `npx drizzle-kit push --config drizzle.config.test.ts --force` (which reads `schema: "./src/server/db/schema/index.ts"`), creating the four `PostgresSaver` tables in the SQL migration file without defining them in the Drizzle schema would cause `drizzle-kit push --force` to drop them as unmanaged tables. Therefore, they **must** be defined in `src/server/db/schema/langgraph-checkpoints.ts` and exported from `src/server/db/schema/index.ts` in lockstep with migration file `0013_migrate_to_credit_ledger.sql`:
 
@@ -314,6 +314,19 @@ export const checkpointWrites = pgTable(
   ],
 );
 ```
+
+### 1.6. Multi-Workspace Isolation, Extended `files` & Consolidated `agent_checkpoints` (Migration `0014_multi_workspace_and_native_engine.sql`)
+
+Deployed in Phase 2 (`ELIXENT-EXECUTION-PLAN-v1.1` / `ADR-011`, `ADR-009`, `ADR-016`):
+
+1. **`workspaces` (`src/server/db/schema/workspaces.ts`):** Sovereign workspace entity (`id`, `userId` FK `users.id` cascade, `name`, `description`, `isEncrypted` default `false`, `defaultPermissionMode` `"safe" | "semi_auto" | "full_auto"` default `"safe"`, `createdAt`, `updatedAt`) with `idx_workspaces_user_name` unique index and `idx_workspaces_user_updated`.
+2. **`files` Extensions (`src/server/db/schema/files.ts`):**
+   - Exports deterministic UUIDv5 helper `deriveDefaultWorkspaceId(userId)`.
+   - Adds `workspaceId` (`uuid`, `NOT NULL`, FK `workspaces.id` cascade), `isAiExcluded` (`boolean`, default `false`), and `artifactRole` (`"document" | "decision_ledger"`, default `"document"`).
+   - Drops `idx_files_user_parent_title_live` and creates `idx_files_workspace_parent_title_live` (workspace-scoped live title uniqueness) alongside `idx_files_workspace_deleted`.
+3. **`agent_checkpoints` (`src/server/db/schema/agent-checkpoints.ts`):** Single-table encrypted checkpoint store (`(threadId, stepIndex)` composite PK, `workspaceId` FK `workspaces.id` cascade, `userId` FK `users.id` cascade, `nodeId`, `status` `"RUNNING" | "INTERRUPTED" | "COMPLETED" | "FAILED"`, `nextNodeId`, `interruptReason`, `encryptedStateBlob` `BYTEA`, `createdAt`, and `idx_agent_checkpoints_workspace_thread`).
+4. **`user_vault_profiles` Default (`src/server/db/schema/vault.ts`):** Updates `allowAIOnEncryptedFiles` column default from `false` to `true` (`ALTER TABLE user_vault_profiles ALTER COLUMN allow_ai_on_encrypted_files SET DEFAULT true`).
+5. **Backfill & Migration Verification (`scripts/verify-migrations.mjs`):** Migration `0014_multi_workspace_and_native_engine.sql` provisions `'Default Workspace'` rows for existing `files.user_id` values, populates `files.workspace_id`, enforces `NOT NULL`, swaps indexes, and is verified in CI Stage 3 by `scripts/verify-migrations.mjs`.
 
 ## 2. `Upstash Redis` Keyspace & Atomic `Lua` Script Contracts (`Redis Keyspace & Lua Contracts`)
 

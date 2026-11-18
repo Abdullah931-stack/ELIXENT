@@ -2,10 +2,10 @@
 
 Living register of known technical debt, accepted risks, and deferred work.
 Each entry records the decision owner and the mitigation currently in place.
-Last reviewed: 2026-11-18 (v0.24.0 — TD-21 Dev Toolchain Security Advisory Registered; Phase 1 Baseline).
+Last reviewed: 2026-11-18 (v0.25.0 — Phase 2 Multi-Workspace Isolation, `decisions.ledger.json` Storage & ZK Governance).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 146 unit suites (3000 tests) · 21 live suites (97 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 147 unit suites (3027 tests) · 22 live suites (101 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ---

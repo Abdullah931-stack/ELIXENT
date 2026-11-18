@@ -47,7 +47,8 @@ src/
 │       └── export-warning-modal.tsx     # Plaintext confirmation modal for encrypted files
 ├── lib/
 │   ├── export/
-│   │   └── export-service.ts            # High-level governed export service & download trigger
+│   │   ├── export-service.ts            # High-level governed single-file export service & download trigger
+│   │   └── workspace-zip-exporter.ts    # Full-workspace deterministic ZIP archive exporter (STORE + CRC-32 + ledger path enrichment)
 │   └── exporters/
 │       ├── index.ts                     # Strategy factory & core format facade
 │       ├── types.ts                     # Interfaces, error codes, and format types
@@ -147,6 +148,25 @@ export interface IExporter {
 - **MarkdownExporter (`strategies/markdown-exporter.ts`):** Preserves raw Markdown AST syntax verbatim with MIME type `text/markdown;charset=utf-8`.
 - **TextExporter (`strategies/text-exporter.ts`):** Strips headers, code blocks, links, emphasis, and blockquotes via `stripMarkdownSyntax()` with MIME type `text/plain;charset=utf-8`.
 
+### 4.4 Full-Workspace ZIP Archive Exporter (`src/lib/export/workspace-zip-exporter.ts`)
+
+Provides zero-dependency client-side full-workspace `.zip` archive export using browser Web APIs (`TextEncoder`, `Uint8Array`, `DataView`, `Blob`) with STORE compression (method `0`), IEEE 802.3 CRC-32 (`computeCrc32`), and UTF-8 EFS flag (`0x0800`):
+
+```typescript
+export function computeCrc32(data: Uint8Array): number;
+export function buildZipArchive(entries: ZipEntry[]): Uint8Array;
+export async function exportWorkspaceAsZip(
+    workspaceId: string,
+    options?: WorkspaceZipExportOptions
+): Promise<Blob>;
+```
+
+#### Behavior & Security Invariants:
+1. **Cross-Workspace & Soft-Delete Filtering:** Rejects any supplied file whose `workspaceId !== workspaceId` with `WorkspaceZipExportError('CROSS_WORKSPACE_FILE_FORBIDDEN')`, and excludes soft-deleted entries (`deletedAt != null`).
+2. **Fail-Closed Plaintext Confirmation Guard:** If any non-deleted non-folder file in the workspace has `isEncrypted === true` and `options.confirmedPlaintextExport !== true`, execution aborts immediately with `WorkspaceZipExportError('ENCRYPTED_EXPORT_UNCONFIRMED')`.
+3. **Just-In-Time Vault Decryption:** Encrypted files are decrypted locally via `options.decryptFile` (defaulting to `SyncCryptoGateway.decryptInbound`) or `options.decryptedContentMap`; locked or undecryptable vaults throw `WorkspaceZipExportError('VAULT_LOCKED' | 'DECRYPTION_FAILED')`.
+4. **Hierarchy & Decision Ledger Reconstruction:** Rebuilds folder paths from the `parentFolderId` tree (`sanitizeSegment`, `allocateUniquePath` collision deduplication) and writes `decisions.ledger.json` at the archive root with `affectedSections` entries enriched with resolved `relativePath` values.
+
 ---
 
 ## 5. Usage in Editor Workspace
@@ -221,9 +241,11 @@ The export subsystem and governance gates are verified by dedicated test suites:
   - Verifies Markdown content preservation.
   - Verifies Markdown syntax stripping in plain text export.
   - Verifies filename sanitization and extension enforcement.
+- `src/test/workspace/multi-workspace-isolation.test.ts`:
+  - Verifies `exportWorkspaceAsZip` folder hierarchy reconstruction, `decisions.ledger.json` `affectedSections` `relativePath` enrichment, `ENCRYPTED_EXPORT_UNCONFIRMED` fail-closed guard (`confirmedPlaintextExport !== true`), cross-workspace rejection (`CROSS_WORKSPACE_FILE_FORBIDDEN`), and `VAULT_LOCKED` failure behavior.
 
 ---
 
-**Documentation Version**: 1.38.0  
-**Last Updated**: 2026-10-02  
+**Documentation Version**: 1.39.0  
+**Last Updated**: 2026-11-18  
 

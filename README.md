@@ -20,8 +20,8 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai-sdk.dev"><img src="https://img.shields.io/badge/Vercel_AI_SDK-v7_(@ai--sdk/google)-8E75B2?style=for-the-badge&logo=vercel" alt="Vercel AI SDK v7" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-146%20Suites%20·%203000%2F3000%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 3000 Passing" /></a>
-  <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-21%20Suites%20·%2097%2F97%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 97 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-147%20Suites%20·%203027%2F3027%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 3027 Passing" /></a>
+  <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-22%20Suites%20·%20101%2F101%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 101 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
 </p>
@@ -142,7 +142,7 @@ _For the full comparative trade-off matrix, complexity analysis, and quantitativ
 | **Language & Typings**        | TypeScript 5 (Strict Mode)                                   | Full type-safety across client hooks, Hono RPC actions, and DB schemas                                       |
 | **Styling & Design System**   | Tailwind CSS 4 · Radix UI Primitives · Lucide Icons          | Dark Glassmorphism, tailored typography, and accessible UI controls                                          |
 | **Markdown Editor & Bidi**    | Standalone CodeMirror 6 (`MarkdownEditor` & `EditorAdapter`) | Live AST preview decorations, line-level Bidi isolation, LTR code block lock                                 |
-| **Database & ORM**            | PostgreSQL (Neon Cloud / Local) · Drizzle ORM                | Smart Hybrid DB Client (`neon-http` / `pg.Pool`), Migrations 0001–0013 (`src/server/db/migrations/`)         |
+| **Database & ORM**            | PostgreSQL (Neon Cloud / Local) · Drizzle ORM                | Smart Hybrid DB Client (`neon-http` / `pg.Pool`), Migrations 0001–0014 (`src/server/db/migrations/`)         |
 | **Authentication & Proxy**    | Supabase Auth SSR · Hono Session Middleware (`src/server/middleware/session-middleware.ts`) | Static fast-path bypass, test-only placeholders, `401` mutations / `303` navs, RFC 6265 dual sign-out clear, 2500ms watchdog |
 | **Offline Synchronization**   | Custom Engine · IndexedDB (`textai_db_${userId}`)            | 3-Way Merge, ETag optimistic locks (HTTP 412), Bounded Queue, GC, DLQ                                        |
 | **AI LLM Engine**             | Vercel AI SDK v7 (`ai` + `@ai-sdk/google`)                   | NDJSON/SSE streaming, `parseQualifiedModelId`, `StreamGovernor` credit leases, 3-state circuit breaker |
@@ -163,7 +163,7 @@ lugx/
 │       └── cron.yml               # Scheduled maintenance workflow (Daily 03:00 UTC & Quota sweepers)
 ├── docs/                          # Comprehensive technical documentation & governance
 │   ├── README.md                  # Master structural map and documentation index
-│   ├── CHANGELOG.md               # Versioned engineering changelog (Elixent v0.1.0 to v0.24.0; archived LUGX v1.0.0–v1.46.3)
+│   ├── CHANGELOG.md               # Versioned engineering changelog (Elixent v0.1.0 to v0.25.0; archived LUGX v1.0.0–v1.46.3)
 │   ├── TECHNICAL_DEBT_REGISTER.md # Living register of accepted debts and resolution history
 │   ├── DOCUMENTATION_GUIDELINES.md# Rules for authoring, linking, and updating documentation
 │   ├── Plans/                     # Active official execution plans (elixent-architectural-evolution-execution-plan.md)
@@ -194,7 +194,7 @@ lugx/
 │   │   ├── ai/                    # Vercel AI SDK v7 gateway client, stream handler, and key rotation
 │   │   ├── config/                # Centralized fail-fast app URL resolution & SSRF/redirect guards (app-url.ts)
 │   │   ├── db/                    # Drizzle schema, Smart Hybrid Client, and transactional runner
-│   │   │   └── migrations/        # Versioned Drizzle SQL migrations (0001–0010)
+│   │   │   └── migrations/        # Versioned Drizzle SQL migrations (0001–0014)
 │   │   ├── exporters/             # Pure Markdown and Plain Text file export strategies
 │   │   ├── parsers/               # File import validators, stream parsers, and PDF/Text extractors
 │   │   ├── rate-limit.ts          # Dual-mode Redis sliding window limiter (Fail-Open sync, Fail-Closed AI)
@@ -219,6 +219,7 @@ lugx/
 │   │   ├── auth/                  # Authentication, session guard, and correlation tests
 │   │   ├── infrastructure/        # Rate limiting, cron jobs, log sanitizer, and DB health tests
 │   │   ├── api/                   # REST route handlers and Stripe webhook live tests
+│   │   ├── workspace/             # Multi-workspace isolation, ledger, ZK governance & ZIP export tests
 │   │   └── ...                    # Root harness (test-db.ts, test-db-guard.ts, db.setup.ts, load-test-env.ts)
 │   └── types/                     # Shared zero-dependency RPC wire DTOs (rpc-contracts.ts) and ambient declarations
 ├── index.html                     # Vite 6 SPA HTML entrypoint
@@ -311,8 +312,8 @@ npm run start
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 146 | 3000 | 100% ✅ |
-| **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 21 | 97 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 147 | 3027 | 100% ✅ |
+| **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 22 | 101 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
 
@@ -326,10 +327,10 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).               |
 
 ```bash
-# Execute unit/contract test suites (146 test files, 3000 tests)
+# Execute unit/contract test suites (147 test files, 3027 tests)
 npm run test
 
-# Execute live database integration test suites on isolated Neon branch (21 test files, 97 tests)
+# Execute live database integration test suites on isolated Neon branch (22 test files, 101 tests)
 npm run test:live
 
 # Execute browser-driven Playwright E2E tests (14 spec files, 15 user journeys)
@@ -645,7 +646,7 @@ To enable intelligent agentic synthesis and multi-file reasoning over sensitive 
 flowchart TD
     ClientReq["Client Request (/api/agent/stream)<br/>ephemeralVaultPayloads: { [fileId]: plaintext }"] --> Scope["runWithEphemeralVaultScope<br/>Node.js AsyncLocalStorage Scope"]
 
-    Scope --> Prov["CloudPostgresWorkspaceProvider<br/>Tenant Check: files.userId === session.userId<br/>Consent Gate: userVaultProfiles.allowAIOnEncryptedFiles"]
+    Scope --> Prov["CloudPostgresWorkspaceProvider<br/>Tenant & Workspace Check: files.workspaceId & files.userId<br/>Consent Gate: userVaultProfiles.allowAIOnEncryptedFiles"]
 
     Prov -->|readSectionByHeading| EphemMap["EphemeralVaultMemoryMap (ALS)<br/>Store Uint8Array Plaintexts"]
     EphemMap -->|Emit Pointers| Ptr["vault_ref://${fileId}#${headingSlug}"]
@@ -664,7 +665,8 @@ flowchart TD
 
 - **Ephemeral Vault Memory Map (`src/lib/vault/ephemeral-memory-map.ts`):** Request-scoped in-memory storage using Node.js `AsyncLocalStorage` (`runWithEphemeralVaultScope`). Decrypted vault sections are sliced in memory and substituted with opaque reference pointers formatted as `vault_ref://${fileId}#${headingSlug}` (`formatVaultRef`, `isVaultRef`). Pointers are dereferenced just-in-time (`resolveVaultRefJustInTime`) at prompt dispatch or 3-way merge time without mutating `AgentGraphState`. Memory buffers are guaranteed to be zeroed out (`buffer.fill(0)`) in a `finally` block upon request termination or error unwinding.
 - **Authenticated Checkpoint Serializer (`src/core/agent/checkpoint-serializer.ts`):** Implements `SerializerProtocol` for `PostgresSaver`. Derives a 256-bit encryption key via `HKDF-SHA-256` and encrypts checkpoint states using authenticated `AES-256-GCM` with a 12-byte random IV, 16-byte authentication tag, and Additional Authenticated Data (AAD) bound to `elixent:v1:checkpoint:${innerType}`. Emits valid UTF-8 JSON representations of `EncryptedCheckpointEnvelope` compatible with PostgreSQL `JSONB` columns, provides idempotent pass-through preventing double-encryption during `_loadMetadata`, and enforces active vault plaintext leak assertions (`assertNoVaultPlaintextLeak`) throwing `CheckpointVaultLeakError` (`VAULT_PLAINTEXT_LEAK_DETECTED`).
-- **Cloud PostgreSQL Workspace Provider (`src/core/workspace/cloud-provider.ts`):** Implements `IWorkspaceProvider` backed by server-side PostgreSQL storage (`schema.files`). Strictly validates file ownership (`files.userId === session.userId`, `deletedAt IS NULL`), enforces the user consent gate in `schema.userVaultProfiles` (rejecting encrypted file operations with HTTP 403 `VaultAIAccessDeniedError` when disabled), redacts BM25 lexical search match excerpts on encrypted files into `vault_ref://` pointers, and executes section-scoped 3-way merges (`diff3MergeSection`) with JIT pointer dereferencing and syntax integrity validation (`validateMarkdownSyntaxIntegrity`).
+- **Cloud PostgreSQL Workspace Provider (`src/core/workspace/cloud-provider.ts`):** Implements `IWorkspaceProvider` backed by server-side PostgreSQL storage (`schema.files`, `schema.workspaces`). Enforces multi-workspace tenant isolation (`files.workspaceId === this.workspaceId`, `files.userId === session.userId`, `deletedAt IS NULL`, `isAiExcluded === false`, throwing HTTP `403 CrossWorkspaceAccessForbiddenError` on cross-workspace access), checks `userVaultProfiles.allowAIOnEncryptedFiles` (default `true`; rejecting encrypted AI operations with HTTP `403 VaultAIAccessDeniedError` when disabled), exposes `listWorkspaceTree`, `createWorkspaceFile`, `deleteWorkspaceFile`, and `readDecisionLedger`/`writeDecisionLedger` (`decisions.ledger.json` with `DecisionLedgerConflictError` `409` OCC), redacts BM25 match excerpts on encrypted files into `vault_ref://` pointers, returns `SectionReadResult` structural hashes (`sectionHash`, `fileEtag`, `fileVersion`), and executes section-scoped 3-way merges (`diff3MergeSection`) with closed-file optimistic persistence (`409 FILE_VERSION_CONFLICT` on concurrent edits) and syntax integrity validation (`validateMarkdownSyntaxIntegrity`).
+- **Full-Workspace ZIP Exporter (`src/lib/export/workspace-zip-exporter.ts`):** Builds deterministic binary `.zip` archives (`exportWorkspaceAsZip`, `buildZipArchive`, `computeCrc32`) reconstructing workspace folder hierarchies, failing closed with `ENCRYPTED_EXPORT_UNCONFIRMED` unless `confirmedPlaintextExport === true`, decrypting encrypted files locally when the vault is unlocked, and packaging `decisions.ledger.json` with enriched `affectedSections[].relativePath` mappings.
 
 ### 14. Universal Concept Taxonomy, Unified Decision Client & Conformal APS Classifier
 
