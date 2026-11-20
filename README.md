@@ -20,7 +20,7 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai-sdk.dev"><img src="https://img.shields.io/badge/Vercel_AI_SDK-v7_(@ai--sdk/google)-8E75B2?style=for-the-badge&logo=vercel" alt="Vercel AI SDK v7" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-147%20Suites%20·%203027%2F3027%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 3027 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-155%20Suites%20·%203140%2F3140%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 3140 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-22%20Suites%20·%20101%2F101%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 101 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
@@ -57,7 +57,7 @@
   - [13. Zero-Knowledge Vault Boundary, Encrypted Checkpoints & Cloud Workspace Provider](#13-zero-knowledge-vault-boundary-encrypted-checkpoints--cloud-workspace-provider)
   - [14. Universal Concept Taxonomy, Unified Decision Client & Conformal APS Classifier](#14-universal-concept-taxonomy-unified-decision-client--conformal-aps-classifier)
   - [15. Justification-Driven ATMS DAG, Deterministic Candidate Retriever & Relational Linker](#15-justification-driven-atms-dag-deterministic-candidate-retriever--relational-linker)
-  - [16. AgentGraphState Channels, Pure Reducers, 7-Stage Nodes & Compiled LangGraph StateGraph](#16-agentgraphstate-channels-pure-reducers-7-stage-nodes--compiled-langgraph-stategraph)
+  - [16. Elixent Native Graph Engine, 18-Channel AgentGraphState & 9 Replay-Safe Canonical Nodes](#16-elixent-native-graph-engine-18-channel-agentgraphstate--9-replay-safe-canonical-nodes)
   - [17. Agent Chat Panel, HITL Question Cards & Incremental Editor Sync](#17-agent-chat-panel-hitl-question-cards--incremental-editor-sync)
 - [Security Architecture](#security-architecture)
 - [Documentation Index](#documentation-index)
@@ -83,10 +83,10 @@
 - 📡 **Dual-Mode Rate Limiting & Distributed Tracing:** Redis sliding-window limiters with Fail-Open resilience on public and file-sync operations, Fail-Closed protection on authentication RPC endpoints (`signInWithGoogle` by IP, `syncUserToDatabase` by user ID) and AI streaming quotas, distributed `X-Correlation-ID` context propagation across Hono RPC and REST Route Handlers with CRLF injection sanitization, and Zero-Knowledge log masking with token-boundary isolation.
 - ⏱️ **Automated Quota & Maintenance Sweepers:** Scheduled crons for 30-day soft-delete purges (`/api/cron/purge-deleted`) and automated reclamation of expired AI quota leases (`/api/cron/expire-reservations`), resolving orphaned pending leases without manual intervention.
 - 📑 **Fence-Aware AST Heading Slicer & Path-Coupled BM25 Search Engine:** CommonMark §4.2 ATX and §4.5 code-fence tracking parser (`src/core/ast/heading-slicer.ts`) with pure TypeScript FIPS 180-4 SHA-256 (zero `node:crypto` imports), section-scoped 3-way merge (`diff3MergeSection` in `src/lib/sync/diff3.ts`), and path-coupled Okapi BM25 search engine (`src/core/workspace/lexical-bm25.ts`) featuring Arabic/Latin normalization, compound subword extraction, and ReDoS protection.
-- 🛡️ **Zero-Knowledge Vault Boundary & Authenticated Checkpoints:** Ephemeral in-memory section map (`EphemeralVaultMemoryMap`) backed by Node.js `AsyncLocalStorage` and `vault_ref://` pointers, `AES-256-GCM` authenticated checkpoint serializer (`EncryptedCheckpointSerializer`) with type-bound AAD and active plaintext leak prevention (`assertNoVaultPlaintextLeak`), and unified server-side workspace provider (`CloudPostgresWorkspaceProvider`) enforcing tenant isolation and user-consent AI gates.
-- 🏷️ **Universal Concept Taxonomy & Conformal APS Classifier:** 9 orthogonal predefined knowledge domains (`DEFAULT_CONCEPT_TAGS`), project-scoped dynamic tag registry algebra, Adaptive Prediction Sets (APS) multi-label conformal classification with distribution-free coverage guarantee ($1 - \alpha$), unified `/v1/decisions` client, and type-safe dynamic Zod batch extraction schemas.
-- ⚖️ **Justification-Driven ATMS DAG & Relational Linker:** Causal dependency graph linking every decision to its selection rationale and evaluated alternatives, multi-signal candidate retrieval (AST section proximity, concept tag Jaccard overlap, BM25 lexical match), batched waterfall-free relational adjudication (`POST /v1/decisions`), and bidirectional cascade BFS for load-bearing promotion and minimal section invalidation.
-- 🧠 **Compiled LangGraph StateGraph & 12-Channel Pure Reducers:** Full autonomous decision-making and architectural adjudication state machine (`src/core/agent/graph.ts`), featuring 12 canonical JSON-serializable channels (`AgentGraphState`), 8 pure synchronous reducers with immutability guarantees, 14 canonical nodes across Stages 0 to 7, 3 conditional routers (`toolsCondition`, `routeAfterAssumptions`, `resolutionGateRouter`), replay-safe stateless HITL interrupts (`pureInterruptNode`), and authenticated AES-256-GCM `PostgresSaver` checkpointers with lazy Proxy initialization.
+- 🛡️ **Zero-Knowledge Vault Boundary & Authenticated Checkpoints:** Ephemeral in-memory section map (`EphemeralVaultMemoryMap`) backed by Node.js `AsyncLocalStorage` and `vault_ref://` pointers, `AES-256-GCM` authenticated native checkpoint serializer (`encryptAgentGraphState` / `decryptAgentGraphState` into single-table `agent_checkpoints`) with type-bound AAD and active plaintext leak prevention (`assertNoVaultPlaintextLeak`), and unified server-side workspace provider (`CloudPostgresWorkspaceProvider`) enforcing tenant isolation and user-consent AI gates.
+- 🏷️ **Universal Concept Taxonomy & Conformal APS Classifier:** 9 orthogonal predefined knowledge domains (`DEFAULT_CONCEPT_TAGS`), project-scoped dynamic tag registry algebra, Adaptive Prediction Sets (APS) multi-label conformal classification with distribution-free coverage guarantee ($1 - \alpha$), neutral pre-scoring options (`NeutralOptionSchema` + post-adjudication rationale synthesis), and unified `/v1/decisions` client.
+- ⚖️ **Justification-Driven ATMS DAG, Change Weight $W(d)$ & Anti-Domino Gate:** Workspace-native causal dependency graph (`decisions.ledger.json` `DecisionLedgerDocument v2.0`) with 4 deterministic graph-exploration tools (`searchDecisionLedger`, `getDecisionNodeDetails`, `traverseDecisionDependencies`, `getSectionGoverningDecisions`), multi-signal candidate retrieval, batched relational adjudication (`POST /v1/decisions`), 4-source Change Weight $W(d) \in [10, 100]$, and Intent-Aware Anti-Domino Override Gate (`CONSTRAINED_BY_PRIOR`, `ESCALATE_TO_HITL`, `LOCALIZED_OVERRIDE`).
+- 🧠 **Elixent Native Graph Engine, 18-Channel AgentGraphState & 9 Canonical Nodes:** Zero-dependency TypeScript state-machine runtime (`ElixentNativeGraphRunner` in `src/core/agent/engine/runner.ts` and `src/core/agent/graph.ts`) with zero `@langchain/*` dependencies, featuring strict `(state, ctx)` separation (`AgentGraphState` vs. `AgentRuntimeContext`), 18 JSON-serializable state channels, pure synchronous reducers (`applyStateDelta`), 9 Replay-Safe Canonical Nodes governed by 6 deterministic state-predicate gates (`G-01..G-06`), replay-safe stateless HITL interrupts (`hitl_clarification_node`), and single-table AES-256-GCM checkpoint persistence (`agent_checkpoints`).
 
 ---
 
@@ -163,7 +163,7 @@ lugx/
 │       └── cron.yml               # Scheduled maintenance workflow (Daily 03:00 UTC & Quota sweepers)
 ├── docs/                          # Comprehensive technical documentation & governance
 │   ├── README.md                  # Master structural map and documentation index
-│   ├── CHANGELOG.md               # Versioned engineering changelog (Elixent v0.1.0 to v0.25.0; archived LUGX v1.0.0–v1.46.3)
+│   ├── CHANGELOG.md               # Versioned engineering changelog (Elixent v0.1.0 to v0.26.0; archived LUGX v1.0.0–v1.46.3)
 │   ├── TECHNICAL_DEBT_REGISTER.md # Living register of accepted debts and resolution history
 │   ├── DOCUMENTATION_GUIDELINES.md# Rules for authoring, linking, and updating documentation
 │   ├── Plans/                     # Active official execution plans (elixent-architectural-evolution-execution-plan.md)
@@ -312,7 +312,7 @@ npm run start
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 147 | 3027 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 155 | 3140 | 100% ✅ |
 | **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 22 | 101 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
@@ -327,7 +327,7 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).               |
 
 ```bash
-# Execute unit/contract test suites (147 test files, 3027 tests)
+# Execute unit/contract test suites (155 test files, 3140 tests)
 npm run test
 
 # Execute live database integration test suites on isolated Neon branch (22 test files, 101 tests)
@@ -652,10 +652,10 @@ flowchart TD
     EphemMap -->|Emit Pointers| Ptr["vault_ref://${fileId}#${headingSlug}"]
     Ptr --> State["AgentGraphState Channels<br/>Strictly Zero Plaintext in State Channels"]
 
-    State --> Checkpoint["EncryptedCheckpointSerializer (serde)<br/>assertNoVaultPlaintextLeak() (>= 4 chars guard)"]
+    State --> Checkpoint["encryptAgentGraphState (checkpoint-serializer.ts)<br/>assertNoVaultPlaintextLeak() (>= 4 chars guard)"]
     Checkpoint -->|Pass| HKDF["HKDF-SHA-256 Key Derivation"]
-    HKDF --> AES["AES-256-GCM Cipher (AAD: innerType)"]
-    AES --> Saver["PostgresSaver Checkpoint Table (JSONB Envelope)"]
+    HKDF --> AES["AES-256-GCM Cipher (AAD: elixent:v1:checkpoint:json)"]
+    AES --> Saver["agent_checkpoints Table (BYTEA Envelope)"]
 
     State -->|Prompt Compile / Diff3| Resolve["resolveVaultRefJustInTime()<br/>Dereference Pointers strictly at Call Site"]
     Resolve --> PromptExec["LLM Dispatch / Section Diff3 Merge"]
@@ -664,106 +664,99 @@ flowchart TD
 ```
 
 - **Ephemeral Vault Memory Map (`src/lib/vault/ephemeral-memory-map.ts`):** Request-scoped in-memory storage using Node.js `AsyncLocalStorage` (`runWithEphemeralVaultScope`). Decrypted vault sections are sliced in memory and substituted with opaque reference pointers formatted as `vault_ref://${fileId}#${headingSlug}` (`formatVaultRef`, `isVaultRef`). Pointers are dereferenced just-in-time (`resolveVaultRefJustInTime`) at prompt dispatch or 3-way merge time without mutating `AgentGraphState`. Memory buffers are guaranteed to be zeroed out (`buffer.fill(0)`) in a `finally` block upon request termination or error unwinding.
-- **Authenticated Checkpoint Serializer (`src/core/agent/checkpoint-serializer.ts`):** Implements `SerializerProtocol` for `PostgresSaver`. Derives a 256-bit encryption key via `HKDF-SHA-256` and encrypts checkpoint states using authenticated `AES-256-GCM` with a 12-byte random IV, 16-byte authentication tag, and Additional Authenticated Data (AAD) bound to `elixent:v1:checkpoint:${innerType}`. Emits valid UTF-8 JSON representations of `EncryptedCheckpointEnvelope` compatible with PostgreSQL `JSONB` columns, provides idempotent pass-through preventing double-encryption during `_loadMetadata`, and enforces active vault plaintext leak assertions (`assertNoVaultPlaintextLeak`) throwing `CheckpointVaultLeakError` (`VAULT_PLAINTEXT_LEAK_DETECTED`).
+- **Native Authenticated Checkpoint Serializer (`src/core/agent/checkpoint-serializer.ts`):** Pure native serializer (`encryptAgentGraphState`, `decryptAgentGraphState`) with zero `@langchain/*` dependencies, persisting encrypted state snapshots into the single-table `agent_checkpoints` store (`src/server/db/schema/agent-checkpoints.ts`). Derives a 256-bit encryption key via `HKDF-SHA-256` and encrypts checkpoint states using authenticated `AES-256-GCM` with a 12-byte random IV, 16-byte authentication tag, and Additional Authenticated Data (AAD) bound to `elixent:v1:checkpoint:${innerType}`. Emits UTF-8 JSON `Buffer` representations of `EncryptedCheckpointEnvelope` stored in `agent_checkpoints.encrypted_state_blob`, provides idempotent pass-through preventing double-encryption, and enforces active vault plaintext leak assertions (`assertNoVaultPlaintextLeak`) throwing `CheckpointVaultLeakError` (`VAULT_PLAINTEXT_LEAK_DETECTED`).
 - **Cloud PostgreSQL Workspace Provider (`src/core/workspace/cloud-provider.ts`):** Implements `IWorkspaceProvider` backed by server-side PostgreSQL storage (`schema.files`, `schema.workspaces`). Enforces multi-workspace tenant isolation (`files.workspaceId === this.workspaceId`, `files.userId === session.userId`, `deletedAt IS NULL`, `isAiExcluded === false`, throwing HTTP `403 CrossWorkspaceAccessForbiddenError` on cross-workspace access), checks `userVaultProfiles.allowAIOnEncryptedFiles` (default `true`; rejecting encrypted AI operations with HTTP `403 VaultAIAccessDeniedError` when disabled), exposes `listWorkspaceTree`, `createWorkspaceFile`, `deleteWorkspaceFile`, and `readDecisionLedger`/`writeDecisionLedger` (`decisions.ledger.json` with `DecisionLedgerConflictError` `409` OCC), redacts BM25 match excerpts on encrypted files into `vault_ref://` pointers, returns `SectionReadResult` structural hashes (`sectionHash`, `fileEtag`, `fileVersion`), and executes section-scoped 3-way merges (`diff3MergeSection`) with closed-file optimistic persistence (`409 FILE_VERSION_CONFLICT` on concurrent edits) and syntax integrity validation (`validateMarkdownSyntaxIntegrity`).
 - **Full-Workspace ZIP Exporter (`src/lib/export/workspace-zip-exporter.ts`):** Builds deterministic binary `.zip` archives (`exportWorkspaceAsZip`, `buildZipArchive`, `computeCrc32`) reconstructing workspace folder hierarchies, failing closed with `ENCRYPTED_EXPORT_UNCONFIRMED` unless `confirmedPlaintextExport === true`, decrypting encrypted files locally when the vault is unlocked, and packaging `decisions.ledger.json` with enriched `affectedSections[].relativePath` mappings.
 
 ### 14. Universal Concept Taxonomy, Unified Decision Client & Conformal APS Classifier
 
-To eliminate static enum rigidity and provide mathematically rigorous uncertainty bounds for extracted architectural assertions, Elixent introduces a 9-domain extensible taxonomy, dynamic schema factories, Adaptive Prediction Sets (APS) multi-label conformal classification, and a unified decisions client.
+To eliminate static enum rigidity and provide mathematically rigorous uncertainty bounds for extracted architectural assertions without System 2 persuasive framing bias, Elixent combines a 9-domain extensible taxonomy, neutral option schema factories, Adaptive Prediction Sets (APS) multi-label conformal classification, and post-adjudication rationale synthesis.
 
 ```mermaid
 flowchart TD
-    Raw["Raw Text / Document Input"] --> Extr["Assumption Analyzer Node<br/>createAssumptionExtractionBatchSchema(projectTags)"]
-    Extr --> Model["LLM Gateway (AI SDK v6 Bridge)<br/>generateObject() with Dynamic Schema"]
-    Model --> Calib["Conformal APS Classifier<br/>Temperature Scaling & Softmax Scoring"]
+    Raw["Raw Text / Document Input"] --> Extr["Node 3: assumption_extractor_node<br/>createAssumptionExtractionBatchSchema(projectTags)<br/>NeutralOptionSchema (technicalConstraints only)"]
+    Extr --> Scorer["Node 5: jev_conformal_scorer_node<br/>evaluateDecisionBatch (/v1/decisions)<br/>Grounded in workspaceEvidence & governingPriorDecisions"]
+    Scorer --> Calib["Conformal APS Classifier<br/>Temperature Scaling & Softmax Scoring"]
     Calib --> APS["Adaptive Prediction Sets (APS)<br/>Marginal Coverage Guarantee (1 - α)"]
-    APS --> Ledger["Unified Decisions Client (/v1/decisions)<br/>applyProjectTagMutations() & Ledger Sync"]
-    Ledger --> Persist["PostgreSQL Project Decision Ledger<br/>Taxonomy Sentinel (__PROJECT_TAXONOMY__)"]
+    APS --> PostSynth["synthesizePostAdjudicationRationales()<br/>Cites fileId#headingSlug & Dominance Margin m(x)"]
+    PostSynth --> Persist["Workspace Artifact: decisions.ledger.json<br/>DecisionLedgerDocument v2.0 (nodes, edges, taxonomy)"]
 ```
 
-- **Universal Concept Taxonomy & Project Registry (`src/core/agent/concept-taxonomy.ts`):** Establishes 9 predefined knowledge domains (`architecture`, `concurrency`, `cryptography`, `database`, `governance`, `performance`, `resilience`, `security`, `testing`), slug format validation regex (`^[a-z][a-z0-9_]{1,63}$`), project-scoped mutation algebra (`applyProjectTagMutations`, `resolveProjectConceptTags`), empty set invariant protection (`EmptyProjectTaxonomyError`), `__PROJECT_TAXONOMY__` ledger sentinel row, and dynamic Zod enum/schema factories (`createConceptTagEnum`, `createAssumptionExtractionBatchSchema`, `createCanonicalDecisionBatchSchema`).
-- **Conformal APS Multi-Label Classifier (`src/core/jev/conformal-classifier.ts`):** Adaptive Prediction Sets (APS) multi-label conformal classification providing distribution-free finite-sample marginal coverage guarantees $P(Y \subseteq C(X)) \ge 1 - \alpha$. Features Platt temperature calibration, deterministic cumulative mass ranking, top-1 fallback against empty sets, and calibrated non-conformity quantile thresholds ($q^*$).
-- **Unified Decision Client (`src/lib/api/decisions-client.ts`):** Client interface for `/v1/decisions` supporting atomic ledger retrieval, filter-by-tag query predicates, client-side optimistic concurrency locking, and atomic project taxonomy synchronization.
-- **AI SDK v6 Gateway Bridge (`src/core/ai/ai-sdk-v6-gateway.ts`):** Unified LLM abstraction bridge harmonizing AI SDK v5 and v6 interfaces, structured object extraction, dynamic schema factory execution, and provider-agnostic observability.
+- **Universal Concept Taxonomy & Project Registry (`src/core/agent/taxonomy/predefined-tags.ts` & `src/core/agent/schemas/decision-schemas.ts`):** Establishes 9 predefined knowledge domains (`architecture`, `concurrency`, `cryptography`, `database`, `governance`, `performance`, `resilience`, `security`, `testing`), slug format validation regex (`^[a-z][a-z0-9_]{1,63}$`), project-scoped mutation algebra (`applyProjectTagMutations`, `resolveProjectConceptTags`), empty set invariant protection (`EmptyProjectTaxonomyError`), and dynamic Zod schema factories (`createConceptTagEnum`, `createAssumptionExtractionBatchSchema`, `createCanonicalDecisionBatchSchema`).
+- **Epistemic Decoupling & Neutral Option Framing (`src/core/agent/schemas/decision-schemas.ts` & `src/lib/jev/client.ts`):** Pre-scoring options adhere to `NeutralOptionSchema` (`optionKey`, `neutralSummary` $\le 220$ chars, `technicalConstraints: string[]` $1..4$), prohibiting pre-scoring persuasive `rationaleAndPremises`. `evaluateDecisionBatch` passes verbatim `workspaceEvidence` excerpts and `governingPriorDecisions` into `POST /v1/decisions`, while `synthesizePostAdjudicationRationales` deterministically constructs `selectionRationale` and `evaluatedAlternatives` after conformal classification concludes.
+- **Conformal APS Multi-Label Classifier (`src/lib/jev/conformal-classifier.ts`):** Adaptive Prediction Sets (APS) multi-label conformal classification providing distribution-free finite-sample marginal coverage guarantees $P(Y \subseteq C(X)) \ge 1 - \alpha$. Features Platt temperature calibration, deterministic cumulative mass ranking, top-1 fallback against empty sets, and calibrated non-conformity quantile thresholds ($q^*$).
 
 ### 15. Justification-Driven ATMS DAG, Deterministic Candidate Retriever & Relational Linker
 
-To manage architectural assertions as a living causal dependency graph and support surgical re-evaluations without accidental cascades or lost justifications, Elixent introduces the Justification-Driven Assumption-based Truth Maintenance System (`ATMS DAG`), multi-signal candidate decision retriever, waterfall-free relational linker, and bidirectional cascade BFS engine.
+To manage architectural assertions as a workspace-native causal dependency graph (`decisions.ledger.json`) and protect high-inertia foundational decisions against collateral domino overrides, Elixent implements `DecisionLedgerDocument v2.0`, 4 deterministic graph-exploration tools, the 4-source Change Weight $W(d) \in [10, 100]$, and the Intent-Aware Anti-Domino Override Gate.
 
 ```mermaid
 flowchart TD
-    Assump["New Extracted Assumptions<br/>(assumptionId, statement, conceptTags, sections)"] --> Retriever["Deterministic Candidate Retriever<br/>(candidate-retriever.ts)"]
+    Assump["Extracted Assumptions<br/>(intentType: DIRECT_USER_INSTRUCTION | INFERRED_COLLATERAL_ASSUMPTION)"] --> Retriever["Deterministic Candidate Retriever<br/>(candidate-retriever.ts) + Node 2 Graph Tool Discoveries"]
 
-    Ledger[("Master Decision Ledger<br/>(project_decision_ledger)<br/>ATMSDecisionNode[] & Sentinel Isolation")] --> Retriever
+    Ledger[("Workspace Decision Graph<br/>(decisions.ledger.json v2.0)<br/>DecisionGraphNode & DirectedDecisionEdge[]")] --> Retriever
 
-    subgraph SIGNALS ["3 Orthogonal Retrieval Signals"]
-        S1["AST Section Proximity (1.0 exact / 0.5 prefix)<br/>Comparison signal only · Never forced edge"]
-        S2["Concept Tags Jaccard Overlap<br/>Normalized project taxonomy comparison"]
-        S3["Okapi BM25 Lexical Match<br/>Question, rationale & alternatives search"]
-    end
-
-    Retriever --- SIGNALS
-    Retriever --> TopK["Top-K Scored Candidates (K <= 8)<br/>Weighted Composite Score & Deterministic Tie-Breaking"]
-
-    TopK --> Linker["Batched Relational Linker (relational-linker.ts)<br/>evaluateRelationalLinksBatch (POST /v1/decisions)<br/>Waterfall-Free Adjudication"]
+    Retriever --> Linker["Batched Relational Linker (relational-linker.ts)<br/>evaluateRelationalLinksBatch (POST /v1/decisions)"]
 
     Linker --> Relations{"Relation Classification<br/>(INDEPENDENT | DEPENDS_ON | REOPENS_OR_OVERRIDES | REFINES)"}
 
     Relations -->|INDEPENDENT| Stable["Zero Modification<br/>Sibling sub-decisions stably coexist"]
     Relations -->|DEPENDS_ON / REFINES| Upward["Upward BFS Promotion<br/>Promote APPROVED_CONSERVATIVE to CORE"]
-    Relations -->|REOPENS_OR_OVERRIDES| Downward["Downward BFS Invalidation<br/>Reopen root & cascade all dependedBy"]
+    Relations -->|REOPENS_OR_OVERRIDES| AntiDomino{"Anti-Domino Gate (invalidation.ts)<br/>4-Source Change Weight W(d) in [10, 100]"}
 
-    Downward --> DiffMap["computeMinimalSectionInvalidationMap<br/>Differential AST Section Surgery"]
+    AntiDomino -->|CONSTRAINED_BY_PRIOR| Shield["Auto-Shield Prior Decision<br/>Drop assumption & inject prior into governing_constraints"]
+    AntiDomino -->|ESCALATE_TO_HITL| Escalate["Route via G-04 to Node 6<br/>HITL Confirmation with Blast-Radius Preview"]
+    AntiDomino -->|LOCALIZED_OVERRIDE| Downward["Downward BFS Invalidation<br/>resolveATMSCascadeBFS & computeMinimalSectionInvalidationMap"]
 ```
 
-- **Justification-Driven ATMS DAG (`src/core/agent/atms/dag.ts`):** Canonical JSON-serializable `ATMSDecisionNode` structures (no `Map`, `Set`, or `BigInt`), recording justifications (`selectionRationale`), all discarded alternatives (`evaluatedAlternatives`), and dependency links (`dependsOn`, `dependedBy`, `affectedSections`). Integrates multi-tenant synchronization with `project_decision_ledger` (`loadProjectDecisionLedger`, `syncMasterLedgerToProjectStore`) enforcing user ownership and strict sentinel row isolation (`isSystemReservedDecisionId`, `__PROJECT_TAXONOMY__`).
-- **Deterministic Multi-Signal Candidate Retriever (`src/core/agent/atms/candidate-retriever.ts`):** Fast local candidate retrieval (`retrieveCandidatePriorDecisions`) combining AST section proximity (exact = 1.0, prefix = 0.5, disjoint = 0.0), concept tag Jaccard similarity, and Okapi BM25 lexical similarity across decision prompts and rationales. Enforces that section proximity is strictly a candidate comparison signal rather than a forced dependency link.
-- **Waterfall-Free Relational Linker (`src/core/agent/atms/relational-linker.ts`):** Batch adjudicates assumption-candidate pairs across all assumptions in a single call to `POST /v1/decisions` (`evaluateRelationalLinksBatch`), avoiding $N+1$ serial roundtrips. Reconstitutes relations classified into `INDEPENDENT`, `DEPENDS_ON`, `REOPENS_OR_OVERRIDES`, and `REFINES`.
-- **Contagious Cascade BFS & Differential Section Invalidation (`src/core/agent/atms/invalidation.ts`):** Bidirectional BFS traversal (`resolveATMSCascadeBFS`) executing upward promotion of provisional peripheral decisions (`APPROVED_CONSERVATIVE`) upon which new requests depend into `CORE_ARCHITECTURAL`, and downward cascade traversal across `dependedBy` on foundational overrides (`REOPENS_OR_OVERRIDES`). Computes minimal section invalidation maps (`computeMinimalSectionInvalidationMap`) for differential document edits without touching unrelated sections.
+- **Canonical `decisions.ledger.json` Graph & 4 Traversal Tools (`src/core/agent/atms/dag.ts` & `src/core/agent/tools/decision-graph-tools.ts`):** Isomorphic pure TypeScript graph module (`0` `@/server/db` imports) defining `DecisionLedgerDocument` (`schemaVersion: "2.0.0"`, `workspaceId`, `taxonomy`, `nodes: Record<string, DecisionGraphNode>`, `edges: DirectedDecisionEdge[]`), cycle validation (`assertAcyclicDecisionGraph`), and 4 deterministic agent exploration tools (`searchDecisionLedger`, `getDecisionNodeDetails`, `traverseDecisionDependencies` supporting `maxDepth: 1 | 2 | "all"`, and `getSectionGoverningDecisions`).
+- **Deterministic Multi-Signal Candidate Retriever (`src/core/agent/atms/candidate-retriever.ts`):** Local candidate retrieval (`retrieveCandidatePriorDecisions`) combining AST section proximity (exact = 1.0, prefix = 0.5, disjoint = 0.0), concept tag Jaccard similarity, and Okapi BM25 lexical similarity across decision prompts and rationales.
+- **Waterfall-Free Relational Linker (`src/core/agent/atms/relational-linker.ts`):** Batch adjudicates assumption-candidate pairs across all assumptions in a single call to `POST /v1/decisions` (`evaluateRelationalLinksBatch`), classifying links into `INDEPENDENT`, `DEPENDS_ON`, `REOPENS_OR_OVERRIDES`, and `REFINES`.
+- **4-Source Change Weight $W(d)$ & Anti-Domino Override Gate (`src/core/agent/atms/invalidation.ts`):** Computes deterministic inertia weights $W(d) \in [10, 100]$ (`computeDecisionChangeWeight`) combining $W_{\text{structural}} \in [10, 45]$, $W_{\text{provenance}} \in [0, 25]$, $W_{\text{topology}} \in [0, 20]$, and $W_{\text{surface}} \in [0, 10]$. Evaluates `REOPENS_OR_OVERRIDES` conflicts via `evaluateAntiDominoGate` (`CONSTRAINED_BY_PRIOR`, `ESCALATE_TO_HITL`, `LOCALIZED_OVERRIDE`) prior to executing `resolveATMSCascadeBFS` and `computeMinimalSectionInvalidationMap`.
 
-### 16. AgentGraphState Channels, Pure Reducers, 7-Stage Nodes & Compiled LangGraph StateGraph
+### 16. Elixent Native Graph Engine, 18-Channel AgentGraphState & 9 Replay-Safe Canonical Nodes
 
-To execute end-to-end autonomous multi-turn reasoning and architectural editing with deterministic state transitions, Elixent introduces the 12-channel `AgentGraphState` annotation, 8 pure synchronous reducers, 14 canonical nodes spanning Stages 0 to 7, 3 conditional edge routers, and the authenticated `PostgresSaver` checkpointer.
+To execute autonomous multi-turn reasoning and surgical workspace mutations without `@langchain/*` overhead, silent channel dropping, or 3-table checkpoint fragmentation, Elixent implements the zero-dependency `Elixent Native Graph Engine` (`ElixentNativeGraphRunner`), 18-channel `AgentGraphState`, pure synchronous reducers, and 9 Replay-Safe Canonical Nodes governed by 6 deterministic state-predicate gates (`G-01..G-06`).
 
 ```mermaid
 flowchart TD
-    START((__start__)) --> S0["Stage 0: Orchestrator Node<br/>orchestrator_node (Project Ledger & Messages)"]
-    S0 --> S1A["Stage 1: Local Inspection Agent<br/>search_agent_node (stepCountIs: 6)"]
+    START(["User Request + AgentRuntimeContext"]) --> N1["1. intent_and_scope_router_node<br/>(Load Workspace Tree & decisions.ledger.json · Classify 9 Intents)"]
+    N1 --> G1{"G-01: Intent Gate"}
 
-    S1A --> TC{"toolsCondition"}
-    TC -->|Call Tool| S1B["Stage 1: Tool Node<br/>workspace_tool_node"]
-    S1B --> S1A
-    TC -->|Done| S1C["Stage 1: Synthesizer<br/>search_synthesizer_node"]
+    G1 -->|CHAT_ONLY| N9["9. direct_response_node<br/>(Stream Conversational / Analytical Response)"]
+    G1 -->|All Other Intents| N2["2. search_discovery_node<br/>(8-Tool Dual Toolset · maxSteps=6 · Deterministic toolCallId Synthesis)"]
 
-    S1C --> S2A["Stage 2: Assumption Analyzer<br/>assumption_analyzer_node"]
-    S2A --> S2B["Stage 2: ATMS Relational Linker<br/>atms_relational_linker_node"]
+    N2 --> G2{"G-02: Discovery Gate"}
+    G2 -->|WORKSPACE_READ_SEARCH / DECISION_LEDGER_QUERY| N9
+    G2 -->|FAST_LOCAL_EDIT| N8["8. workspace_mutator_node<br/>(Generative Section/File Authoring · 3-Way Diff3 · File Create/Delete)"]
+    G2 -->|Architectural / Multi-Section Impact| N3["3. assumption_extractor_node<br/>(Extract Assumptions + NeutralOptionSchema Candidates)"]
 
-    S2B --> RA{"routeAfterAssumptions"}
-    RA -->|Active Decisions| S3A["Stage 3: JEV Structuring<br/>jev_structuring_node"]
-    RA -->|No Assumptions| S7["Stage 7: Document Writer<br/>document_writer_node"]
-    RA -->|Context Gap| S1A
+    N3 --> G3{"G-03: Extraction Gate"}
+    G3 -->|0 Assumptions & 0 Invalidations| N8
+    G3 -->|Assumptions > 0| N4["4. conflict_and_weight_gate_node<br/>(Relational Linker + 4-Source W(d) + Anti-Domino Gate)"]
 
-    S3A --> S3B["Stage 3: Decision Scorer<br/>decision_scorer_node"]
-    S3B --> S4["Stage 4: Confidence Classifier<br/>confidence_classifier_node (Pure Math)"]
-    S4 --> S5A["Stage 5: Ledger Commit<br/>ledger_commit_node (ATMS Invalidation)"]
+    N4 --> G4{"G-04: Anti-Domino & Gap Gate"}
+    G4 -->|Evidence Gap & search_loop_count < 3| N2
+    G4 -->|ESCALATE_TO_HITL| N6["6. hitl_clarification_node<br/>(Stateless Interrupt & Calibration Feedback)"]
+    G4 -->|Ready for Scoring| N5["5. jev_conformal_scorer_node<br/>(Evidence-Grounded POST /v1/decisions + Conformal APS + Post-Hoc Rationale)"]
 
-    S5A --> RG{"resolutionGateRouter"}
-    RG -->|Resolved| S7
-    RG -->|Gap Loop < 3| S5B["Stage 5: Gap Planner<br/>internal_gap_planner_node"]
-    S5B --> S1A
-    RG -->|HITL Clarification| S6A["Stage 6: Question Organizer<br/>question_organizer_node"]
-    S6A --> S6B["Stage 6: Pure Interrupt<br/>pure_interrupt_node (Zero LLM)"]
-    RG -->|Credit Pause| S6B
+    N5 --> G5{"G-05: Triage Gate"}
+    G5 -->|Unresolved Decisions or Unapproved DELETE_FILE| N6
+    G5 -->|All Approved| N7["7. ledger_commit_node<br/>(DAG Cycle Check + Recompute W(d) + Write decisions.ledger.json)"]
 
-    S6B -.->|Command Resume| S2A
-    S7 --> END((__end__))
+    N6 -->|Resumed with User Answers| N7
+
+    N7 --> G6{"G-06: Mutation Gate"}
+    G6 -->|No Document/File Mutations| N9
+    G6 -->|Document or File Mutations Pending| N8
+
+    N8 --> END(["SSE Stream Complete + Settlement Flush"])
+    N9 --> END
 ```
 
-- **12-Channel LangGraph State Annotation (`src/core/agent/state.ts`):** Defined via `Annotation.Root`, strictly enforcing JSON-serializable plain records, arrays, and decimal strings (avoiding `Map`, `Set`, or `BigInt` at channel boundaries). Channels include `messages`, `user_request`, `search_report`, `local_inspection_state`, `assumptions`, `master_ledger`, `project_taxonomy`, `unresolved_ledger`, `invalidation_map`, `question_queue`, `budget_tracking`, and `search_loop_count`.
-- **Pure Synchronous Reducers (`src/core/agent/reducers.ts`):** 8 deterministic reducer functions (`(current, update) => next`) with zero I/O, zero async, and zero mutation of input arguments (verified under `Object.freeze`). Implements composite key deduplication (`fileId:headingSlug`), set union, decimal string BigInt arithmetic, and monotonic loop count clamping (`MAX_SEARCH_LOOPS = 3`).
-- **14 Canonical Stage Nodes (`src/core/agent/nodes/*`):** Modular stage nodes across Stages 0 to 7 covering orchestration, hybrid inspection, assumption extraction, relational linking, JEV structuring, single-pass scoring, deterministic conformal triage, ATMS DAG commit, gap planning, replay-safe HITL interrupts, and 3-way document surgery (`diff3MergeSection`).
-- **Compiled StateGraph & Authenticated Checkpointer (`src/core/agent/graph.ts`):** StateGraph workflow builder (`buildAgentWorkflow`) connecting all 14 nodes and 3 conditional edge routers. Integrates `PostgresSaver` checkpointer with `EncryptedCheckpointSerializer` (AES-256-GCM) with `elixent:v1:checkpoint:${innerType}` AAD and active plaintext leak assertions (`assertNoVaultPlaintextLeak`). Provides `createElixentAgentGraph(options)` factory and `elixentAgentGraph` lazy singleton Proxy preventing premature database initialization in test environments.
+- **Elixent Native Graph Engine (`src/core/agent/engine/runner.ts`):** Zero-dependency TypeScript state-machine runner (`ElixentNativeGraphRunner`) enforcing strict separation between serializable `AgentGraphState` and request-scoped `AgentRuntimeContext` (`(state, ctx) => Promise<NodeExecutionResult>`). Executes bounded super-step loops (`maxSuperSteps = 25`), persists one atomic AES-256-GCM encrypted checkpoint row per step into `agent_checkpoints` (`src/server/db/schema/agent-checkpoints.ts`), handles first-class `INTERRUPTED` outcomes (`HITL_CLARIFICATION_REQUIRED`, `FILE_DELETION_APPROVAL_REQUIRED`, `ANTI_DOMINO_CONFIRMATION_REQUIRED`, `INSUFFICIENT_CREDITS`), and resumes deterministically from the interrupted checkpoint step without re-running completed upstream nodes.
+- **18-Channel Typed `AgentGraphState` & Pure Reducers (`src/core/agent/state.ts` & `src/core/agent/reducers.ts`):** Pure TypeScript interface covering 18 JSON-serializable channels (`messages`, `user_request`, `classified_intent`, `search_report`, `local_inspection_state`, `assumptions`, `governing_constraints`, `scored_decisions`, `master_ledger`, `ledger_edges`, `project_taxonomy`, `unresolved_ledger`, `invalidation_map`, `pending_file_actions`, `question_queue`, `clarification_answers`, `budget_tracking`, `search_loop_count`). Reducers (`applyStateDelta`) enforce immutability, explicit `clearInvalidationMap` resets after `workspace_mutator_node`, `replaceMasterLedger` support for decision eviction, and monotonic loop clamping (`MAX_SEARCH_LOOPS = 3`).
+- **9 Replay-Safe Canonical Nodes & 6 State-Predicate Gates (`src/core/agent/nodes/*` & `src/core/agent/graph.ts`):** Replaces the legacy 14-node topology with 9 canonical nodes wired via `createElixentAgentGraph` and 6 pure routing gates (`gateG01..gateG06` + `gateAfterHitlClarification`), wrapped by the native `(state, ctx)` `withMeteredNodeGate` (`src/lib/metering/node-gate.ts`).
 
 ### 17. Agent Chat Panel, HITL Question Cards & Incremental Editor Sync
 

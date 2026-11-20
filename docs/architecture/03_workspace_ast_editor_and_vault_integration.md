@@ -79,9 +79,13 @@ export interface SectionReadResult {
 
 export interface AgentStreamRequestPayload {
   threadId: string;
-  projectId: string;
+  workspaceId?: string;
+  projectId?: string;
+  turnId?: string;
   prompt?: string;
   targetFileIds: string[];
+  permissionMode?: "safe" | "semi_auto" | "full_auto";
+  selectedSystem2ModelId?: string;
   resumePayload?: unknown;
   ephemeralVaultPayloads?: Record<string, string>;
   liveDocumentSnapshots?: Record<string, string>;
@@ -359,10 +363,14 @@ To preserve the end-to-end encryption (`Zero-Knowledge`) guarantees implemented 
 
    export interface AgentStreamRequestPayload {
      threadId: string;
-     projectId: string;
+     workspaceId?: string;
+     projectId?: string;
+     turnId?: string;
      prompt?: string;
      targetFileIds: string[];
-     resumePayload?: unknown; // Validated user responses when resuming after interrupt()
+     permissionMode?: "safe" | "semi_auto" | "full_auto";
+     selectedSystem2ModelId?: string;
+     resumePayload?: unknown; // Validated user responses when resuming after an INTERRUPTED checkpoint
      /**
       * Plaintext of encrypted files decrypted locally in the browser (when the vault is unlocked and allowAIOnEncryptedFiles === true).
       * Used exclusively to populate EphemeralVaultMemoryMap within the scope of the current HTTP request and never enters AgentGraphState.
@@ -423,26 +431,26 @@ Because the `files.content` column in PostgreSQL stores `AES-256-GCM` ciphertext
 5. **Leak Assertions & Scope Introspection:**
    - Exposes `getActiveEphemeralVaultPlaintexts(): string[]` and `hasActiveVaultPlaintextInMemory(): boolean` to allow downstream serializers to inspect and guarantee zero-knowledge boundaries.
 
-### 5.3. Authenticated Checkpoint Encryption & Zero-Knowledge Leak Assertion (`EncryptedCheckpointSerializer`)
+### 5.3. Authenticated Checkpoint Encryption & Zero-Knowledge Leak Assertion (`checkpoint-serializer.ts`)
 
-To prevent state persistence from storing unencrypted scratchpad data or leaked plaintexts in PostgreSQL, `src/core/agent/checkpoint-serializer.ts` implements `SerializerProtocol` from `@langchain/langgraph-checkpoint`:
+To prevent state persistence from storing unencrypted scratchpad data or leaked plaintexts in PostgreSQL, `src/core/agent/checkpoint-serializer.ts` implements pure native checkpoint encryption (`encryptAgentGraphState` and `decryptAgentGraphState`) with zero `@langchain/*` dependencies for the single-table `agent_checkpoints` store (`src/server/db/schema/agent-checkpoints.ts`):
 
 ```mermaid
 flowchart LR
-    State["LangGraph Checkpoint State"] --> Inner["JsonPlusSerializer<br/>Preserve Date, Map, Set, DeltaSnapshot"]
-    Inner --> LeakAssert{"assertNoVaultPlaintextLeak()<br/>Inspect for active plaintexts >= 4 chars"}
+    State["AgentGraphState Snapshot"] --> JSONSer["UTF-8 JSON Serialization"]
+    JSONSer --> LeakAssert{"assertNoVaultPlaintextLeak()<br/>Inspect for active plaintexts >= 4 chars"}
     LeakAssert -->|Leak Detected| LeakErr["throw CheckpointVaultLeakError<br/>(VAULT_PLAINTEXT_LEAK_DETECTED)"]
     LeakAssert -->|Clean (pointers only)| HKDF["HKDF-SHA-256 Key Derivation<br/>256-bit Key from secretKey + salt + info"]
     HKDF --> AES["AES-256-GCM Cipher<br/>12-byte IV · 16-byte Tag · AAD: innerType"]
-    AES --> Envelope["EncryptedCheckpointEnvelope<br/>Emits valid UTF-8 JSON bytes for JSONB"]
-    Envelope --> Postgres["PostgresSaver Checkpoint Table"]
+    AES --> Envelope["EncryptedCheckpointEnvelope<br/>Emits UTF-8 JSON Buffer"]
+    Envelope --> Postgres["agent_checkpoints.encrypted_state_blob (BYTEA)"]
 ```
 
-1. **Authenticated AES-256-GCM Encryption with HKDF Key Derivation:**
-   - Derives a 32-byte (256-bit) encryption key using `crypto.hkdfSync("sha256", keyMaterial, salt, info, 32)` from `CHECKPOINT_ENCRYPTION_KEY`, `AUTH_SECRET`, or the deprecated legacy alias `NEXTAUTH_SECRET`.
-   - Encrypts serialized checkpoint payloads with `AES-256-GCM` using a 12-byte CSPRNG IV and a 16-byte authentication tag.
-   - Binds Additional Authenticated Data (AAD) to the inner serialization type: `elixent:v1:checkpoint:${innerType}`.
-2. **PostgresSaver JSONB Column Compatibility (`EncryptedCheckpointEnvelope`):**
+1. **Authenticated AES-256-GCM Encryption with HKDF Key Derivation (`encryptAgentGraphState` / `decryptAgentGraphState`):**
+   - Derives a 32-byte (256-bit) encryption key using `crypto.hkdfSync("sha256", keyMaterial, salt, info, 32)` from `CHECKPOINT_ENCRYPTION_KEY`, `AUTH_SECRET`, or the legacy fallback alias `NEXTAUTH_SECRET`.
+   - Encrypts serialized `AgentGraphState` payloads with `AES-256-GCM` using a 12-byte CSPRNG IV and a 16-byte authentication tag.
+   - Binds Additional Authenticated Data (AAD) to the inner serialization type: `elixent:v1:checkpoint:${innerType}` (default `innerType = "json"`).
+2. **`agent_checkpoints` BYTEA Column Compatibility (`EncryptedCheckpointEnvelope`):**
    - Serialized envelopes conform to the typed contract:
      ```typescript
      export interface EncryptedCheckpointEnvelope {
@@ -455,12 +463,9 @@ flowchart LR
        ct: string;  // Base64 Ciphertext
      }
      ```
-   - Emits valid UTF-8 JSON strings (`["encrypted_json", Buffer.from(JSON.stringify(envelope))]`), enabling seamless storage and querying within PostgreSQL `JSONB` checkpoint tables.
-3. **Idempotent Pass-Through Protection:**
-   - During `PostgresSaver._loadMetadata`, LangGraph re-serializes previously read checkpoint envelopes. `EncryptedCheckpointSerializer.dumpsTyped` inspects candidates using `isEncryptedCheckpointEnvelope` and passes them through directly, preventing catastrophic double-encryption.
+   - `encryptAgentGraphState` returns `Buffer.from(JSON.stringify(envelope), "utf8")` stored directly in `agent_checkpoints.encrypted_state_blob`.
+3. **Idempotent Pass-Through Protection (`isEncryptedCheckpointEnvelope`):**
+   - Inspects candidate payloads using `isEncryptedCheckpointEnvelope` and passes already-encrypted envelopes through directly without double-encryption.
 4. **Active Plaintext Leak Assertion (`assertNoVaultPlaintextLeak`):**
-   - Prior to encryption in `dumpsTyped`, the serializer queries `getActiveEphemeralVaultPlaintexts()`.
+   - Prior to encryption, `encryptAgentGraphState` queries `getActiveEphemeralVaultPlaintexts()`.
    - If any active vault plaintext ($\ge 4$ characters, non-pointer) is detected anywhere within the serialized state string (either verbatim or JSON-escaped), the serializer halts execution and throws `CheckpointVaultLeakError` with code `VAULT_PLAINTEXT_LEAK_DETECTED`.
-5. **Complex Type Preservation & Legacy Fallback:**
-   - Wraps LangGraph's internal `JsonPlusSerializer` to preserve complex state objects (`Date`, `Map`, `Set`, `RegExp`, `DeltaSnapshot`, and custom LangChain classes).
-   - In `loadsTyped`, supports unencrypted fallback for legacy or development checkpoints.

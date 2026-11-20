@@ -8,7 +8,7 @@
 | **Supersedes / Amends** | Supersedes the `@langchain/langgraph` runtime and `PostgresSaver` 3-table checkpointer mandate in [`ADR-001`](../01_architecture_vision_and_adrs.md) (§3.1) and [`ADR-005`](../01_architecture_vision_and_adrs.md) (§3.5); amends [`02_agent_orchestration_and_decision_engine.md`](../02_agent_orchestration_and_decision_engine.md) (§2 & §3.1) |
 | **Governing Execution Plan** | [`ELIXENT-EXECUTION-PLAN-v1.1`](../../Plans/elixent-architectural-evolution-execution-plan.md) |
 | **Companion SRS** | [`SRS-01: Agent Orchestration Engine, Canonical Decision Graph & Weight Gate`](../../specs/srs_01_agent_orchestration_decision_graph_and_weight_engine.md) |
-| **Affected Repository Scope** | `../../src/core/agent/state.ts`, `../../src/core/agent/graph.ts`, `../../src/core/agent/checkpoint-serializer.ts`, `../../src/server/routes/agent.routes.ts`, `../../src/server/db/schema/langgraph-checkpoints.ts` (retired), `../../src/server/db/schema/agent-checkpoints.ts` (Planned / New), `../../package.json` |
+| **Affected Repository Scope** | `../../src/core/agent/engine/runner.ts`, `../../src/core/agent/state.ts`, `../../src/core/agent/graph.ts`, `../../src/core/agent/checkpoint-serializer.ts`, `../../src/server/routes/agent.routes.ts`, `../../src/server/db/schema/langgraph-checkpoints.ts` (retired & deleted), `../../src/server/db/schema/agent-checkpoints.ts`, `../../package.json` |
 
 ## 1. Context & Problem Diagnosis
 
@@ -27,7 +27,7 @@ In [`ADR-001`](../01_architecture_vision_and_adrs.md) (§3.1), `@langchain/langg
 
 ## 2. Accepted Decision & Architectural Contract
 
-We supersede [`ADR-001`](../01_architecture_vision_and_adrs.md) (§3.1) by removing `@langchain/langgraph`, `@langchain/core`, and `@langchain/langgraph-checkpoint-postgres` from the codebase and replacing them with the **`Elixent Native Graph Engine`** (`../../src/core/agent/engine/` — Planned / New), a deterministic, zero-dependency TypeScript state-machine runtime built directly on top of `Vercel AI SDK v7` and `Hono RPC`.
+We supersede [`ADR-001`](../01_architecture_vision_and_adrs.md) (§3.1) by removing `@langchain/langgraph`, `@langchain/core`, and `@langchain/langgraph-checkpoint-postgres` from the codebase and replacing them with the **`Elixent Native Graph Engine`** (`../../src/core/agent/engine/runner.ts`), a deterministic, zero-dependency TypeScript state-machine runtime built directly on top of `Vercel AI SDK v7` and `Hono RPC`.
 
 ```mermaid
 flowchart TB

@@ -5,9 +5,9 @@
 | **Document ID**             | `ELIXENT-SRS-01-ORCHESTRATION-v1.1`                                                                                                                                                                                                                                                                                                                                                                                                              |
 | **Classification**          | `SOFTWARE REQUIREMENTS SPECIFICATION (SUBSYSTEM 1 OF 4)`                                                                                                                                                                                                                                                                                                                                                                                         |
 | **Governing ADRs**          | [`ADR-009`](../architecture/adrs/adr_009_native_graph_orchestration_engine.md), [`ADR-010`](../architecture/adrs/adr_010_replay_safe_node_boundary_topology.md), [`ADR-012`](../architecture/adrs/adr_012_json_decision_ledger_and_graph_traversal.md), [`ADR-013`](../architecture/adrs/adr_013_epistemic_framing_decoupling_system2_system1.md), [`ADR-014`](../architecture/adrs/adr_014_deterministic_change_weight_and_anti_domino_gate.md) |
-| **Reference Baseline**      | `Elixent v0.22.0` (`Vite 6 SPA + TanStack Router + Hono RPC`)                                                                                                                                                                                                                                                                                                                                                                                    |
-| **Target Repository Scope** | `../../src/core/agent/engine/**` (Planned / New), `../../src/core/agent/state.ts`, `../../src/core/agent/nodes/**`, `../../src/core/agent/atms/**`, `../../src/core/agent/schemas/decision-schemas.ts`, `../../src/lib/jev/**`, `../../src/server/routes/agent.routes.ts`, `../../src/server/db/schema/agent-checkpoints.ts` (Planned / New)                                                                                                     |
-| **Status**                  | `APPROVED FOR IMPLEMENTATION (v1.1 Audited)`                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **Reference Baseline**      | `Elixent v0.26.0` (`Vite 6 SPA + TanStack Router + Hono RPC`)                                                                                                                                                                                                                                                                                                                                                                                    |
+| **Target Repository Scope** | `../../src/core/agent/engine/**`, `../../src/core/agent/state.ts`, `../../src/core/agent/reducers.ts`, `../../src/core/agent/nodes/**`, `../../src/core/agent/atms/**`, `../../src/core/agent/tools/decision-graph-tools.ts`, `../../src/core/agent/schemas/decision-schemas.ts`, `../../src/lib/jev/**`, `../../src/server/routes/agent.routes.ts`, `../../src/server/db/schema/agent-checkpoints.ts`                                           |
+| **Status**                  | `IMPLEMENTED & VERIFIED IN PHASE 3 (v0.26.0)`                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 ## 1. Purpose, Scope & Architectural Traceability
 
@@ -15,9 +15,9 @@ This Software Requirements Specification (**SRS-01**) defines the exact function
 
 | Requirement Group         | Governing ADR                                                                                 | Target Source Modules                                                                                                                                | Core Engineering Objective                                                                                                                                                                                                           |
 | :------------------------ | :-------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`REQ-ORCH-01 .. 05`**   | [`ADR-009`](../architecture/adrs/adr_009_native_graph_orchestration_engine.md)                | `../../src/core/agent/engine/**` (Planned / New), `../../src/core/agent/state.ts`, `../../src/server/db/schema/agent-checkpoints.ts` (Planned / New) | Replace `@langchain/langgraph` and `PostgresSaver` with `Elixent Native Graph Engine`, separating `AgentRuntimeContext` from `AgentGraphState` and persisting single-table encrypted checkpoints (`agent_checkpoints`).              |
+| **`REQ-ORCH-01 .. 05`**   | [`ADR-009`](../architecture/adrs/adr_009_native_graph_orchestration_engine.md)                | `../../src/core/agent/engine/**`, `../../src/core/agent/state.ts`, `../../src/server/db/schema/agent-checkpoints.ts`                                 | Replace `@langchain/langgraph` and `PostgresSaver` with `Elixent Native Graph Engine`, separating `AgentRuntimeContext` from `AgentGraphState` and persisting single-table encrypted checkpoints (`agent_checkpoints`).              |
 | **`REQ-TOPO-01 .. 06`**   | [`ADR-010`](../architecture/adrs/adr_010_replay_safe_node_boundary_topology.md)               | `../../src/core/agent/nodes/**`, `../../src/core/agent/graph.ts`                                                                                     | Implement the 9 Replay-Safe Canonical Nodes, 6 deterministic State-Predicate routing gates (`G-01..G-06`), 9+ input pattern routing, and full generative editing in `workspace_mutator_node` without silent HTML alignment comments. |
-| **`REQ-LEDGER-01 .. 04`** | [`ADR-012`](../architecture/adrs/adr_012_json_decision_ledger_and_graph_traversal.md)         | `../../src/core/agent/atms/dag.ts`, `../../src/core/agent/nodes/search-nodes.ts`, `../../src/core/agent/nodes/resolution-and-ledger-nodes.ts`        | Replace the SQL `project_decision_ledger` table with `decisions.ledger.json` (`DecisionLedgerDocument v2.0`) and provide 4 deterministic graph-exploration tools inside `search_discovery_node`.                                     |
+| **`REQ-LEDGER-01 .. 04`** | [`ADR-012`](../architecture/adrs/adr_012_json_decision_ledger_and_graph_traversal.md)         | `../../src/core/agent/atms/dag.ts`, `../../src/core/agent/tools/decision-graph-tools.ts`, `../../src/core/agent/nodes/search-nodes.ts`, `../../src/core/agent/nodes/resolution-and-ledger-nodes.ts` | Replace the SQL `project_decision_ledger` table with `decisions.ledger.json` (`DecisionLedgerDocument v2.0`) and provide 4 deterministic graph-exploration tools inside `search_discovery_node`.                                     |
 | **`REQ-EPIST-01 .. 03`**  | [`ADR-013`](../architecture/adrs/adr_013_epistemic_framing_decoupling_system2_system1.md)     | `../../src/core/agent/schemas/decision-schemas.ts`, `../../src/lib/jev/client.ts`, `../../src/core/agent/nodes/jev-scoring-nodes.ts`                 | Eliminate `System 2` pre-scoring `rationaleAndPremises`, ground `POST /v1/decisions` in verbatim `search_report.evidenceItems` and governing prior decisions, and synthesize rationales post-adjudication.                           |
 | **`REQ-WEIGHT-01 .. 04`** | [`ADR-014`](../architecture/adrs/adr_014_deterministic_change_weight_and_anti_domino_gate.md) | `../../src/core/agent/atms/invalidation.ts`, `../../src/core/agent/nodes/assumption-and-linker-nodes.ts`                                             | Compute the deterministic 4-source Change Weight $W(d) \in [10, 100]$ and enforce the Intent-Aware Anti-Domino Override Gate (`CONSTRAINED_BY_PRIOR`, `ESCALATE_TO_HITL`, `LOCALIZED_OVERRIDE`).                                     |
 
@@ -26,11 +26,11 @@ This Software Requirements Specification (**SRS-01**) defines the exact function
 ### 2.1. Removal of `@langchain/*` Dependencies (`REQ-ORCH-01`)
 
 1. `../../package.json` MUST remove `@langchain/langgraph`, `@langchain/core`, and `@langchain/langgraph-checkpoint-postgres`.
-2. `../../src/server/db/schema/langgraph-checkpoints.ts` (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations`) MUST be retired and replaced by `../../src/server/db/schema/agent-checkpoints.ts` (Planned / New).
+2. `../../src/server/db/schema/langgraph-checkpoints.ts` (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations`) MUST be retired and replaced by `../../src/server/db/schema/agent-checkpoints.ts`.
 
 ### 2.2. Consolidated Encrypted Checkpoint Schema (`REQ-ORCH-02`)
 
-File: `../../src/server/db/schema/agent-checkpoints.ts` (Planned / New)
+File: `../../src/server/db/schema/agent-checkpoints.ts`
 
 ```typescript
 import {
@@ -88,11 +88,11 @@ export const agentCheckpoints = pgTable(
 );
 ```
 
-- **Zero-Knowledge Leak Guard:** Before encrypting `AgentGraphState` into `encryptedStateBlob`, `EncryptedCheckpointSerializer` (`../../src/core/agent/checkpoint-serializer.ts`) MUST invoke `getActiveEphemeralVaultPlaintexts()` (`../../src/lib/vault/ephemeral-memory-map.ts`) and assert that zero active decrypted vault strings appear anywhere inside the serialized state JSON.
+- **Zero-Knowledge Leak Guard:** Before encrypting `AgentGraphState` into `encryptedStateBlob`, `encryptAgentGraphState` (`../../src/core/agent/checkpoint-serializer.ts`) MUST invoke `getActiveEphemeralVaultPlaintexts()` (`../../src/lib/vault/ephemeral-memory-map.ts`) and assert that zero active decrypted vault strings appear anywhere inside the serialized state JSON.
 
 ### 2.3. Separation of `AgentRuntimeContext` and `AgentGraphState` (`REQ-ORCH-03`)
 
-Files: `../../src/core/agent/engine/runner.ts` (Planned / New) & `../../src/core/agent/state.ts`
+Files: `../../src/core/agent/engine/runner.ts` & `../../src/core/agent/state.ts`
 
 ```typescript
 export interface AgentRuntimeContext {
@@ -243,7 +243,7 @@ export interface AgentGraphState {
      - Executes `ctx.workspaceProvider.mergeSectionThreeWay` (`../../src/core/workspace/provider.ts`).
      - In `safe` mode: emits `ghost_hunk_proposed` SSE frames without mutating the persistent file record.
      - In `semi_auto` and `full_auto` modes: commits unencrypted files directly to PostgreSQL (and emits `file_mutated` SSE frames so open client tabs update via single `CodeMirror` undo transactions) or emits `vault_file_commit_required` SSE frames for encrypted files ([`ADR-016`](../architecture/adrs/adr_016_zk_encryption_granularity_and_ephemeral_ai_bridge.md)).
-9. **Node 9: `direct_response_node` (`../../src/core/agent/nodes/direct-response-node.ts` — Planned / New)**
+9. **Node 9: `direct_response_node` (`../../src/core/agent/nodes/direct-response-node.ts`)**
    - Streams conversational responses, workspace search findings, or `decisions.ledger.json` dependency explanations via `executeStreamingGeneration` when no `.md` document mutation is required.
 
 ### 3.2. Deterministic State-Predicate Routing Gates (`G-01 .. G-06`)
@@ -332,7 +332,7 @@ export interface DecisionLedgerDocument {
 
 ### 4.2. Four Deterministic Decision Graph Tools (`REQ-LEDGER-02`)
 
-Implemented in `../../src/core/agent/atms/dag.ts` and exposed to `executeToolAgentGeneration` inside `search_discovery_node`:
+Implemented in `../../src/core/agent/tools/decision-graph-tools.ts` (re-exported via `../../src/core/agent/atms/dag.ts`) and exposed to `executeToolAgentGeneration` inside `search_discovery_node`:
 
 1. **`searchDecisionLedger`:**
    - **Input Schema:** `z.object({ query: z.string().optional(), conceptTags: z.array(z.string()).optional(), fileId: z.string().optional() })`

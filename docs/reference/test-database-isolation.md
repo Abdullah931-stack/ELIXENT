@@ -94,7 +94,7 @@ To guarantee 100% isolation when integration test suites run against a shared te
 
 - Strict Sequential Suite Execution: Enforced via `fileParallelism: false` in `vitest.live.config.mts`, eliminating concurrent transaction interleaving and PostgreSQL cascading foreign key deadlocks (`40P01`).
 - Deterministic Placeholder UUID Namespaces: Every suite is allocated a deterministic, non-overlapping placeholder UUID range matching `/^(\d{4})\1-\1-\1-\1-\1{3}$/` (e.g. `1111...` for `ai-ops.integrity`, `1313...`/`1414...` for `cross-user-ownership`, `1515...` for `editor-orchestration`, `1616...` for `ai-server-atomic-commit`, `2323...`/`2424...`/`2525...` for `stripe/webhook`).
-- Resilient Hierarchical Cleanup: `cleanupTestUsers` in `src/test/test-db.ts` explicitly deletes dependent child rows (`subscriptions`, `creditLedgerTransactions`, `projectDecisionLedger`, `checkpointWrites`, `checkpointBlobs`, `checkpoints`, `agentCheckpoints`, `files`, `workspaces`, `userVaultProfiles`) prior to removing user records, and guards against transient lock contention with an exponential backoff retry loop.
+- Resilient Hierarchical Cleanup: `cleanupTestUsers` in `src/test/test-db.ts` explicitly deletes dependent child rows (`subscriptions`, `creditLedgerTransactions`, `agentCheckpoints`, `files`, `workspaces`, `userVaultProfiles`) prior to removing user records, and guards against transient lock contention with an exponential backoff retry loop.
 - Suites seed their test user rows in `beforeEach` with `onConflictDoNothing()` and ensure a deterministic default workspace via `ensureTestDefaultWorkspace(userId)` (`deriveDefaultWorkspaceId(userId)` in `schema.workspaces`, mirroring E2E seeding in `e2e/fixtures/test-db.ts` and `src/server/routes/e2e-auth.routes.ts`), preventing cross-suite `CASCADE` deletions or missing-workspace constraint violations (`23503`). Migration verification (`scripts/verify-migrations.mjs`) asserts `workspaces`, `agent_checkpoints`, and all `0014` workspace/checkpoint indexes.
 
 ### CI Upstash REST Service Container & Worker Concurrency (Phase 13 / LUGX-093)
@@ -142,10 +142,10 @@ to a live URL; push failures surface immediately).
 ## 5. Evidence of isolation
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 147 unit suites (3027 tests) · 22 live suites (101 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 155 unit suites (3140 tests) · 22 live suites (101 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
-- **Active Unit & Contract Suite (`npm run test`):** **147 files / 3027 tests — all passed (100% pass rate)**, zero LIVE files included.
+- **Active Unit & Contract Suite (`npm run test`):** **155 files / 3140 tests — all passed (100% pass rate)**, zero LIVE files included.
 - **Active Live Multi-System Suite (`npm run test:live`):** **22 registered suites / 101 tests — all passed (100% pass rate)** on isolated Neon branch (`ep-dark-queen-ahbapy5k-pooler`).
 - **Guard unit tests (`src/test/infrastructure/test-db.isolation.test.ts`):** **8/8 passed** (main-branch refusal, missing-URL refusal, mismatch refusal, loader leak prevention, shell-value precedence, and `-pooler` endpoint refusal).
 - **Historical Milestone Baseline (Phase 10 Archive):** Initially verified at 37 unit files / 488 tests and 16 live suites; systematically expanded through Phase 18 and Phase 20 hardening rounds to current active levels.

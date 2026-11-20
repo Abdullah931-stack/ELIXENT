@@ -115,9 +115,9 @@ The model registry in `src/config/models.config.json` is indexed by unique model
 1. **Exception to the Minimum Chunk Floor ($L_{\min}$) at Stream Initialization:** If the remaining balance after reserving input costs in `STREAMING_GENERATIVE` mode covers a number of output tokens strictly greater than zero and less than $L_{\min}$ ($0 < \text{UserAvailableTokensCapacity} < L_{\min}$), the $L_{\min}$ constraint is waived as an exception: the entire remaining balance is reserved to generate exactly $\text{UserAvailableTokensCapacity}$ tokens, after which the stream closes cleanly with a balance of **exactly zero**.
 2. **Mid-Stream Terminal Micro-Extension Slice (`Mid-Stream Terminal Drain`):** If an active stream reaches the extension threshold ($\text{Trigger}$) and the remaining account balance in Redis is less than the cost of a full $L_{\text{calc}}$ slice but strictly greater than zero, the entire remaining balance is reserved as a terminal micro-extension slice until the last financially covered token is consumed.
 
-### 3.3. Idempotent Pre-Node Wrapper Preventing Double Billing in `LangGraph` (`Idempotent Pre-Node Wrapper`)
+### 3.3. Native Pre-Node Gate Wrapper (`withMeteredNodeGate` in `src/lib/metering/node-gate.ts`)
 
-> **Superseded / Amended by [ADR-009](./adrs/adr_009_native_graph_orchestration_engine.md) and [SRS-04](../specs/srs_04_multi_provider_ai_gateway_and_wallet_metering.md):** The `Elixent Native Graph Engine` resumes directly at the interrupted node boundary without re-executing prior lines, eliminating `@langchain/langgraph` node-replay double-billing and replacing `withMeteredNodeGate` replay workarounds with single-layer open-ceiling wallet-bounded metering. The `withMeteredNodeGate` design is preserved below for historical context.
+> **Implemented in Phase 3 (`v0.26.0`) per [ADR-009](./adrs/adr_009_native_graph_orchestration_engine.md) and [SRS-01](../specs/srs_01_agent_orchestration_decision_graph_and_weight_engine.md):** `withMeteredNodeGate(nodeName, modelId, nodeFn, options)` accepts the native `(state: Readonly<AgentGraphState>, ctx: AgentRuntimeContext) => Promise<NodeExecutionResult>` signature with zero `@langchain/*` imports (`RunnableConfig` purged). When `options.isSystem2Node === true`, it dynamically resolves the user's selected model from `ctx.selectedSystem2ModelId || state.user_request?.selectedSystem2ModelId || defaultModelId`. On credit exhaustion (`INSUFFICIENT_CREDITS`), it returns a first-class `{ status: "INTERRUPTED", interruptReason: "INSUFFICIENT_CREDITS", stateDelta: {}, interruptPayload }` result (`BUG-06` resolved) rather than routing to a separate LangGraph interrupt node.
 
 Because resuming a node after `interrupt()` in `@langchain/langgraph` re-executes the node function from its first line, every model-consuming node is wrapped with **`withMeteredNodeGate`** (`src/lib/metering/node-gate.ts`):
 
@@ -242,7 +242,8 @@ In Phase 11, user-facing quota displays were migrated from legacy word-count met
   - `src/test/metering/derivation-and-lua.unit.test.ts` — Token derivation and Redis Lua script unit tests (18 tests)
   - `src/test/metering/cold-start.unit.test.ts` — Flush-First cold start unit tests (13 tests)
   - `src/test/metering/stream-governor.unit.test.ts` — Real-time stream governor unit tests (17 tests)
-  - `src/test/metering/node-gate.unit.test.ts` — Metered node gate unit tests (11 tests)
+  - `src/test/metering/node-gate.unit.test.ts` — Metered node gate unit tests (12 tests)
+  - `src/test/metering/native-node-gate.test.ts` — Native `(state, ctx)` metered node gate & System 2 dynamic model routing unit tests (10 tests)
   - `src/test/metering/ai-settlement-service.unit.test.ts` — AI settlement service unit tests (21 tests)
   - `src/test/infrastructure/cron-expire-reservations.test.ts` — Cron batch draining tests (10 tests)
   - `src/test/server/billing-service.test.ts` — Billing service and top-up unit tests (23 tests)

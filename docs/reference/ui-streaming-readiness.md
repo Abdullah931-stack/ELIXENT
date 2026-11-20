@@ -185,7 +185,7 @@ tested and ready for progressive canary activation by setting the flag to `true`
 
 ## 8. Unified Agent SSE Stream Protocol (`/api/agent/stream`)
 
-As part of the Elixent autonomous agent architecture (`ELIXENT-ARCH-03` §5.1 & `ELIXENT-ARCH-02`), the unified route `POST /api/agent/stream` serves server-authoritative Server-Sent Events (SSE) for LangGraph state machine execution:
+As part of the Elixent autonomous agent architecture (`ELIXENT-ARCH-03` §5.1, `ELIXENT-ARCH-02` & `SRS-01`), the unified route `POST /api/agent/stream` serves server-authoritative Server-Sent Events (SSE) for `ElixentNativeGraphRunner` state machine execution:
 
 ### 8.1 Route Handler & Stream Execution Invariants
 - **Hono SSE Route Handler (`agentRoutes` / `handleAgentStreamPost`):** Served as a persistent Web-standard Hono `ReadableStream<Uint8Array>` handler (`POST /api/agent/stream` in `src/server/routes/agent.routes.ts`) with `AbortController` cancellation bound to `req.signal` and `ReadableStream.cancel()`, `StreamGovernor` multi-slice Redis leases (`120s` TTL via `LEASE_TTL_SECONDS`), and background PostgreSQL settlement flush via `scheduleAfterResponse()` (ADR-007 ALS).
@@ -193,10 +193,14 @@ As part of the Elixent autonomous agent architecture (`ELIXENT-ARCH-03` §5.1 & 
 - **Fail-Closed Stream Rate Limiting:** Enforces `aiStreamRateLimiter.limit(user.id)`; returns RFC 7807 `429 Too Many Requests` if the user exceeds limits or Redis is unavailable.
 - **Strict Payload Schema (`src/core/agent/stream-payload.ts`):** Validated via `parseAgentStreamPayload`:
   - `threadId`: string (max 256 chars, required).
-  - `projectId`: string (max 256 chars, required).
+  - `workspaceId`: string (max 256 chars, optional; required if `projectId` is omitted).
+  - `projectId`: string (max 256 chars, optional legacy alias for `workspaceId`).
+  - `turnId`: string (max 256 chars, optional; defaults to generated UUID).
   - `prompt`: string (max 100,000 chars, optional).
   - `targetFileIds`: string array (max 100 files, required).
-  - `resumePayload`: unknown (optional, passed to `new Command({ resume })`).
+  - `permissionMode`: `"safe" | "semi_auto" | "full_auto"` (optional, defaults to `"safe"`).
+  - `selectedSystem2ModelId`: string (max 256 chars, optional, defaults to `"google/gemini-3.1-pro"`).
+  - `resumePayload`: unknown (optional, passed to `elixentAgentGraph.stream({ resumePayload }, runtimeContext)`).
   - `ephemeralVaultPayloads`: Record<string, string> (max 100 keys, max 2MB per document, optional).
   - `liveDocumentSnapshots`: Record<string, string> (max 100 keys, max 2MB per document, optional).
   Schema violations return RFC 7807 `400 Bad Request` with `invalidParams` details.

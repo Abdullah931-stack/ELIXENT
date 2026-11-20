@@ -124,9 +124,9 @@ export type NewCreditLedgerTransaction =
   typeof creditLedgerTransactions.$inferInsert;
 ```
 
-### 1.3. Cross-Session Project Decision Ledger Table (`src/server/db/schema/project-decision-ledger.ts`)
+### 1.3. Cross-Session Project Decision Ledger Table (`src/server/db/schema/project-decision-ledger.ts` — Retired & Deleted in Phase 3)
 
-> **Superseded by [ADR-012](./adrs/adr_012_json_decision_ledger_and_graph_traversal.md):** The `project_decision_ledger` PostgreSQL table is replaced by the workspace-native `decisions.ledger.json` file as the single source of truth for the decision DAG. The original table contract is preserved below for historical context.
+> **Superseded & Physically Deleted in Phase 3 (`v0.26.0`) per [ADR-012](./adrs/adr_012_json_decision_ledger_and_graph_traversal.md):** The `project_decision_ledger` PostgreSQL table is replaced by the workspace-native `decisions.ledger.json` file (`DecisionLedgerDocument v2.0`) as the single source of truth for the decision DAG. `src/server/db/schema/project-decision-ledger.ts` has been physically deleted from the repository and removed from `src/server/db/schema/index.ts`. The original table contract is preserved below for historical migration context.
 
 This table persists the Justification-Driven Assumption-Based Truth Maintenance System directed acyclic graph (`Justification-Driven ATMS DAG`), including the decision prompt, the selected option and its rationale (`selectionRationale`), all evaluated alternatives and their contextual rejection reasons (`evaluatedAlternatives`), concept tags resolved from the project-scoped dynamic taxonomy (`conceptTags`), and dependency links (`dependsOn` and `dependedBy`) scoped at the project level (`projectId`) so they remain available across all `thread_id` sessions (with project taxonomy mutations persisted under the reserved sentinel `decision_id = '__PROJECT_TAXONOMY__'`):
 
@@ -222,9 +222,9 @@ export function getPgPool(): NeonPool | NodePgPool {
 }
 ```
 
-### 1.5. `PostgresSaver` Drizzle Schema (`src/server/db/schema/langgraph-checkpoints.ts`) and Migration `0013_migrate_to_credit_ledger.sql`
+### 1.5. `PostgresSaver` Drizzle Schema (`src/server/db/schema/langgraph-checkpoints.ts` — Retired & Deleted in Phase 3) and Migration `0013_migrate_to_credit_ledger.sql`
 
-> **Superseded by [ADR-009](./adrs/adr_009_native_graph_orchestration_engine.md):** The 4-table `PostgresSaver` schema (`langgraph-checkpoints.ts`) is replaced by the single-table encrypted `agent_checkpoints` store (`src/server/db/schema/agent-checkpoints.ts`, deployed in migration `0014_multi_workspace_and_native_engine.sql`). The original Drizzle schema contract is preserved below for historical migration context (`langgraph-checkpoints.ts` exports remain in `src/server/db/schema/index.ts` until Phase 3 LangGraph removal).
+> **Superseded & Physically Deleted in Phase 3 (`v0.26.0`) per [ADR-009](./adrs/adr_009_native_graph_orchestration_engine.md):** The 4-table `PostgresSaver` schema (`langgraph-checkpoints.ts`) is replaced by the single-table encrypted `agent_checkpoints` store (`src/server/db/schema/agent-checkpoints.ts`, deployed in migration `0014_multi_workspace_and_native_engine.sql`). `src/server/db/schema/langgraph-checkpoints.ts` has been physically deleted from the repository and removed from `src/server/db/schema/index.ts` alongside the removal of all `@langchain/*` packages. The original Drizzle schema contract is preserved below for historical migration `0013` context.
 
 Because Stage 3 of the continuous integration pipeline (`.github/workflows/ci.yml` — `Stage 3: migration-integrity`, lines `136–142`) executes `node scripts/verify-migrations.mjs` followed by `npx drizzle-kit push --config drizzle.config.test.ts --force` (which reads `schema: "./src/server/db/schema/index.ts"`), creating the four `PostgresSaver` tables in the SQL migration file without defining them in the Drizzle schema would cause `drizzle-kit push --force` to drop them as unmanaged tables. Therefore, they **must** be defined in `src/server/db/schema/langgraph-checkpoints.ts` and exported from `src/server/db/schema/index.ts` in lockstep with migration file `0013_migrate_to_credit_ledger.sql`:
 
