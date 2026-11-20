@@ -31,7 +31,14 @@ import {
   type AgentStreamRequestPayload,
 } from "@/core/agent/stream-payload";
 import { elixentAgentGraph } from "@/core/agent/graph";
-import { Command, isGraphInterrupt } from "@langchain/langgraph";
+import {
+  type AgentRuntimeContext,
+  type AgentStreamEvent,
+  type GraphExecutionInput,
+  type GraphStreamYield,
+} from "@/core/agent/engine/runner";
+import { createInitialAgentGraphState } from "@/core/agent/state";
+import { CloudPostgresWorkspaceProvider } from "@/core/workspace/cloud-provider";
 import {
   runWithEphemeralVaultScope,
   storeEphemeralVaultSection,
@@ -276,39 +283,136 @@ export async function handleAgentStreamPost(req: Request): Promise<Response> {
             });
             controller.enqueue(encoder.encode(startFrame));
 
-            // Configure LangGraph execution input & options
-            const graphInput =
+            // Configure Native Graph Engine execution input & runtime context
+            const workspaceId = payload.workspaceId ?? payload.projectId ?? "";
+            const turnId = payload.turnId ?? operationId;
+            const permissionMode = payload.permissionMode ?? "safe";
+            const selectedSystem2ModelId =
+              payload.selectedSystem2ModelId ?? AGENT_STREAM_MODEL_ID;
+
+            const graphInput: GraphExecutionInput =
               payload.resumePayload !== undefined
-                ? new Command({ resume: payload.resumePayload })
-                : {
+                ? {
+                    resumeFromCheckpoint: true,
+                    stateOverrides: {
+                      clarification_answers:
+                        payload.resumePayload as Record<string, unknown>,
+                    },
+                  }
+                : createInitialAgentGraphState({
                     user_request: {
                       prompt: payload.prompt ?? "",
+                      workspaceId,
                       projectId: payload.projectId,
+                      turnId,
                       targetFileIds: payload.targetFileIds,
+                      permissionMode,
+                      selectedSystem2ModelId,
                     },
-                  };
+                  });
 
-            const graphConfig = {
-              configurable: {
-                thread_id: payload.threadId,
-                userId: user.id,
-                user_id: user.id,
+            const workspaceProvider = new CloudPostgresWorkspaceProvider({
+              userId: user.id,
+              workspaceId,
+              ephemeralVaultPayloads: payload.ephemeralVaultPayloads,
+              liveDocumentSnapshots: payload.liveDocumentSnapshots,
+            });
+
+            const runtimeContext: AgentRuntimeContext = {
+              userId: user.id,
+              workspaceId: workspaceProvider.workspaceId,
+              threadId: payload.threadId,
+              turnId,
+              permissionMode,
+              selectedSystem2ModelId,
+              workspaceProvider,
+              streamGovernor: governor,
+              ephemeralVaultPayloads: new Map(
+                Object.entries(payload.ephemeralVaultPayloads ?? {})
+              ),
+              liveDocumentSnapshots: new Map(
+                Object.entries(payload.liveDocumentSnapshots ?? {})
+              ),
+              emitSseEvent: (event: AgentStreamEvent) => {
+                if (
+                  event.type === "ghost_hunk_proposed" ||
+                  event.type === "file_mutated" ||
+                  event.type === "vault_file_commit_required" ||
+                  (event.type === "update" &&
+                    event.nodeId === "direct_response_node")
+                ) {
+                  controller.enqueue(
+                    encoder.encode(formatSSE(event.type, event))
+                  );
+                }
               },
-              signal: abortController.signal,
+              abortSignal: abortController.signal,
             };
 
             const eventStream = await elixentAgentGraph.stream(
-              graphInput as Parameters<typeof elixentAgentGraph.stream>[0],
-              graphConfig
+              graphInput,
+              runtimeContext
             );
 
-            for await (const chunk of eventStream) {
+            let didInterrupt = false;
+            for await (const chunk of eventStream as AsyncIterable<
+              GraphStreamYield | Record<string, unknown> | string
+            >) {
               if (abortController.signal.aborted) {
                 break;
               }
 
-              // Handle inline interrupt chunks
+              // Handle native GraphStreamYield interrupts & legacy __interrupt__ mocks
+              if (
+                chunk &&
+                typeof chunk === "object" &&
+                "status" in chunk &&
+                chunk.status === "INTERRUPTED"
+              ) {
+                didInterrupt = true;
+                const yieldChunk = chunk as GraphStreamYield;
+                const rawPayload = yieldChunk.interruptPayload ?? {};
+                const questionQueue = rawPayload.questionQueue as
+                  | { questions?: unknown[] }
+                  | undefined;
+                const interruptValue =
+                  yieldChunk.interruptReason === "INSUFFICIENT_CREDITS"
+                    ? {
+                        code: "INSUFFICIENT_CREDITS",
+                        message:
+                          "Insufficient credits to continue agent execution.",
+                        ...rawPayload,
+                      }
+                    : {
+                        ...rawPayload,
+                        ...(Array.isArray(questionQueue?.questions)
+                          ? { questions: questionQueue.questions }
+                          : {}),
+                        interruptReason: yieldChunk.interruptReason,
+                      };
+
+                const interruptFrame = formatSSE("interrupt", {
+                  type: "interrupt",
+                  threadId: payload.threadId,
+                  operationId,
+                  nodeId: yieldChunk.nodeId,
+                  stepIndex: yieldChunk.stepIndex,
+                  interruptReason: yieldChunk.interruptReason,
+                  interruptPayload: yieldChunk.interruptPayload,
+                  interrupts: [
+                    {
+                      value: interruptValue,
+                      resumable:
+                        yieldChunk.interruptReason !== "INSUFFICIENT_CREDITS",
+                    },
+                  ],
+                });
+                controller.enqueue(encoder.encode(interruptFrame));
+                continue;
+              }
+
               if (chunk && typeof chunk === "object" && "__interrupt__" in chunk) {
+                didInterrupt = true;
                 const interruptFrame = formatSSE("interrupt", {
                   type: "interrupt",
                   threadId: payload.threadId,
@@ -334,6 +438,16 @@ export async function handleAgentStreamPost(req: Request): Promise<Response> {
                 break;
               }
 
+              // Skip duplicate final update frame for direct_response_node (already streamed via emitSseEvent)
+              if (
+                chunk &&
+                typeof chunk === "object" &&
+                "nodeId" in chunk &&
+                chunk.nodeId === "direct_response_node"
+              ) {
+                continue;
+              }
+
               // Emit update frame
               const updateFrame = formatSSE("update", {
                 type: "update",
@@ -342,7 +456,7 @@ export async function handleAgentStreamPost(req: Request): Promise<Response> {
               controller.enqueue(encoder.encode(updateFrame));
             }
 
-            if (!abortController.signal.aborted) {
+            if (!abortController.signal.aborted && !didInterrupt) {
               const doneFrame = formatSSE("done", {
                 type: "done",
                 threadId: payload.threadId,
@@ -351,34 +465,17 @@ export async function handleAgentStreamPost(req: Request): Promise<Response> {
               controller.enqueue(encoder.encode(doneFrame));
             }
           } catch (graphError: unknown) {
-            if (
-              isGraphInterrupt(graphError) ||
-              (graphError &&
-                typeof graphError === "object" &&
-                (graphError as { name?: string }).name === "GraphInterrupt")
-            ) {
-              const interrupts =
-                (graphError as { interrupts?: unknown[] }).interrupts ?? [];
-              const interruptFrame = formatSSE("interrupt", {
-                type: "interrupt",
-                threadId: payload.threadId,
-                operationId,
-                interrupts,
-              });
-              controller.enqueue(encoder.encode(interruptFrame));
-            } else {
-              abortController.abort("GRAPH_EXECUTION_ERROR");
-              const message =
-                graphError instanceof Error
-                  ? sanitizeLogMessage(graphError.message)
-                  : "Agent stream execution error";
-              const errorFrame = formatSSE("error", {
-                type: "error",
-                code: "STREAM_EXECUTION_ERROR",
-                message,
-              });
-              controller.enqueue(encoder.encode(errorFrame));
-            }
+            abortController.abort("GRAPH_EXECUTION_ERROR");
+            const message =
+              graphError instanceof Error
+                ? sanitizeLogMessage(graphError.message)
+                : "Agent stream execution error";
+            const errorFrame = formatSSE("error", {
+              type: "error",
+              code: "STREAM_EXECUTION_ERROR",
+              message,
+            });
+            controller.enqueue(encoder.encode(errorFrame));
           } finally {
             zeroOutEphemeralVaultMemory();
           }

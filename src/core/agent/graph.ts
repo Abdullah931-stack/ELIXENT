@@ -1,280 +1,274 @@
 /**
- * Elixent LangGraph StateGraph Assembly
+ * Elixent Native Graph Engine Assembly (ADR-009, ADR-010 & SRS-01 §3.1–§3.2)
  *
- * Assembles the full autonomous decision-making and architectural adjudication
- * state machine according to ELIXENT-ARCH-02 §1, §2, & §3.
+ * Assembles the 9 replay-safe canonical nodes and 6 deterministic
+ * state-predicate routing gates (`G-01..G-06`) on `ElixentNativeGraphRunner`.
  *
  * Topology:
- * - 14 Nodes across Stages 0 to 7
- * - 3 Conditional Edge Routers:
- *   1. `toolsCondition`: Stage 1 inspection loop
- *   2. `routeAfterAssumptions`: Stage 2 assumption gate
- *   3. `resolutionGateRouter`: Stage 5 four-way resolution gate
- * - Entry from START to `orchestrator_node`
- * - Terminal transition from `document_writer_node` to END
- * - Production checkpointer: `PostgresSaver` with `EncryptedCheckpointSerializer` (AES-256-GCM)
+ * - Entry: `intent_and_scope_router_node` (Node 1)
+ * - Gates: `G-01..G-06` + `gateAfterHitlClarification`
+ * - Terminal (`null` / END): `workspace_mutator_node` (Node 8) & `direct_response_node` (Node 9)
+ * - Max super-steps: 25
  */
 
 import {
-  StateGraph,
-  START,
-  END,
-  MemorySaver,
-} from "@langchain/langgraph";
-import type { BaseCheckpointSaver } from "@langchain/langgraph-checkpoint";
-import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
-import { getPgPool } from "@/server/db";
-import { EncryptedCheckpointSerializer } from "@/core/agent/checkpoint-serializer";
-import {
-  AgentGraphAnnotation,
-  type AgentGraphState,
-} from "@/core/agent/state";
+  ElixentNativeGraphRunner,
+  type AgentGraphGateFn,
+  type AgentGraphNodeFn,
+} from "@/core/agent/engine/runner";
+import type { AgentGraphState } from "@/core/agent/state";
 
-// Stage 0 Orchestrator Node
-import { orchestratorNode } from "./nodes/orchestrator-node";
-
-// Stage 1 Search Nodes & Router
+// 9 Replay-Safe Canonical Nodes (Wave 3.2)
+import { intentAndScopeRouterNode } from "./nodes/orchestrator-node";
+import { searchDiscoveryNode } from "./nodes/search-nodes";
 import {
-  searchAgentNode,
-  workspaceToolNode,
-  searchSynthesizerNode,
-  toolsCondition,
-} from "./nodes/search-nodes";
-
-// Stage 2 Assumption & Linker Nodes & Router
-import {
-  assumptionAnalyzerNode,
-  atmsRelationalLinkerNode,
-  routeAfterAssumptions,
+  assumptionExtractorNode,
+  conflictAndWeightGateNode,
 } from "./nodes/assumption-and-linker-nodes";
-
-// Stage 3 JEV Scoring Nodes
-import {
-  jevStructuringNode,
-  decisionScorerNode,
-} from "./nodes/jev-scoring-nodes";
-
-// Stages 4 & 5 Resolution & Ledger Commit Nodes & Router
-import {
-  confidenceClassifierNode,
-  ledgerCommitNode,
-  internalGapPlannerNode,
-  resolutionGateRouter,
-} from "./nodes/resolution-and-ledger-nodes";
-
-// Stage 6 HITL Nodes
-import {
-  questionOrganizerNode,
-  pureInterruptNode,
-} from "./nodes/hitl-nodes";
-
-// Stage 7 Document Writer Node
-import { documentWriterNode } from "./nodes/document-writer-node";
+import { jevConformalScorerNode } from "./nodes/jev-scoring-nodes";
+import { hitlClarificationNode } from "./nodes/hitl-nodes";
+import { ledgerCommitNode } from "./nodes/resolution-and-ledger-nodes";
+import { workspaceMutatorNode } from "./nodes/document-writer-node";
+import { directResponseNode } from "./nodes/direct-response-node";
 
 // ---------------------------------------------------------------------------
-// Canonical Node Name Constants
+// Canonical 9-Node Identifiers (SRS-01 §3.1)
 // ---------------------------------------------------------------------------
 
-/** Stage 0 Master Orchestrator Node identifier */
-export const ORCHESTRATOR_NODE = "orchestrator_node";
+/** Node 1: Stage 0 Intent & Scope Router */
+export const INTENT_AND_SCOPE_ROUTER_NODE = "intent_and_scope_router_node";
 
-/** Stage 1 Local Inspection Agent Node identifier */
-export const SEARCH_AGENT_NODE = "search_agent_node";
+/** Node 2: Stage 1 Search Discovery */
+export const SEARCH_DISCOVERY_NODE = "search_discovery_node";
 
-/** Stage 1 Deterministic Workspace Tool Execution Node identifier */
-export const WORKSPACE_TOOL_NODE = "workspace_tool_node";
+/** Node 3: Stage 2 Assumption Extractor */
+export const ASSUMPTION_EXTRACTOR_NODE = "assumption_extractor_node";
 
-/** Stage 1 Evidence Report Synthesizer Node identifier */
-export const SEARCH_SYNTHESIZER_NODE = "search_synthesizer_node";
+/** Node 4: Stage 2 Conflict & Weight Gate (ATMS + Anti-Domino) */
+export const CONFLICT_AND_WEIGHT_GATE_NODE = "conflict_and_weight_gate_node";
 
-/** Stage 2 Assumption Analyzer & Tag Classifier Node identifier */
-export const ASSUMPTION_ANALYZER_NODE = "assumption_analyzer_node";
+/** Node 5: Stage 3–4 JEV Conformal Scorer */
+export const JEV_CONFORMAL_SCORER_NODE = "jev_conformal_scorer_node";
 
-/** Stage 2 Relational Adjudication & Rationale Audit Node identifier */
-export const ATMS_RELATIONAL_LINKER_NODE = "atms_relational_linker_node";
+/** Node 6: Stage 6 HITL Clarification & Deletion Approval */
+export const HITL_CLARIFICATION_NODE = "hitl_clarification_node";
 
-/** Stage 3 Option & Rationale Neutralization Node identifier */
-export const JEV_STRUCTURING_NODE = "jev_structuring_node";
-
-/** Stage 3 Parallel Decision Scorer Node identifier */
-export const DECISION_SCORER_NODE = "decision_scorer_node";
-
-/** Stage 4 Deterministic Mathematical Classifier Node identifier */
-export const CONFIDENCE_CLASSIFIER_NODE = "confidence_classifier_node";
-
-/** Stage 5 ATMS DAG Commit & Dependency Invalidation Node identifier */
+/** Node 7: Stage 5 ATMS Ledger Commit */
 export const LEDGER_COMMIT_NODE = "ledger_commit_node";
 
-/** Stage 5 Supplementary Search Planner Node identifier */
-export const INTERNAL_GAP_PLANNER_NODE = "internal_gap_planner_node";
+/** Node 8: Stage 7 Workspace Mutator (Diff3 / Ghost / File Lifecycle) */
+export const WORKSPACE_MUTATOR_NODE = "workspace_mutator_node";
 
-/** Stage 6 Diagnostic Question Batch Organizer Node identifier */
-export const QUESTION_ORGANIZER_NODE = "question_organizer_node";
-
-/** Stage 6 Replay-Safe Pure Interrupt Node identifier */
-export const PURE_INTERRUPT_NODE = "pure_interrupt_node";
-
-/** Stage 7 Document Writer & Structural Merge Node identifier */
-export const DOCUMENT_WRITER_NODE = "document_writer_node";
+/** Node 9: Stage 7 Direct Conversational / Query Response */
+export const DIRECT_RESPONSE_NODE = "direct_response_node";
 
 // ---------------------------------------------------------------------------
-// StateGraph Workflow Construction
+// 6 Deterministic State-Predicate Routing Gates (SRS-01 §3.2)
 // ---------------------------------------------------------------------------
 
 /**
- * Builds and configures the uncompiled StateGraph workflow connecting all
- * 14 canonical nodes and 3 conditional edge routers.
- *
- * @returns Configured StateGraph builder instance.
+ * Gate G-01 (from Node 1 `intent_and_scope_router_node`):
+ * - `CHAT_ONLY` -> `direct_response_node` (Node 9)
+ * - All other intents -> `search_discovery_node` (Node 2)
  */
-export function buildAgentWorkflow(): StateGraph<
-  typeof AgentGraphAnnotation,
-  AgentGraphState
-> {
-  const workflow = new StateGraph(AgentGraphAnnotation)
-    // 14 Nodes
-    .addNode(ORCHESTRATOR_NODE, orchestratorNode)
-    .addNode(SEARCH_AGENT_NODE, searchAgentNode)
-    .addNode(WORKSPACE_TOOL_NODE, workspaceToolNode)
-    .addNode(SEARCH_SYNTHESIZER_NODE, searchSynthesizerNode)
-    .addNode(ASSUMPTION_ANALYZER_NODE, assumptionAnalyzerNode)
-    .addNode(ATMS_RELATIONAL_LINKER_NODE, atmsRelationalLinkerNode)
-    .addNode(JEV_STRUCTURING_NODE, jevStructuringNode)
-    .addNode(DECISION_SCORER_NODE, decisionScorerNode)
-    .addNode(CONFIDENCE_CLASSIFIER_NODE, confidenceClassifierNode)
-    .addNode(LEDGER_COMMIT_NODE, ledgerCommitNode)
-    .addNode(INTERNAL_GAP_PLANNER_NODE, internalGapPlannerNode)
-    .addNode(QUESTION_ORGANIZER_NODE, questionOrganizerNode)
-    .addNode(PURE_INTERRUPT_NODE, pureInterruptNode)
-    .addNode(DOCUMENT_WRITER_NODE, documentWriterNode);
-
-  // 1. Entry Transition: START -> orchestrator_node -> search_agent_node
-  workflow.addEdge(START, ORCHESTRATOR_NODE);
-  workflow.addEdge(ORCHESTRATOR_NODE, SEARCH_AGENT_NODE);
-
-  // 2. Stage 1 Conditional Inspection Loop
-  workflow.addConditionalEdges(SEARCH_AGENT_NODE, toolsCondition, {
-    [WORKSPACE_TOOL_NODE]: WORKSPACE_TOOL_NODE,
-    [SEARCH_SYNTHESIZER_NODE]: SEARCH_SYNTHESIZER_NODE,
-  });
-  workflow.addEdge(WORKSPACE_TOOL_NODE, SEARCH_AGENT_NODE);
-  workflow.addEdge(SEARCH_SYNTHESIZER_NODE, ASSUMPTION_ANALYZER_NODE);
-
-  // 3. Stage 2 Assumption Analysis -> ATMS Linker -> Conditional Edge Gate
-  workflow.addEdge(ASSUMPTION_ANALYZER_NODE, ATMS_RELATIONAL_LINKER_NODE);
-  workflow.addConditionalEdges(ATMS_RELATIONAL_LINKER_NODE, routeAfterAssumptions, {
-    [JEV_STRUCTURING_NODE]: JEV_STRUCTURING_NODE,
-    [DOCUMENT_WRITER_NODE]: DOCUMENT_WRITER_NODE,
-    [SEARCH_AGENT_NODE]: SEARCH_AGENT_NODE,
-  });
-
-  // 4. Stage 3 Auditing -> Scoring -> Stage 4 Confidence Classifier
-  workflow.addEdge(JEV_STRUCTURING_NODE, DECISION_SCORER_NODE);
-  workflow.addEdge(DECISION_SCORER_NODE, CONFIDENCE_CLASSIFIER_NODE);
-
-  // 5. Stage 4 & 5 Deterministic Triage -> Ledger Commit -> Four-Way Gate
-  workflow.addEdge(CONFIDENCE_CLASSIFIER_NODE, LEDGER_COMMIT_NODE);
-  workflow.addConditionalEdges(LEDGER_COMMIT_NODE, resolutionGateRouter, {
-    [DOCUMENT_WRITER_NODE]: DOCUMENT_WRITER_NODE,
-    [INTERNAL_GAP_PLANNER_NODE]: INTERNAL_GAP_PLANNER_NODE,
-    [QUESTION_ORGANIZER_NODE]: QUESTION_ORGANIZER_NODE,
-    [PURE_INTERRUPT_NODE]: PURE_INTERRUPT_NODE,
-  });
-
-  // 6. Resolution Gate Edge Continuations
-  workflow.addEdge(INTERNAL_GAP_PLANNER_NODE, SEARCH_AGENT_NODE);
-  workflow.addEdge(QUESTION_ORGANIZER_NODE, PURE_INTERRUPT_NODE);
-  workflow.addEdge(PURE_INTERRUPT_NODE, ASSUMPTION_ANALYZER_NODE);
-
-  // 7. Stage 7 Terminal Transition: document_writer_node -> END
-  workflow.addEdge(DOCUMENT_WRITER_NODE, END);
-
-  return workflow as unknown as StateGraph<
-    typeof AgentGraphAnnotation,
-    AgentGraphState
-  >;
-}
-
-/** Pre-configured StateGraph builder instance */
-export const workflow = buildAgentWorkflow();
-
-// ---------------------------------------------------------------------------
-// Checkpointer & Factory (G-1 & G-2)
-// ---------------------------------------------------------------------------
+export const gateG01: AgentGraphGateFn = (
+  state: Readonly<AgentGraphState>,
+): string => {
+  if (state.classified_intent === "CHAT_ONLY") {
+    return DIRECT_RESPONSE_NODE;
+  }
+  return SEARCH_DISCOVERY_NODE;
+};
 
 /**
- * Instantiates and returns the production PostgreSQL checkpointer.
- *
- * Configures `PostgresSaver` with the global PostgreSQL pool and
- * `EncryptedCheckpointSerializer` (AES-256-GCM) per G-1.
- *
- * @returns Configured PostgresSaver checkpointer instance.
+ * Gate G-02 (from Node 2 `search_discovery_node`):
+ * - `WORKSPACE_READ_SEARCH` | `DECISION_LEDGER_QUERY` -> `direct_response_node` (Node 9)
+ * - `FAST_LOCAL_EDIT` -> `workspace_mutator_node` (Node 8)
+ * - Architectural / multi-file / structure mutation intents -> `assumption_extractor_node` (Node 3)
  */
-export function getProductionCheckpointer(): PostgresSaver {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return new PostgresSaver(getPgPool() as any, new EncryptedCheckpointSerializer());
-}
+export const gateG02: AgentGraphGateFn = (
+  state: Readonly<AgentGraphState>,
+): string => {
+  if (
+    state.classified_intent === "WORKSPACE_READ_SEARCH" ||
+    state.classified_intent === "DECISION_LEDGER_QUERY"
+  ) {
+    return DIRECT_RESPONSE_NODE;
+  }
+  if (state.classified_intent === "FAST_LOCAL_EDIT") {
+    return WORKSPACE_MUTATOR_NODE;
+  }
+  return ASSUMPTION_EXTRACTOR_NODE;
+};
 
 /**
- * Options for configuring and compiling the Elixent agent graph.
+ * Gate G-03 (from Node 3 `assumption_extractor_node`):
+ * - Zero assumptions AND empty invalidation map -> `workspace_mutator_node` (Node 8)
+ * - Otherwise -> `conflict_and_weight_gate_node` (Node 4)
+ */
+export const gateG03: AgentGraphGateFn = (
+  state: Readonly<AgentGraphState>,
+): string => {
+  if (
+    state.assumptions.length === 0 &&
+    Object.keys(state.invalidation_map).length === 0
+  ) {
+    return WORKSPACE_MUTATOR_NODE;
+  }
+  return CONFLICT_AND_WEIGHT_GATE_NODE;
+};
+
+/**
+ * Gate G-04 (from Node 4 `conflict_and_weight_gate_node`):
+ * - Anti-Domino `ESCALATE_TO_HITL` triggered (`state.question_queue !== null`) -> `hitl_clarification_node` (Node 6)
+ * - Contextual evidence gap flagged AND `state.search_loop_count < 3` -> `search_discovery_node` (Node 2)
+ * - Otherwise -> `jev_conformal_scorer_node` (Node 5)
+ */
+export const gateG04: AgentGraphGateFn = (
+  state: Readonly<AgentGraphState>,
+): string => {
+  if (state.question_queue !== null) {
+    return HITL_CLARIFICATION_NODE;
+  }
+
+  const hasEvidenceGap =
+    state.search_loop_count < 3 &&
+    state.search_report.inspectedPaths.length > 0 &&
+    state.assumptions.some((assumption) =>
+      assumption.affectedSections.some(
+        (sec) =>
+          !state.search_report.evidenceItems.some(
+            (ev) => ev.fileId === sec.fileId,
+          ),
+      ),
+    );
+
+  if (hasEvidenceGap) {
+    return SEARCH_DISCOVERY_NODE;
+  }
+
+  return JEV_CONFORMAL_SCORER_NODE;
+};
+
+/**
+ * Gate G-05 (from Node 5 `jev_conformal_scorer_node`):
+ * - `unresolved_ledger.length > 0` OR unapproved `DELETE_FILE` in `safe`/`semi_auto` -> `hitl_clarification_node` (Node 6)
+ * - Otherwise -> `ledger_commit_node` (Node 7)
+ */
+export const gateG05: AgentGraphGateFn = (
+  state: Readonly<AgentGraphState>,
+): string => {
+  const hasUnapprovedDeletion = state.pending_file_actions.some(
+    (action) =>
+      action.type === "DELETE_FILE" &&
+      action.approved !== true &&
+      state.user_request.permissionMode !== "full_auto",
+  );
+
+  if (state.unresolved_ledger.length > 0 || hasUnapprovedDeletion) {
+    return HITL_CLARIFICATION_NODE;
+  }
+
+  return LEDGER_COMMIT_NODE;
+};
+
+/**
+ * Outgoing gate from Node 6 (`hitl_clarification_node`) upon HITL resumption:
+ * - If Node 4 escalated Anti-Domino directly to Node 6 (`G-04 -> Node 6`, skipping Node 5)
+ *   and resumption still leaves unconstrained assumptions with `scored_decisions.length === 0`,
+ *   route to `jev_conformal_scorer_node` (Node 5) to score them before committing.
+ * - Otherwise route directly to `ledger_commit_node` (Node 7).
+ */
+export const gateAfterHitlClarification: AgentGraphGateFn = (
+  state: Readonly<AgentGraphState>,
+): string => {
+  const hasUnconstrainedAssumptions = state.assumptions.some(
+    (assumption) =>
+      !(assumption as { constrainedByPrior?: boolean }).constrainedByPrior,
+  );
+
+  if (hasUnconstrainedAssumptions && state.scored_decisions.length === 0) {
+    return JEV_CONFORMAL_SCORER_NODE;
+  }
+
+  return LEDGER_COMMIT_NODE;
+};
+
+/**
+ * Gate G-06 (from Node 7 `ledger_commit_node`):
+ * - No `.md` target sections or file lifecycle mutations pending -> `direct_response_node` (Node 9)
+ * - `.md` mutations or file creation/deletion pending -> `workspace_mutator_node` (Node 8)
+ */
+export const gateG06: AgentGraphGateFn = (
+  state: Readonly<AgentGraphState>,
+): string => {
+  if (
+    Object.keys(state.invalidation_map).length === 0 &&
+    state.pending_file_actions.length === 0 &&
+    state.user_request.targetFileIds.length === 0
+  ) {
+    return DIRECT_RESPONSE_NODE;
+  }
+  return WORKSPACE_MUTATOR_NODE;
+};
+
+// ---------------------------------------------------------------------------
+// Native Graph Runner Factory & Production Singleton
+// ---------------------------------------------------------------------------
+
+/**
+ * Options for constructing an `ElixentNativeGraphRunner` instance.
  */
 export interface ElixentAgentGraphOptions {
-  /**
-   * Optional custom checkpoint saver (e.g. MemorySaver for testing).
-   * Defaults to production PostgresSaver via `getProductionCheckpointer()`.
-   */
-  checkpointer?: BaseCheckpointSaver;
+  readonly maxSuperSteps?: number;
 }
 
 /**
- * Factory function that compiles the Elixent agent state graph with the specified
- * or default production checkpointer.
- *
- * @param options - Optional compilation settings including custom checkpointer.
- * @returns Compiled StateGraph instance ready for invocation or streaming.
+ * Factory function assembling all 9 canonical nodes and 6 deterministic
+ * routing gates (`G-01..G-06`) onto `ElixentNativeGraphRunner`.
  */
-export function createElixentAgentGraph(options?: ElixentAgentGraphOptions) {
-  const checkpointer = options?.checkpointer ?? getProductionCheckpointer();
-  return workflow.compile({ checkpointer });
+export function createElixentAgentGraph(
+  options?: ElixentAgentGraphOptions,
+): ElixentNativeGraphRunner {
+  const nodes: Record<string, AgentGraphNodeFn> = {
+    [INTENT_AND_SCOPE_ROUTER_NODE]: intentAndScopeRouterNode,
+    [SEARCH_DISCOVERY_NODE]: searchDiscoveryNode,
+    [ASSUMPTION_EXTRACTOR_NODE]: assumptionExtractorNode,
+    [CONFLICT_AND_WEIGHT_GATE_NODE]: conflictAndWeightGateNode,
+    [JEV_CONFORMAL_SCORER_NODE]: jevConformalScorerNode,
+    [HITL_CLARIFICATION_NODE]: hitlClarificationNode,
+    [LEDGER_COMMIT_NODE]: ledgerCommitNode,
+    [WORKSPACE_MUTATOR_NODE]: workspaceMutatorNode,
+    [DIRECT_RESPONSE_NODE]: directResponseNode,
+  };
+
+  const edges: Record<string, string | AgentGraphGateFn | null> = {
+    [INTENT_AND_SCOPE_ROUTER_NODE]: gateG01,
+    [SEARCH_DISCOVERY_NODE]: gateG02,
+    [ASSUMPTION_EXTRACTOR_NODE]: gateG03,
+    [CONFLICT_AND_WEIGHT_GATE_NODE]: gateG04,
+    [JEV_CONFORMAL_SCORER_NODE]: gateG05,
+    [HITL_CLARIFICATION_NODE]: gateAfterHitlClarification,
+    [LEDGER_COMMIT_NODE]: gateG06,
+    [WORKSPACE_MUTATOR_NODE]: null,
+    [DIRECT_RESPONSE_NODE]: null,
+  };
+
+  return new ElixentNativeGraphRunner({
+    entryNodeId: INTENT_AND_SCOPE_ROUTER_NODE,
+    nodes,
+    edges,
+    maxSuperSteps: options?.maxSuperSteps ?? 25,
+  });
 }
 
 /**
- * Type alias for the compiled Elixent Agent StateGraph.
+ * Type alias for the Elixent Native Graph Engine runner.
  */
-export type ElixentAgentGraph = ReturnType<typeof createElixentAgentGraph>;
-
-// ---------------------------------------------------------------------------
-// Lazy Singleton Production Instance
-// ---------------------------------------------------------------------------
-
-let singletonGraph: ElixentAgentGraph | null = null;
+export type ElixentAgentGraph = ElixentNativeGraphRunner;
 
 /**
- * Lazily initializes and returns the singleton compiled agent graph for production.
- *
- * @returns Compiled agent graph instance configured with PostgresSaver.
+ * Production singleton instance of the Elixent Native Graph Engine.
  */
-export function getElixentAgentGraph(): ElixentAgentGraph {
-  if (!singletonGraph) {
-    singletonGraph = createElixentAgentGraph();
-  }
-  return singletonGraph;
-}
-
-/**
- * Compiled Elixent Agent StateGraph configured with the production checkpointer.
- * Lazily evaluated via Proxy on first access to prevent eager database initialization
- * during unit test execution or offline runs.
- */
-export const elixentAgentGraph: ElixentAgentGraph = new Proxy(
-  {} as ElixentAgentGraph,
-  {
-    get(_target, prop, receiver) {
-      const graph = getElixentAgentGraph();
-      const value = Reflect.get(graph, prop, receiver);
-      return typeof value === "function" ? value.bind(graph) : value;
-    },
-  },
-);
-
-export { START, END, MemorySaver };
+export const elixentAgentGraph: ElixentNativeGraphRunner =
+  createElixentAgentGraph();

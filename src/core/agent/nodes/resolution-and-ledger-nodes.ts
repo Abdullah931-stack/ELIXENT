@@ -1,38 +1,39 @@
 /**
- * Stage 4 & Stage 5 Resolution, Ledger Commit & Gap Planner Nodes
+ * Stage 4 ATMS Ledger Commit Node (Node 7: `ledger_commit_node`)
  *
- * Implements deterministic graph nodes and router semantics for the Elixent
- * agent orchestration engine (ELIXENT-ARCH-02 §3, §4, §5):
- * 1. `confidenceClassifierNode`: Evaluates scored decisions from Stage 3 against conformal
- *    prediction criteria (APS), routing high-confidence items to commit and populating
- *    `unresolved_ledger` with ambiguous decisions. ZERO LLM calls.
- * 2. `ledgerCommitNode`: Converts approved decisions into ATMS DAG nodes, updates `master_ledger`,
- *    computes minimal section invalidation, and synchronizes to `project_decision_ledger`. ZERO LLM calls.
- * 3. `internalGapPlannerNode`: Increments monotonic search loop counter and extracts missing
- *    evidence investigation paths into `local_inspection_state`. ZERO LLM calls.
- * 4. `resolutionGateRouter`: Four-way deterministic router directing graph execution between
- *    document writer, supplementary search, user clarification, or credit interrupt.
+ * Implements deterministic ATMS DAG commitment for the Elixent Native Graph Engine:
+ * - Converts approved decisions (`APPROVED_DIRECT` | `APPROVED_CONSERVATIVE`) from
+ *   `state.scored_decisions` into formal `ATMSDecisionNode` entries in `master_ledger`.
+ * - Updates `ledger_edges` (`DirectedDecisionEdge[]`), runs `assertAcyclicDecisionGraph`
+ *   and `normalizeLedgerGraphIntegrity`.
+ * - Recomputes 4-source `changeWeight` via `computeDecisionChangeWeight` across modified
+ *   and connected nodes, and computes `invalidation_map` via `computeMinimalSectionInvalidationMap`.
+ * - Persists `decisions.ledger.json` via `ctx.workspaceProvider.writeDecisionLedger` and emits
+ *   `vault_file_commit_required` when the ledger artifact is encrypted.
  */
 
-import type { RunnableConfig } from "@langchain/core/runnables";
-import type { AgentGraphState, UnresolvedDecision } from "@/core/agent/state";
+import type {
+  AgentGraphNodeFn,
+  AgentRuntimeContext,
+  NodeExecutionResult,
+} from "@/core/agent/engine/runner";
+import type { AgentGraphState } from "@/core/agent/state";
 import {
+  assertAcyclicDecisionGraph,
+  normalizeLedgerGraphIntegrity,
+  toProviderLedgerDocument,
   type ATMSDecisionNode,
-  syncMasterLedgerToProjectStore,
+  type DecisionLedgerDocument,
+  type DecisionProvenance,
+  type DirectedDecisionEdge,
 } from "@/core/agent/atms/dag";
-import { computeMinimalSectionInvalidationMap } from "@/core/agent/atms/invalidation";
 import {
-  classifyDecisionConformalAPS,
-  type ConformalClassificationResult,
-  type DecisionItemEvaluationInput,
-  type EvaluatedAlternativeRecord,
-} from "@/lib/jev/conformal-classifier";
-import {
-  getStaticPriors,
-  DEFAULT_FALLBACK_PRIORS,
-  type CalibrationPriors,
-} from "@/lib/jev/calibration-store";
+  computeDecisionChangeWeight,
+  computeMinimalSectionInvalidationMap,
+} from "@/core/agent/atms/invalidation";
+import type { EvaluatedAlternativeRecord } from "@/lib/jev/conformal-classifier";
 import type { SectionTarget } from "@/core/agent/schemas/decision-schemas";
+import type { DecisionLedgerDocument as ProviderDecisionLedgerDocument } from "@/core/workspace/provider";
 
 /**
  * Normalized intermediate representation of a scored decision item.
@@ -43,6 +44,7 @@ export interface ScoredDecisionCandidate {
   readonly questionPrompt?: string;
   readonly conceptTags?: readonly string[];
   readonly status?: "APPROVED_DIRECT" | "APPROVED_CONSERVATIVE" | "UNRESOLVED";
+  readonly provenance?: DecisionProvenance | string;
   readonly impactTier?: "CORE_ARCHITECTURAL" | "PERIPHERAL";
   readonly isLoadBearing?: boolean;
   readonly selectedOptionKey?: string | null;
@@ -69,502 +71,311 @@ export interface ScoredDecisionCandidate {
   readonly reason?: string;
 }
 
-/**
- * Internal helper to safely resolve candidate decision items from state or config.
- *
- * @param state - The agent graph state.
- * @param config - The optional runnable config.
- * @returns Array of candidate decision items.
- */
-function resolveScoredCandidates(
-  state: AgentGraphState,
-  config?: RunnableConfig,
-): ScoredDecisionCandidate[] {
-  const stateRecord = state as unknown as Record<string, unknown>;
-  const configurable = config?.configurable as Record<string, unknown> | undefined;
-
-  const rawCandidates: unknown[] =
-    (Array.isArray(stateRecord.scored_decisions) ? stateRecord.scored_decisions : null) ??
-    (Array.isArray(stateRecord.scoredDecisions) ? stateRecord.scoredDecisions : null) ??
-    (Array.isArray(stateRecord.evaluated_decisions) ? stateRecord.evaluated_decisions : null) ??
-    (Array.isArray(configurable?.scored_decisions) ? configurable.scored_decisions : null) ??
-    (Array.isArray(configurable?.scoredDecisions) ? configurable.scoredDecisions : null) ??
-    (Array.isArray(configurable?.evaluatedDecisions) ? configurable.evaluatedDecisions : null) ??
-    [];
-
-  if (rawCandidates.length > 0) {
-    return rawCandidates.filter(
-      (item): item is ScoredDecisionCandidate =>
-        typeof item === "object" && item !== null && "decisionId" in item,
-    );
+function resolveDecisionProvenance(
+  rawProvenance: unknown,
+  status: "APPROVED_DIRECT" | "APPROVED_CONSERVATIVE",
+): DecisionProvenance {
+  if (rawProvenance === "USER_EXPLICIT_HITL") {
+    return "USER_EXPLICIT_HITL";
   }
-
-  // Fallback: If no explicit scored decisions channel exists, inspect assumptions
-  if (Array.isArray(state.assumptions) && state.assumptions.length > 0) {
-    return state.assumptions.map((assumption) => ({
-      decisionId: assumption.assumptionId,
-      topicSlug: assumption.assumptionId,
-      questionPrompt: assumption.statement,
-      conceptTags: assumption.conceptTags,
-      affectedSections: assumption.affectedSections,
-      dependsOnDecisionIds: assumption.dependsOn,
-    }));
+  if (rawProvenance === "SYSTEM1_DIRECT_APS") {
+    return "SYSTEM1_DIRECT_APS";
   }
-
-  return [];
+  if (
+    rawProvenance === "SYSTEM2_ESCALATED_APS" ||
+    rawProvenance === "SYSTEM1_CONSERVATIVE_APS"
+  ) {
+    return "SYSTEM2_ESCALATED_APS";
+  }
+  return status === "APPROVED_CONSERVATIVE"
+    ? "SYSTEM2_ESCALATED_APS"
+    : "SYSTEM1_DIRECT_APS";
 }
 
-/**
- * Deterministic Conformal Confidence Classifier Node (Stage 4).
- *
- * Evaluates candidate scored decisions against Conformal Adaptive Prediction Sets (APS)
- * criteria (arXiv:2607.25018v1).
- *
- * Invariants:
- * 1. Zero LLM Calls: Completely deterministic mathematical execution.
- * 2. High-confidence decisions (|C_core| = 1 && m >= 0.25, or peripheral |C_periph| <= 2 && m >= 0.15)
- *    are staged for commitment into the ATMS master ledger.
- * 3. Ambiguous/low-confidence decisions are directed to `unresolved_ledger`.
- *
- * @param state - Current agent graph state.
- * @param config - Optional runnable configuration.
- * @returns State delta containing `unresolved_ledger` and staged decisions.
- */
-export async function confidenceClassifierNode(
-  state: AgentGraphState,
-  config?: RunnableConfig,
-): Promise<Partial<AgentGraphState>> {
-  const candidates = resolveScoredCandidates(state, config);
-  const configurable = config?.configurable as Record<string, unknown> | undefined;
-  const modelId =
-    (configurable?.modelId as string | undefined) ?? "typesafe/jev-1.13";
+function extractAffectedSections(
+  rawAffected: unknown,
+  fallbackSections: ReadonlyArray<{ fileId: string; headingSlug: string }>,
+): Array<{ fileId: string; headingSlug: string }> {
+  const source = Array.isArray(rawAffected) ? rawAffected : fallbackSections;
+  const sections: Array<{ fileId: string; headingSlug: string }> = [];
 
-  let priors: CalibrationPriors;
-  try {
-    priors = getStaticPriors(modelId);
-  } catch {
-    priors = DEFAULT_FALLBACK_PRIORS;
-  }
-
-  const unresolvedDecisions: UnresolvedDecision[] = [];
-  const stagedDecisions: ConformalClassificationResult[] = [];
-
-  for (const candidate of candidates) {
-    let result: ConformalClassificationResult;
-
-    // If candidate has raw probabilities and options, run conformal APS classifier
+  for (const sec of source) {
     if (
-      candidate.probabilities &&
-      Array.isArray(candidate.options) &&
-      candidate.options.length > 0
+      sec &&
+      typeof sec === "object" &&
+      typeof (sec as { fileId?: unknown }).fileId === "string" &&
+      typeof (sec as { headingSlug?: unknown }).headingSlug === "string"
     ) {
-      const evalInput: DecisionItemEvaluationInput = {
-        decisionId: candidate.decisionId,
-        topicSlug: candidate.topicSlug ?? candidate.decisionId,
-        questionPrompt: candidate.questionPrompt ?? candidate.decisionId,
-        conceptTags: candidate.conceptTags ? [...candidate.conceptTags] : [],
-        evidenceGrounding: candidate.evidenceGrounding ?? 1.0,
-        couplingLevel: candidate.couplingLevel ?? 0,
-        rollbackCost: candidate.rollbackCost ?? 0,
-        probabilities: candidate.probabilities,
-        options: candidate.options.map((opt) => ({
-          optionKey: opt.optionKey,
-          neutralSummary: opt.neutralSummary,
-          rationaleAndPremises: opt.rationaleAndPremises,
-        })),
-        dependsOnDecisionIds: candidate.dependsOnDecisionIds
-          ? [...candidate.dependsOnDecisionIds]
-          : [],
-        affectedSections: candidate.affectedSections
-          ? [...candidate.affectedSections]
-          : [],
-      };
-      result = classifyDecisionConformalAPS(evalInput, priors);
-    } else if (candidate.status) {
-      // Candidate was already classified in Stage 3
-      result = {
-        decisionId: candidate.decisionId,
-        topicSlug: candidate.topicSlug ?? candidate.decisionId,
-        questionPrompt: candidate.questionPrompt ?? candidate.decisionId,
-        conceptTags: candidate.conceptTags ? [...candidate.conceptTags] : [],
-        status: candidate.status,
-        impactTier: candidate.impactTier ?? "CORE_ARCHITECTURAL",
-        isLoadBearing: candidate.isLoadBearing ?? true,
-        selectedOptionKey: candidate.selectedOptionKey ?? null,
-        selectionRationale:
-          candidate.selectionRationale ?? "Validated architectural decision.",
-        runnerUpOptionKey: candidate.runnerUpOptionKey ?? null,
-        evaluatedAlternatives: candidate.evaluatedAlternatives
-          ? [...candidate.evaluatedAlternatives]
-          : [],
-        predictionSetCore: candidate.predictionSetCore
-          ? [...candidate.predictionSetCore]
-          : [],
-        predictionSetPeriph: candidate.predictionSetPeriph
-          ? [...candidate.predictionSetPeriph]
-          : [],
-        dominanceMargin: candidate.dominanceMargin ?? 0.5,
-        evidenceGrounding: candidate.evidenceGrounding ?? 1.0,
-        reason: candidate.reason,
-      };
-    } else {
-      // Default conservative heuristic when raw scores are omitted
-      result = {
-        decisionId: candidate.decisionId,
-        topicSlug: candidate.topicSlug ?? candidate.decisionId,
-        questionPrompt: candidate.questionPrompt ?? candidate.decisionId,
-        conceptTags: candidate.conceptTags ? [...candidate.conceptTags] : [],
-        status: "APPROVED_DIRECT",
-        impactTier: "CORE_ARCHITECTURAL",
-        isLoadBearing: true,
-        selectedOptionKey: "default_approved",
-        selectionRationale:
-          candidate.selectionRationale ?? "Unambiguous architectural assumption adopted.",
-        runnerUpOptionKey: null,
-        evaluatedAlternatives: [],
-        predictionSetCore: ["default_approved"],
-        predictionSetPeriph: ["default_approved"],
-        dominanceMargin: 1.0,
-        evidenceGrounding: 1.0,
-      };
-    }
-
-    if (result.status === "UNRESOLVED") {
-      unresolvedDecisions.push({
-        decisionId: result.decisionId,
-        topicSlug: result.topicSlug,
-        questionPrompt: result.questionPrompt,
-        conceptTags: result.conceptTags,
-        reason: result.reason ?? "CONFORMAL_CRITERIA_UNMET",
-      });
-    } else {
-      stagedDecisions.push(result);
+      const fileId = (sec as { fileId: string }).fileId.trim();
+      const headingSlug = (sec as { headingSlug: string }).headingSlug.trim();
+      if (fileId.length > 0 && headingSlug.length > 0) {
+        sections.push({ fileId, headingSlug });
+      }
     }
   }
 
-  return {
-    unresolved_ledger: unresolvedDecisions,
-    ...(stagedDecisions.length > 0
-      ? {
-          staged_decisions: stagedDecisions,
-          resolved_decisions: stagedDecisions,
-        }
-      : {}),
-  } as unknown as Partial<AgentGraphState>;
+  return sections;
+}
+
+function extractDependsOn(
+  item: Record<string, unknown>,
+  fallbackDependsOn: readonly string[],
+): string[] {
+  const rawDependsOn =
+    (Array.isArray(item.dependsOn) ? item.dependsOn : null) ??
+    (Array.isArray(item.dependsOnDecisionIds)
+      ? item.dependsOnDecisionIds
+      : null) ??
+    fallbackDependsOn;
+
+  return Array.from(
+    new Set(
+      rawDependsOn.filter(
+        (id): id is string => typeof id === "string" && id.trim().length > 0,
+      ),
+    ),
+  );
 }
 
 /**
- * Deterministic ATMS Ledger Commit Node (Stage 4).
+ * Canonical Node 7 (`ledger_commit_node`).
  *
- * Converts approved decisions into formal `ATMSDecisionNode` structures, updates the
- * in-memory `master_ledger`, computes minimal differential section invalidation,
- * and synchronizes the active ledger to PostgreSQL `project_decision_ledger`.
- *
- * Invariants:
- * 1. Zero LLM Calls: Pure deterministic state mutation and transactional persistence.
- * 2. Multi-Tenant Safe: Project and user boundaries are strictly enforced.
- * 3. Bidirectional Edge Consistency: Updates `dependedBy` on parent decision nodes.
- *
- * @param state - Current agent graph state.
- * @param config - Optional runnable configuration.
- * @returns State delta containing updated `master_ledger` and `invalidation_map`.
+ * Commits approved decisions into the ATMS DAG, validates acyclicity, recomputes
+ * 4-source `changeWeight` and `invalidation_map`, and persists `decisions.ledger.json`
+ * via `ctx.workspaceProvider.writeDecisionLedger`.
  */
-export async function ledgerCommitNode(
-  state: AgentGraphState,
-  config?: RunnableConfig,
-): Promise<Partial<AgentGraphState>> {
-  const stateRecord = state as unknown as Record<string, unknown>;
-  const configurable = config?.configurable as Record<string, unknown> | undefined;
-
-  // Retrieve staged decisions from confidenceClassifierNode or config
-  const staged =
-    (Array.isArray(stateRecord.staged_decisions) ? stateRecord.staged_decisions : null) ??
-    (Array.isArray(stateRecord.resolved_decisions) ? stateRecord.resolved_decisions : null) ??
-    (Array.isArray(stateRecord.stagedDecisions) ? stateRecord.stagedDecisions : null) ??
-    (Array.isArray(configurable?.staged_decisions) ? configurable.staged_decisions : null) ??
-    (Array.isArray(configurable?.resolved_decisions) ? configurable.resolved_decisions : null) ??
-    [];
-
+export const ledgerCommitNode: AgentGraphNodeFn = async (
+  state: Readonly<AgentGraphState>,
+  ctx: AgentRuntimeContext,
+): Promise<NodeExecutionResult> => {
   const updatedMasterLedger: Record<string, ATMSDecisionNode> = {
-    ...state.master_ledger,
+    ...(state.master_ledger ?? {}),
   };
+  const updatedEdges: DirectedDecisionEdge[] = [
+    ...(state.ledger_edges ?? []),
+  ];
 
   const unresolvedIds = new Set(
     (state.unresolved_ledger ?? []).map((u) => u.decisionId),
   );
 
-  const convertedNodes: ATMSDecisionNode[] = [];
+  const committedIds: string[] = [];
+  const nowIso = new Date().toISOString();
 
-  for (const item of staged) {
-    if (!item || typeof item !== "object" || !("decisionId" in item)) {
-      continue;
-    }
-    const decId = String((item as { decisionId: unknown }).decisionId);
-    if (unresolvedIds.has(decId)) {
+  for (const rawItem of state.scored_decisions ?? []) {
+    if (!rawItem || typeof rawItem !== "object" || !("decisionId" in rawItem)) {
       continue;
     }
 
-    const typedItem = item as Partial<ConformalClassificationResult> &
-      Partial<ATMSDecisionNode> &
-      Record<string, unknown>;
+    const decId = String(rawItem.decisionId).trim();
+    if (!decId || unresolvedIds.has(decId)) {
+      continue;
+    }
 
-    const status: "APPROVED_DIRECT" | "APPROVED_CONSERVATIVE" =
-      typedItem.status === "APPROVED_CONSERVATIVE"
-        ? "APPROVED_CONSERVATIVE"
-        : "APPROVED_DIRECT";
+    const rawStatus = rawItem.status;
+    if (
+      rawStatus !== "APPROVED_DIRECT" &&
+      rawStatus !== "APPROVED_CONSERVATIVE"
+    ) {
+      continue;
+    }
 
+    const status: "APPROVED_DIRECT" | "APPROVED_CONSERVATIVE" = rawStatus;
     const impactTier: "CORE_ARCHITECTURAL" | "PERIPHERAL" =
-      typedItem.impactTier === "PERIPHERAL"
+      rawItem.impactTier === "PERIPHERAL"
         ? "PERIPHERAL"
         : "CORE_ARCHITECTURAL";
+    const isLoadBearing =
+      typeof rawItem.isLoadBearing === "boolean"
+        ? rawItem.isLoadBearing
+        : impactTier === "CORE_ARCHITECTURAL";
 
-    const isLoadBearing = impactTier === "CORE_ARCHITECTURAL";
+    const matchingAssumption = state.assumptions?.find(
+      (a) => a.assumptionId === decId,
+    );
 
-    // Extract affected sections from assumption or candidate
-    const rawAffected =
-      (Array.isArray(typedItem.affectedSections) ? typedItem.affectedSections : null) ??
-      state.assumptions?.find((a) => a.assumptionId === decId)?.affectedSections ??
-      [];
-
-    const affectedSections: Array<{ fileId: string; headingSlug: string }> = [];
-    for (const sec of rawAffected) {
-      if (
-        sec &&
-        typeof sec.fileId === "string" &&
-        typeof sec.headingSlug === "string" &&
-        sec.fileId.trim().length > 0 &&
-        sec.headingSlug.trim().length > 0
-      ) {
-        affectedSections.push({
-          fileId: sec.fileId.trim(),
-          headingSlug: sec.headingSlug.trim(),
-        });
-      }
-    }
-
-    // Extract dependencies from assumption or item
-    const rawDependsOn =
-      (Array.isArray(typedItem.dependsOn) ? typedItem.dependsOn : null) ??
-      (Array.isArray(typedItem.dependsOnDecisionIds)
-        ? typedItem.dependsOnDecisionIds
-        : null) ??
-      state.assumptions?.find((a) => a.assumptionId === decId)?.dependsOn ??
-      [];
-
-    const dependsOn = Array.from(
-      new Set(
-        rawDependsOn.filter(
-          (id): id is string => typeof id === "string" && id.trim().length > 0,
-        ),
-      ),
+    const affectedSections = extractAffectedSections(
+      rawItem.affectedSections,
+      matchingAssumption?.affectedSections ?? [],
+    );
+    const dependsOn = extractDependsOn(
+      rawItem,
+      matchingAssumption?.dependsOn ?? [],
     );
 
     const existingNode = updatedMasterLedger[decId];
     const dependedBy = existingNode ? [...existingNode.dependedBy] : [];
+    const provenance = resolveDecisionProvenance(rawItem.provenance, status);
+
+    const evaluatedAlternatives: EvaluatedAlternativeRecord[] = Array.isArray(
+      rawItem.evaluatedAlternatives,
+    )
+      ? rawItem.evaluatedAlternatives.map((alt) => {
+          const record = alt as Record<string, unknown>;
+          return {
+            optionKey: String(record.optionKey ?? ""),
+            neutralSummary: String(record.neutralSummary ?? ""),
+            rationaleAndPremises: String(record.rationaleAndPremises ?? ""),
+            normalizedProbability:
+              typeof record.normalizedProbability === "number"
+                ? record.normalizedProbability
+                : undefined,
+          };
+        })
+      : [];
 
     const committedNode: ATMSDecisionNode = {
       decisionId: decId,
-      topicSlug: String(typedItem.topicSlug ?? decId),
-      questionPrompt: String(typedItem.questionPrompt ?? decId),
-      conceptTags: Array.isArray(typedItem.conceptTags)
-        ? typedItem.conceptTags.map(String)
+      topicSlug: String(rawItem.topicSlug ?? decId),
+      questionPrompt: String(rawItem.questionPrompt ?? decId),
+      conceptTags: Array.isArray(rawItem.conceptTags)
+        ? rawItem.conceptTags.map(String)
         : [],
       selectedOptionKey: String(
-        typedItem.selectedOptionKey ??
-          typedItem.runnerUpOptionKey ??
+        rawItem.selectedOptionKey ??
+          rawItem.runnerUpOptionKey ??
           "default_choice",
       ),
       selectionRationale: String(
-        typedItem.selectionRationale ?? "Adopted during resolution commit.",
+        rawItem.selectionRationale ?? "Adopted during resolution commit.",
       ),
-      runnerUpOptionKey: typedItem.runnerUpOptionKey
-        ? String(typedItem.runnerUpOptionKey)
+      runnerUpOptionKey: rawItem.runnerUpOptionKey
+        ? String(rawItem.runnerUpOptionKey)
         : null,
-      evaluatedAlternatives: Array.isArray(typedItem.evaluatedAlternatives)
-        ? typedItem.evaluatedAlternatives.map((alt) => ({
-            optionKey: String(alt.optionKey),
-            neutralSummary: String(alt.neutralSummary),
-            rationaleAndPremises: String(alt.rationaleAndPremises),
-            normalizedProbability:
-              typeof alt.normalizedProbability === "number"
-                ? alt.normalizedProbability
-                : undefined,
-          }))
-        : [],
+      evaluatedAlternatives,
       status,
       impactTier,
       isLoadBearing,
       dependsOn,
       dependedBy,
       affectedSections,
-      updatedAt: new Date().toISOString(),
+      provenance,
+      couplingLevel:
+        typeof rawItem.couplingLevel === "number"
+          ? rawItem.couplingLevel
+          : existingNode?.couplingLevel,
+      rollbackCost:
+        typeof rawItem.rollbackCost === "number"
+          ? rawItem.rollbackCost
+          : existingNode?.rollbackCost,
+      dominanceMargin:
+        typeof rawItem.dominanceMargin === "number"
+          ? rawItem.dominanceMargin
+          : existingNode?.dominanceMargin,
+      evidenceGrounding:
+        typeof rawItem.evidenceGrounding === "number"
+          ? rawItem.evidenceGrounding
+          : existingNode?.evidenceGrounding,
+      createdAt: existingNode?.createdAt ?? nowIso,
+      updatedAt: nowIso,
     };
 
     updatedMasterLedger[decId] = committedNode;
-    convertedNodes.push(committedNode);
-  }
+    committedIds.push(decId);
 
-  // Maintain bidirectional parent edges (dependedBy)
-  for (const node of convertedNodes) {
-    for (const parentId of node.dependsOn) {
+    for (const parentId of dependsOn) {
       const parentNode = updatedMasterLedger[parentId];
-      if (parentNode && !parentNode.dependedBy.includes(node.decisionId)) {
+      if (parentNode && !parentNode.dependedBy.includes(decId)) {
         updatedMasterLedger[parentId] = {
           ...parentNode,
-          dependedBy: [...parentNode.dependedBy, node.decisionId],
+          dependedBy: [...parentNode.dependedBy, decId],
         };
       }
-    }
-  }
 
-  // Compute minimal section invalidation map across committed root decisions
-  const rootDecisionIds = convertedNodes.map((n) => n.decisionId);
-  const computedInvalidationMap: Record<string, SectionTarget[]> =
-    computeMinimalSectionInvalidationMap(rootDecisionIds, updatedMasterLedger);
-
-  // Synchronize master ledger to persistent PostgreSQL store
-  const projectId =
-    state.user_request?.projectId ||
-    (configurable?.projectId as string | undefined) ||
-    (configurable?.project_id as string | undefined) ||
-    "default-project";
-
-  const userId =
-    (configurable?.userId as string | undefined) ||
-    (configurable?.user_id as string | undefined) ||
-    "default-user";
-
-  const skipStoreSync = Boolean(configurable?.skipStoreSync);
-
-  if (!skipStoreSync && projectId && userId) {
-    try {
-      await syncMasterLedgerToProjectStore(
-        projectId,
-        userId,
-        updatedMasterLedger,
-        state.project_taxonomy,
+      const hasEdge = updatedEdges.some(
+        (edge) =>
+          edge.sourceDecisionId === decId &&
+          edge.targetDecisionId === parentId &&
+          edge.relation === "DEPENDS_ON",
       );
-    } catch (error) {
-      // If store sync fails in a hermetic non-database test environment, log error without throwing
-      console.warn("syncMasterLedgerToProjectStore notice:", error);
+      if (!hasEdge) {
+        updatedEdges.push({
+          edgeId: `${decId}--DEPENDS_ON--${parentId}`,
+          sourceDecisionId: decId,
+          targetDecisionId: parentId,
+          relation: "DEPENDS_ON",
+          createdAt: nowIso,
+        });
+      }
     }
+  }
+
+  // Validate acyclicity and normalize bidirectional graph integrity
+  assertAcyclicDecisionGraph(updatedMasterLedger, updatedEdges);
+
+  const normalizedDoc = normalizeLedgerGraphIntegrity({
+    schemaVersion: "2.0.0",
+    workspaceId: ctx.workspaceId,
+    updatedAt: nowIso,
+    taxonomy: state.project_taxonomy ?? null,
+    nodes: updatedMasterLedger,
+    edges: updatedEdges,
+  });
+
+  // Recompute 4-source changeWeight W(d) across modified and connected nodes
+  const nodesToReweight = new Set<string>(committedIds);
+  for (const id of committedIds) {
+    const node = normalizedDoc.nodes[id];
+    if (!node) continue;
+    for (const parentId of node.dependsOn) {
+      nodesToReweight.add(parentId);
+    }
+    for (const childId of node.dependedBy) {
+      nodesToReweight.add(childId);
+    }
+  }
+
+  const finalNodes: Record<string, ATMSDecisionNode> = {
+    ...normalizedDoc.nodes,
+  };
+  for (const nodeId of nodesToReweight) {
+    const node = finalNodes[nodeId];
+    if (!node) continue;
+    finalNodes[nodeId] = {
+      ...node,
+      changeWeight: computeDecisionChangeWeight(node, finalNodes),
+    };
+  }
+
+  const computedInvalidationMap: Record<string, SectionTarget[]> =
+    computeMinimalSectionInvalidationMap(committedIds, finalNodes);
+
+  const finalLedgerDoc: DecisionLedgerDocument = {
+    schemaVersion: "2.0.0",
+    workspaceId: ctx.workspaceId,
+    updatedAt: nowIso,
+    taxonomy: state.project_taxonomy ?? null,
+    nodes: finalNodes,
+    edges: normalizedDoc.edges,
+  };
+
+  const providerLedgerDoc = toProviderLedgerDocument(finalLedgerDoc);
+  await ctx.workspaceProvider.writeDecisionLedger(
+    providerLedgerDoc as unknown as ProviderDecisionLedgerDocument,
+  );
+
+  // If the ledger artifact is encrypted, emit vault_file_commit_required for client E2EE sync
+  const workspaceTree = await ctx.workspaceProvider.listWorkspaceTree();
+  const ledgerEntry = workspaceTree.find(
+    (entry) => entry.artifactRole === "decision_ledger",
+  );
+  if (ledgerEntry?.isEncrypted) {
+    ctx.emitSseEvent({
+      type: "vault_file_commit_required",
+      fileId: ledgerEntry.fileId,
+      relativePath: ledgerEntry.relativePath,
+      mergedContent: JSON.stringify(providerLedgerDoc, null, 2),
+    });
   }
 
   return {
-    master_ledger: updatedMasterLedger,
-    ...(Object.keys(computedInvalidationMap).length > 0
-      ? { invalidation_map: computedInvalidationMap }
-      : {}),
+    status: "COMPLETED",
+    stateDelta: {
+      master_ledger: finalNodes,
+      ledger_edges: normalizedDoc.edges,
+      ...(Object.keys(computedInvalidationMap).length > 0
+        ? { invalidation_map: computedInvalidationMap }
+        : {}),
+    },
   };
-}
-
-/**
- * Deterministic Internal Gap Planner Node (Stage 5).
- *
- * Increments the search loop counter by 1 (which the pure reducer clamps at `MAX_SEARCH_LOOPS = 3`),
- * inspects the `unresolved_ledger`, and extracts targeted investigation paths into `local_inspection_state`.
- *
- * Invariants:
- * 1. Zero LLM Calls: Deterministic topic and concept path extraction.
- * 2. Deduplicated Paths: Emits unique exploration paths formatted for AST heading slice queries.
- *
- * @param state - Current agent graph state.
- * @param _config - Optional runnable configuration.
- * @returns State delta with search_loop_count increment and target inspection paths.
- */
-export async function internalGapPlannerNode(
-  state: AgentGraphState,
-  _config?: RunnableConfig,
-): Promise<Partial<AgentGraphState>> {
-  const unresolvedItems = state.unresolved_ledger ?? [];
-  const targetPaths: string[] = [];
-  const seenPaths = new Set<string>();
-
-  for (const item of unresolvedItems) {
-    if (item.topicSlug && item.topicSlug.trim().length > 0) {
-      const topicPath = `topic:${item.topicSlug.trim()}`;
-      if (!seenPaths.has(topicPath)) {
-        seenPaths.add(topicPath);
-        targetPaths.push(topicPath);
-      }
-    }
-
-    for (const tag of item.conceptTags ?? []) {
-      if (typeof tag === "string" && tag.trim().length > 0) {
-        const tagPath = `concept:${tag.trim()}`;
-        if (!seenPaths.has(tagPath)) {
-          seenPaths.add(tagPath);
-          targetPaths.push(tagPath);
-        }
-      }
-    }
-
-    // Inspect if related assumption had specific file/heading sections
-    const matchingAssumption = state.assumptions?.find(
-      (a) => a.assumptionId === item.decisionId,
-    );
-    for (const section of matchingAssumption?.affectedSections ?? []) {
-      const sectionPath = `${section.fileId}#${section.headingSlug}`;
-      if (!seenPaths.has(sectionPath)) {
-        seenPaths.add(sectionPath);
-        targetPaths.push(sectionPath);
-      }
-    }
-  }
-
-  return {
-    search_loop_count: 1,
-    local_inspection_state: targetPaths,
-  };
-}
-
-/**
- * Deterministic Four-Way Resolution Gate Router (Stage 5 Conditional Edge).
- *
- * Directs graph transition per ELIXENT-ARCH-02 §3:
- * - Path 1: Insufficient credit balance -> "pure_interrupt_node"
- * - Path 2: All decisions resolved (unresolved_ledger is empty) -> "document_writer_node"
- * - Path 3: Unresolved items remain & search_loop_count < 3 -> "internal_gap_planner_node"
- * - Path 4: Unresolved items remain & search_loop_count >= 3 -> "question_organizer_node"
- *
- * @param state - Current agent graph state.
- * @returns Target node name.
- */
-export function resolutionGateRouter(
-  state: AgentGraphState,
-):
-  | "document_writer_node"
-  | "internal_gap_planner_node"
-  | "question_organizer_node"
-  | "pure_interrupt_node" {
-  const stateRecord = state as unknown as Record<string, unknown>;
-
-  // Path 1: Check credit failure / exhaustion flag
-  const isCreditFailure =
-    Boolean(stateRecord.credit_exhausted) ||
-    Boolean(stateRecord.insufficient_credits) ||
-    Boolean(stateRecord.credit_failure) ||
-    Boolean(stateRecord.creditFailure) ||
-    stateRecord.interrupt_reason === "INSUFFICIENT_CREDITS" ||
-    stateRecord.code === "INSUFFICIENT_CREDITS";
-
-  if (isCreditFailure) {
-    return "pure_interrupt_node";
-  }
-
-  const unresolvedCount = state.unresolved_ledger?.length ?? 0;
-  const loopCount = state.search_loop_count ?? 0;
-
-  // Path 2: All decisions resolved -> document writer node
-  if (unresolvedCount === 0) {
-    return "document_writer_node";
-  }
-
-  // Path 3: Unresolved decisions remain and search loops are available (< 3)
-  if (loopCount < 3) {
-    return "internal_gap_planner_node";
-  }
-
-  // Path 4: Search loops exhausted (>= 3) -> escalate to user via question organizer
-  return "question_organizer_node";
-}
+};

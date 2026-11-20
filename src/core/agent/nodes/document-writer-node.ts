@@ -1,31 +1,37 @@
 /**
- * Stage 7 Document Writer Node
+ * Stage 7 Workspace Mutator Node (Node 8: `workspace_mutator_node`)
  *
- * Implements section-targeted three-way document editing for the Elixent agent
- * orchestration engine (ELIXENT-ARCH-02 §3 & ELIXENT-ARCH-03 §4).
- *
- * Execution Steps:
- * 1. Collects targeted document sections from `state.invalidation_map` (or active decisions in `state.master_ledger`).
- * 2. Retrieves base section content via `IWorkspaceProvider.readSectionByHeading`.
- * 3. Synthesizes agent-proposed updated section content aligning with resolved decisions in `master_ledger`.
- * 4. Executes isolated three-way merge via `IWorkspaceProvider.mergeSectionThreeWay` or `diff3MergeSection`,
- *    preserving non-conflicting concurrent edits and quarantining true overlaps.
- * 5. Returns updated conversation messages summarizing merge outcomes.
+ * Implements metered, LLM-streamed three-way section editing and file lifecycle
+ * execution for the Elixent Native Graph Engine (`ADR-009` & `SRS-01` §2.3):
+ * 1. Executes approved `pending_file_actions` (`CREATE_FILE` / `DELETE_FILE`).
+ * 2. Collects target `(fileId, headingSlug)` sections from `state.invalidation_map`
+ *    (and `state.user_request.targetFileIds` for `FAST_LOCAL_EDIT` / `NEW_DOC_DRAFTING`).
+ * 3. Reads base sections via `ctx.workspaceProvider.readSectionByHeading`, dereferencing
+ *    any `vault_ref://` pointers in RAM via `resolveVaultRefJustInTime` for the LLM prompt.
+ * 4. Streams full generative markdown edits via `executeStreamingGeneration` using
+ *    `ctx.selectedSystem2ModelId`, governed by `state.master_ledger` and `state.governing_constraints`.
+ * 5. Merges via `ctx.workspaceProvider.mergeSectionThreeWay` and branches SSE output by
+ *    `ctx.permissionMode` (`safe` -> `ghost_hunk_proposed`; `semi_auto`/`full_auto` ->
+ *    `vault_file_commit_required` for encrypted files or `file_mutated` otherwise).
  */
 
-import { AIMessage } from "@langchain/core/messages";
-import type { RunnableConfig } from "@langchain/core/runnables";
-import type { AgentGraphState } from "@/core/agent/state";
+import type {
+  AgentGraphNodeFn,
+  AgentRuntimeContext,
+  NodeExecutionResult,
+} from "@/core/agent/engine/runner";
+import type {
+  AgentConversationMessage,
+  AgentGraphState,
+  PendingFileLifecycleAction,
+} from "@/core/agent/state";
 import type { ATMSDecisionNode } from "@/core/agent/atms/dag";
 import type { SectionTarget } from "@/core/agent/schemas/decision-schemas";
-import {
-  diff3MergeSection,
-  type SectionMergeOutcome,
-} from "@/lib/sync/diff3";
-import {
-  type IWorkspaceProvider,
-} from "@/core/workspace/provider";
-import { CloudPostgresWorkspaceProvider } from "@/core/workspace/cloud-provider";
+import type { WorkspaceTreeEntry } from "@/core/workspace/provider";
+import type { SectionMergeOutcome } from "@/lib/sync/diff3";
+import { executeStreamingGeneration } from "@/lib/ai/client";
+import { withMeteredNodeGate } from "@/lib/metering/node-gate";
+import { resolveVaultRefJustInTime } from "@/lib/vault/ephemeral-memory-map";
 
 /**
  * Result record tracking merge status for a single heading section.
@@ -37,233 +43,282 @@ export interface SectionMergeRecord {
   readonly diagnostics?: readonly string[];
 }
 
-/**
- * Deterministically synthesizes updated section content reflecting committed ATMS decisions.
- *
- * @param baseContent - Current base plaintext of the heading section.
- * @param headingSlug - Target heading slug being edited.
- * @param relevantDecisions - Array of committed ATMS decisions affecting this section.
- * @returns Verbatim updated section content ready for 3-way merge.
- */
-export function synthesizeAgentSectionContent(
-  baseContent: string,
-  headingSlug: string,
-  relevantDecisions: readonly ATMSDecisionNode[],
+function buildGovernanceContextText(
+  target: SectionTarget,
+  masterLedger: Record<string, ATMSDecisionNode>,
+  governingConstraints: readonly ATMSDecisionNode[],
 ): string {
-  const trimmedBase = baseContent.trim();
-  const humanReadableHeading = headingSlug
-    .split("-")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
+  const relevantById = new Map<string, ATMSDecisionNode>();
 
-  // Build decision implementation bullet entries
-  const decisionLines: string[] = [];
-  for (const decision of relevantDecisions) {
-    decisionLines.push(
-      `- **${decision.topicSlug}** [${decision.selectedOptionKey}]: ${decision.selectionRationale}`,
+  for (const node of governingConstraints) {
+    relevantById.set(node.decisionId, node);
+  }
+
+  for (const node of Object.values(masterLedger)) {
+    const touchesTarget = node.affectedSections?.some(
+      (sec) =>
+        sec.fileId === target.fileId && sec.headingSlug === target.headingSlug,
     );
+    if (touchesTarget) {
+      relevantById.set(node.decisionId, node);
+    }
   }
 
-  const decisionBlock = decisionLines.length > 0
-    ? `\n\n<!-- BEGIN:AGENT_DECISION_ALIGNMENT -->\n${decisionLines.join("\n")}\n<!-- END:AGENT_DECISION_ALIGNMENT -->`
-    : "";
-
-  if (trimmedBase.length === 0) {
-    return `## ${humanReadableHeading}\n${decisionBlock.trimStart()}`;
+  if (relevantById.size === 0) {
+    return "No specific prior ATMS decision constraints bound to this section.";
   }
 
-  // If section already has a decision block, update it cleanly
-  const startMarker = "<!-- BEGIN:AGENT_DECISION_ALIGNMENT -->";
-  const endMarker = "<!-- END:AGENT_DECISION_ALIGNMENT -->";
-  const startIndex = trimmedBase.indexOf(startMarker);
-  const endIndex = trimmedBase.indexOf(endMarker);
-
-  if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
-    const beforeBlock = trimmedBase.slice(0, startIndex).trimEnd();
-    const afterBlock = trimmedBase.slice(endIndex + endMarker.length).trimStart();
-    const joined = `${beforeBlock}${decisionBlock}\n\n${afterBlock}`.trim();
-    return joined;
-  }
-
-  // Otherwise, append the decision block to the base section
-  return `${trimmedBase}${decisionBlock}`;
+  return Array.from(relevantById.values())
+    .map(
+      (node) =>
+        `- [${node.decisionId}] ${node.topicSlug} (${node.selectedOptionKey}): ${node.selectionRationale}`,
+    )
+    .join("\n");
 }
 
-/**
- * Stage 7 Document Writer Node.
- *
- * Merges modifications across document sections registered in `state.invalidation_map`
- * using the Hunt-McIlroy Diff3 3-way merge engine.
- *
- * Architectural Invariants:
- * 1. Minimal Section Invalidation: Only sections listed in `state.invalidation_map`
- *    are inspected and patched; untouched document sections remain bit-for-bit identical.
- * 2. Zero Unresolved Conflicts in Memory: Merge conflicts (if any) are quarantined per-section
- *    without crashing the agent graph execution.
- * 3. Zero Knowledge Isolation: When operating on encrypted vault files, plaintexts are
- *    accessed strictly through `IWorkspaceProvider` using ephemeral references.
- *
- * @param state - Current agent graph state.
- * @param config - Optional runnable configuration containing workspaceProvider or snapshots.
- * @returns State delta containing summary messages and cleared invalidation map.
- */
-export async function documentWriterNode(
-  state: AgentGraphState,
-  config?: RunnableConfig,
-): Promise<Partial<AgentGraphState>> {
-  const stateRecord = state as unknown as Record<string, unknown>;
-  const configurable = config?.configurable as Record<string, unknown> | undefined;
+function dereferenceIfVaultPointer(text: string): string {
+  if (!text || !text.includes("vault_ref://")) {
+    return text;
+  }
+  return resolveVaultRefJustInTime(text);
+}
 
-  // 1. Collect target sections to modify from invalidation_map or master_ledger
-  const targetsToMerge: SectionTarget[] = [];
-  const seenTargetKeys = new Set<string>();
+async function collectTargetSections(
+  state: Readonly<AgentGraphState>,
+  ctx: AgentRuntimeContext,
+): Promise<SectionTarget[]> {
+  const targets: SectionTarget[] = [];
+  const seenKeys = new Set<string>();
 
   for (const sections of Object.values(state.invalidation_map ?? {})) {
     for (const sec of sections) {
       const key = `${sec.fileId}#${sec.headingSlug}`;
-      if (!seenTargetKeys.has(key)) {
-        seenTargetKeys.add(key);
-        targetsToMerge.push(sec);
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        targets.push(sec);
       }
     }
   }
 
-  // Fallback: If invalidation_map is empty, check master_ledger affectedSections
-  if (targetsToMerge.length === 0) {
-    for (const node of Object.values(state.master_ledger ?? {})) {
-      for (const sec of node.affectedSections ?? []) {
-        const key = `${sec.fileId}#${sec.headingSlug}`;
-        if (!seenTargetKeys.has(key)) {
-          seenTargetKeys.add(key);
-          targetsToMerge.push(sec);
+  const isLocalOrDraftIntent =
+    state.classified_intent === "FAST_LOCAL_EDIT" ||
+    state.classified_intent === "NEW_DOC_DRAFTING";
+
+  if (
+    targets.length === 0 &&
+    isLocalOrDraftIntent &&
+    state.user_request.targetFileIds.length > 0
+  ) {
+    const headingsByFile = await ctx.workspaceProvider.listHeadingsTree([
+      ...state.user_request.targetFileIds,
+    ]);
+    for (const fileId of state.user_request.targetFileIds) {
+      const headings = headingsByFile[fileId] ?? [];
+      if (headings.length > 0) {
+        const firstSlug = headings[0].headingSlug;
+        const key = `${fileId}#${firstSlug}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          targets.push({ fileId, headingSlug: firstSlug });
         }
       }
     }
   }
 
-  // 2. Resolve Workspace Provider
-  let provider = configurable?.workspaceProvider as IWorkspaceProvider | undefined;
-  const userId = (
-    configurable?.userId ??
-    configurable?.user_id ??
-    stateRecord.userId ??
-    stateRecord.user_id ??
-    "default-user"
-  ) as string;
+  return targets;
+}
 
-  const liveSnapshots: Record<string, string> = {
-    ...((configurable?.liveDocumentSnapshots as Record<string, string> | undefined) ?? {}),
-    ...((stateRecord.liveDocumentSnapshots as Record<string, string> | undefined) ?? {}),
-  };
+/**
+ * Unwrapped implementation of Node 8 (`workspace_mutator_node`).
+ */
+export const rawWorkspaceMutatorNode: AgentGraphNodeFn = async (
+  state: Readonly<AgentGraphState>,
+  ctx: AgentRuntimeContext,
+): Promise<NodeExecutionResult> => {
+  // 1. Execute approved file lifecycle actions
+  const remainingFileActions: PendingFileLifecycleAction[] = [];
+  let executedFileActionCount = 0;
 
-  if (!provider && typeof CloudPostgresWorkspaceProvider === "function") {
-    try {
-      provider = new CloudPostgresWorkspaceProvider({
-        userId,
-        liveDocumentSnapshots: liveSnapshots,
-        ephemeralVaultPayloads: configurable?.ephemeralVaultPayloads as
-          | Record<string, string>
-          | undefined,
-      });
-    } catch {
-      // In-memory or fallback mode if database cannot be initialized
-      provider = undefined;
+  for (const action of state.pending_file_actions ?? []) {
+    if (action.type === "CREATE_FILE") {
+      const canCreate =
+        action.approved === true ||
+        (action.approved !== false && ctx.permissionMode !== "safe");
+      if (canCreate) {
+        const created = await ctx.workspaceProvider.createWorkspaceFile({
+          relativePath: action.relativePath,
+          initialContent: action.initialContent ?? "",
+        });
+        executedFileActionCount++;
+        ctx.emitSseEvent({
+          type: "file_mutated",
+          fileId: created.fileId,
+          relativePath: created.relativePath,
+          action: "created",
+        });
+        continue;
+      }
+    } else if (action.type === "DELETE_FILE") {
+      const canDelete =
+        (action.approved === true || ctx.permissionMode === "full_auto") &&
+        Boolean(action.fileId);
+      if (canDelete && action.fileId) {
+        await ctx.workspaceProvider.deleteWorkspaceFile({
+          fileId: action.fileId,
+        });
+        executedFileActionCount++;
+        ctx.emitSseEvent({
+          type: "file_mutated",
+          fileId: action.fileId,
+          relativePath: action.relativePath,
+          action: "deleted",
+        });
+        continue;
+      }
     }
+
+    remainingFileActions.push(action);
   }
 
+  // 2. Load workspace tree metadata for encryption & relativePath lookup
+  const workspaceTree = await ctx.workspaceProvider.listWorkspaceTree();
+  const treeByFileId = new Map<string, WorkspaceTreeEntry>(
+    workspaceTree.map((entry) => [entry.fileId, entry]),
+  );
+
+  // 3. Collect target sections from invalidation_map (or targetFileIds for fast/draft intents)
+  const targetsToMerge = await collectTargetSections(state, ctx);
+  const liveSnapshots = new Map<string, string>(ctx.liveDocumentSnapshots);
   const mergeRecords: SectionMergeRecord[] = [];
+  const resolvedUserPrompt = dereferenceIfVaultPointer(
+    state.user_request.prompt,
+  );
 
-  // 3. Merge each targeted section individually
+  // 4. Stream generative markdown edits and execute 3-way section merge
   for (const target of targetsToMerge) {
-    const relevantDecisions = Object.values(state.master_ledger ?? {}).filter(
-      (node) =>
-        node.affectedSections?.some(
-          (sec) =>
-            sec.fileId === target.fileId &&
-            sec.headingSlug === target.headingSlug,
-        ),
-    );
-
-    let baseContent = "";
-    if (provider) {
-      try {
-        const readResult = await provider.readSectionByHeading(
-          target.fileId,
-          target.headingSlug,
-        );
-        baseContent = readResult.contentOrVaultRef;
-      } catch {
-        baseContent = "";
-      }
-    }
-
-    // Synthesize agent proposed content
-    const agentContent = synthesizeAgentSectionContent(
-      baseContent,
+    const readResult = await ctx.workspaceProvider.readSectionByHeading(
+      target.fileId,
       target.headingSlug,
-      relevantDecisions,
+    );
+    const basePlaintext = dereferenceIfVaultPointer(
+      readResult.contentOrVaultRef,
+    );
+    const governanceContext = buildGovernanceContextText(
+      target,
+      state.master_ledger ?? {},
+      state.governing_constraints ?? [],
     );
 
-    const liveDoc = liveSnapshots[target.fileId] ?? baseContent;
-    let outcome: SectionMergeOutcome;
+    const systemPrompt = [
+      "You are Elixent's architectural document editor.",
+      "Rewrite only the requested Markdown heading section cleanly and completely.",
+      "Preserve the heading line itself and adhere strictly to all governing ATMS decisions.",
+      "Do not emit HTML decision-alignment comment blocks or placeholder stubs.",
+    ].join(" ");
 
-    if (provider) {
-      try {
-        outcome = await provider.mergeSectionThreeWay({
-          fileId: target.fileId,
-          headingSlug: target.headingSlug,
-          baseSectionContent: baseContent,
-          agentProposedSectionContent: agentContent,
-          liveDocumentContent: liveDoc,
-        });
-      } catch {
-        outcome = diff3MergeSection({
-          headingSlug: target.headingSlug,
-          liveDocumentContent: liveDoc,
-          baseSectionContent: baseContent,
-          agentProposedSectionContent: agentContent,
-        });
-      }
-    } else {
-      outcome = diff3MergeSection({
-        headingSlug: target.headingSlug,
-        liveDocumentContent: liveDoc,
-        baseSectionContent: baseContent,
-        agentProposedSectionContent: agentContent,
-      });
-    }
+    const userPrompt = [
+      `Target File ID: ${target.fileId}`,
+      `Heading Breadcrumb: ${readResult.breadcrumb || target.headingSlug}`,
+      `User Request:\n${resolvedUserPrompt}`,
+      `Governing Decisions & Constraints:\n${governanceContext}`,
+      `Current Base Section Markdown:\n\`\`\`markdown\n${basePlaintext}\n\`\`\``,
+      "Return only the updated Markdown for this section.",
+    ].join("\n\n");
 
-    // Update accumulated live document snapshot
-    liveSnapshots[target.fileId] = outcome.mergedDocumentContent;
+    const streamResult = await executeStreamingGeneration({
+      modelId: ctx.selectedSystem2ModelId,
+      system: systemPrompt,
+      prompt: userPrompt,
+      abortSignal: ctx.abortSignal,
+    });
+    const agentProposedSectionContent = (await streamResult.text).trim();
 
+    const liveDocumentContent =
+      liveSnapshots.get(target.fileId) ?? basePlaintext;
+
+    const outcome = await ctx.workspaceProvider.mergeSectionThreeWay({
+      fileId: target.fileId,
+      headingSlug: target.headingSlug,
+      baseSectionContent: readResult.contentOrVaultRef,
+      agentProposedSectionContent,
+      liveDocumentContent,
+    });
+
+    liveSnapshots.set(target.fileId, outcome.mergedDocumentContent);
     mergeRecords.push({
       fileId: target.fileId,
       headingSlug: target.headingSlug,
       status: outcome.status,
       diagnostics: outcome.diagnostics,
     });
+
+    const treeEntry = treeByFileId.get(target.fileId);
+    const relativePath = treeEntry?.relativePath ?? target.fileId;
+
+    if (ctx.permissionMode === "safe") {
+      ctx.emitSseEvent({
+        type: "ghost_hunk_proposed",
+        fileId: target.fileId,
+        headingSlug: target.headingSlug,
+        hunks: [outcome.hunkRange as unknown as Record<string, unknown>],
+      });
+    } else if (treeEntry?.isEncrypted) {
+      ctx.emitSseEvent({
+        type: "vault_file_commit_required",
+        fileId: target.fileId,
+        relativePath,
+        mergedContent: outcome.mergedDocumentContent,
+      });
+    } else {
+      ctx.emitSseEvent({
+        type: "file_mutated",
+        fileId: target.fileId,
+        relativePath,
+        action: "updated",
+      });
+    }
   }
 
-  // 4. Synthesize final execution summary message
+  // 5. Build summary assistant message and clear invalidation_map
   const cleanCount = mergeRecords.filter((r) => r.status === "clean").length;
   const conflictCount = mergeRecords.filter(
     (r) => r.status === "conflict_quarantined",
   ).length;
 
-  let summaryText = `Document Writer Node completed: ${cleanCount} section(s) cleanly merged.`;
-  if (conflictCount > 0) {
-    summaryText += ` ${conflictCount} section(s) had concurrent conflicts safely quarantined.`;
-  }
-  if (mergeRecords.length === 0) {
-    summaryText = "Document Writer Node completed: no section modifications required.";
+  let summaryText: string;
+  if (mergeRecords.length === 0 && executedFileActionCount === 0) {
+    summaryText =
+      "Workspace Mutator Node completed: no section modifications or file actions required.";
+  } else {
+    summaryText = `Workspace Mutator Node completed: ${cleanCount} section(s) cleanly merged, ${executedFileActionCount} file action(s) executed.`;
+    if (conflictCount > 0) {
+      summaryText += ` ${conflictCount} section(s) had concurrent conflicts quarantined.`;
+    }
   }
 
-  const summaryMessage = new AIMessage({
+  const summaryMessage: AgentConversationMessage = {
+    id: `mutator-summary-${ctx.turnId}-${Date.now()}`,
+    role: "assistant",
     content: summaryText,
-  });
+    createdAt: new Date().toISOString(),
+  };
 
   return {
-    messages: [summaryMessage],
-    invalidation_map: {},
+    status: "COMPLETED",
+    stateDelta: {
+      messages: [summaryMessage],
+      pending_file_actions: remainingFileActions,
+      clearInvalidationMap: true,
+    },
   };
-}
+};
+
+/**
+ * Metered Canonical Node 8 (`workspace_mutator_node`).
+ */
+export const workspaceMutatorNode: AgentGraphNodeFn = withMeteredNodeGate(
+  "workspace_mutator_node",
+  "system2",
+  rawWorkspaceMutatorNode,
+  { isSystem2Node: true },
+);

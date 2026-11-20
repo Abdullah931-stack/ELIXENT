@@ -1,556 +1,441 @@
 /**
- * Hybrid Structural Inspection & Lexical Search Nodes (Stage 1)
+ * Node 2: Dual-Domain Search & Discovery (`search_discovery_node`)
  *
- * Implements Stage 1 nodes and conditional routing for the Elixent agent state graph
- * according to ELIXENT-ARCH-02 §1 & §3.2.
+ * Native Graph Engine Stage 1 node (`ADR-009`, `ADR-012`, `SRS-01` §2.3 & §4.2).
  *
- * Exported Symbols:
- * 1. `searchAgentNode`: Metered exploration agent invoking inspection tools with step ceiling.
- * 2. `workspaceToolNode`: Deterministic tool execution against `IWorkspaceProvider`.
- * 3. `searchSynthesizerNode`: Metered synthesis of evidence items into `search_report`.
- * 4. `toolsCondition`: Conditional edge routing between tool node and synthesizer node.
- * 5. `rawSearchAgentNode` / `rawSearchSynthesizerNode`: Unwrapped pure implementations for tests.
+ * Responsibilities:
+ * 1. Exposes the 8-Tool Dual Toolset:
+ *    - 4 Workspace Document Tools (`listWorkspaceTree`, `listHeadingsTree`,
+ *      `searchLexicalWithASTBreadcrumb`, `readSectionByHeading`) backed by `ctx.workspaceProvider`.
+ *    - 4 Decision Ledger Graph Tools (`searchDecisionLedger`, `getDecisionNodeDetails`,
+ *      `traverseDecisionDependencies`, `getSectionGoverningDecisions`) backed by `createDecisionGraphTools`.
+ * 2. Executes `executeToolAgentGeneration` bounded by `maxSteps = 6` (`ctx.selectedSystem2ModelId`).
+ * 3. Deterministically synthesizes `search_report` (`SearchReport`) from `result.steps`
+ *    by pairing each `toolCallId` with its exact `(args.fileId, args.headingSlug)` (`BUG-07` fix).
  */
 
-import { AIMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
-import type { RunnableConfig } from "@langchain/core/runnables";
-import { generateText, stepCountIs, tool } from "ai";
+import { tool, type StepResult, type ToolSet } from "ai";
 import { z } from "zod";
-import type { AgentGraphState, SearchReport, SearchReportEvidence } from "@/core/agent/state";
+import type {
+  AgentGraphNodeFn,
+  AgentRuntimeContext,
+  NodeExecutionResult,
+} from "@/core/agent/engine/runner";
+import type {
+  AgentGraphState,
+  SearchReport,
+  SearchReportEvidence,
+} from "@/core/agent/state";
+import { toProviderLedgerDocument } from "@/core/agent/atms/dag";
+import { createDecisionGraphTools } from "@/core/agent/tools/decision-graph-tools";
+import type {
+  HeadingNode,
+  LexicalMatchResult,
+  SectionReadResult,
+} from "@/core/workspace/provider";
+import { executeToolAgentGeneration } from "@/lib/ai/client";
+import { getApiKeys } from "@/lib/ai/key-rotation";
 import { withMeteredNodeGate } from "@/lib/metering/node-gate";
 import {
-  resolveVaultRefJustInTime,
   isVaultRef,
+  resolveVaultRefJustInTime,
   storeEphemeralVaultSection,
 } from "@/lib/vault/ephemeral-memory-map";
-import {
-  type IWorkspaceProvider,
-  type HeadingNode,
-  type LexicalMatchResult,
-  type SectionReadResult,
-  type WorkspaceTreeEntry,
-  type DecisionLedgerDocument,
-} from "@/core/workspace/provider";
-import { CloudPostgresWorkspaceProvider } from "@/core/workspace/cloud-provider";
-import { getApiKeys } from "@/lib/ai/key-rotation";
-import { getGoogleModel } from "@/lib/ai/client";
 
-/** Model identifier used for metered search agent and synthesizer executions */
-export const SEARCH_AGENT_MODEL_ID = "google/gemini-3.8-flash";
-
-/** Maximum exploration steps permitted for the search agent */
+/** Maximum exploration steps permitted for the search discovery agent. */
 export const SEARCH_AGENT_STEP_CEILING = 6;
 
 /**
- * Fallback in-memory workspace provider for offline test environments.
+ * Builds the 4 workspace document inspection tools bound to `ctx.workspaceProvider`.
  */
-class FallbackWorkspaceProvider implements IWorkspaceProvider {
-  public readonly workspaceId = "default-workspace";
-  public readonly userId = "default_user";
-
-  async listWorkspaceTree(): Promise<WorkspaceTreeEntry[]> {
-    return [];
-  }
-
-  /**
-   * Returns fallback headings tree.
-   *
-   * @param fileIds - Optional array of file identifiers.
-   * @returns Record mapping file IDs to heading nodes.
-   */
-  async listHeadingsTree(fileIds: string[] = []): Promise<Record<string, HeadingNode[]>> {
-    const result: Record<string, HeadingNode[]> = {};
-    for (const fileId of fileIds) {
-      result[fileId] = [
-        {
-          headingSlug: "system-overview",
-          title: "System Overview",
-          level: 1,
-          breadcrumb: "System Overview",
-          startLine: 1,
-          endLine: 20,
-          startOffset: 0,
-          endOffset: 500,
-          contentHash: "hash_overview",
-        },
-      ];
-    }
-    return result;
-  }
-
-  /**
-   * Reads fallback section content.
-   *
-   * @param fileId - Document ID.
-   * @param headingSlug - Heading slug.
-   * @returns SectionReadResult structure.
-   */
-  async readSectionByHeading(fileId: string, headingSlug: string): Promise<SectionReadResult> {
-    return {
-      fileId,
-      headingSlug,
-      breadcrumb: headingSlug,
-      contentOrVaultRef: `Section content for ${fileId}#${headingSlug}`,
-      isVaultRef: false,
-      sectionHash: "fallback_section_hash",
-      fileEtag: "fallback_etag",
-      fileVersion: 1,
-    };
-  }
-
-  /**
-   * Executes fallback lexical search.
-   *
-   * @param params - Search parameters.
-   * @returns Array of lexical matches.
-   */
-  async searchLexicalWithASTBreadcrumb(params: {
-    fileIds?: string[];
-    query: string;
-    maxResults?: number;
-  }): Promise<LexicalMatchResult[]> {
-    return (params.fileIds ?? []).map((fileId) => ({
-      fileId,
-      fileName: `${fileId}.md`,
-      headingSlug: "system-overview",
-      headingBreadcrumb: "System Overview",
-      matchedExcerpt: `Matched excerpt for "${params.query}" in ${fileId}`,
-      lineRange: [1, 5],
-      bm25Score: 1.0,
-    }));
-  }
-
-  /**
-   * Fallback 3-way merge outcome.
-   *
-   * @param params - Merge parameters.
-   * @returns SectionMergeOutcome structure.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async mergeSectionThreeWay(params: any) {
-    return {
-      status: "clean" as const,
-      mergedDocumentContent: String(params.agentProposedSectionContent ?? ""),
-      hunkRange: {
-        from: 0,
-        to: String(params.liveDocumentContent ?? "").length,
-        replacementText: String(params.agentProposedSectionContent ?? ""),
+function createWorkspaceDocumentTools(ctx: AgentRuntimeContext) {
+  return {
+    listWorkspaceTree: tool({
+      description:
+        "List all non-deleted, non-AI-excluded files and folders in the active workspace.",
+      inputSchema: z.object({}),
+      execute: async () => {
+        return ctx.workspaceProvider.listWorkspaceTree();
       },
-    };
-  }
+    }),
 
-  async createWorkspaceFile(params: {
-    relativePath: string;
-    initialContent: string;
-  }): Promise<WorkspaceTreeEntry> {
-    const title = params.relativePath.split("/").filter(Boolean).pop() ?? "untitled.md";
-    return {
-      fileId: `fallback_${title}`,
-      parentFolderId: null,
-      title,
-      relativePath: params.relativePath,
-      isFolder: false,
-      isEncrypted: false,
-      isAiExcluded: false,
-      artifactRole: "document",
-      etag: "fallback_etag",
-      version: 1,
-      updatedAt: new Date().toISOString(),
-    };
-  }
-
-  async deleteWorkspaceFile(params: { fileId: string }): Promise<{ fileId: string; deletedAt: string }> {
-    return {
-      fileId: params.fileId,
-      deletedAt: new Date().toISOString(),
-    };
-  }
-
-  async readDecisionLedger(): Promise<DecisionLedgerDocument> {
-    return {
-      schemaVersion: "2.0",
-      workspaceId: this.workspaceId,
-      updatedAt: new Date().toISOString(),
-      decisions: {},
-    };
-  }
-
-  async writeDecisionLedger(
-    _document: DecisionLedgerDocument,
-    _options?: { expectedVersion?: number; expectedEtag?: string }
-  ): Promise<{ etag: string; version: number }> {
-    return { etag: "fallback_etag", version: 1 };
-  }
-}
-
-/**
- * Resolves an IWorkspaceProvider instance from config configurable or defaults to CloudPostgresWorkspaceProvider.
- *
- * @param config - Runnable configuration.
- * @returns An initialized IWorkspaceProvider instance.
- */
-function resolveWorkspaceProvider(config?: RunnableConfig): IWorkspaceProvider {
-  const configuredProvider =
-    (config?.configurable?.workspaceProvider as IWorkspaceProvider | undefined) ??
-    (config?.configurable?.workspace_provider as IWorkspaceProvider | undefined);
-
-  if (configuredProvider) {
-    return configuredProvider;
-  }
-
-  const userId =
-    (config?.configurable?.userId as string | undefined) ??
-    (config?.configurable?.user_id as string | undefined) ??
-    "default_user";
-
-  try {
-    return new CloudPostgresWorkspaceProvider({
-      userId,
-      ephemeralVaultPayloads: config?.configurable?.ephemeralVaultPayloads,
-      liveDocumentSnapshots: config?.configurable?.liveDocumentSnapshots,
-    });
-  } catch {
-    return new FallbackWorkspaceProvider();
-  }
-}
-
-/**
- * Unwrapped implementation of `searchAgentNode`.
- *
- * Dispatches AST structural inspection and lexical BM25 search queries over target files.
- * Pointers (`vault_ref://`) are dereferenced just-in-time at prompt construction time.
- * Bounded by `stepCountIs(6)`.
- *
- * @param state - The current agent graph state.
- * @param config - LangGraph execution config.
- * @returns Partial state containing the emitted AIMessage.
- */
-export async function rawSearchAgentNode(
-  state: AgentGraphState,
-  config?: RunnableConfig,
-): Promise<Partial<AgentGraphState>> {
-  const dereferencedPrompt = resolveVaultRefJustInTime(state.user_request?.prompt ?? "");
-  const targetFileIds = state.user_request?.targetFileIds ?? [];
-
-  const hasApiKeys = getApiKeys().length > 0 || Boolean(process.env.GEMINI_API_KEY);
-
-  if (hasApiKeys) {
-    try {
-      const { modelInstance } = await getGoogleModel(SEARCH_AGENT_MODEL_ID);
-
-      const inspectionTools = {
-        listHeadingsTree: tool({
-          description: "List the complete markdown heading hierarchy tree for target workspace files.",
-          inputSchema: z.object({
-            fileIds: z.array(z.string()).describe("Workspace file IDs to inspect"),
-          }),
-        }),
-        readSectionByHeading: tool({
-          description: "Read body content of a specific document section by file ID and heading slug.",
-          inputSchema: z.object({
-            fileId: z.string().describe("Target file ID"),
-            headingSlug: z.string().describe("Target heading slug"),
-          }),
-        }),
-        searchLexicalWithASTBreadcrumb: tool({
-          description: "Search workspace files using path-coupled BM25 lexical search.",
-          inputSchema: z.object({
-            fileIds: z.array(z.string()).describe("Target file IDs"),
-            query: z.string().describe("Search keywords"),
-            maxResults: z.number().optional().describe("Maximum match count"),
-          }),
-        }),
-      };
-
-      const result = await generateText({
-        model: modelInstance,
-        system:
-          "You are an expert systems inspection agent. Inspect heading trees and read relevant sections to gather architectural evidence for the user request.",
-        prompt: `User Request: ${dereferencedPrompt}\nTarget Files: ${targetFileIds.join(", ")}`,
-        tools: inspectionTools,
-        stopWhen: stepCountIs(SEARCH_AGENT_STEP_CEILING),
-        abortSignal: config?.signal,
-      });
-
-      const toolCalls = (result.toolCalls ?? []).map((call) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const rawCall = call as any;
-        return {
-          id: rawCall.toolCallId ?? rawCall.id ?? `call_${Date.now()}`,
-          name: rawCall.toolName ?? rawCall.name ?? "",
-          args: (rawCall.input ?? rawCall.args ?? {}) as Record<string, unknown>,
-        };
-      });
-
-      return {
-        messages: [
-          new AIMessage({
-            content: result.text || "Workspace exploration step complete.",
-            tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
-          }),
-        ],
-      };
-    } catch {
-      // Fallback to deterministic simulation if live generation fails
-    }
-  }
-
-  // Deterministic exploration simulation for offline / hermetic environments
-  const hasToolMessage = state.messages?.some((m) => m._getType() === "tool");
-
-  if (!hasToolMessage && targetFileIds.length > 0) {
-    // Turn 1: Emit initial heading tree inspection tool call
-    return {
-      messages: [
-        new AIMessage({
-          content: "Initiating structural heading inspection for target files.",
-          tool_calls: [
-            {
-              id: `call_${Date.now()}_headings`,
-              name: "listHeadingsTree",
-              args: { fileIds: targetFileIds },
-            },
-          ],
-        }),
-      ],
-    };
-  }
-
-  // Turn 2: Conclude search exploration
-  return {
-    messages: [
-      new AIMessage({
-        content: "Completed workspace inspection. Evidence collected for synthesis.",
+    listHeadingsTree: tool({
+      description:
+        "List the complete markdown heading hierarchy tree for target workspace files (or all files if omitted).",
+      inputSchema: z.object({
+        fileIds: z
+          .array(z.string())
+          .optional()
+          .describe("Optional workspace file IDs to inspect"),
       }),
-    ],
-  };
-}
+      execute: async ({ fileIds }) => {
+        return ctx.workspaceProvider.listHeadingsTree(fileIds);
+      },
+    }),
 
-/**
- * Metered search agent node wrapped with `withMeteredNodeGate`.
- */
-export const searchAgentNode = withMeteredNodeGate(
-  "search_agent_node",
-  SEARCH_AGENT_MODEL_ID,
-  rawSearchAgentNode,
-);
+    searchLexicalWithASTBreadcrumb: tool({
+      description:
+        "Search workspace files using path-coupled BM25 lexical search with AST breadcrumbs.",
+      inputSchema: z.object({
+        fileIds: z
+          .array(z.string())
+          .optional()
+          .describe("Optional target file IDs"),
+        query: z.string().min(1).describe("Search keywords"),
+        maxResults: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Maximum match count"),
+      }),
+      execute: async ({ fileIds, query, maxResults }) => {
+        return ctx.workspaceProvider.searchLexicalWithASTBreadcrumb({
+          fileIds,
+          query,
+          maxResults,
+        });
+      },
+    }),
 
-/**
- * Deterministic Tool Execution Node (Stage 1).
- *
- * Executes requested inspection tools against `IWorkspaceProvider`,
- * formats `ToolMessage` instances with `vault_ref://` pointers for encrypted files,
- * and tracks newly visited paths in `local_inspection_state`.
- *
- * @param state - The current agent graph state.
- * @param config - LangGraph execution config containing optional custom workspace provider.
- * @returns Partial state update with tool messages and newly inspected paths.
- */
-export async function workspaceToolNode(
-  state: AgentGraphState,
-  config?: RunnableConfig,
-): Promise<Partial<AgentGraphState>> {
-  const lastMessage = state.messages?.[state.messages.length - 1];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const toolCalls = (lastMessage as any)?.tool_calls as
-    | Array<{ id?: string; name: string; args: Record<string, unknown> }>
-    | undefined;
-
-  if (!toolCalls || !Array.isArray(toolCalls) || toolCalls.length === 0) {
-    return {};
-  }
-
-  const provider = resolveWorkspaceProvider(config);
-  const toolMessages: BaseMessage[] = [];
-  const newPaths: string[] = [];
-
-  for (const call of toolCalls) {
-    const callId = call.id ?? `call_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    const rawArgs = (call.args && typeof call.args === "object" ? call.args : {}) as Record<string, unknown>;
-    let resultPayload: unknown;
-
-    if (call.name === "listHeadingsTree") {
-      const fileIds = Array.isArray(rawArgs.fileIds)
-        ? (rawArgs.fileIds as string[])
-        : [];
-      const tree = await provider.listHeadingsTree(fileIds);
-      resultPayload = tree;
-
-      for (const [fileId, headings] of Object.entries(tree)) {
-        for (const heading of headings) {
-          newPaths.push(`${fileId}#${heading.headingSlug}`);
+    readSectionByHeading: tool({
+      description:
+        "Read body content of a specific document section by file ID and heading slug.",
+      inputSchema: z.object({
+        fileId: z.string().min(1).describe("Target file ID"),
+        headingSlug: z.string().min(1).describe("Target heading slug"),
+      }),
+      execute: async ({ fileId, headingSlug }) => {
+        const section = await ctx.workspaceProvider.readSectionByHeading(
+          fileId,
+          headingSlug,
+        );
+        if (section.isVaultRef && !isVaultRef(section.contentOrVaultRef)) {
+          storeEphemeralVaultSection(
+            fileId,
+            headingSlug,
+            section.contentOrVaultRef,
+          );
         }
-      }
-    } else if (call.name === "readSectionByHeading") {
-      const fileId = String(rawArgs.fileId ?? "");
-      const headingSlug = String(rawArgs.headingSlug ?? "");
-      const section = await provider.readSectionByHeading(fileId, headingSlug);
-      resultPayload = section;
-      newPaths.push(`${fileId}#${headingSlug}`);
-
-      if (section.isVaultRef && !isVaultRef(section.contentOrVaultRef)) {
-        storeEphemeralVaultSection(fileId, headingSlug, section.contentOrVaultRef);
-      }
-    } else if (call.name === "searchLexicalWithASTBreadcrumb") {
-      const fileIds = Array.isArray(rawArgs.fileIds)
-        ? (rawArgs.fileIds as string[])
-        : [];
-      const query = String(rawArgs.query ?? "");
-      const maxResults = typeof rawArgs.maxResults === "number" ? rawArgs.maxResults : 10;
-      const matches = await provider.searchLexicalWithASTBreadcrumb({
-        fileIds,
-        query,
-        maxResults,
-      });
-      resultPayload = matches;
-
-      for (const match of matches) {
-        newPaths.push(`${match.fileId}#${match.headingSlug}`);
-      }
-    } else {
-      resultPayload = { error: `Unrecognized workspace inspection tool: ${call.name}` };
-    }
-
-    toolMessages.push(
-      new ToolMessage({
-        tool_call_id: callId,
-        content: typeof resultPayload === "string" ? resultPayload : JSON.stringify(resultPayload),
-        name: call.name,
-      }),
-    );
-  }
-
-  return {
-    messages: toolMessages,
-    local_inspection_state: Array.from(new Set(newPaths)),
+        return section;
+      },
+    }),
   };
 }
 
+interface RawToolCallRecord {
+  readonly toolCallId: string;
+  readonly toolName: string;
+  readonly args: Record<string, unknown>;
+}
+
 /**
- * Unwrapped implementation of `searchSynthesizerNode`.
- *
- * Synthesizes gathered tool outputs into the canonical `SearchReport` state channel,
- * extracting evidence entries keyed by `(fileId, headingSlug)`.
- *
- * @param state - The current agent graph state.
- * @param _config - LangGraph execution config.
- * @returns Partial state update with `search_report`.
+ * Deterministically synthesizes `SearchReport` from `executeToolAgentGeneration` `steps`
+ * by pairing each `toolResult.toolCallId` with its exact `toolCall` arguments (`BUG-07` fix).
  */
-export async function rawSearchSynthesizerNode(
-  state: AgentGraphState,
-  _config?: RunnableConfig,
-): Promise<Partial<AgentGraphState>> {
+function synthesizeSearchReportFromSteps(
+  steps: readonly StepResult<ToolSet>[],
+  agentSummaryText: string,
+  initialInspectionPaths: readonly string[],
+): SearchReport {
   const evidenceItems: SearchReportEvidence[] = [];
-  const inspectedPaths = Array.from(new Set(state.local_inspection_state ?? []));
+  const inspectedPathSet = new Set<string>(initialInspectionPaths);
 
-  // Extract evidence from ToolMessage content in conversation history
-  for (const message of state.messages ?? []) {
-    if (message._getType() !== "tool") continue;
+  for (const step of steps) {
+    const callById = new Map<string, RawToolCallRecord>();
 
-    const content = typeof message.content === "string" ? message.content : "";
-    if (!content.trim().startsWith("{") && !content.trim().startsWith("[")) continue;
-
-    try {
-      const parsed = JSON.parse(content);
-
-      // 1. Heading tree result
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && !("contentOrVaultRef" in parsed)) {
-        const tree = parsed as Record<string, HeadingNode[]>;
-        for (const [fileId, headings] of Object.entries(tree)) {
-          if (Array.isArray(headings)) {
-            for (const h of headings) {
-              evidenceItems.push({
-                fileId,
-                headingSlug: h.headingSlug,
-                breadcrumb: typeof h.breadcrumb === "string" ? h.breadcrumb.split(" > ") : [h.headingSlug],
-                textExcerpt: `[Heading Level ${h.level}] ${h.title}`,
-              });
-            }
-          }
-        }
+    for (const rawCall of step.toolCalls ?? []) {
+      const callRecord = rawCall as unknown as {
+        toolCallId?: string;
+        id?: string;
+        toolName?: string;
+        name?: string;
+        input?: Record<string, unknown>;
+        args?: Record<string, unknown>;
+      };
+      const toolCallId = callRecord.toolCallId ?? callRecord.id ?? "";
+      const toolName = callRecord.toolName ?? callRecord.name ?? "";
+      const args = callRecord.input ?? callRecord.args ?? {};
+      if (toolCallId) {
+        callById.set(toolCallId, { toolCallId, toolName, args });
       }
+    }
 
-      // 2. readSectionByHeading result
-      if (parsed && typeof parsed === "object" && "contentOrVaultRef" in parsed) {
-        const section = parsed as SectionReadResult;
-        const lastTarget = inspectedPaths[inspectedPaths.length - 1] ?? "file#section";
-        const [fileId = "file", headingSlug = "section"] = lastTarget.split("#");
+    for (const rawResult of step.toolResults ?? []) {
+      const resRecord = rawResult as unknown as {
+        toolCallId?: string;
+        toolName?: string;
+        output?: unknown;
+        result?: unknown;
+      };
+      const toolCallId = resRecord.toolCallId ?? "";
+      const matchedCall = toolCallId ? callById.get(toolCallId) : undefined;
+      const toolName = resRecord.toolName ?? matchedCall?.toolName ?? "";
+      const args = matchedCall?.args ?? {};
+      const output = resRecord.output ?? resRecord.result;
+
+      if (!output || typeof output !== "object") continue;
+
+      if (toolName === "readSectionByHeading") {
+        const section = output as Partial<SectionReadResult>;
+        const fileId =
+          typeof section.fileId === "string" && section.fileId.length > 0
+            ? section.fileId
+            : String(args.fileId ?? "");
+        const headingSlug =
+          typeof section.headingSlug === "string" && section.headingSlug.length > 0
+            ? section.headingSlug
+            : String(args.headingSlug ?? "");
+
+        if (!fileId || !headingSlug) continue;
+
+        inspectedPathSet.add(`${fileId}#${headingSlug}`);
+
+        const rawContent =
+          typeof section.contentOrVaultRef === "string"
+            ? section.contentOrVaultRef
+            : "";
+        const breadcrumbStr =
+          typeof section.breadcrumb === "string" && section.breadcrumb.length > 0
+            ? section.breadcrumb
+            : headingSlug;
 
         evidenceItems.push({
           fileId,
           headingSlug,
-          breadcrumb: section.breadcrumb ? section.breadcrumb.split(" > ") : [headingSlug],
-          textExcerpt: section.contentOrVaultRef.slice(0, 500),
-          vaultRef: section.isVaultRef ? section.contentOrVaultRef : undefined,
+          breadcrumb: breadcrumbStr.split(" > "),
+          textExcerpt: rawContent.slice(0, 500),
+          vaultRef:
+            section.isVaultRef || isVaultRef(rawContent)
+              ? rawContent
+              : undefined,
         });
-      }
-
-      // 3. searchLexicalWithASTBreadcrumb result
-      if (Array.isArray(parsed)) {
-        const matches = parsed as LexicalMatchResult[];
-        for (const m of matches) {
-          if (m && m.fileId && m.headingSlug) {
+      } else if (toolName === "listHeadingsTree" && !Array.isArray(output)) {
+        const tree = output as Record<string, HeadingNode[]>;
+        for (const [fileId, headings] of Object.entries(tree)) {
+          if (!Array.isArray(headings)) continue;
+          for (const h of headings) {
+            if (!h?.headingSlug) continue;
+            inspectedPathSet.add(`${fileId}#${h.headingSlug}`);
             evidenceItems.push({
-              fileId: m.fileId,
-              headingSlug: m.headingSlug,
-              breadcrumb: m.headingBreadcrumb ? m.headingBreadcrumb.split(" > ") : [m.headingSlug],
-              textExcerpt: m.matchedExcerpt,
-              vaultRef: isVaultRef(m.matchedExcerpt) ? m.matchedExcerpt : undefined,
+              fileId,
+              headingSlug: h.headingSlug,
+              breadcrumb:
+                typeof h.breadcrumb === "string" && h.breadcrumb.length > 0
+                  ? h.breadcrumb.split(" > ")
+                  : [h.headingSlug],
+              textExcerpt: `[Heading Level ${h.level}] ${h.title}`,
             });
           }
         }
+      } else if (
+        toolName === "searchLexicalWithASTBreadcrumb" &&
+        Array.isArray(output)
+      ) {
+        const matches = output as LexicalMatchResult[];
+        for (const m of matches) {
+          if (!m?.fileId || !m?.headingSlug) continue;
+          inspectedPathSet.add(`${m.fileId}#${m.headingSlug}`);
+          evidenceItems.push({
+            fileId: m.fileId,
+            headingSlug: m.headingSlug,
+            breadcrumb:
+              typeof m.headingBreadcrumb === "string" &&
+              m.headingBreadcrumb.length > 0
+                ? m.headingBreadcrumb.split(" > ")
+                : [m.headingSlug],
+            textExcerpt: m.matchedExcerpt ?? "",
+            vaultRef: isVaultRef(m.matchedExcerpt ?? "")
+              ? m.matchedExcerpt
+              : undefined,
+          });
+        }
       }
-    } catch {
-      // Skip unparseable tool responses
     }
   }
 
+  const inspectedPaths = Array.from(inspectedPathSet);
   const summary =
-    evidenceItems.length > 0
-      ? `Synthesized ${evidenceItems.length} evidence items across ${inspectedPaths.length} workspace sections.`
-      : "Workspace inspection completed with no active section evidence extracted.";
+    agentSummaryText.trim().length > 0
+      ? agentSummaryText.trim()
+      : evidenceItems.length > 0
+        ? `Synthesized ${evidenceItems.length} evidence items across ${inspectedPaths.length} workspace paths.`
+        : "Workspace and decision-ledger discovery completed with no section evidence extracted.";
 
-  const report: SearchReport = {
+  return {
     evidenceItems,
     inspectedPaths,
     summary,
   };
+}
 
+/**
+ * Deterministic offline/hermetic fallback discovery when no API key is configured.
+ */
+async function runDeterministicFallbackDiscovery(
+  dereferencedPrompt: string,
+  targetFileIds: readonly string[],
+  initialInspectionPaths: readonly string[],
+  ctx: AgentRuntimeContext,
+): Promise<SearchReport> {
+  const evidenceItems: SearchReportEvidence[] = [];
+  const inspectedPathSet = new Set<string>(initialInspectionPaths);
+
+  try {
+    if (targetFileIds.length > 0) {
+      const tree = await ctx.workspaceProvider.listHeadingsTree([...targetFileIds]);
+      for (const [fileId, headings] of Object.entries(tree)) {
+        for (const h of headings) {
+          inspectedPathSet.add(`${fileId}#${h.headingSlug}`);
+          evidenceItems.push({
+            fileId,
+            headingSlug: h.headingSlug,
+            breadcrumb:
+              typeof h.breadcrumb === "string" && h.breadcrumb.length > 0
+                ? h.breadcrumb.split(" > ")
+                : [h.headingSlug],
+            textExcerpt: `[Heading Level ${h.level}] ${h.title}`,
+          });
+        }
+      }
+
+      if (dereferencedPrompt.trim().length > 0) {
+        const matches =
+          await ctx.workspaceProvider.searchLexicalWithASTBreadcrumb({
+            fileIds: [...targetFileIds],
+            query: dereferencedPrompt,
+            maxResults: 5,
+          });
+        for (const m of matches) {
+          inspectedPathSet.add(`${m.fileId}#${m.headingSlug}`);
+          evidenceItems.push({
+            fileId: m.fileId,
+            headingSlug: m.headingSlug,
+            breadcrumb:
+              typeof m.headingBreadcrumb === "string" &&
+              m.headingBreadcrumb.length > 0
+                ? m.headingBreadcrumb.split(" > ")
+                : [m.headingSlug],
+            textExcerpt: m.matchedExcerpt,
+            vaultRef: isVaultRef(m.matchedExcerpt)
+              ? m.matchedExcerpt
+              : undefined,
+          });
+        }
+      }
+    }
+  } catch {
+    // Graceful degradation for offline/empty workspaces
+  }
+
+  const inspectedPaths = Array.from(inspectedPathSet);
   return {
-    search_report: report,
+    evidenceItems,
+    inspectedPaths,
+    summary:
+      evidenceItems.length > 0
+        ? `Deterministic discovery extracted ${evidenceItems.length} evidence items across ${inspectedPaths.length} paths.`
+        : "Deterministic workspace discovery completed with no section evidence extracted.",
   };
 }
 
 /**
- * Metered search synthesizer node wrapped with `withMeteredNodeGate`.
+ * Unwrapped implementation of `searchDiscoveryNode` (Node 2: `search_discovery_node`).
  */
-export const searchSynthesizerNode = withMeteredNodeGate(
-  "search_synthesizer_node",
-  SEARCH_AGENT_MODEL_ID,
-  rawSearchSynthesizerNode,
-);
+export const rawSearchDiscoveryNode: AgentGraphNodeFn = async (
+  state: Readonly<AgentGraphState>,
+  ctx: AgentRuntimeContext,
+): Promise<NodeExecutionResult> => {
+  const targetFileIds = state.user_request?.targetFileIds ?? [];
+  const dereferencedPrompt = resolveVaultRefJustInTime(
+    state.user_request?.prompt ?? "",
+  );
+  const initialPaths = state.local_inspection_state ?? [];
+
+  const hasApiKeys =
+    getApiKeys().length > 0 || Boolean(process.env.GEMINI_API_KEY);
+
+  let searchReport: SearchReport;
+
+  if (hasApiKeys) {
+    const workspaceTools = createWorkspaceDocumentTools(ctx);
+    const decisionGraphTools = createDecisionGraphTools(() =>
+      toProviderLedgerDocument({
+        schemaVersion: "2.0.0",
+        workspaceId: ctx.workspaceId,
+        updatedAt: new Date().toISOString(),
+        taxonomy: state.project_taxonomy,
+        nodes: state.master_ledger,
+        edges: state.ledger_edges,
+      }),
+    );
+
+    const tools: ToolSet = {
+      ...workspaceTools,
+      ...decisionGraphTools,
+    };
+
+    try {
+      const result = await executeToolAgentGeneration({
+        modelId: ctx.selectedSystem2ModelId,
+        tools,
+        maxSteps: SEARCH_AGENT_STEP_CEILING,
+        abortSignal: ctx.abortSignal,
+        system: [
+          "You are the Elixent Dual-Domain Search & Discovery Agent.",
+          "Inspect workspace documents and the ATMS Decision Ledger to gather exact architectural evidence.",
+          "Prefer targeted heading-tree inspection and section reads over blind full-workspace scans.",
+          "When finished, summarize the key findings concisely.",
+        ].join("\n"),
+        prompt: [
+          `Classified Intent: ${state.classified_intent ?? "WORKSPACE_READ_SEARCH"}`,
+          `User Request: ${dereferencedPrompt}`,
+          `Target File IDs: ${targetFileIds.length > 0 ? targetFileIds.join(", ") : "none"}`,
+          `Known Inspection Paths: ${initialPaths.length > 0 ? initialPaths.join(", ") : "none"}`,
+        ].join("\n"),
+      });
+
+      searchReport = synthesizeSearchReportFromSteps(
+        result.steps,
+        result.text,
+        initialPaths,
+      );
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw error;
+      }
+      searchReport = await runDeterministicFallbackDiscovery(
+        dereferencedPrompt,
+        targetFileIds,
+        initialPaths,
+        ctx,
+      );
+    }
+  } else {
+    searchReport = await runDeterministicFallbackDiscovery(
+      dereferencedPrompt,
+      targetFileIds,
+      initialPaths,
+      ctx,
+    );
+  }
+
+  return {
+    status: "COMPLETED",
+    stateDelta: {
+      search_report: searchReport,
+      local_inspection_state: [...searchReport.inspectedPaths],
+      search_loop_count: 1,
+    },
+  };
+};
 
 /**
- * Conditional edge router for Stage 1.
- *
- * Inspects the last message in `state.messages`:
- * - If it contains pending tool calls, routes to `workspace_tool_node`.
- * - Otherwise, routes to `search_synthesizer_node`.
- *
- * @param state - The current agent graph state.
- * @returns Target node key: "workspace_tool_node" | "search_synthesizer_node".
+ * Metered Node 2 (`search_discovery_node`) wrapped with `withMeteredNodeGate`.
  */
-export function toolsCondition(
-  state: AgentGraphState,
-): "workspace_tool_node" | "search_synthesizer_node" {
-  const lastMessage = state.messages?.[state.messages.length - 1];
-  if (
-    lastMessage &&
-    "tool_calls" in lastMessage &&
-    Array.isArray((lastMessage as Record<string, unknown>).tool_calls) &&
-    ((lastMessage as Record<string, unknown>).tool_calls as unknown[]).length > 0
-  ) {
-    return "workspace_tool_node";
-  }
-  return "search_synthesizer_node";
-}
+export const searchDiscoveryNode: AgentGraphNodeFn = withMeteredNodeGate(
+  "search_discovery_node",
+  "system2",
+  rawSearchDiscoveryNode,
+  { isSystem2Node: true },
+);

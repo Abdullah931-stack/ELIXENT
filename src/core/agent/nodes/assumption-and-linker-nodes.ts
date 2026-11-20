@@ -1,62 +1,166 @@
 /**
- * Assumption Analysis, ATMS Candidate Retrieval & Relational Linker (Stage 2)
+ * Assumption Extraction, ATMS Relational Linker & Anti-Domino Gate (Nodes 3 & 4)
  *
- * Implements Stage 2 nodes and conditional routing for the Elixent agent state graph
- * according to ELIXENT-ARCH-02 §1 & §3.3.
- *
- * Exported Symbols:
- * 1. `assumptionAnalyzerNode`: Metered node extracting assumptions and bounding tags via project taxonomy.
- * 2. `atmsRelationalLinkerNode`: Adjudicates relational links and executes ATMS cascade BFS.
- * 3. `routeAfterAssumptions`: Conditional routing gate (G-5) to jev_structuring, doc_writer, or search_agent.
- * 4. `rawAssumptionAnalyzerNode`: Unwrapped pure implementation for testing.
+ * Implements Stage 2 canonical nodes for the Elixent Native Graph Engine (`ADR-009` & `SRS-01`):
+ * 1. `assumptionExtractorNode` / `rawAssumptionExtractorNode`: Extracts architectural assumptions
+ *    with `intentType` (`DIRECT_USER_INSTRUCTION` | `INFERRED_COLLATERAL_ASSUMPTION`) and 3-4
+ *    neutral options (`NeutralOptionSchema`), merging tool-discovered decisions with
+ *    `retrieveCandidatePriorDecisions`.
+ * 2. `conflictAndWeightGateNode`: Adjudicates relational links via `linkAssumptionsToPriorDecisions`,
+ *    enforces `evaluateAntiDominoGate`, executes `resolveATMSCascadeBFS`, and computes
+ *    `computeMinimalSectionInvalidationMap`.
  */
 
-import type { RunnableConfig } from "@langchain/core/runnables";
-import type { AgentGraphState, AssumptionItem } from "@/core/agent/state";
-import { reduceInvalidationMap } from "@/core/agent/reducers";
-import { withMeteredNodeGate } from "@/lib/metering/node-gate";
-import { resolveVaultRefJustInTime } from "@/lib/vault/ephemeral-memory-map";
-import { resolveProjectConceptTags } from "@/core/agent/taxonomy/predefined-tags";
+import { z } from "zod";
+import type { ATMSDecisionNode } from "@/core/agent/atms/dag";
+import { retrieveCandidatePriorDecisions } from "@/core/agent/atms/candidate-retriever";
 import {
-  createAssumptionExtractionBatchSchema,
+  computeMinimalSectionInvalidationMap,
+  evaluateAntiDominoGate,
+  resolveATMSCascadeBFS,
+  type LinkedAssumptionInput,
+} from "@/core/agent/atms/invalidation";
+import { linkAssumptionsToPriorDecisions } from "@/core/agent/atms/relational-linker";
+import type {
+  AgentGraphNodeFn,
+  AgentRuntimeContext,
+  NodeExecutionResult,
+} from "@/core/agent/engine/runner";
+import {
+  reduceInvalidationMap,
+  type ClarifyingQuestionBatch,
+  type SearchReport,
+} from "@/core/agent/reducers";
+import {
+  createAssumptionItemSchema,
+  NeutralOptionSchema,
+  type AssumptionIntentType,
+  type NeutralDecisionOptionInput,
   type SectionTarget,
 } from "@/core/agent/schemas/decision-schemas";
-import { retrieveCandidatePriorDecisions } from "@/core/agent/atms/candidate-retriever";
-import { linkAssumptionsToPriorDecisions } from "@/core/agent/atms/relational-linker";
-import {
-  resolveATMSCascadeBFS,
-  computeMinimalSectionInvalidationMap,
-} from "@/core/agent/atms/invalidation";
+import type { AgentGraphState, AssumptionItem } from "@/core/agent/state";
+import { resolveProjectConceptTags } from "@/core/agent/taxonomy/predefined-tags";
 import { executeStructuredGeneration } from "@/lib/ai/client";
 import { getApiKeys } from "@/lib/ai/key-rotation";
-
-/** Model identifier used for metered assumption analyzer execution */
-export const ASSUMPTION_ANALYZER_MODEL_ID = "google/gemini-3.8-flash";
+import { withMeteredNodeGate } from "@/lib/metering/node-gate";
+import { resolveVaultRefJustInTime } from "@/lib/vault/ephemeral-memory-map";
 
 /**
- * Extended assumption shape that optionally tracks retrieved candidate decision IDs.
+ * Extended assumption shape carrying retrieved candidate prior decision IDs
+ * and neutral pre-scoring options (`NeutralOptionSchema`).
  */
 export interface AnalyzedAssumptionItem extends AssumptionItem {
   readonly candidateDecisionIds?: readonly string[];
+  readonly neutralOptions?: readonly NeutralDecisionOptionInput[];
+  readonly constrainedByPrior?: boolean;
+}
+
+function slugifyOptionPrefix(text: string): string {
+  const slug = text
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return slug.slice(0, 28) || "option";
+}
+
+function buildFallbackNeutralOptions(statement: string): NeutralDecisionOptionInput[] {
+  const prefix = slugifyOptionPrefix(statement);
+  return [
+    {
+      optionKey: `${prefix}_standard`,
+      neutralSummary: "Adopt standard modular implementation aligned with existing workspace boundaries.",
+      technicalConstraints: ["Preserves existing module interfaces", "Minimal structural coupling"],
+    },
+    {
+      optionKey: `${prefix}_conservative`,
+      neutralSummary: "Apply conservative incremental change with strict fallback isolation.",
+      technicalConstraints: ["Limits blast radius to local section", "Easy rollback via isolated boundary"],
+    },
+    {
+      optionKey: `${prefix}_decoupled`,
+      neutralSummary: "Introduce decoupled abstraction layer separating core policy from implementation.",
+      technicalConstraints: ["Higher initial indirection", "Isolates downstream dependents"],
+    },
+  ];
+}
+
+function normalizeNeutralOptions(
+  rawOptions: readonly NeutralDecisionOptionInput[] | undefined,
+  statement: string,
+): NeutralDecisionOptionInput[] {
+  if (!Array.isArray(rawOptions) || rawOptions.length < 3) {
+    return buildFallbackNeutralOptions(statement);
+  }
+
+  return rawOptions.slice(0, 4).map((opt, idx) => ({
+    optionKey: opt.optionKey.toLowerCase().replace(/[^a-z0-9_]/g, "_") || `option_${idx + 1}`,
+    neutralSummary: opt.neutralSummary.slice(0, 220),
+    technicalConstraints:
+      opt.technicalConstraints.length > 0
+        ? opt.technicalConstraints.slice(0, 4).map((c: string) => c.slice(0, 160))
+        : ["Standard architectural constraint"],
+  }));
+}
+
+function mergeCandidateDecisionIds(
+  assumption: AssumptionItem,
+  masterLedger: Record<string, ATMSDecisionNode>,
+  searchReport: SearchReport | undefined,
+): string[] {
+  const seen = new Set<string>();
+  const merged: string[] = [];
+
+  const pushId = (id: string): void => {
+    if (id && masterLedger[id] && !seen.has(id)) {
+      seen.add(id);
+      merged.push(id);
+    }
+  };
+
+  if (searchReport) {
+    const ledgerIds = Object.keys(masterLedger);
+    const searchableText = [
+      searchReport.summary ?? "",
+      ...(searchReport.inspectedPaths ?? []),
+      ...(searchReport.evidenceItems ?? []).map(
+        (ev) => `${ev.fileId} ${ev.headingSlug} ${ev.textExcerpt}`,
+      ),
+    ].join("\n");
+
+    for (const id of ledgerIds) {
+      if (searchableText.includes(id)) {
+        pushId(id);
+      }
+    }
+  }
+
+  const retrieved = retrieveCandidatePriorDecisions(assumption, masterLedger);
+  for (const node of retrieved) {
+    pushId(node.decisionId);
+  }
+
+  return merged;
 }
 
 /**
- * Unwrapped implementation of `assumptionAnalyzerNode`.
+ * Unwrapped implementation of Node 3 (`assumption_extractor_node`).
  *
- * Extracts architectural assumptions from the search report and user prompt,
- * bounds concept tags to the project taxonomy, and retrieves top-K candidate prior
- * decisions from `master_ledger` for each assumption.
- *
- * @param state - The current agent graph state.
- * @param config - LangGraph execution config.
- * @returns Partial state update containing the extracted assumptions.
+ * Extracts architectural assumptions with `intentType` classification and 3-4
+ * neutral options (`NeutralOptionSchema`, zero `rationaleAndPremises`), then merges
+ * tool-discovered prior decisions with `retrieveCandidatePriorDecisions`.
  */
-export async function rawAssumptionAnalyzerNode(
-  state: AgentGraphState,
-  config?: RunnableConfig,
-): Promise<Partial<AgentGraphState>> {
+export async function rawAssumptionExtractorNode(
+  state: Readonly<AgentGraphState>,
+  ctx: AgentRuntimeContext,
+): Promise<NodeExecutionResult> {
   const activeTags = resolveProjectConceptTags(state.project_taxonomy);
-  const extractionSchema = createAssumptionExtractionBatchSchema(activeTags);
+  const itemSchema = createAssumptionItemSchema(activeTags).extend({
+    options: z.array(NeutralOptionSchema).min(3).max(4).optional(),
+  });
+  const extractionSchema = z.object({
+    assumptions: z.array(itemSchema),
+  });
 
   const dereferencedPrompt = resolveVaultRefJustInTime(state.user_request?.prompt ?? "");
   const evidenceSummaries = (state.search_report?.evidenceItems ?? []).map(
@@ -64,12 +168,13 @@ export async function rawAssumptionAnalyzerNode(
   );
 
   const hasApiKeys = getApiKeys().length > 0 || Boolean(process.env.GEMINI_API_KEY);
-  let extractedAssumptions: AssumptionItem[] = [];
+  let extractedAssumptions: AnalyzedAssumptionItem[] = [];
 
   if (hasApiKeys) {
     try {
       const promptText = [
         "Analyze the user request and gathered workspace evidence to extract distinct architectural assumptions.",
+        "For each assumption, classify intentType as DIRECT_USER_INSTRUCTION (explicitly requested by user) or INFERRED_COLLATERAL_ASSUMPTION (implied side-effect), and provide 3-4 mutually exclusive neutral options (optionKey, neutralSummary, technicalConstraints only — no rationaleAndPremises).",
         `User Request: ${dereferencedPrompt}`,
         evidenceSummaries.length > 0
           ? `Workspace Evidence:\n${evidenceSummaries.join("\n")}`
@@ -77,30 +182,35 @@ export async function rawAssumptionAnalyzerNode(
       ].join("\n\n");
 
       const result = await executeStructuredGeneration({
-        modelId: ASSUMPTION_ANALYZER_MODEL_ID,
+        modelId: ctx.selectedSystem2ModelId,
         schema: extractionSchema,
         prompt: promptText,
         system:
-          "You are an architectural assumption analyzer. Extract concise technical assumptions and map each to 1-6 authorized concept tags from the active project taxonomy.",
-        abortSignal: config?.signal,
+          "You are an architectural assumption extractor. Extract concise technical assumptions with intentType, 1-6 authorized conceptTags from the active project taxonomy, and 3-4 neutral options.",
+        abortSignal: ctx.abortSignal,
       });
 
       if (result.object && Array.isArray(result.object.assumptions)) {
-        extractedAssumptions = result.object.assumptions.map((a, index) => ({
-          assumptionId: a.assumptionId || `asmp_${Date.now()}_${index + 1}`,
-          statement: a.statement || a.assumptionStatement || "",
-          conceptTags: (a.conceptTags as string[]) ?? [activeTags[0]],
-          affectedSections: (a.affectedSections as SectionTarget[]) ?? [],
-          dependsOn: a.dependsOn ?? [],
-        }));
+        extractedAssumptions = result.object.assumptions.map((a, index) => {
+          const statement = a.statement || a.assumptionStatement || "";
+          const intentType: AssumptionIntentType =
+            a.intentType ?? "INFERRED_COLLATERAL_ASSUMPTION";
+          return {
+            assumptionId: a.assumptionId || `asmp_${Date.now()}_${index + 1}`,
+            statement,
+            intentType,
+            conceptTags: (a.conceptTags as string[]) ?? [activeTags[0]],
+            affectedSections: (a.affectedSections as SectionTarget[]) ?? [],
+            dependsOn: a.dependsOn ?? [],
+            neutralOptions: normalizeNeutralOptions(a.options, statement),
+          };
+        });
       }
     } catch {
-      // Fallback to deterministic extraction on model failure
       extractedAssumptions = [];
     }
   }
 
-  // Deterministic fallback if model was unconfigured or failed
   if (extractedAssumptions.length === 0) {
     const prompt = dereferencedPrompt.trim();
     if (prompt.length > 0) {
@@ -114,144 +224,238 @@ export async function rawAssumptionAnalyzerNode(
       extractedAssumptions.push({
         assumptionId: `asmp_${Date.now()}_1`,
         statement: prompt,
+        intentType: "DIRECT_USER_INSTRUCTION",
         conceptTags: [activeTags[0]],
         affectedSections,
         dependsOn: [],
+        neutralOptions: buildFallbackNeutralOptions(prompt),
       });
     }
   }
 
-  // Deterministic Top-K Candidate Retrieval (ELIXENT-ARCH-02 §5.1 Step 1)
   const masterLedger = state.master_ledger ?? {};
-  const enrichedAssumptions: AssumptionItem[] = extractedAssumptions.map((assumption) => {
-    // Run candidate retriever to rank prior decisions from masterLedger
-    const candidateNodes = retrieveCandidatePriorDecisions(assumption, masterLedger);
-    const candidateIds = candidateNodes.map((n) => n.decisionId);
-
-    return {
-      ...assumption,
-      candidateDecisionIds: candidateIds,
-    } as AssumptionItem;
-  });
+  const enrichedAssumptions: AnalyzedAssumptionItem[] = extractedAssumptions.map((assumption) => ({
+    ...assumption,
+    candidateDecisionIds: mergeCandidateDecisionIds(
+      assumption,
+      masterLedger,
+      state.search_report,
+    ),
+  }));
 
   return {
-    assumptions: enrichedAssumptions,
+    status: "COMPLETED",
+    stateDelta: {
+      assumptions: enrichedAssumptions,
+    },
   };
 }
 
 /**
- * Metered assumption analyzer node wrapped with `withMeteredNodeGate`.
+ * Metered Node 3 (`assumption_extractor_node`) wrapped with `withMeteredNodeGate`.
  */
-export const assumptionAnalyzerNode = withMeteredNodeGate(
-  "assumption_analyzer_node",
-  ASSUMPTION_ANALYZER_MODEL_ID,
-  rawAssumptionAnalyzerNode,
+export const assumptionExtractorNode: AgentGraphNodeFn = withMeteredNodeGate(
+  "assumption_extractor_node",
+  "system2",
+  rawAssumptionExtractorNode,
+  { isSystem2Node: true },
 );
 
+function buildAntiDominoEscalationQuestion(
+  assumption: AssumptionItem,
+  priorNode: ATMSDecisionNode,
+  masterLedger: Record<string, ATMSDecisionNode>,
+): ClarifyingQuestionBatch["questions"][number] {
+  const dependentCount = countTransitiveDependents(priorNode.decisionId, priorNode, masterLedger);
+  const affectedSectionsList = (priorNode.affectedSections ?? [])
+    .map((s) => `${s.fileId}#${s.headingSlug}`)
+    .join(", ");
+
+  return {
+    questionId: `antidomino_${priorNode.decisionId}`,
+    topicSlug: priorNode.topicSlug,
+    questionPrompt: `Assumption "${assumption.statement}" conflicts with prior decision "${priorNode.questionPrompt}" (${priorNode.selectedOptionKey}). Confirm override or preserve prior decision?`,
+    options: [
+      {
+        optionKey: "preserve_prior",
+        neutralSummary: `Preserve prior decision (${priorNode.selectedOptionKey}) and constrain the new assumption.`,
+      },
+      {
+        optionKey: "confirm_override",
+        neutralSummary: `Override prior decision (${priorNode.decisionId}) and cascade updates to ${dependentCount} dependent(s).`,
+      },
+    ],
+    contextExplanation: `Anti-Domino Blast Radius: ${dependentCount} dependent decision(s); affected sections: [${affectedSectionsList || "none"}].`,
+  };
+}
+
+function countTransitiveDependents(
+  rootId: string,
+  rootNode: ATMSDecisionNode,
+  masterLedger: Record<string, ATMSDecisionNode>,
+): number {
+  const visited = new Set<string>([rootId]);
+  const queue: string[] = [...(rootNode.dependedBy ?? [])];
+  let count = 0;
+
+  while (queue.length > 0) {
+    const currentId = queue.shift()!;
+    if (visited.has(currentId)) continue;
+    visited.add(currentId);
+    count += 1;
+
+    const child = masterLedger[currentId];
+    if (child?.dependedBy) {
+      for (const grandChildId of child.dependedBy) {
+        if (!visited.has(grandChildId)) {
+          queue.push(grandChildId);
+        }
+      }
+    }
+  }
+
+  return count;
+}
+
 /**
- * Justification-Driven ATMS Relational Linker Node (Stage 2 — Step 2).
+ * Node 4 (`conflict_and_weight_gate_node`): Pure deterministic + relational-linker node.
  *
- * Adjudicates logical relationships (`INDEPENDENT`, `DEPENDS_ON`, `REOPENS_OR_OVERRIDES`, `REFINES`)
- * between newly extracted assumptions and candidate prior decisions, executes Contagious Promotion &
- * Override Cascade BFS across the ATMS DAG, and aggregates impacted section targets.
- *
- * @param state - The current agent graph state.
- * @param config - LangGraph execution config containing optional abortSignal.
- * @returns Partial state update with updated master ledger, invalidation map, and reopened assumptions.
+ * Adjudicates links via `linkAssumptionsToPriorDecisions`, enforces `evaluateAntiDominoGate`
+ * for `REOPENS_OR_OVERRIDES` links, executes `resolveATMSCascadeBFS`, and computes
+ * `computeMinimalSectionInvalidationMap`.
  */
-export async function atmsRelationalLinkerNode(
-  state: AgentGraphState,
-  config?: RunnableConfig,
-): Promise<Partial<AgentGraphState>> {
+export async function conflictAndWeightGateNode(
+  state: Readonly<AgentGraphState>,
+  ctx: AgentRuntimeContext,
+): Promise<NodeExecutionResult> {
   const assumptions = state.assumptions ?? [];
   const masterLedger = state.master_ledger ?? {};
 
   if (assumptions.length === 0) {
     return {
-      master_ledger: masterLedger,
-      invalidation_map: state.invalidation_map ?? {},
+      status: "COMPLETED",
+      stateDelta: {
+        master_ledger: masterLedger,
+        invalidation_map: state.invalidation_map ?? {},
+      },
     };
   }
 
-  // 1. Relational Adjudication via POST /v1/decisions client
   const linkedGroups = await linkAssumptionsToPriorDecisions(assumptions, masterLedger, {
-    abortSignal: config?.signal,
+    abortSignal: ctx.abortSignal,
   });
 
-  // 2. Bidirectional Contagious Promotion & Override Cascade BFS (ELIXENT-ARCH-02 §5.2)
-  const cascadeResult = resolveATMSCascadeBFS(linkedGroups, masterLedger);
+  const constrainedAssumptionIds = new Set<string>();
+  const governingMap = new Map<string, ATMSDecisionNode>();
+  for (const existing of state.governing_constraints ?? []) {
+    governingMap.set(existing.decisionId, existing);
+  }
 
-  // 3. Differential Section Invalidation Map (ELIXENT-ARCH-02 §5.3)
-  const rootDecisionIds = cascadeResult.reopenedOrPromotedNodes.map((node) => node.decisionId);
-  const minimalInvalidations = computeMinimalSectionInvalidationMap(rootDecisionIds, masterLedger);
+  const escalatedQuestions: Array<ClarifyingQuestionBatch["questions"][number]> = [];
+  const permittedGroups: Array<LinkedAssumptionInput<AssumptionItem>> = [];
+  const localizedOverrideRootIds: string[] = [];
+
+  for (const group of linkedGroups) {
+    const intentType: AssumptionIntentType =
+      group.assumption.intentType ?? "INFERRED_COLLATERAL_ASSUMPTION";
+    const permittedRelations = [];
+    let isConstrainedByPrior = false;
+
+    for (const rel of group.relations) {
+      if (rel.relationType !== "REOPENS_OR_OVERRIDES") {
+        permittedRelations.push(rel);
+        continue;
+      }
+
+      const priorNode = masterLedger[rel.targetDecisionId];
+      if (!priorNode) {
+        continue;
+      }
+
+      const verdict = evaluateAntiDominoGate(
+        { intentType },
+        priorNode,
+        masterLedger,
+      );
+
+      if (verdict === "CONSTRAINED_BY_PRIOR") {
+        isConstrainedByPrior = true;
+        governingMap.set(priorNode.decisionId, priorNode);
+      } else if (verdict === "ESCALATE_TO_HITL") {
+        escalatedQuestions.push(
+          buildAntiDominoEscalationQuestion(group.assumption, priorNode, masterLedger),
+        );
+      } else {
+        // LOCALIZED_OVERRIDE
+        localizedOverrideRootIds.push(priorNode.decisionId);
+        permittedRelations.push(rel);
+      }
+    }
+
+    if (isConstrainedByPrior) {
+      constrainedAssumptionIds.add(group.assumption.assumptionId);
+    } else {
+      permittedGroups.push({
+        assumption: group.assumption,
+        relations: permittedRelations,
+      });
+    }
+  }
+
+  const cascadeResult = resolveATMSCascadeBFS(permittedGroups, masterLedger);
+
+  const rootDecisionIds = Array.from(
+    new Set([
+      ...cascadeResult.reopenedOrPromotedNodes.map((node) => node.decisionId),
+      ...localizedOverrideRootIds,
+    ]),
+  );
+
+  const minimalInvalidations = computeMinimalSectionInvalidationMap(
+    rootDecisionIds,
+    masterLedger,
+  );
   const mergedInvalidations = reduceInvalidationMap(
     state.invalidation_map ?? {},
     minimalInvalidations,
   );
 
-  // 4. Staged assumptions: merge current assumptions with reopened / promoted nodes for Stage 3
-  const existingAssumptionIds = new Set(assumptions.map((a) => a.assumptionId));
+  const taggedAssumptions: AnalyzedAssumptionItem[] = assumptions.map((a) =>
+    constrainedAssumptionIds.has(a.assumptionId)
+      ? { ...a, constrainedByPrior: true }
+      : a,
+  );
+  const existingAssumptionIds = new Set(taggedAssumptions.map((a) => a.assumptionId));
+
   const reopenedAssumptions: AssumptionItem[] = cascadeResult.reopenedOrPromotedNodes
     .filter((node) => !existingAssumptionIds.has(node.decisionId))
     .map((node) => ({
       assumptionId: node.decisionId,
       statement: node.questionPrompt,
+      intentType: "INFERRED_COLLATERAL_ASSUMPTION",
       conceptTags: node.conceptTags,
       affectedSections: node.affectedSections,
       dependsOn: node.dependsOn,
     }));
 
+  const questionQueue: ClarifyingQuestionBatch | null =
+    escalatedQuestions.length > 0
+      ? { questions: escalatedQuestions }
+      : (state.question_queue ?? null);
+
+  const hasEvictions =
+    cascadeResult.reopenedOrPromotedNodes.length > 0 ||
+    cascadeResult.cascadedDependentNodes.length > 0;
+
   return {
-    master_ledger: cascadeResult.updatedLedger,
-    invalidation_map: mergedInvalidations,
-    assumptions: [...assumptions, ...reopenedAssumptions],
+    status: "COMPLETED",
+    stateDelta: {
+      assumptions: [...taggedAssumptions, ...reopenedAssumptions],
+      governing_constraints: Array.from(governingMap.values()),
+      master_ledger: cascadeResult.updatedLedger,
+      ...(hasEvictions ? { replaceMasterLedger: true } : {}),
+      invalidation_map: mergedInvalidations,
+      question_queue: questionQueue,
+    },
   };
-}
-
-/**
- * Conditional edge router after Stage 2 Assumption Analysis (G-5 Gate).
- *
- * Routing Rules:
- * 1. If no assumptions were generated and invalidation_map is empty, route to "document_writer_node".
- * 2. If contextual gaps are flagged and search_loop_count < MAX_SEARCH_LOOPS (3), route to "search_agent_node".
- * 3. Otherwise, route to "jev_structuring_node".
- *
- * @param state - The current agent graph state.
- * @returns Target node key: "jev_structuring_node" | "document_writer_node" | "search_agent_node".
- */
-export function routeAfterAssumptions(
-  state: AgentGraphState,
-): "jev_structuring_node" | "document_writer_node" | "search_agent_node" {
-  const assumptions = state.assumptions ?? [];
-  const invalidationMap = state.invalidation_map ?? {};
-  const hasInvalidations = Object.keys(invalidationMap).length > 0;
-
-  // Rule 1: No assumptions generated and no invalidations -> direct doc writer execution
-  if (assumptions.length === 0 && !hasInvalidations) {
-    return "document_writer_node";
-  }
-
-  // Rule 2: Contextual gaps flagged while search loops remain
-  const searchLoopCount = state.search_loop_count ?? 0;
-  const hasTargetFiles = (state.user_request?.targetFileIds ?? []).length > 0;
-  const hasNoEvidence = (state.search_report?.evidenceItems ?? []).length === 0;
-
-  const hasContextualGapFlag = assumptions.some((a) => {
-    const text = a.statement.toLowerCase();
-    return (
-      text.includes("contextual gap") ||
-      text.includes("needs inspection") ||
-      text.includes("insufficient evidence") ||
-      text.includes("unresolved gap")
-    );
-  });
-
-  const isGapFlagged = hasContextualGapFlag || (hasTargetFiles && hasNoEvidence);
-
-  if (isGapFlagged && searchLoopCount < 3) {
-    return "search_agent_node";
-  }
-
-  // Rule 3: Normal progression to Stage 3
-  return "jev_structuring_node";
 }
