@@ -13,7 +13,9 @@
  */
 
 import {
+  type CanonicalOption,
   createCanonicalDecisionBatchSchema,
+  type NeutralDecisionOptionInput,
   RelationalLinkPairInput,
   RelationalLinkPairInputSchema,
   RelationalAdjudicationItem,
@@ -27,7 +29,36 @@ import {
   classifyDecisionConformalAPS,
   ConformalClassificationResult,
   DecisionItemEvaluationInput,
+  type EvaluatedAlternativeRecord,
 } from "./conformal-classifier";
+
+export interface GroundedWorkspaceEvidence {
+  fileId: string;
+  headingSlug: string;
+  excerpt: string;
+}
+
+export interface GoverningPriorDecisionContext {
+  decisionId: string;
+  topicSlug: string;
+  selectedOptionKey: string;
+  selectionRationale: string;
+  isLoadBearing: boolean;
+  changeWeightTotal?: number;
+}
+
+export interface GroundedDecisionEvaluationRequestItem {
+  decisionId: string;
+  topicSlug: string;
+  questionPrompt: string;
+  conceptTags: string[];
+  options: Array<NeutralDecisionOptionInput | CanonicalOption>;
+  workspaceEvidence?: GroundedWorkspaceEvidence[];
+  governingPriorDecisions?: GoverningPriorDecisionContext[];
+  priorDecisionContext?: DecisionEvaluationItem["priorDecisionContext"];
+  dependsOnDecisionIds?: string[];
+  affectedSections?: Array<{ fileId: string; headingSlug: string }>;
+}
 
 export const DEFAULT_JEV_API_URL = "https://api.fastino.ai/v1";
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
@@ -81,7 +112,7 @@ function createCombinedSignal(
  * Internal helper to query POST /v1/decisions or invoke the mock generator if unconfigured.
  */
 async function queryJevDecisionsApi(
-  items: DecisionEvaluationItem[],
+  items: GroundedDecisionEvaluationRequestItem[],
   modelId: string,
   userSignal?: AbortSignal
 ): Promise<DecisionItemEvaluationInput[]> {
@@ -116,6 +147,10 @@ async function queryJevDecisionsApi(
         dependsOnDecisionIds: item.dependsOnDecisionIds ?? [],
         affectedSections: item.affectedSections ?? [],
         priorDecisionContext: item.priorDecisionContext,
+        ...(item.workspaceEvidence ? { workspaceEvidence: item.workspaceEvidence } : {}),
+        ...(item.governingPriorDecisions
+          ? { governingPriorDecisions: item.governingPriorDecisions }
+          : {}),
       })),
     };
 
@@ -194,7 +229,7 @@ async function queryJevDecisionsApi(
  * Deterministic mock generator for local tests and environments without external API keys.
  */
 function generateMockEvaluation(
-  item: DecisionEvaluationItem,
+  item: GroundedDecisionEvaluationRequestItem,
   modelId: string
 ): DecisionItemEvaluationInput {
   const isEscalatedTier2 = modelId === TIER2_THINKING_MODEL;
@@ -344,37 +379,56 @@ function generateMockEvaluation(
  *    escalates to Tier 2 thinking model (fastino/glide), re-classifies, and updates results.
  */
 export async function evaluateDecisionBatch(
-  batch: CanonicalDecisionBatch,
+  batch: CanonicalDecisionBatch | { items: GroundedDecisionEvaluationRequestItem[] },
   options?: {
     modelId?: string;
     activeConceptTags?: readonly string[];
     abortSignal?: AbortSignal;
+    workspaceEvidence?: GroundedWorkspaceEvidence[];
+    governingPriorDecisions?: GoverningPriorDecisionContext[];
   }
 ): Promise<ConformalClassificationResult[]> {
   // Validate batch schema
   const schema = createCanonicalDecisionBatchSchema(options?.activeConceptTags);
   const validatedBatch = schema.parse(batch);
 
+  const groundedItems: GroundedDecisionEvaluationRequestItem[] = validatedBatch.items.map(
+    (validatedItem, index) => {
+      const rawItem = batch.items[index] as GroundedDecisionEvaluationRequestItem | undefined;
+      const workspaceEvidence =
+        rawItem?.workspaceEvidence ?? options?.workspaceEvidence;
+      const governingPriorDecisions =
+        rawItem?.governingPriorDecisions ?? options?.governingPriorDecisions;
+
+      return {
+        ...validatedItem,
+        ...(workspaceEvidence ? { workspaceEvidence } : {}),
+        ...(governingPriorDecisions ? { governingPriorDecisions } : {}),
+      };
+    }
+  );
+
   // Tier 1 model evaluation
   const tier1ModelId = options?.modelId ?? TIER1_DEFAULT_MODEL;
   const tier1Evaluations = await queryJevDecisionsApi(
-    validatedBatch.items,
+    groundedItems,
     tier1ModelId,
     options?.abortSignal
   );
 
   const tier1Priors = await calibrationStore.getQuantilePriors(tier1ModelId);
-  const results: ConformalClassificationResult[] = tier1Evaluations.map((evalInput) =>
-    classifyDecisionConformalAPS(evalInput, tier1Priors)
-  );
+  const results: ConformalClassificationResult[] = tier1Evaluations.map((evalInput) => ({
+    ...classifyDecisionConformalAPS(evalInput, tier1Priors),
+    wasEscalatedToTier2: false,
+  }));
 
   // Two-Tier Cascade Escalation:
   // If impactTier == "CORE_ARCHITECTURAL" && |C_{alpha_core}| > 1, escalate to Tier 2 thinking model
-  const escalationItems: DecisionEvaluationItem[] = [];
+  const escalationItems: GroundedDecisionEvaluationRequestItem[] = [];
   const escalationIndices: number[] = [];
 
-  for (let i = 0; i < validatedBatch.items.length; i++) {
-    const item = validatedBatch.items[i];
+  for (let i = 0; i < groundedItems.length; i++) {
+    const item = groundedItems[i];
     const initialResult = results[i];
 
     if (
@@ -399,11 +453,134 @@ export async function evaluateDecisionBatch(
       const origIndex = escalationIndices[k];
       const escalatedEval = tier2Evaluations[k];
       const escalatedResult = classifyDecisionConformalAPS(escalatedEval, tier2Priors);
-      results[origIndex] = escalatedResult;
+      results[origIndex] = {
+        ...escalatedResult,
+        wasEscalatedToTier2: true,
+      };
     }
   }
 
-  return results;
+  return results.map((result, index) => {
+    const item = groundedItems[index];
+    const hasNeutralOnlyOptions = item.options.some(
+      (opt) => !("rationaleAndPremises" in opt) || !opt.rationaleAndPremises
+    );
+    const hasGroundingContext =
+      (item.workspaceEvidence?.length ?? 0) > 0 ||
+      (item.governingPriorDecisions?.length ?? 0) > 0;
+
+    if (hasNeutralOnlyOptions || hasGroundingContext) {
+      return synthesizePostAdjudicationRationales(result, item);
+    }
+    return result;
+  });
+}
+
+/**
+ * Synthesizes grounded `selectionRationale` and `evaluatedAlternatives` post-adjudication
+ * (`ADR-013`, `SRS-01:400-403`), citing the winning option's `neutralSummary`,
+ * `technicalConstraints`, supporting `(fileId, headingSlug)` evidence, and conformal metrics.
+ */
+export function synthesizePostAdjudicationRationales(
+  classificationResult: ConformalClassificationResult,
+  item: GroundedDecisionEvaluationRequestItem | DecisionEvaluationItem
+): ConformalClassificationResult {
+  const workspaceEvidence =
+    "workspaceEvidence" in item && Array.isArray(item.workspaceEvidence)
+      ? item.workspaceEvidence
+      : [];
+  const evidenceRefs = workspaceEvidence
+    .map((ev) => `${ev.fileId}#${ev.headingSlug}`)
+    .filter((ref, idx, arr) => arr.indexOf(ref) === idx);
+
+  const sectionRefs = (item.affectedSections ?? [])
+    .map((sec) => `${sec.fileId}#${sec.headingSlug}`)
+    .filter((ref, idx, arr) => arr.indexOf(ref) === idx);
+
+  const citedLocations = evidenceRefs.length > 0 ? evidenceRefs : sectionRefs;
+  const evidenceCitation =
+    citedLocations.length > 0
+      ? `Evidence: [${citedLocations.join(", ")}].`
+      : "Evidence: workspace grounding evaluated.";
+
+  const metricsSummary = `Conformal APS (${classificationResult.status}, margin=${classificationResult.dominanceMargin.toFixed(3)}, grounding=${classificationResult.evidenceGrounding.toFixed(2)}).`;
+
+  const optionByKey = new Map(item.options.map((opt) => [opt.optionKey, opt]));
+
+  const synthesizedAlternatives: EvaluatedAlternativeRecord[] =
+    classificationResult.evaluatedAlternatives.map((alt) => {
+      const sourceOpt = optionByKey.get(alt.optionKey);
+      const constraints =
+        alt.technicalConstraints ??
+        (sourceOpt && "technicalConstraints" in sourceOpt
+          ? sourceOpt.technicalConstraints
+          : undefined);
+      const existingRationale =
+        sourceOpt && "rationaleAndPremises" in sourceOpt && sourceOpt.rationaleAndPremises
+          ? sourceOpt.rationaleAndPremises
+          : alt.rationaleAndPremises;
+
+      const probPct =
+        typeof alt.normalizedProbability === "number"
+          ? `${(alt.normalizedProbability * 100).toFixed(1)}%`
+          : "n/a";
+
+      const isSelected = alt.optionKey === classificationResult.selectedOptionKey;
+      const constraintClause =
+        constraints && constraints.length > 0
+          ? ` Constraints: ${constraints.join("; ")}.`
+          : "";
+
+      const synthesized =
+        existingRationale && existingRationale.trim().length > 0 && !constraints?.length
+          ? existingRationale
+          : `${alt.neutralSummary}.${constraintClause} Normalized probability: ${probPct} (${isSelected ? "selected" : "alternative"}).`;
+
+      return {
+        optionKey: alt.optionKey,
+        neutralSummary: alt.neutralSummary,
+        rationaleAndPremises: synthesized,
+        ...(constraints ? { technicalConstraints: [...constraints] } : {}),
+        ...(typeof alt.normalizedProbability === "number"
+          ? { normalizedProbability: alt.normalizedProbability }
+          : {}),
+      };
+    });
+
+  if (!classificationResult.selectedOptionKey) {
+    return {
+      ...classificationResult,
+      selectionRationale: `${classificationResult.selectionRationale} ${evidenceCitation} ${metricsSummary}`.trim(),
+      evaluatedAlternatives: synthesizedAlternatives,
+    };
+  }
+
+  const winningOption = optionByKey.get(classificationResult.selectedOptionKey);
+  const winningConstraints =
+    winningOption && "technicalConstraints" in winningOption
+      ? winningOption.technicalConstraints
+      : undefined;
+
+  const summaryText =
+    winningOption?.neutralSummary ?? classificationResult.selectedOptionKey;
+  const constraintsText =
+    winningConstraints && winningConstraints.length > 0
+      ? ` Technical constraints: ${winningConstraints.join("; ")}.`
+      : "";
+
+  const priorCitation =
+    item && "governingPriorDecisions" in item && item.governingPriorDecisions?.length
+      ? ` Prior governing decisions: [${item.governingPriorDecisions.map((d) => d.decisionId).join(", ")}].`
+      : "";
+
+  const selectionRationale =
+    `Selected "${classificationResult.selectedOptionKey}": ${summaryText}.${constraintsText} ${evidenceCitation}${priorCitation} ${metricsSummary}`.trim();
+
+  return {
+    ...classificationResult,
+    selectionRationale,
+    evaluatedAlternatives: synthesizedAlternatives,
+  };
 }
 
 /**

@@ -51,12 +51,40 @@ export const AgentStreamRequestPayloadSchema = z
       .min(1, "threadId must be a non-empty string")
       .max(MAX_IDENTIFIER_LENGTH, `threadId cannot exceed ${MAX_IDENTIFIER_LENGTH} characters`),
 
-    /** Owning project identifier */
+    /** Owning project identifier (legacy alias for workspaceId) */
     projectId: z
       .string()
       .trim()
       .min(1, "projectId must be a non-empty string")
-      .max(MAX_IDENTIFIER_LENGTH, `projectId cannot exceed ${MAX_IDENTIFIER_LENGTH} characters`),
+      .max(MAX_IDENTIFIER_LENGTH, `projectId cannot exceed ${MAX_IDENTIFIER_LENGTH} characters`)
+      .optional(),
+
+    /** Owning workspace identifier */
+    workspaceId: z
+      .string()
+      .trim()
+      .min(1, "workspaceId must be a non-empty string")
+      .max(MAX_IDENTIFIER_LENGTH, `workspaceId cannot exceed ${MAX_IDENTIFIER_LENGTH} characters`)
+      .optional(),
+
+    /** Optional client-generated turn identifier */
+    turnId: z
+      .string()
+      .trim()
+      .min(1, "turnId must be a non-empty string")
+      .max(MAX_IDENTIFIER_LENGTH, `turnId cannot exceed ${MAX_IDENTIFIER_LENGTH} characters`)
+      .optional(),
+
+    /** Execution permission mode */
+    permissionMode: z.enum(["safe", "semi_auto", "full_auto"]).default("safe"),
+
+    /** Selected System 2 model identifier */
+    selectedSystem2ModelId: z
+      .string()
+      .trim()
+      .min(1, "selectedSystem2ModelId must be a non-empty string")
+      .max(MAX_IDENTIFIER_LENGTH, `selectedSystem2ModelId cannot exceed ${MAX_IDENTIFIER_LENGTH} characters`)
+      .default("google/gemini-3.8-flash"),
 
     /** Optional user prompt when starting or extending an agent task */
     prompt: z
@@ -107,23 +135,41 @@ export const AgentStreamRequestPayloadSchema = z
       )
       .optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((data, ctx) => {
+    if (!data.workspaceId && !data.projectId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Either workspaceId or projectId must be provided",
+        path: ["workspaceId"],
+      });
+    }
+  });
 
 /**
  * Inferred TypeScript type representing a validated agent stream request payload.
  */
-export type AgentStreamRequestPayload = z.infer<typeof AgentStreamRequestPayloadSchema>;
+export type AgentStreamRequestPayload = z.input<typeof AgentStreamRequestPayloadSchema>;
+
+/**
+ * Normalized request payload with `workspaceId` guaranteed to be populated
+ * (falling back to `projectId` when only `projectId` was supplied).
+ */
+export type NormalizedAgentStreamRequestPayload = z.output<typeof AgentStreamRequestPayloadSchema> & {
+  readonly workspaceId: string;
+};
 
 /**
  * Discriminated result type returned by `parseAgentStreamPayload`.
  */
 export type ParseAgentStreamPayloadResult =
-  | { readonly success: true; readonly data: AgentStreamRequestPayload }
+  | { readonly success: true; readonly data: NormalizedAgentStreamRequestPayload }
   | { readonly success: false; readonly error: z.ZodError };
 
 /**
  * Pure, side-effect-free helper that parses and validates an unknown input
- * against `AgentStreamRequestPayloadSchema`, returning a typed discriminated union.
+ * against `AgentStreamRequestPayloadSchema`, returning a typed discriminated union
+ * with `workspaceId` normalized from `workspaceId ?? projectId`.
  *
  * @param input - Unknown candidate request body to validate.
  * @returns Discriminated union indicating validation success or failure.
@@ -131,7 +177,14 @@ export type ParseAgentStreamPayloadResult =
 export function parseAgentStreamPayload(input: unknown): ParseAgentStreamPayloadResult {
   const result = AgentStreamRequestPayloadSchema.safeParse(input);
   if (result.success) {
-    return { success: true, data: result.data };
+    const workspaceId = result.data.workspaceId ?? result.data.projectId!;
+    return {
+      success: true,
+      data: {
+        ...result.data,
+        workspaceId,
+      },
+    };
   }
   return { success: false, error: result.error };
 }

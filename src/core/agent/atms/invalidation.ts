@@ -21,9 +21,12 @@
 
 import {
   type ATMSDecisionNode,
+  type ChangeWeightBreakdown,
   cloneATMSDecisionNode,
   cloneMasterLedger,
+  isSystemReservedDecisionId,
 } from "./dag";
+export type { ChangeWeightBreakdown };
 import type { CandidateRetrievalInput } from "./candidate-retriever";
 import type { RelationalLinkType, SectionTarget } from "@/core/agent/schemas/decision-schemas";
 
@@ -331,4 +334,161 @@ export function computeMinimalSectionInvalidationMap(
   }
 
   return invalidationMap;
+}
+
+
+// ============================================================================
+// 5. 4-Source Decision Change Weight W(d) & Anti-Domino Gate (ADR-014 / SRS-01 §5)
+// ============================================================================
+
+export type AntiDominoGateVerdict =
+  | "CONSTRAINED_BY_PRIOR"
+  | "ESCALATE_TO_HITL"
+  | "LOCALIZED_OVERRIDE";
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
+}
+
+function collectTransitiveDependents(
+  rootDecisionId: string,
+  rootNode: ATMSDecisionNode,
+  allNodes: Record<string, ATMSDecisionNode>,
+): { directCount: number; indirectCount: number; totalCount: number } {
+  const normalizedRootId = rootDecisionId.trim();
+  const directSet = new Set<string>();
+  const indirectSet = new Set<string>();
+  const visited = new Set<string>([normalizedRootId]);
+  const queue: Array<{ id: string; depth: number }> = [];
+
+  for (const rawChildId of rootNode.dependedBy ?? []) {
+    if (typeof rawChildId !== "string") continue;
+    const childId = rawChildId.trim();
+    if (!childId || isSystemReservedDecisionId(childId) || visited.has(childId)) {
+      continue;
+    }
+    visited.add(childId);
+    directSet.add(childId);
+    queue.push({ id: childId, depth: 1 });
+  }
+
+  while (queue.length > 0) {
+    const { id } = queue.shift()!;
+    const currentNode = allNodes[id];
+    if (!currentNode) continue;
+
+    for (const rawGrandChildId of currentNode.dependedBy ?? []) {
+      if (typeof rawGrandChildId !== "string") continue;
+      const grandChildId = rawGrandChildId.trim();
+      if (
+        !grandChildId ||
+        isSystemReservedDecisionId(grandChildId) ||
+        visited.has(grandChildId)
+      ) {
+        continue;
+      }
+      visited.add(grandChildId);
+      indirectSet.add(grandChildId);
+      queue.push({ id: grandChildId, depth: 2 });
+    }
+  }
+
+  return {
+    directCount: directSet.size,
+    indirectCount: indirectSet.size,
+    totalCount: directSet.size + indirectSet.size,
+  };
+}
+
+/**
+ * Computes the 4-source Decision Change Weight `W(d) in [10, 100]` (`SRS-01` §5):
+ * - `structural` [10, 45]
+ * - `provenance` [0, 25]
+ * - `topology` [0, 20]
+ * - `surface` [0, 10]
+ */
+export function computeDecisionChangeWeight(
+  node: ATMSDecisionNode,
+  allNodes: Record<string, ATMSDecisionNode>,
+): ChangeWeightBreakdown {
+  const defaultCoupling = node.impactTier === "CORE_ARCHITECTURAL" ? 1.5 : 0.5;
+  const defaultRollback = node.impactTier === "CORE_ARCHITECTURAL" ? 1.5 : 0.5;
+
+  const coupling = clampNumber(node.couplingLevel ?? defaultCoupling, 0, 2);
+  const rollback = clampNumber(node.rollbackCost ?? defaultRollback, 0, 2);
+  const structural = Math.round(10 + 17.5 * ((coupling + rollback) / 2.0));
+
+  let provenance = 0;
+  if (node.provenance === "USER_EXPLICIT_HITL") {
+    provenance = 25;
+  } else if (node.provenance === "SYSTEM1_DIRECT_APS") {
+    const margin = clampNumber(node.dominanceMargin ?? 0, 0, 1);
+    provenance = 10 + Math.round(5 * margin);
+  }
+
+  const { directCount, indirectCount } = collectTransitiveDependents(
+    node.decisionId,
+    node,
+    allNodes,
+  );
+  const topology = Math.min(20, 6 * directCount + 3 * indirectCount);
+
+  const uniqueSections = deduplicateSectionTargets(node.affectedSections ?? []);
+  let surface = 0;
+  if (uniqueSections.length > 0) {
+    const uniqueFiles = new Set(uniqueSections.map((s) => s.fileId));
+    surface = Math.min(
+      10,
+      3 * Math.max(0, uniqueFiles.size - 1) + 2 * uniqueSections.length,
+    );
+  }
+
+  const total = clampNumber(structural + provenance + topology + surface, 10, 100);
+
+  return {
+    total,
+    structural,
+    provenance,
+    topology,
+    surface,
+  };
+}
+
+/**
+ * Evaluates the Anti-Domino Gate (`ADR-014` / `SRS-01:505-514`) before allowing a new
+ * assumption to override or reopen a prior decision node.
+ */
+export function evaluateAntiDominoGate(
+  assumption: {
+    intentType: "DIRECT_USER_INSTRUCTION" | "INFERRED_COLLATERAL_ASSUMPTION";
+  },
+  priorNode: ATMSDecisionNode,
+  allNodes: Record<string, ATMSDecisionNode>,
+): AntiDominoGateVerdict {
+  const weight = computeDecisionChangeWeight(priorNode, allNodes);
+  const { totalCount: transitiveDependents } = collectTransitiveDependents(
+    priorNode.decisionId,
+    priorNode,
+    allNodes,
+  );
+
+  if (assumption.intentType === "INFERRED_COLLATERAL_ASSUMPTION") {
+    if (
+      weight.total >= 40 ||
+      priorNode.provenance === "USER_EXPLICIT_HITL" ||
+      priorNode.impactTier === "CORE_ARCHITECTURAL"
+    ) {
+      return "CONSTRAINED_BY_PRIOR";
+    }
+    if (weight.total >= 25 || transitiveDependents >= 1) {
+      return "ESCALATE_TO_HITL";
+    }
+    return "LOCALIZED_OVERRIDE";
+  }
+
+  if (weight.total >= 50 || transitiveDependents >= 1) {
+    return "ESCALATE_TO_HITL";
+  }
+  return "LOCALIZED_OVERRIDE";
 }

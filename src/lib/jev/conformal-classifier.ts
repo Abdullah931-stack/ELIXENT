@@ -27,6 +27,7 @@ export interface EvaluatedAlternativeRecord {
   optionKey: string;
   neutralSummary: string;
   rationaleAndPremises: string;
+  technicalConstraints?: string[];
   normalizedProbability?: number;
 }
 
@@ -42,7 +43,8 @@ export interface DecisionItemEvaluationInput {
   options: Array<{
     optionKey: string;
     neutralSummary: string;
-    rationaleAndPremises: string;
+    rationaleAndPremises?: string;
+    technicalConstraints?: string[];
   }>;
   dependsOnDecisionIds?: string[];
   affectedSections?: Array<{ fileId: string; headingSlug: string }>;
@@ -65,6 +67,7 @@ export interface ConformalClassificationResult {
   dominanceMargin: number;
   evidenceGrounding: number;
   reason?: string;
+  readonly wasEscalatedToTier2?: boolean;
 }
 
 const EPSILON = 1e-9;
@@ -96,7 +99,9 @@ export function classifyDecisionConformalAPS(
     const evaluatedAlternatives: EvaluatedAlternativeRecord[] = input.options.map((opt) => ({
       optionKey: opt.optionKey,
       neutralSummary: opt.neutralSummary,
-      rationaleAndPremises: opt.rationaleAndPremises,
+      rationaleAndPremises:
+        opt.rationaleAndPremises ?? (opt.technicalConstraints?.join("; ") || ""),
+      ...(opt.technicalConstraints ? { technicalConstraints: [...opt.technicalConstraints] } : {}),
       normalizedProbability: denom > 1e-6 ? (input.probabilities[opt.optionKey] ?? 0) / denom : 0,
     }));
 
@@ -126,10 +131,13 @@ export function classifyDecisionConformalAPS(
     const rawP = input.probabilities[opt.optionKey] ?? 0;
     const normProb = rawP / denom;
     const nonconformityScore = 1 - normProb;
+    const rationale =
+      opt.rationaleAndPremises ?? (opt.technicalConstraints?.join("; ") || "");
     return {
       optionKey: opt.optionKey,
       neutralSummary: opt.neutralSummary,
-      rationaleAndPremises: opt.rationaleAndPremises,
+      rationaleAndPremises: rationale,
+      ...(opt.technicalConstraints ? { technicalConstraints: [...opt.technicalConstraints] } : {}),
       normProb,
       nonconformityScore,
     };
@@ -158,7 +166,11 @@ export function classifyDecisionConformalAPS(
     return {
       optionKey: opt.optionKey,
       neutralSummary: opt.neutralSummary,
-      rationaleAndPremises: opt.rationaleAndPremises,
+      rationaleAndPremises:
+        scored?.rationaleAndPremises ??
+        opt.rationaleAndPremises ??
+        (opt.technicalConstraints?.join("; ") || ""),
+      ...(opt.technicalConstraints ? { technicalConstraints: [...opt.technicalConstraints] } : {}),
       normalizedProbability: scored?.normProb ?? 0,
     };
   });
@@ -177,7 +189,7 @@ export function classifyDecisionConformalAPS(
       impactTier,
       isLoadBearing: true,
       selectedOptionKey: a1.optionKey,
-      selectionRationale: a1.rationaleAndPremises,
+      selectionRationale: a1.rationaleAndPremises || a1.neutralSummary,
       runnerUpOptionKey: runnerUpKey,
       evaluatedAlternatives,
       predictionSetCore,
@@ -204,7 +216,7 @@ export function classifyDecisionConformalAPS(
       impactTier: "PERIPHERAL",
       isLoadBearing: false,
       selectedOptionKey: a1.optionKey,
-      selectionRationale: a1.rationaleAndPremises,
+      selectionRationale: a1.rationaleAndPremises || a1.neutralSummary,
       runnerUpOptionKey: runnerUpKey,
       evaluatedAlternatives,
       predictionSetCore,

@@ -19,8 +19,25 @@ import type { ProjectTaxonomyState } from "@/core/agent/taxonomy/predefined-tags
 import type { SectionTarget } from "@/core/agent/schemas/decision-schemas";
 
 // ---------------------------------------------------------------------------
-// 1. Locally Defined Types (not found elsewhere in the codebase)
+// 1. Locally Defined Types
 // ---------------------------------------------------------------------------
+
+/**
+ * Execution permission mode controlling auto-approval of file mutations and overrides.
+ */
+export type AgentPermissionMode = "safe" | "semi_auto" | "full_auto";
+
+/**
+ * Conversation message entry stored in `AgentGraphState.messages`.
+ */
+export interface AgentConversationMessage {
+  readonly id: string;
+  readonly role: "user" | "assistant" | "system" | "tool";
+  readonly content: string;
+  readonly createdAt: string;
+  readonly toolCallId?: string;
+  readonly toolName?: string;
+}
 
 /**
  * Single evidence entry within a search report, keyed by `(fileId, headingSlug)`.
@@ -47,8 +64,12 @@ export interface SearchReport {
  */
 export interface UserRequest {
   readonly prompt: string;
-  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly projectId?: string;
+  readonly turnId: string;
   readonly targetFileIds: readonly string[];
+  readonly permissionMode: AgentPermissionMode;
+  readonly selectedSystem2ModelId: string;
 }
 
 /**
@@ -82,7 +103,8 @@ export interface ClarifyingQuestionBatch {
     readonly options: ReadonlyArray<{
       readonly optionKey: string;
       readonly neutralSummary: string;
-      readonly rationaleAndPremises: string;
+      readonly rationaleAndPremises?: string;
+      readonly technicalConstraints?: readonly string[];
     }>;
     readonly contextExplanation?: string;
   }>;
@@ -98,6 +120,39 @@ export const MAX_SEARCH_LOOPS = 3;
 // ---------------------------------------------------------------------------
 // 3. Pure Reducer Functions
 // ---------------------------------------------------------------------------
+
+/**
+ * Merges conversation messages by `id` while preserving insertion order.
+ * Newer messages with an existing `id` replace older ones in place.
+ *
+ * @param current - Existing conversation messages.
+ * @param update - Incoming messages to merge.
+ * @returns A new array of deduplicated conversation messages.
+ */
+export function reduceMessages(
+  current: readonly AgentConversationMessage[],
+  update: readonly AgentConversationMessage[],
+): AgentConversationMessage[] {
+  const indexById = new Map<string, number>();
+  const merged: AgentConversationMessage[] = [];
+
+  for (const msg of current) {
+    indexById.set(msg.id, merged.length);
+    merged.push(msg);
+  }
+
+  for (const msg of update) {
+    const existingIdx = indexById.get(msg.id);
+    if (existingIdx !== undefined) {
+      merged[existingIdx] = msg;
+    } else {
+      indexById.set(msg.id, merged.length);
+      merged.push(msg);
+    }
+  }
+
+  return merged;
+}
 
 /**
  * Deep-merges search report evidence entries, deduplicating by composite key

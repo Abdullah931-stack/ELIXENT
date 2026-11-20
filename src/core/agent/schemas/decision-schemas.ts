@@ -49,17 +49,26 @@ export const SectionTargetSchema = z.object({
 });
 export type SectionTarget = z.infer<typeof SectionTargetSchema>;
 
+export const NeutralOptionSchema = z.object({
+  optionKey: z.string().regex(/^[a-z0-9_]+$/),
+  neutralSummary: z.string().min(5).max(220),
+  technicalConstraints: z.array(z.string().max(160)).min(1).max(4),
+});
+export type NeutralDecisionOptionInput = z.infer<typeof NeutralOptionSchema>;
+
 export const CanonicalOptionSchema = z.object({
   optionKey: z.string().regex(/^[a-z0-9_]+$/),
   neutralSummary: z.string().max(220),
-  rationaleAndPremises: z.string().max(400),
+  rationaleAndPremises: z.string().max(400).optional(),
+  technicalConstraints: z.array(z.string().max(160)).max(4).optional(),
 });
 export type CanonicalOption = z.infer<typeof CanonicalOptionSchema>;
 
 export const EvaluatedAlternativeSchema = z.object({
   optionKey: z.string(),
   neutralSummary: z.string(),
-  rationaleAndPremises: z.string(),
+  rationaleAndPremises: z.string().optional(),
+  technicalConstraints: z.array(z.string()).optional(),
   normalizedProbability: z.number().min(0).max(1).optional(),
 });
 export type EvaluatedAlternative = z.infer<typeof EvaluatedAlternativeSchema>;
@@ -189,6 +198,12 @@ export function createCanonicalDecisionBatchSchema(activeTags?: readonly string[
   });
 }
 
+export const AssumptionIntentTypeEnum = z.enum([
+  "DIRECT_USER_INSTRUCTION",
+  "INFERRED_COLLATERAL_ASSUMPTION",
+]);
+export type AssumptionIntentType = z.infer<typeof AssumptionIntentTypeEnum>;
+
 /**
  * Creates an AssumptionItem schema bounded by the active concept tags.
  */
@@ -198,6 +213,7 @@ export function createAssumptionItemSchema(activeTags?: readonly string[]) {
     assumptionId: z.string(),
     statement: z.string(),
     assumptionStatement: z.string().optional(),
+    intentType: AssumptionIntentTypeEnum.default("INFERRED_COLLATERAL_ASSUMPTION"),
     conceptTags: z.array(TagEnum).min(1).max(6),
     affectedSections: z.array(SectionTargetSchema).default([]),
     dependsOn: z.array(z.string()).default([]),
