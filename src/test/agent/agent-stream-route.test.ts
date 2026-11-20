@@ -4,12 +4,17 @@
  * Verifies authentication guards,
  * fail-closed rate limiting, RFC 7807 problem details error responses,
  * Zod payload parsing & strict sanitization, happy-path SSE event streaming,
- * Command({ resume }) dispatch, StreamGovernor quota enforcement,
+ * native checkpoint resumption (`resumeFromCheckpoint: true`), native `GraphStreamYield`
+ * interrupt normalization, StreamGovernor quota enforcement,
  * real zero-knowledge memory wiping (Buffer.fill(0)), and scheduleAfterResponse() (ADR-007 ALS) settlement scheduling.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { Command, GraphInterrupt } from "@langchain/langgraph";
+import type {
+  AgentRuntimeContext,
+  GraphStreamYield,
+} from "@/core/agent/engine/runner";
+import type { AgentGraphState } from "@/core/agent/state";
 import { setScheduleAfterResponseListener } from "@/server/context/request-context";
 import {
   hasActiveVaultPlaintextInMemory,
@@ -470,7 +475,7 @@ describe("POST /api/agent/stream Route Handler", () => {
       expect(governorConfigState.instances[0].tokenChunks.length).toBe(2);
     });
 
-    it("should pass user_request with prompt, projectId, and targetFileIds on initial invocation", async () => {
+    it("should pass full 18-channel AgentGraphState and typed AgentRuntimeContext on initial invocation", async () => {
       graphConfigState.chunksToEmit = [{ step: 1 }];
 
       const req = new Request("http://localhost:3000/api/agent/stream", {
@@ -480,6 +485,8 @@ describe("POST /api/agent/stream Route Handler", () => {
           projectId: "project-200",
           targetFileIds: ["file-a", "file-b"],
           prompt: "Draft system spec",
+          permissionMode: "semi_auto",
+          selectedSystem2ModelId: "google/gemini-4-argon",
         }),
         headers: { "Content-Type": "application/json" },
       });
@@ -487,21 +494,30 @@ describe("POST /api/agent/stream Route Handler", () => {
       const res = await route.POST(req);
       await readStreamToText(res);
 
-      expect(graphConfigState.lastInput).toEqual({
-        user_request: {
-          prompt: "Draft system spec",
-          projectId: "project-200",
-          targetFileIds: ["file-a", "file-b"],
-        },
+      const stateInput = graphConfigState.lastInput as AgentGraphState;
+      expect(stateInput.user_request).toMatchObject({
+        prompt: "Draft system spec",
+        workspaceId: "project-200",
+        projectId: "project-200",
+        targetFileIds: ["file-a", "file-b"],
+        permissionMode: "semi_auto",
+        selectedSystem2ModelId: "google/gemini-4-argon",
       });
+      expect(stateInput.classified_intent).toBeNull();
+      expect(stateInput.messages).toEqual([]);
 
-      expect((graphConfigState.lastConfig as any)?.configurable?.thread_id).toBe("thread-100");
-      expect((graphConfigState.lastConfig as any)?.configurable?.userId).toBe(mockUser.id);
+      const runtimeCtx = graphConfigState.lastConfig as AgentRuntimeContext;
+      expect(runtimeCtx.threadId).toBe("thread-100");
+      expect(runtimeCtx.userId).toBe(mockUser.id);
+      expect(runtimeCtx.workspaceId).toBe("project-200");
+      expect(runtimeCtx.permissionMode).toBe("semi_auto");
+      expect(runtimeCtx.selectedSystem2ModelId).toBe("google/gemini-4-argon");
+      expect(typeof runtimeCtx.emitSseEvent).toBe("function");
     });
   });
 
-  describe("6. Resumption via Command({ resume })", () => {
-    it("should invoke elixentAgentGraph with Command({ resume: resumePayload }) when resumePayload is provided", async () => {
+  describe("6. Native Checkpoint Resumption (resumeFromCheckpoint)", () => {
+    it("should invoke elixentAgentGraph with native resumeFromCheckpoint and clarification_answers when resumePayload is provided", async () => {
       graphConfigState.chunksToEmit = [{ resumed: true }];
 
       const resumePayload = {
@@ -523,8 +539,12 @@ describe("POST /api/agent/stream Route Handler", () => {
       const res = await route.POST(req);
       await readStreamToText(res);
 
-      expect(graphConfigState.lastInput).toBeInstanceOf(Command);
-      expect((graphConfigState.lastInput as Command).resume).toEqual(resumePayload);
+      expect(graphConfigState.lastInput).toEqual({
+        resumeFromCheckpoint: true,
+        stateOverrides: {
+          clarification_answers: resumePayload,
+        },
+      });
     });
   });
 
@@ -612,17 +632,19 @@ describe("POST /api/agent/stream Route Handler", () => {
     });
   });
 
-  describe("8. LangGraph Interrupt Emission (HITL)", () => {
-    it("should emit SSE interrupt event and cleanly terminate stream when GraphInterrupt is caught", async () => {
-      graphConfigState.errorToThrow = new GraphInterrupt([
-        {
-          id: "interrupt-1",
-          value: {
-            code: "INSUFFICIENT_CREDITS",
-            targetNode: "pure_interrupt_node",
-          },
+  describe("8. Native GraphStreamYield Interrupt Emission (Financial & HITL)", () => {
+    it("should normalize INSUFFICIENT_CREDITS native interrupt with resumable: false, suppress done frame, and wipe memory", async () => {
+      const creditYield: Partial<GraphStreamYield> = {
+        nodeId: "jev_conformal_scorer_node",
+        stepIndex: 4,
+        status: "INTERRUPTED",
+        interruptReason: "INSUFFICIENT_CREDITS",
+        interruptPayload: {
+          availableMicro: 250,
+          requiredMicro: 120_000,
         },
-      ]);
+      };
+      graphConfigState.chunksToEmit = [creditYield];
 
       const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
@@ -638,10 +660,28 @@ describe("POST /api/agent/stream Route Handler", () => {
       const text = await readStreamToText(res);
       const frames = parseSSEFrames(text);
 
-      const interruptFrame = frames.find((f) => f.event === "interrupt");
-      expect(interruptFrame).toBeDefined();
-      expect(interruptFrame?.data.type).toBe("interrupt");
+      expect(frames.map((f) => f.event)).toEqual(["start", "interrupt"]);
+      const interruptFrame = frames[1];
+      expect(interruptFrame.data).toMatchObject({
+        type: "interrupt",
+        threadId: "thread-interrupt-test",
+        nodeId: "jev_conformal_scorer_node",
+        stepIndex: 4,
+        interruptReason: "INSUFFICIENT_CREDITS",
+        interrupts: [
+          {
+            resumable: false,
+            value: {
+              code: "INSUFFICIENT_CREDITS",
+              message: "Insufficient credits to continue agent execution.",
+              availableMicro: 250,
+              requiredMicro: 120_000,
+            },
+          },
+        ],
+      });
       expect(hasActiveVaultPlaintextInMemory()).toBe(false);
+      expect(governorConfigState.instances[0].settledStatus).toBe("SETTLED");
     });
   });
 
@@ -962,12 +1002,67 @@ describe("POST /api/agent/stream Route Handler", () => {
     });
   });
 
-  describe("13. GraphInterrupt Variations & HITL Edge Cases", () => {
-    it("should emit interrupt SSE frame when graph yields an inline __interrupt__ chunk without aborting governor", async () => {
+  describe("13. Native Interrupt Normalization Variations & HITL Edge Cases", () => {
+    it("should hoist questionQueue.questions onto interrupts[0].value with resumable: true for HITL interrupts", async () => {
+      const questions = [
+        {
+          questionId: "dec_sync_1",
+          topicSlug: "sync_engine",
+          questionPrompt: "Select offline merge protocol?",
+          options: [
+            { optionKey: "diff3", neutralSummary: "Diff3" },
+            { optionKey: "crdt", neutralSummary: "CRDT" },
+          ],
+        },
+      ];
+      graphConfigState.chunksToEmit = [
+        {
+          nodeId: "hitl_clarification_node",
+          stepIndex: 5,
+          status: "INTERRUPTED",
+          interruptReason: "HITL_CLARIFICATION_REQUIRED",
+          interruptPayload: {
+            questionQueue: { questions },
+          },
+        } satisfies Partial<GraphStreamYield>,
+      ];
+
+      const req = new Request("http://localhost:3000/api/agent/stream", {
+        method: "POST",
+        body: JSON.stringify({
+          threadId: "th-hitl-hoist",
+          projectId: "proj-1",
+          targetFileIds: ["f1"],
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const res = await route.POST(req);
+      const text = await readStreamToText(res);
+      const frames = parseSSEFrames(text);
+
+      expect(frames.map((f) => f.event)).toEqual(["start", "interrupt"]);
+      expect(frames[1].data).toMatchObject({
+        type: "interrupt",
+        nodeId: "hitl_clarification_node",
+        interruptReason: "HITL_CLARIFICATION_REQUIRED",
+        interrupts: [
+          {
+            resumable: true,
+            value: {
+              questions,
+              interruptReason: "HITL_CLARIFICATION_REQUIRED",
+            },
+          },
+        ],
+      });
+      expect(governorConfigState.instances[0].settledStatus).toBe("SETTLED");
+    });
+
+    it("should preserve compatibility for inline __interrupt__ mock chunks without emitting a trailing done frame", async () => {
       graphConfigState.chunksToEmit = [
         { step: "before_interrupt" },
         { __interrupt__: [{ id: "int_hitl_1", value: "Awaiting confirmation" }] },
-        { step: "after_interrupt" },
       ];
 
       const req = new Request("http://localhost:3000/api/agent/stream", {
@@ -989,20 +1084,27 @@ describe("POST /api/agent/stream Route Handler", () => {
       expect(intFrame?.data.interrupts).toEqual([
         { id: "int_hitl_1", value: "Awaiting confirmation" },
       ]);
-
-      expect(frames.some((f) => f.event === "done")).toBe(true);
+      expect(frames.some((f) => f.event === "done")).toBe(false);
     });
 
-    it("should handle custom error with name GraphInterrupt and empty interrupts array", async () => {
-      const customInt = new Error("Human in the loop");
-      customInt.name = "GraphInterrupt";
-      (customInt as any).interrupts = [];
-      graphConfigState.errorToThrow = customInt;
+    it.each([
+      { reason: "ANTI_DOMINO_CONFIRMATION_REQUIRED" as const },
+      { reason: "FILE_DELETION_APPROVAL_REQUIRED" as const },
+    ])("should mark $reason interrupts as resumable: true", async ({ reason }) => {
+      graphConfigState.chunksToEmit = [
+        {
+          nodeId: "hitl_clarification_node",
+          stepIndex: 4,
+          status: "INTERRUPTED",
+          interruptReason: reason,
+          interruptPayload: { questionCount: 1 },
+        } satisfies Partial<GraphStreamYield>,
+      ];
 
       const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
         body: JSON.stringify({
-          threadId: "th-empty-int",
+          threadId: `th-${reason}`,
           projectId: "proj-1",
           targetFileIds: ["f1"],
         }),
@@ -1010,37 +1112,16 @@ describe("POST /api/agent/stream Route Handler", () => {
       });
 
       const res = await route.POST(req);
-      const text = await readStreamToText(res);
-      const frames = parseSSEFrames(text);
+      const frames = parseSSEFrames(await readStreamToText(res));
 
-      const intFrame = frames.find((f) => f.event === "interrupt");
-      expect(intFrame).toBeDefined();
-      expect(intFrame?.data.interrupts).toEqual([]);
-      expect(frames.some((f) => f.event === "error")).toBe(false);
-    });
-
-    it("should emit multiple pending interrupts in the interrupt frame", async () => {
-      graphConfigState.errorToThrow = new GraphInterrupt([
-        { id: "i1", value: "Approval 1" },
-        { id: "i2", value: "Approval 2" },
-      ]);
-
-      const req = new Request("http://localhost:3000/api/agent/stream", {
-        method: "POST",
-        body: JSON.stringify({
-          threadId: "th-multi-int",
-          projectId: "proj-1",
-          targetFileIds: ["f1"],
-        }),
-        headers: { "Content-Type": "application/json" },
-      });
-
-      const res = await route.POST(req);
-      const text = await readStreamToText(res);
-      const frames = parseSSEFrames(text);
-
-      const intFrame = frames.find((f) => f.event === "interrupt");
-      expect(intFrame?.data.interrupts).toHaveLength(2);
+      expect(frames.map((f) => f.event)).toEqual(["start", "interrupt"]);
+      const interrupts = frames[1].data.interrupts as Array<{
+        resumable: boolean;
+        value: Record<string, unknown>;
+      }>;
+      expect(interrupts).toHaveLength(1);
+      expect(interrupts[0].resumable).toBe(true);
+      expect(interrupts[0].value.interruptReason).toBe(reason);
     });
   });
 

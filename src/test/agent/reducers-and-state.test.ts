@@ -11,20 +11,19 @@
  *    - `reduceInvalidationMap`: SectionTarget aggregation & deduplication by (fileId:headingSlug).
  *    - `reduceBudgetTracking`: Arbitrary-precision BigInt arithmetic serialized to JSON-safe decimal strings.
  *    - `reduceSearchLoopCount`: Monotonic loop counting with strict MAX_SEARCH_LOOPS (3) ceiling.
- * 2. LangGraph 12-Channel Annotation & StateGraph Lifecycle:
- *    - AgentGraphAnnotation root spec contains all 12 canonical channels.
- *    - Fresh default factory isolation across instances.
- *    - Compilation and execution inside real StateGraph workflow with partial node returns.
+ * 2. Native 18-Channel AgentGraphState & applyStateDelta Lifecycle (ADR-009, SRS-01 §2.3):
+ *    - createInitialAgentGraphState initializes all 18 canonical channels with isolated defaults.
+ *    - applyStateDelta applies pure reducers across multi-step transitions, including
+ *      reduceMessages upsert-by-id, clearInvalidationMap, and replaceMasterLedger.
  * 3. Architectural Invariants:
  *    - Zero I/O, zero async, zero input mutation (verified under Object.freeze).
  *    - Lossless JSON serializability at channel boundaries.
  */
 
 import { describe, it, expect } from "vitest";
-import { StateGraph, START, END } from "@langchain/langgraph";
-import { HumanMessage, AIMessage } from "@langchain/core/messages";
 
 import {
+  reduceMessages,
   reduceSearchReport,
   reduceLocalInspectionState,
   reduceAssumptions,
@@ -34,6 +33,7 @@ import {
   reduceBudgetTracking,
   reduceSearchLoopCount,
   MAX_SEARCH_LOOPS,
+  type AgentConversationMessage,
   type SearchReport,
   type SearchReportEvidence,
   type UserRequest,
@@ -43,7 +43,8 @@ import {
 } from "@/core/agent/reducers";
 
 import {
-  AgentGraphAnnotation,
+  createInitialAgentGraphState,
+  applyStateDelta,
   type AssumptionItem,
 } from "@/core/agent/state";
 
@@ -784,163 +785,201 @@ describe("AgentGraphState Channels & Pure Reducers (Wave 9.1)", () => {
   });
 
   // =========================================================================
-  // 9. AgentGraphAnnotation: 12-Channel LangGraph Spec & StateGraph Compilation
+  // 9. Native 18-Channel AgentGraphState & applyStateDelta Lifecycle
   // =========================================================================
-  describe("9. AgentGraphAnnotation: 12-Channel Root Spec & StateGraph Lifecycle", () => {
+  describe("9. Native 18-Channel AgentGraphState & applyStateDelta Lifecycle", () => {
     const CANONICAL_CHANNELS = [
       "messages",
       "user_request",
+      "classified_intent",
       "search_report",
       "local_inspection_state",
       "assumptions",
+      "governing_constraints",
+      "scored_decisions",
       "master_ledger",
+      "ledger_edges",
       "project_taxonomy",
       "unresolved_ledger",
       "invalidation_map",
+      "pending_file_actions",
       "question_queue",
+      "clarification_answers",
       "budget_tracking",
       "search_loop_count",
     ] as const;
 
-    it("should declare all 12 canonical state channels in AgentGraphAnnotation.spec", () => {
-      const channelKeys = Object.keys(AgentGraphAnnotation.spec);
-      expect(channelKeys).toHaveLength(12);
+    it("initializes all 18 canonical state channels with deterministic defaults", () => {
+      const state = createInitialAgentGraphState();
+      const channelKeys = Object.keys(state);
+
+      expect(channelKeys).toHaveLength(18);
       expect(channelKeys.sort()).toEqual([...CANONICAL_CHANNELS].sort());
-    });
 
-    it("should initialize correct default values for each channel via its default factory", () => {
-      const spec = AgentGraphAnnotation.spec as any;
-
-      expect(spec.messages.initialValueFactory()).toEqual([]);
-      expect(spec.user_request.initialValueFactory()).toEqual({
+      expect(state.messages).toEqual([]);
+      expect(state.user_request).toEqual({
         prompt: "",
-        projectId: "",
+        workspaceId: "",
+        turnId: "",
         targetFileIds: [],
+        permissionMode: "safe",
+        selectedSystem2ModelId: "google/gemini-3.8-flash",
       });
-      expect(spec.search_report.initialValueFactory()).toEqual({
+      expect(state.classified_intent).toBeNull();
+      expect(state.search_report).toEqual({
         evidenceItems: [],
         inspectedPaths: [],
         summary: "",
       });
-      expect(spec.local_inspection_state.initialValueFactory()).toEqual([]);
-      expect(spec.assumptions.initialValueFactory()).toEqual([]);
-      expect(spec.master_ledger.initialValueFactory()).toEqual({});
-      expect(spec.project_taxonomy.initialValueFactory()).toBeNull();
-      expect(spec.unresolved_ledger.initialValueFactory()).toEqual([]);
-      expect(spec.invalidation_map.initialValueFactory()).toEqual({});
-      expect(spec.question_queue.initialValueFactory()).toBeNull();
-      expect(spec.budget_tracking.initialValueFactory()).toEqual({
+      expect(state.local_inspection_state).toEqual([]);
+      expect(state.assumptions).toEqual([]);
+      expect(state.governing_constraints).toEqual([]);
+      expect(state.scored_decisions).toEqual([]);
+      expect(state.master_ledger).toEqual({});
+      expect(state.ledger_edges).toEqual([]);
+      expect(state.project_taxonomy).toBeNull();
+      expect(state.unresolved_ledger).toEqual([]);
+      expect(state.invalidation_map).toEqual({});
+      expect(state.pending_file_actions).toEqual([]);
+      expect(state.question_queue).toBeNull();
+      expect(state.clarification_answers).toBeNull();
+      expect(state.budget_tracking).toEqual({
         reservedMicro: "0",
         spentMicro: "0",
       });
-      expect(spec.search_loop_count.initialValueFactory()).toBe(0);
+      expect(state.search_loop_count).toBe(0);
     });
 
-    it("should produce fresh references from default factories (no cross-instance leakage)", () => {
-      const spec = AgentGraphAnnotation.spec as any;
+    it("produces fresh isolated references across separate createInitialAgentGraphState calls", () => {
+      const stateA = createInitialAgentGraphState();
+      const stateB = createInitialAgentGraphState();
 
-      const defaultArray1 = spec.messages.initialValueFactory();
-      const defaultArray2 = spec.messages.initialValueFactory();
-      expect(defaultArray1).not.toBe(defaultArray2);
-
-      const defaultObj1 = spec.master_ledger.initialValueFactory();
-      const defaultObj2 = spec.master_ledger.initialValueFactory();
-      expect(defaultObj1).not.toBe(defaultObj2);
-
-      const defaultBudget1 = spec.budget_tracking.initialValueFactory();
-      const defaultBudget2 = spec.budget_tracking.initialValueFactory();
-      expect(defaultBudget1).not.toBe(defaultBudget2);
+      expect(stateA.messages).not.toBe(stateB.messages);
+      expect(stateA.master_ledger).not.toBe(stateB.master_ledger);
+      expect(stateA.budget_tracking).not.toBe(stateB.budget_tracking);
+      expect(stateA.invalidation_map).not.toBe(stateB.invalidation_map);
     });
 
-    it("should compile and execute inside a real LangGraph StateGraph workflow with partial node returns", async () => {
-      // Construct a two-stage LangGraph workflow testing real reducer integration
-      const workflow = new StateGraph(AgentGraphAnnotation)
-        .addNode("step_orchestrator", () => ({
-          user_request: {
-            prompt: "Design cryptographic sync protocol",
-            projectId: "proj_crypto",
-            targetFileIds: ["crypto.md"],
-          },
-          local_inspection_state: ["crypto.md#spec"],
-          budget_tracking: { reservedMicro: "1000", spentMicro: "0" },
-          search_loop_count: 1,
-        }))
-        .addNode("step_search", () => ({
-          search_report: {
-            evidenceItems: [
-              {
-                fileId: "crypto.md",
-                headingSlug: "spec",
-                breadcrumb: ["Root", "Crypto"],
-                textExcerpt: "AES-256-GCM authenticated encryption",
-              },
-            ],
-            inspectedPaths: ["crypto.md#spec"],
-            summary: "Extracted crypto spec",
-          },
-          local_inspection_state: ["crypto.md#spec", "vault.md#keys"],
-          budget_tracking: { reservedMicro: "2000", spentMicro: "800" },
-          search_loop_count: 1,
-        }))
-        .addEdge(START, "step_orchestrator")
-        .addEdge("step_orchestrator", "step_search")
-        .addEdge("step_search", END);
+    it("accumulates partial multi-step node deltas deterministically via applyStateDelta", () => {
+      const initial = createInitialAgentGraphState();
 
-      const compiledApp = workflow.compile();
+      const afterStep1 = applyStateDelta(initial, {
+        classified_intent: "ARCHITECTURAL_MODIFICATION",
+        user_request: {
+          prompt: "Design cryptographic sync protocol",
+          workspaceId: "ws_crypto",
+          projectId: "proj_crypto",
+          turnId: "turn_1",
+          targetFileIds: ["crypto.md"],
+          permissionMode: "safe",
+          selectedSystem2ModelId: "google/gemini-3.8-flash",
+        },
+        local_inspection_state: ["crypto.md#spec"],
+        budget_tracking: { reservedMicro: "1000", spentMicro: "0" },
+        search_loop_count: 1,
+      });
 
-      const finalState = await compiledApp.invoke({});
+      const finalState = applyStateDelta(afterStep1, {
+        search_report: {
+          evidenceItems: [
+            {
+              fileId: "crypto.md",
+              headingSlug: "spec",
+              breadcrumb: ["Root", "Crypto"],
+              textExcerpt: "AES-256-GCM authenticated encryption",
+            },
+          ],
+          inspectedPaths: ["crypto.md#spec"],
+          summary: "Extracted crypto spec",
+        },
+        local_inspection_state: ["crypto.md#spec", "vault.md#keys"],
+        budget_tracking: { reservedMicro: "2000", spentMicro: "800" },
+        search_loop_count: 1,
+      });
 
-      // Assert that state channels were correctly aggregated by their registered reducers
+      expect(finalState.classified_intent).toBe("ARCHITECTURAL_MODIFICATION");
       expect(finalState.user_request.projectId).toBe("proj_crypto");
+      expect(finalState.user_request.workspaceId).toBe("ws_crypto");
       expect(finalState.search_report.evidenceItems).toHaveLength(1);
       expect(finalState.search_report.evidenceItems[0].headingSlug).toBe("spec");
       expect(finalState.search_report.summary).toBe("Extracted crypto spec");
-
-      // Deduplicated local_inspection_state: ["crypto.md#spec"] ∪ ["crypto.md#spec", "vault.md#keys"]
       expect(finalState.local_inspection_state).toEqual([
         "crypto.md#spec",
         "vault.md#keys",
       ]);
-
-      // BudgetTracking BigInt addition: (1000 + 2000 = 3000 reserved, 0 + 800 = 800 spent)
       expect(finalState.budget_tracking).toEqual({
         reservedMicro: "3000",
         spentMicro: "800",
       });
-
-      // Monotonic search loop counter: 0 -> 1 -> 2
       expect(finalState.search_loop_count).toBe(2);
     });
 
-    it("should handle messages channel accumulation via LangGraph messagesStateReducer", async () => {
-      const msg1 = new HumanMessage({ content: "Initial query", id: "msg-1" });
-      const msg2 = new AIMessage({ content: "AI response 1", id: "msg-2" });
-      const msg2Updated = new AIMessage({ content: "AI response 1 (edited)", id: "msg-2" });
-      const msg3 = new HumanMessage({ content: "Follow-up query", id: "msg-3" });
+    it("upserts conversation messages by id in insertion order via reduceMessages and applyStateDelta", () => {
+      const msg1: AgentConversationMessage = {
+        id: "msg-1",
+        role: "user",
+        content: "Initial query",
+        createdAt: "2026-11-20T00:00:00.000Z",
+      };
+      const msg2: AgentConversationMessage = {
+        id: "msg-2",
+        role: "assistant",
+        content: "AI response 1",
+        createdAt: "2026-11-20T00:00:01.000Z",
+      };
+      const msg2Updated: AgentConversationMessage = {
+        id: "msg-2",
+        role: "assistant",
+        content: "AI response 1 (edited)",
+        createdAt: "2026-11-20T00:00:02.000Z",
+      };
+      const msg3: AgentConversationMessage = {
+        id: "msg-3",
+        role: "user",
+        content: "Follow-up query",
+        createdAt: "2026-11-20T00:00:03.000Z",
+      };
 
-      const workflow = new StateGraph(AgentGraphAnnotation)
-        .addNode("node_initial", () => ({
-          messages: [msg1, msg2],
-        }))
-        .addNode("node_update", () => ({
-          messages: [msg2Updated, msg3],
-        }))
-        .addEdge(START, "node_initial")
-        .addEdge("node_initial", "node_update")
-        .addEdge("node_update", END);
+      const directMerged = reduceMessages(
+        Object.freeze([msg1, msg2]),
+        Object.freeze([msg2Updated, msg3]),
+      );
+      expect(directMerged).toHaveLength(3);
+      expect(directMerged[1].content).toBe("AI response 1 (edited)");
 
-      const app = workflow.compile();
-      const finalState = await app.invoke({});
+      const step1 = applyStateDelta(createInitialAgentGraphState(), {
+        messages: [msg1, msg2],
+      });
+      const step2 = applyStateDelta(step1, {
+        messages: [msg2Updated, msg3],
+      });
 
-      expect(finalState.messages).toHaveLength(3);
-      expect(finalState.messages[0].content).toBe("Initial query");
-      expect(finalState.messages[1].content).toBe("AI response 1 (edited)"); // Updated by ID
-      expect(finalState.messages[2].content).toBe("Follow-up query");
+      expect(step2.messages.map((m) => [m.id, m.content])).toEqual([
+        ["msg-1", "Initial query"],
+        ["msg-2", "AI response 1 (edited)"],
+        ["msg-3", "Follow-up query"],
+      ]);
     });
 
-    it("should verify last-write replacement channels (user_request, unresolved_ledger, question_queue)", async () => {
-      const req1: UserRequest = { prompt: "first", projectId: "p1", targetFileIds: ["f1"] };
-      const req2: UserRequest = { prompt: "second", projectId: "p2", targetFileIds: ["f2"] };
+    it("supports last-write replacement channels and explicit clearInvalidationMap / replaceMasterLedger flags", () => {
+      const req1: UserRequest = {
+        prompt: "first",
+        workspaceId: "ws-1",
+        projectId: "p1",
+        turnId: "t1",
+        targetFileIds: ["f1"],
+        permissionMode: "safe",
+        selectedSystem2ModelId: "google/gemini-3.8-flash",
+      };
+      const req2: UserRequest = {
+        prompt: "second",
+        workspaceId: "ws-2",
+        projectId: "p2",
+        turnId: "t2",
+        targetFileIds: ["f2"],
+        permissionMode: "full_auto",
+        selectedSystem2ModelId: "google/gemini-4-argon",
+      };
 
       const unres1: UnresolvedDecision[] = [
         {
@@ -951,7 +990,6 @@ describe("AgentGraphState Channels & Pure Reducers (Wave 9.1)", () => {
           reason: "low confidence",
         },
       ];
-      const unres2: UnresolvedDecision[] = [];
 
       const questions: ClarifyingQuestionBatch = {
         questions: [
@@ -967,27 +1005,35 @@ describe("AgentGraphState Channels & Pure Reducers (Wave 9.1)", () => {
         ],
       };
 
-      const workflow = new StateGraph(AgentGraphAnnotation)
-        .addNode("node_a", () => ({
-          user_request: req1,
-          unresolved_ledger: unres1,
-          question_queue: questions,
-        }))
-        .addNode("node_b", () => ({
-          user_request: req2,
-          unresolved_ledger: unres2,
-          question_queue: null, // Reset upon resolution/resumption
-        }))
-        .addEdge(START, "node_a")
-        .addEdge("node_a", "node_b")
-        .addEdge("node_b", END);
+      const afterA = applyStateDelta(createInitialAgentGraphState(), {
+        user_request: req1,
+        unresolved_ledger: unres1,
+        question_queue: questions,
+        master_ledger: {
+          dec_a: createTestDecisionNode("dec_a"),
+          dec_b: createTestDecisionNode("dec_b"),
+        },
+        invalidation_map: {
+          dec_a: [{ fileId: "f1.md", headingSlug: "intro" }],
+        },
+      });
 
-      const app = workflow.compile();
-      const finalState = await app.invoke({});
+      const afterB = applyStateDelta(afterA, {
+        user_request: req2,
+        unresolved_ledger: [],
+        question_queue: null,
+        clarification_answers: { q_01: "opt_b" },
+        clearInvalidationMap: true,
+        replaceMasterLedger: true,
+        master_ledger: { dec_a: createTestDecisionNode("dec_a") },
+      });
 
-      expect(finalState.user_request).toEqual(req2);
-      expect(finalState.unresolved_ledger).toEqual([]);
-      expect(finalState.question_queue).toBeNull();
+      expect(afterB.user_request).toEqual(req2);
+      expect(afterB.unresolved_ledger).toEqual([]);
+      expect(afterB.question_queue).toBeNull();
+      expect(afterB.clarification_answers).toEqual({ q_01: "opt_b" });
+      expect(afterB.invalidation_map).toEqual({});
+      expect(Object.keys(afterB.master_ledger)).toEqual(["dec_a"]);
     });
   });
 

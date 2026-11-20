@@ -66,10 +66,6 @@ export async function cleanupE2EUser(userId: string) {
         await e2eDb.delete(schema.files).where(eq(schema.files.userId, userId));
         await e2eDb.delete(schema.workspaces).where(eq(schema.workspaces.userId, userId));
         await e2eDb.delete(schema.creditLedgerTransactions).where(eq(schema.creditLedgerTransactions.userId, userId));
-        await e2eDb.delete(schema.projectDecisionLedger).where(eq(schema.projectDecisionLedger.userId, userId));
-        await e2eDb.delete(schema.checkpointWrites);
-        await e2eDb.delete(schema.checkpointBlobs);
-        await e2eDb.delete(schema.checkpoints);
         await e2eDb.delete(schema.subscriptionEvents).where(eq(schema.subscriptionEvents.userId, userId));
         await e2eDb.delete(schema.userVaultProfiles).where(eq(schema.userVaultProfiles.userId, userId));
         await e2eDb.delete(schema.users).where(eq(schema.users.id, userId));

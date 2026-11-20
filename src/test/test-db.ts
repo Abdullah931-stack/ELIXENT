@@ -113,7 +113,7 @@ export async function ensureTestDefaultWorkspace(
  * Deletes ONLY the given test accounts from the users table.
  *
  * To avoid PostgreSQL cascading lock deadlocks (40P01) across foreign keys,
- * dependent rows in child tables (subscriptions, credit_ledger_transactions, project_decision_ledger, checkpoint_writes, checkpoint_blobs, checkpoints, agent_checkpoints, files, workspaces,
+ * dependent rows in child tables (subscriptions, credit_ledger_transactions, agent_checkpoints, files, workspaces,
  * user_vault_profiles) are deleted explicitly first before deleting from users.
  * A resilient retry loop with exponential backoff guards against transient lock contention.
  */
@@ -136,10 +136,6 @@ export async function cleanupTestUsers(
             if (userIds.length > 0) {
                 await testDb.delete(schema.subscriptions).where(inArray(schema.subscriptions.userId, userIds));
                 await testDb.delete(schema.creditLedgerTransactions).where(inArray(schema.creditLedgerTransactions.userId, userIds));
-                await testDb.delete(schema.projectDecisionLedger).where(inArray(schema.projectDecisionLedger.userId, userIds));
-                await testDb.delete(schema.checkpointWrites);
-                await testDb.delete(schema.checkpointBlobs);
-                await testDb.delete(schema.checkpoints);
                 await testDb.delete(schema.agentCheckpoints).where(inArray(schema.agentCheckpoints.userId, userIds));
                 await testDb.delete(schema.files).where(inArray(schema.files.userId, userIds));
                 await testDb.delete(schema.workspaces).where(inArray(schema.workspaces.userId, userIds));

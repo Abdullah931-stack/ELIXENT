@@ -1,22 +1,30 @@
 /**
- * Comprehensive Unit & Edge-Case Test Suite for Web-Standard Agent SSE Route (`src/server/routes/agent.routes.ts`)
+ * Cross-Contract Unit & Edge-Case Test Suite for Web-Standard Agent SSE Route (`src/server/routes/agent.routes.ts`)
  *
  * Verifies:
- * 1. Both direct `handleAgentStreamPost(Request)` invocation and Hono `agentRoutes.request("/stream", ...)` dispatch.
- * 3. Authentication guard (401 Problem Details before body parsing, non-Error throw resilience).
- * 4. Rate limiting (429 quota exceeded, 503 fail-closed when limiter throws or returns degraded).
- * 5. Request body & Zod contract validation (400 Problem Details on malformed JSON, schema violations, unknown fields).
- * 6. Ephemeral vault payload loading (`vault_ref://` prefix stripping, `fileId#headingSlug` direct storage,
- *    markdown heading tree slicing, non-string entry filtering, invalid identifier resilience, zeroing on completion/error/cancel).
- * 7. LangGraph streaming (initial `user_request` vs `Command({ resume })`, inline `__interrupt__` chunks,
- *    thrown `GraphInterrupt` and named `GraphInterrupt` objects, general graph error log sanitization).
- * 8. AbortSignal propagation (pre-aborted request signal, mid-stream abort signal, ReadableStream `cancel()`).
- * 9. StreamGovernor credit metering & settlement (`SETTLED` vs `ABORTED` on quota exhaustion, error, or cancellation).
- * 10. Post-response settlement scheduling via `scheduleAfterResponse` and error resilience when settlement flush throws.
+ * 1. Direct `handleAgentStreamPost(Request)` invocation and Hono `agentRoutes.request("/stream", ...)` dispatch.
+ * 2. Authentication guard (401 Problem Details before body parsing, non-Error throw resilience).
+ * 3. Rate limiting (429 quota exceeded, 503 fail-closed when limiter throws or returns degraded).
+ * 4. Ephemeral vault payload loading (`vault_ref://` prefix stripping, `fileId#headingSlug` direct storage,
+ *    markdown heading tree slicing, root fallback, and zeroing on completion/error/cancel).
+ * 5. Native Graph Engine streaming:
+ *    - Initial 18-channel `AgentGraphState` + typed `AgentRuntimeContext` construction.
+ *    - Checkpoint resumption (`{ resumeFromCheckpoint: true, stateOverrides: { clarification_answers } }`).
+ *    - Native `GraphStreamYield` interrupt normalization:
+ *      * `INSUFFICIENT_CREDITS` -> `resumable: false`, canonical `code`/`message` + balance payload.
+ *      * HITL (`HITL_CLARIFICATION_REQUIRED`, `ANTI_DOMINO_CONFIRMATION_REQUIRED`, `FILE_DELETION_APPROVAL_REQUIRED`)
+ *        -> `resumable: true`, hoisting `questionQueue.questions` onto `interrupts[0].value`.
+ *    - Legacy inline `__interrupt__` mock compatibility.
+ *    - `emitSseEvent` selective forwarding (`ghost_hunk_proposed`, `file_mutated`, `vault_file_commit_required`,
+ *      `direct_response_node` `update`) and non-duplication of `start`/`done`/`interrupt`/`direct_response_node` yields.
+ * 6. AbortSignal propagation, StreamGovernor settlement (`SETTLED` vs `ABORTED`), and `scheduleAfterResponse` resilience.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { Command } from "@langchain/langgraph";
+import type {
+  AgentRuntimeContext,
+  GraphStreamYield,
+} from "@/core/agent/engine/runner";
 import {
   hasActiveVaultPlaintextInMemory,
   getActiveEphemeralVaultPlaintexts,
@@ -62,7 +70,7 @@ const {
     errorToThrow: null as unknown,
     lastInput: null as unknown,
     lastConfig: null as unknown,
-    onStreamStart: null as (() => void) | null,
+    onStreamStart: null as ((ctx: AgentRuntimeContext) => void) | null,
   };
 
   const governorState = {
@@ -96,7 +104,7 @@ const {
       modelId: string,
       initialTokens: number,
       abortController: AbortController,
-      options?: unknown
+      options?: unknown,
     ) {
       this.userId = userId;
       this.operationId = operationId;
@@ -186,11 +194,11 @@ vi.mock("@/lib/rate-limit", async (importOriginal) => {
 
 vi.mock("@/core/agent/graph", () => ({
   elixentAgentGraph: {
-    stream: vi.fn(async (input: unknown, config: unknown) => {
+    stream: vi.fn(async (input: unknown, ctx: AgentRuntimeContext) => {
       graphState.lastInput = input;
-      graphState.lastConfig = config;
+      graphState.lastConfig = ctx;
       if (graphState.onStreamStart) {
-        graphState.onStreamStart();
+        graphState.onStreamStart(ctx);
       }
       if (graphState.errorToThrow) {
         throw graphState.errorToThrow;
@@ -224,7 +232,7 @@ import {
 // ---------------------------------------------------------------------------
 
 async function drainSSE(
-  res: Response
+  res: Response,
 ): Promise<Array<{ event: string; data: Record<string, unknown> }>> {
   const reader = res.body?.getReader();
   if (!reader) return [];
@@ -337,16 +345,16 @@ describe("Web-Standard Hono Agent Route Module (src/server/routes/agent.routes.t
 
       graphState.onStreamStart = () => {
         capturedSections.directSection = resolveVaultRefJustInTime(
-          "vault_ref://file-alpha#architecture-overview"
+          "vault_ref://file-alpha#architecture-overview",
         );
         capturedSections.headingIntro = resolveVaultRefJustInTime(
-          "vault_ref://file-beta#introduction"
+          "vault_ref://file-beta#introduction",
         );
         capturedSections.headingDetails = resolveVaultRefJustInTime(
-          "vault_ref://file-beta#security-details"
+          "vault_ref://file-beta#security-details",
         );
         capturedSections.rootFallback = resolveVaultRefJustInTime(
-          "vault_ref://file-beta#root"
+          "vault_ref://file-beta#root",
         );
       };
       graphState.chunksToEmit = ["plain-string-chunk"];
@@ -387,8 +395,204 @@ describe("Web-Standard Hono Agent Route Module (src/server/routes/agent.routes.t
     });
   });
 
-  describe("Inline Interrupts, Named GraphInterrupts & Abort Handling", () => {
-    it("emits SSE interrupt frame when stream yields an inline __interrupt__ chunk and continues", async () => {
+  describe("Native SSE Interrupt Normalization & emitSseEvent Non-Duplication", () => {
+    it("normalizes INSUFFICIENT_CREDITS yield with resumable: false and suppresses done frame", async () => {
+      graphState.chunksToEmit = [
+        {
+          nodeId: "assumption_extractor_node",
+          stepIndex: 2,
+          status: "INTERRUPTED",
+          interruptReason: "INSUFFICIENT_CREDITS",
+          interruptPayload: {
+            availableMicro: 100,
+            requiredMicro: 85_000,
+          },
+        } satisfies Partial<GraphStreamYield>,
+      ];
+
+      const req = new Request("http://localhost/api/agent/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          threadId: "th-native-credit",
+          workspaceId: "ws-credit-1",
+          targetFileIds: ["file-1"],
+        }),
+      });
+
+      const res = await handleAgentStreamPost(req);
+      const frames = await drainSSE(res);
+
+      expect(frames.map((f) => f.event)).toEqual(["start", "interrupt"]);
+      expect(frames[1].data).toMatchObject({
+        type: "interrupt",
+        threadId: "th-native-credit",
+        nodeId: "assumption_extractor_node",
+        stepIndex: 2,
+        interruptReason: "INSUFFICIENT_CREDITS",
+        interrupts: [
+          {
+            resumable: false,
+            value: {
+              code: "INSUFFICIENT_CREDITS",
+              message: "Insufficient credits to continue agent execution.",
+              availableMicro: 100,
+              requiredMicro: 85_000,
+            },
+          },
+        ],
+      });
+      expect(governorState.instances[0].settledStatus).toBe("SETTLED");
+    });
+
+    it("hoists questionQueue.questions onto interrupts[0].value with resumable: true for HITL interrupts", async () => {
+      const questions = [
+        {
+          questionId: "q-auth",
+          topicSlug: "auth_strategy",
+          questionPrompt: "Confirm session token signing algorithm?",
+          options: [
+            { optionKey: "ed25519", neutralSummary: "Ed25519" },
+            { optionKey: "rs256", neutralSummary: "RS256" },
+          ],
+        },
+      ];
+
+      graphState.chunksToEmit = [
+        {
+          nodeId: "hitl_clarification_node",
+          stepIndex: 5,
+          status: "INTERRUPTED",
+          interruptReason: "HITL_CLARIFICATION_REQUIRED",
+          interruptPayload: {
+            questionQueue: { questions },
+          },
+        } satisfies Partial<GraphStreamYield>,
+      ];
+
+      const req = new Request("http://localhost/api/agent/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          threadId: "th-native-hitl",
+          workspaceId: "ws-hitl-1",
+          targetFileIds: ["file-1"],
+        }),
+      });
+
+      const res = await handleAgentStreamPost(req);
+      const frames = await drainSSE(res);
+
+      expect(frames.map((f) => f.event)).toEqual(["start", "interrupt"]);
+      expect(frames[1].data).toMatchObject({
+        type: "interrupt",
+        nodeId: "hitl_clarification_node",
+        interruptReason: "HITL_CLARIFICATION_REQUIRED",
+        interrupts: [
+          {
+            resumable: true,
+            value: {
+              questions,
+              interruptReason: "HITL_CLARIFICATION_REQUIRED",
+            },
+          },
+        ],
+      });
+    });
+
+    it("forwards mutation & direct_response_node emitSseEvent frames while suppressing duplicate runner/final frames", async () => {
+      graphState.onStreamStart = (ctx) => {
+        // Runner-level lifecycle events must be filtered by emitSseEvent (never duplicated)
+        ctx.emitSseEvent({
+          type: "start",
+          threadId: ctx.threadId,
+          turnId: ctx.turnId,
+          workspaceId: ctx.workspaceId,
+        });
+        ctx.emitSseEvent({
+          type: "update",
+          nodeId: "search_discovery_node",
+          stepIndex: 1,
+          stateDelta: {},
+        });
+        // Node-level mutation & direct_response streaming events MUST be forwarded
+        ctx.emitSseEvent({
+          type: "ghost_hunk_proposed",
+          fileId: "doc-1",
+          headingSlug: "overview",
+          hunks: [{ from: 0, to: 10, replacementText: "Updated" }],
+        });
+        ctx.emitSseEvent({
+          type: "file_mutated",
+          fileId: "doc-2",
+          relativePath: "docs/spec.md",
+          action: "created",
+        });
+        ctx.emitSseEvent({
+          type: "vault_file_commit_required",
+          fileId: "doc-enc",
+          relativePath: "vault/secret.md",
+          mergedContent: "# Encrypted Merged",
+        });
+        ctx.emitSseEvent({
+          type: "update",
+          nodeId: "direct_response_node",
+          stepIndex: 2,
+          stateDelta: {
+            messages: [
+              {
+                id: "m-stream",
+                role: "assistant",
+                content: "Streamed delta",
+                createdAt: "2026-11-20T00:00:00.000Z",
+              },
+            ],
+          },
+        });
+      };
+
+      // Final yielded chunk for direct_response_node MUST be skipped to avoid duplication,
+      // while non-direct_response yields still emit a single update frame.
+      graphState.chunksToEmit = [
+        { nodeId: "search_discovery_node", stepIndex: 1, status: "COMPLETED" },
+        { nodeId: "direct_response_node", stepIndex: 2, status: "COMPLETED" },
+      ];
+
+      const req = new Request("http://localhost/api/agent/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          threadId: "th-non-dup",
+          workspaceId: "ws-non-dup",
+          targetFileIds: ["doc-1"],
+        }),
+      });
+
+      const res = await handleAgentStreamPost(req);
+      const frames = await drainSSE(res);
+
+      expect(frames.map((f) => f.event)).toEqual([
+        "start",
+        "ghost_hunk_proposed",
+        "file_mutated",
+        "vault_file_commit_required",
+        "update", // direct_response_node via emitSseEvent
+        "update", // search_discovery_node via stream yield
+        "done",
+      ]);
+
+      // Exactly 1 start, 1 done, 1 direct_response_node update, 1 search_discovery_node update
+      expect(frames.filter((f) => f.event === "start")).toHaveLength(1);
+      expect(frames.filter((f) => f.event === "done")).toHaveLength(1);
+      const updateFrames = frames.filter((f) => f.event === "update");
+      expect(updateFrames).toHaveLength(2);
+      expect(updateFrames[0].data.nodeId).toBe("direct_response_node");
+      expect((updateFrames[1].data.chunk as { nodeId: string }).nodeId).toBe(
+        "search_discovery_node",
+      );
+    });
+
+    it("emits SSE interrupt frame for inline __interrupt__ mock chunk and suppresses done frame", async () => {
       graphState.chunksToEmit = [
         { __interrupt__: [{ id: "int-inline-1", value: { question: "Approve?" } }] },
         { writer_node: { status: "completed" } },
@@ -407,7 +611,7 @@ describe("Web-Standard Hono Agent Route Module (src/server/routes/agent.routes.t
       const res = await handleAgentStreamPost(req);
       const frames = await drainSSE(res);
 
-      expect(frames.map((f) => f.event)).toEqual(["start", "interrupt", "update", "done"]);
+      expect(frames.map((f) => f.event)).toEqual(["start", "interrupt", "update"]);
       expect(frames[1].data).toMatchObject({
         type: "interrupt",
         threadId: "th-inline-int",
@@ -416,17 +620,14 @@ describe("Web-Standard Hono Agent Route Module (src/server/routes/agent.routes.t
       expect(governorState.instances[0].settledStatus).toBe("SETTLED");
     });
 
-    it("emits SSE interrupt frame when a custom error object with name === 'GraphInterrupt' is thrown", async () => {
-      graphState.errorToThrow = {
-        name: "GraphInterrupt",
-        interrupts: [{ id: "int-named", value: "awaiting_user" }],
-      };
+    it("emits STREAM_EXECUTION_ERROR and settles governor ABORTED when graph.stream throws", async () => {
+      graphState.errorToThrow = new Error("Unexpected native runner crash");
 
       const req = new Request("http://localhost/api/agent/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          threadId: "th-named-int",
+          threadId: "th-graph-err",
           projectId: "proj-1",
           targetFileIds: ["file-1"],
         }),
@@ -435,10 +636,13 @@ describe("Web-Standard Hono Agent Route Module (src/server/routes/agent.routes.t
       const res = await handleAgentStreamPost(req);
       const frames = await drainSSE(res);
 
-      const intFrame = frames.find((f) => f.event === "interrupt");
-      expect(intFrame).toBeDefined();
-      expect(intFrame?.data.interrupts).toEqual([{ id: "int-named", value: "awaiting_user" }]);
-      expect(governorState.instances[0].settledStatus).toBe("SETTLED");
+      expect(frames.map((f) => f.event)).toEqual(["start", "error"]);
+      expect(frames[1].data).toMatchObject({
+        type: "error",
+        code: "STREAM_EXECUTION_ERROR",
+        message: "Unexpected native runner crash",
+      });
+      expect(governorState.instances[0].settledStatus).toBe("ABORTED");
     });
 
     it("propagates pre-aborted Request signal and settles governor as ABORTED without emitting done frame", async () => {
@@ -486,14 +690,14 @@ describe("Web-Standard Hono Agent Route Module (src/server/routes/agent.routes.t
       await expect(scheduledAfterTasks[0]()).resolves.toBeUndefined();
       expect(errorSpy).toHaveBeenCalledWith(
         "[AgentStream] Settlement flush error:",
-        expect.any(Error)
+        expect.any(Error),
       );
       errorSpy.mockRestore();
     });
   });
 
   describe("Hono Router Dispatch (agentRoutes)", () => {
-    it("dispatches POST /stream through agentRoutes.request() and streams start -> update -> done", async () => {
+    it("dispatches POST /stream through agentRoutes.request() with native resumeFromCheckpoint payload", async () => {
       graphState.chunksToEmit = [{ summary_node: { ok: true } }];
       const resumePayload = { decision: "approve" };
 
@@ -502,7 +706,7 @@ describe("Web-Standard Hono Agent Route Module (src/server/routes/agent.routes.t
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           threadId: "th-hono-router",
-          projectId: "proj-hono",
+          workspaceId: "ws-hono",
           targetFileIds: ["file-hono-1"],
           resumePayload,
         }),
@@ -513,8 +717,12 @@ describe("Web-Standard Hono Agent Route Module (src/server/routes/agent.routes.t
 
       const frames = await drainSSE(res);
       expect(frames.map((f) => f.event)).toEqual(["start", "update", "done"]);
-      expect(graphState.lastInput).toBeInstanceOf(Command);
-      expect((graphState.lastInput as Command).resume).toEqual(resumePayload);
+      expect(graphState.lastInput).toEqual({
+        resumeFromCheckpoint: true,
+        stateOverrides: {
+          clarification_answers: resumePayload,
+        },
+      });
     });
   });
 });

@@ -1,91 +1,196 @@
 /**
- * Integration Test Suite: Phase 9 - Wave 9.3
- * Compiled StateGraph Orchestration & Checkpointed Lifecycle Integration Tests
+ * Cross-Contract Integration Test Suite: Elixent Native Graph Engine Assembly (`src/core/agent/graph.ts`)
  *
- * Verifies the fully compiled Elixent agent StateGraph (`createElixentAgentGraph`)
- * using an in-memory checkpointer (`MemorySaver`).
+ * Verifies ADR-009, ADR-010, ADR-012, ADR-013, ADR-014 & SRS-01 §3.1–§3.2 across real internal seams:
+ * 1. Canonical 9-Node Registry, `elixentAgentGraph` singleton, and `maxSuperSteps: 25` invariant.
+ * 2. All 6 Deterministic State-Predicate Routing Gates (`gateG01..gateG06`) + `gateAfterHitlClarification`.
+ * 3. End-to-End Native Graph Execution Paths through real `createElixentAgentGraph()`:
+ *    - `CHAT_ONLY`: Node 1 -> G-01 -> Node 9 -> END
+ *    - `WORKSPACE_READ_SEARCH` / `DECISION_LEDGER_QUERY`: Node 1 -> G-01 -> Node 2 -> G-02 -> Node 9 -> END
+ *    - `FAST_LOCAL_EDIT`: Node 1 -> G-01 -> Node 2 -> G-02 -> Node 8 -> END
+ *    - Full Architectural Flow: Node 1 -> Node 2 -> Node 3 -> Node 4 -> Node 5 -> G-05 -> Node 7 -> G-06 -> Node 8 -> END
+ * 4. Native HITL Clarification Interrupt & Encrypted Checkpoint Resumption (`resumeFromCheckpoint: true`).
+ * 5. Financial Gate (`INSUFFICIENT_CREDITS`) Native Interruption (`BUG-06` regression).
+ * 6. Multi-Thread Encrypted Checkpoint Isolation & `loadLatestCheckpoint` Decryption.
  *
- * Test Matrix Coverage:
- * 1. Graph Compilation & Static Topology (all 14 canonical nodes and 3 routers)
- * 2. 7-Stage End-to-End Happy Path Execution:
- *    START -> Orchestrator -> Search -> Synthesizer -> Assumption Analyzer ->
- *    ATMS Relational Linker -> Jev Structuring -> Decision Scorer ->
- *    Confidence Classifier -> Ledger Commit -> Document Writer -> END
- * 3. Stage 1 Tool Loop Inspection Cycle:
- *    Search Agent -> Workspace Tool Node -> Search Agent -> Search Synthesizer
- * 4. Stage 2 G-5 Conditional Edge Branching:
- *    - Short-circuit directly to `document_writer_node` when no assumptions exist
- *    - Contextual gap loop back to `search_agent_node` when search loops remain
- *    - Standard forward progression to `jev_structuring_node`
- * 5. Stage 5 G-6 Resolution Gate Branching & Loop Bounds:
- *    - Supplementary search loop via `internal_gap_planner_node` (< 3 loops)
- *    - Strict ceiling at MAX_SEARCH_LOOPS = 3 routing to `question_organizer_node`
- *    - Clean progression to `document_writer_node` when all decisions are resolved
- * 6. Stage 6 HITL Interrupt & Resume Lifecycle:
- *    - Unresolved decision triggers `question_organizer_node` -> `pure_interrupt_node`
- *    - Graph cleanly suspends execution; state is persisted in MemorySaver
- *    - Thread resumption via `app.invoke(new Command({ resume: ... }), config)`
- *    - Post-resumption routing to `assumption_analyzer_node` without re-executing earlier model nodes
- * 7. Stage 6 Financial Gate Interrupt:
- *    - Credit exhaustion or failure immediately suspends execution at `pure_interrupt_node`
- *    - Validates typed financial pause payload (`code: "INSUFFICIENT_CREDITS"`)
- * 8. Checkpoint State Retrieval, Immutability & Thread Isolation:
- *    - Idempotent retrieval of 12-channel state snapshots via `app.getState(config)`
- *    - Multi-thread execution isolation in shared checkpointer
+ * Only true external I/O boundaries (`@/server/db`, `@/lib/ai/client`, `@/lib/ai/key-rotation`,
+ * `@/lib/jev/client`, and Redis metering via `@/lib/metering/node-gate`) are stubbed.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { Command, MemorySaver } from "@langchain/langgraph";
-
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   createElixentAgentGraph,
-  buildAgentWorkflow,
-  ORCHESTRATOR_NODE,
-  SEARCH_AGENT_NODE,
-  WORKSPACE_TOOL_NODE,
-  SEARCH_SYNTHESIZER_NODE,
-  ASSUMPTION_ANALYZER_NODE,
-  ATMS_RELATIONAL_LINKER_NODE,
-  JEV_STRUCTURING_NODE,
-  DECISION_SCORER_NODE,
-  CONFIDENCE_CLASSIFIER_NODE,
+  elixentAgentGraph,
+  INTENT_AND_SCOPE_ROUTER_NODE,
+  SEARCH_DISCOVERY_NODE,
+  ASSUMPTION_EXTRACTOR_NODE,
+  CONFLICT_AND_WEIGHT_GATE_NODE,
+  JEV_CONFORMAL_SCORER_NODE,
+  HITL_CLARIFICATION_NODE,
   LEDGER_COMMIT_NODE,
-  INTERNAL_GAP_PLANNER_NODE,
-  QUESTION_ORGANIZER_NODE,
-  PURE_INTERRUPT_NODE,
-  DOCUMENT_WRITER_NODE,
+  WORKSPACE_MUTATOR_NODE,
+  DIRECT_RESPONSE_NODE,
+  gateG01,
+  gateG02,
+  gateG03,
+  gateG04,
+  gateG05,
+  gateAfterHitlClarification,
+  gateG06,
 } from "@/core/agent/graph";
-import type { AgentGraphState } from "@/core/agent/state";
-import { syncMasterLedgerToProjectStore } from "@/core/agent/atms/dag";
+import {
+  ElixentNativeGraphRunner,
+  type AgentGraphNodeFn,
+  type AgentRuntimeContext,
+  type AgentStreamEvent,
+  type GraphStreamYield,
+} from "@/core/agent/engine/runner";
+import {
+  createInitialAgentGraphState,
+  type AgentGraphState,
+  type InputIntentCategory,
+  type PendingFileLifecycleAction,
+} from "@/core/agent/state";
+import { isEncryptedCheckpointEnvelope } from "@/core/agent/checkpoint-serializer";
 import type {
-  IWorkspaceProvider,
+  DecisionLedgerDocument,
   HeadingNode,
+  IWorkspaceProvider,
+  LexicalMatchResult,
+  SectionMergeOutcome,
   SectionReadResult,
   WorkspaceTreeEntry,
-  DecisionLedgerDocument,
 } from "@/core/workspace/provider";
+import type { StreamGovernor } from "@/lib/metering/stream-governor";
 
-// ============================================================================
-// Module Mocks for Pure Hermetic Execution
-// ============================================================================
+// ---------------------------------------------------------------------------
+// Hoisted In-Memory External Boundary Stubs (Postgres Checkpoints, AI, JEV, Credit Gate)
+// ---------------------------------------------------------------------------
 
-vi.mock("@/core/agent/atms/dag", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/core/agent/atms/dag")>();
+interface PersistedCheckpointRow {
+  threadId: string;
+  stepIndex: number;
+  workspaceId: string;
+  userId: string;
+  nodeId: string;
+  status: "RUNNING" | "INTERRUPTED" | "COMPLETED" | "FAILED";
+  nextNodeId: string | null;
+  interruptReason:
+    | "HITL_CLARIFICATION_REQUIRED"
+    | "FILE_DELETION_APPROVAL_REQUIRED"
+    | "ANTI_DOMINO_CONFIRMATION_REQUIRED"
+    | "INSUFFICIENT_CREDITS"
+    | null;
+  encryptedStateBlob: Buffer;
+}
+
+const {
+  checkpointRows,
+  creditGateControl,
+  mockExecuteStreamingGeneration,
+  mockExecuteStructuredGeneration,
+  mockExecuteToolAgentGeneration,
+  mockGetApiKeys,
+  mockEvaluateDecisionBatch,
+} = vi.hoisted(() => {
+  const checkpointRows = new Map<string, PersistedCheckpointRow>();
+  const creditGateControl = {
+    failOnNodeId: null as string | null,
+    availableMicro: 0,
+    requiredMicro: 500_000,
+  };
   return {
-    ...actual,
-    loadProjectDecisionLedger: vi.fn().mockResolvedValue({
-      masterLedger: {},
-      projectTaxonomy: null,
-    }),
-    syncMasterLedgerToProjectStore: vi.fn().mockResolvedValue(undefined),
+    checkpointRows,
+    creditGateControl,
+    mockExecuteStreamingGeneration: vi.fn(),
+    mockExecuteStructuredGeneration: vi.fn(),
+    mockExecuteToolAgentGeneration: vi.fn(),
+    mockGetApiKeys: vi.fn<() => string[]>(),
+    mockEvaluateDecisionBatch: vi.fn(),
   };
 });
 
-vi.mock("@/lib/ai/key-rotation", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/ai/key-rotation")>();
+/**
+ * Extracts string parameter values from a Drizzle SQL predicate tree (`and(eq(...), eq(...))`)
+ * so the in-memory `agentCheckpoints` table filters by the real `(workspaceId, threadId)` arguments.
+ */
+function extractSqlStringParams(node: unknown, out: string[] = []): string[] {
+  if (!node || typeof node !== "object") return out;
+  const record = node as Record<string, unknown>;
+  if ("value" in record && typeof record.value === "string") {
+    out.push(record.value);
+    return out;
+  }
+  if (Array.isArray(record.queryChunks)) {
+    for (const chunk of record.queryChunks) {
+      extractSqlStringParams(chunk, out);
+    }
+  }
+  return out;
+}
+
+vi.mock("@/server/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/server/db")>();
+  const mockDb = {
+    insert: vi.fn(() => ({
+      values: (row: PersistedCheckpointRow) => ({
+        onConflictDoUpdate: async (opts: { set: Partial<PersistedCheckpointRow> }) => {
+          const key = `${row.threadId}::${row.stepIndex}`;
+          const existing = checkpointRows.get(key);
+          checkpointRows.set(key, existing ? { ...existing, ...opts.set } : { ...row });
+        },
+      }),
+    })),
+    select: vi.fn(() => ({
+      from: () => ({
+        where: (predicate: unknown) => {
+          const params = extractSqlStringParams(predicate);
+          const [workspaceId, threadId] = params;
+          return {
+            orderBy: () => ({
+              limit: async (limitCount: number) => {
+                const matching = Array.from(checkpointRows.values())
+                  .filter(
+                    (row) =>
+                      (!workspaceId || row.workspaceId === workspaceId) &&
+                      (!threadId || row.threadId === threadId),
+                  )
+                  .sort((a, b) => b.stepIndex - a.stepIndex);
+                return matching.slice(0, limitCount);
+              },
+            }),
+          };
+        },
+      }),
+    })),
+  };
+
   return {
     ...actual,
-    getApiKeys: vi.fn().mockReturnValue([]),
+    db: mockDb,
+  };
+});
+
+vi.mock("@/lib/ai/client", () => ({
+  executeStreamingGeneration: mockExecuteStreamingGeneration,
+  executeStructuredGeneration: mockExecuteStructuredGeneration,
+  executeToolAgentGeneration: mockExecuteToolAgentGeneration,
+}));
+
+vi.mock("@/lib/ai/key-rotation", () => ({
+  getApiKeys: mockGetApiKeys,
+}));
+
+vi.mock("@/lib/jev/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/jev/client")>();
+  return {
+    ...actual,
+    evaluateDecisionBatch: (...args: Parameters<typeof actual.evaluateDecisionBatch>) => {
+      if (mockEvaluateDecisionBatch.getMockImplementation()) {
+        return mockEvaluateDecisionBatch(...args);
+      }
+      return actual.evaluateDecisionBatch(...args);
+    },
   };
 });
 
@@ -94,765 +199,957 @@ vi.mock("@/lib/metering/node-gate", async (importOriginal) => {
   return {
     ...actual,
     withMeteredNodeGate: (
-      _nodeName: string,
+      nodeName: string,
       _modelId: string,
-      nodeFn: (state: any, config?: any) => Promise<any>,
-    ) => {
-      return async (state: any, config?: any) => {
-        // Financial gate simulation: trigger credit exhaustion interrupt payload
-        if (
-          state?.credit_exhausted ||
-          state?.insufficient_credits ||
-          state?.credit_failure ||
-          state?.code === "INSUFFICIENT_CREDITS" ||
-          config?.configurable?.credit_failure
-        ) {
+      nodeFn: AgentGraphNodeFn,
+    ): AgentGraphNodeFn => {
+      return async (state, ctx) => {
+        if (creditGateControl.failOnNodeId === nodeName) {
           return {
-            interrupt: true,
-            code: "INSUFFICIENT_CREDITS",
-            availableMicro: 0,
-            requiredMicro: 500_000,
-            targetNode: "pure_interrupt_node",
+            status: "INTERRUPTED",
+            interruptReason: "INSUFFICIENT_CREDITS",
+            stateDelta: {},
+            interruptPayload: {
+              availableMicro: creditGateControl.availableMicro,
+              requiredMicro: creditGateControl.requiredMicro,
+            },
           };
         }
-        return await nodeFn(state, config);
+        return nodeFn(state, ctx);
       };
     },
   };
 });
 
-// ============================================================================
-// Mock Workspace Provider Fixture
-// ============================================================================
+// ---------------------------------------------------------------------------
+// Test Fixtures
+// ---------------------------------------------------------------------------
 
-class MockHermeticWorkspaceProvider implements IWorkspaceProvider {
-  public readonly workspaceId = "ws-test";
-  public readonly userId = "user-test";
-
-  public listWorkspaceTree = vi.fn().mockResolvedValue([] as WorkspaceTreeEntry[]);
-
-  public listHeadingsTree = vi.fn().mockImplementation(async (fileIds: string[] = []) => {
-    const res: Record<string, HeadingNode[]> = {};
-    for (const fileId of fileIds) {
-      res[fileId] = [
-        {
-          headingSlug: "architecture-overview",
-          title: "Architecture Overview",
-          level: 1,
-          breadcrumb: "Architecture Overview",
-          startLine: 1,
-          endLine: 20,
-          startOffset: 0,
-          endOffset: 500,
-          contentHash: "hash_overview",
-        },
-      ];
-    }
-    return res;
-  });
-
-  public readSectionByHeading = vi.fn().mockImplementation(
-    async (fileId: string, headingSlug: string): Promise<SectionReadResult> => ({
-      fileId,
-      headingSlug,
-      breadcrumb: `${fileId} > ${headingSlug}`,
-      contentOrVaultRef: `Baseline text content for ${fileId}#${headingSlug}`,
-      isVaultRef: false,
-      sectionHash: `hash_${fileId}_${headingSlug}`,
-      fileEtag: "etag-test",
-      fileVersion: 1,
-    }),
-  );
-
-  public searchLexicalWithASTBreadcrumb = vi.fn().mockImplementation(
-    async (params: { fileIds?: string[]; query: string; maxResults?: number }) => {
-      return (params.fileIds ?? []).map((fileId) => ({
-        fileId,
-        fileName: `${fileId}.md`,
-        headingSlug: "architecture-overview",
-        headingBreadcrumb: "Architecture Overview",
-        matchedExcerpt: `Matched excerpt for query "${params.query}" in ${fileId}`,
-        lineRange: [2, 6] as [number, number],
-        bm25Score: 1.5,
-      }));
-    },
-  );
-
-  public mergeSectionThreeWay = vi.fn().mockImplementation(async (params: any) => ({
-    status: "clean" as const,
-    mergedDocumentContent: `# Merged Document\n${params.agentProposedSectionContent}`,
-    hunkRange: {
-      from: 0,
-      to: 100,
-      replacementText: params.agentProposedSectionContent,
-    },
-  }));
-
-  public createWorkspaceFile = vi.fn().mockImplementation(
-    async (params: { relativePath: string; initialContent: string }): Promise<WorkspaceTreeEntry> => ({
-      fileId: `file-${params.relativePath}`,
+function createMockWorkspaceProvider(
+  workspaceId = "ws-graph-test",
+  overrides: Partial<IWorkspaceProvider> = {},
+): IWorkspaceProvider {
+  const tree: WorkspaceTreeEntry[] = [
+    {
+      fileId: "cache.md",
       parentFolderId: null,
-      title: params.relativePath,
-      relativePath: params.relativePath,
+      title: "Caching Architecture",
+      relativePath: "docs/cache.md",
       isFolder: false,
       isEncrypted: false,
       isAiExcluded: false,
       artifactRole: "document",
+      etag: "etag-cache-1",
+      version: 1,
+      updatedAt: "2026-11-20T00:00:00.000Z",
+    },
+    {
+      fileId: "sync.md",
+      parentFolderId: null,
+      title: "Sync Protocol",
+      relativePath: "docs/sync.md",
+      isFolder: false,
+      isEncrypted: false,
+      isAiExcluded: false,
+      artifactRole: "document",
+      etag: "etag-sync-1",
+      version: 1,
+      updatedAt: "2026-11-20T00:00:00.000Z",
+    },
+  ];
+
+  const ledgerDoc: DecisionLedgerDocument = {
+    schemaVersion: "2.0.0",
+    workspaceId,
+    updatedAt: "2026-11-20T00:00:00.000Z",
+    decisions: {},
+    nodes: {},
+    edges: [],
+    taxonomy: null,
+  };
+
+  return {
+    workspaceId,
+    userId: "user-graph-test",
+    listWorkspaceTree: vi.fn(async () => tree),
+    listHeadingsTree: vi.fn(async (fileIds: string[] = []) => {
+      const res: Record<string, HeadingNode[]> = {};
+      for (const fileId of fileIds) {
+        res[fileId] = [
+          {
+            headingSlug: "architecture-overview",
+            title: "Architecture Overview",
+            level: 2,
+            breadcrumb: "Architecture Overview",
+            startLine: 1,
+            endLine: 15,
+            startOffset: 0,
+            endOffset: 300,
+            contentHash: "a".repeat(64),
+          },
+        ];
+      }
+      return res;
+    }),
+    readSectionByHeading: vi.fn(
+      async (fileId: string, headingSlug: string): Promise<SectionReadResult> => ({
+        fileId,
+        headingSlug,
+        breadcrumb: `${fileId} > ${headingSlug}`,
+        contentOrVaultRef: `## Architecture Overview\nBaseline content for ${fileId}#${headingSlug}.`,
+        isVaultRef: false,
+        sectionHash: `hash_${fileId}_${headingSlug}`,
+        fileEtag: "etag-1",
+        fileVersion: 1,
+      }),
+    ),
+    searchLexicalWithASTBreadcrumb: vi.fn(
+      async (params: { fileIds?: string[]; query: string }): Promise<LexicalMatchResult[]> =>
+        (params.fileIds ?? []).map((fileId) => ({
+          fileId,
+          fileName: fileId,
+          headingSlug: "architecture-overview",
+          headingBreadcrumb: "Architecture Overview",
+          matchedExcerpt: `Excerpt for ${params.query} in ${fileId}`,
+          lineRange: [1, 5],
+          bm25Score: 1.8,
+        })),
+    ),
+    mergeSectionThreeWay: vi.fn(
+      async (params): Promise<SectionMergeOutcome> => ({
+        status: "clean",
+        mergedDocumentContent: params.agentProposedSectionContent,
+        hunkRange: {
+          from: 0,
+          to: params.agentProposedSectionContent.length,
+          replacementText: params.agentProposedSectionContent,
+        },
+        diagnostics: [],
+      }),
+    ),
+    createWorkspaceFile: vi.fn(async ({ relativePath }) => ({
+      fileId: `created-${relativePath}`,
+      parentFolderId: null,
+      title: relativePath,
+      relativePath,
+      isFolder: false,
+      isEncrypted: false,
+      isAiExcluded: false,
+      artifactRole: "document" as const,
       etag: "etag-created",
       version: 1,
-      updatedAt: new Date(0).toISOString(),
-    }),
-  );
-
-  public deleteWorkspaceFile = vi.fn().mockImplementation(
-    async (params: { fileId: string }): Promise<{ fileId: string; deletedAt: string }> => ({
-      fileId: params.fileId,
-      deletedAt: new Date(0).toISOString(),
-    }),
-  );
-
-  public readDecisionLedger = vi.fn().mockResolvedValue({
-    schemaVersion: "2.0",
-    workspaceId: "ws-test",
-    updatedAt: new Date(0).toISOString(),
-    decisions: {},
-  } satisfies DecisionLedgerDocument);
-
-  public writeDecisionLedger = vi.fn().mockResolvedValue({
-    etag: "etag-ledger",
-    version: 1,
-  });
+      updatedAt: "2026-11-20T00:00:00.000Z",
+    })),
+    deleteWorkspaceFile: vi.fn(async ({ fileId }) => ({
+      fileId,
+      deletedAt: "2026-11-20T00:00:00.000Z",
+    })),
+    readDecisionLedger: vi.fn(async () => ledgerDoc),
+    writeDecisionLedger: vi.fn(async () => ({ etag: "etag-ledger-2", version: 2 })),
+    ...overrides,
+  };
 }
 
-// ============================================================================
-// Integration Test Suites
-// ============================================================================
+function createRuntimeContext(
+  workspaceProvider: IWorkspaceProvider,
+  overrides: Partial<AgentRuntimeContext> = {},
+): { ctx: AgentRuntimeContext; events: AgentStreamEvent[] } {
+  const events: AgentStreamEvent[] = [];
+  const ctx: AgentRuntimeContext = {
+    userId: "user-graph-test",
+    workspaceId: workspaceProvider.workspaceId,
+    threadId: "thread-native-default",
+    turnId: "turn-native-1",
+    permissionMode: "safe",
+    selectedSystem2ModelId: "google/gemini-3.8-flash",
+    workspaceProvider,
+    streamGovernor: {} as StreamGovernor,
+    ephemeralVaultPayloads: new Map(),
+    liveDocumentSnapshots: new Map(),
+    emitSseEvent: (e) => events.push(e),
+    abortSignal: new AbortController().signal,
+    ...overrides,
+  };
+  return { ctx, events };
+}
 
-describe("Phase 9 - Wave 9.3: Compiled StateGraph Orchestration Integration Tests", () => {
-  let mockProvider: MockHermeticWorkspaceProvider;
+async function collectGraphStream(
+  runner: ElixentNativeGraphRunner,
+  input: Parameters<ElixentNativeGraphRunner["stream"]>[0],
+  ctx: AgentRuntimeContext,
+): Promise<{ yields: GraphStreamYield[]; finalState: AgentGraphState }> {
+  const yields: GraphStreamYield[] = [];
+  const gen = runner.stream(input, ctx);
+  let next = await gen.next();
+  while (!next.done) {
+    yields.push(next.value);
+    next = await gen.next();
+  }
+  return { yields, finalState: next.value };
+}
+
+// ---------------------------------------------------------------------------
+// Test Suites
+// ---------------------------------------------------------------------------
+
+describe("Elixent Native Graph Engine Assembly & Orchestration (src/core/agent/graph.ts)", () => {
+  const originalGeminiKey = process.env.GEMINI_API_KEY;
+  const originalJevKey = process.env.JEV_API_KEY;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockProvider = new MockHermeticWorkspaceProvider();
+    checkpointRows.clear();
+    creditGateControl.failOnNodeId = null;
+    creditGateControl.availableMicro = 0;
+    creditGateControl.requiredMicro = 500_000;
+    mockGetApiKeys.mockReturnValue([]);
+    mockEvaluateDecisionBatch.mockReset();
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.JEV_API_KEY;
+
+    mockExecuteStreamingGeneration.mockResolvedValue({
+      text: Promise.resolve("## Architecture Overview\nUpdated architectural specification section."),
+      textStream: (async function* () {
+        yield "## Architecture Overview\nUpdated architectural specification section.";
+      })(),
+    });
   });
 
-  // ==========================================================================
-  // Suite 1: Graph Compilation & Static Topology Invariants
-  // ==========================================================================
-  describe("1. Graph Compilation & Topology Invariants", () => {
-    it("should build workflow containing all 14 canonical nodes and correct node keys", () => {
-      const graphWorkflow = buildAgentWorkflow();
-      const nodeKeys = Object.keys(graphWorkflow.nodes);
+  afterEach(() => {
+    if (originalGeminiKey !== undefined) {
+      process.env.GEMINI_API_KEY = originalGeminiKey;
+    } else {
+      delete process.env.GEMINI_API_KEY;
+    }
+    if (originalJevKey !== undefined) {
+      process.env.JEV_API_KEY = originalJevKey;
+    } else {
+      delete process.env.JEV_API_KEY;
+    }
+  });
 
-      const expectedNodes = [
-        ORCHESTRATOR_NODE,
-        SEARCH_AGENT_NODE,
-        WORKSPACE_TOOL_NODE,
-        SEARCH_SYNTHESIZER_NODE,
-        ASSUMPTION_ANALYZER_NODE,
-        ATMS_RELATIONAL_LINKER_NODE,
-        JEV_STRUCTURING_NODE,
-        DECISION_SCORER_NODE,
-        CONFIDENCE_CLASSIFIER_NODE,
+  // =========================================================================
+  // Suite 1: Canonical 9-Node Registry & Runner Factory
+  // =========================================================================
+  describe("1. Canonical 9-Node Assembly & maxSuperSteps Contract", () => {
+    it("exports all 9 canonical node identifiers, default maxSuperSteps: 25, and custom maxSuperSteps override", () => {
+      const canonicalIds = [
+        INTENT_AND_SCOPE_ROUTER_NODE,
+        SEARCH_DISCOVERY_NODE,
+        ASSUMPTION_EXTRACTOR_NODE,
+        CONFLICT_AND_WEIGHT_GATE_NODE,
+        JEV_CONFORMAL_SCORER_NODE,
+        HITL_CLARIFICATION_NODE,
         LEDGER_COMMIT_NODE,
-        INTERNAL_GAP_PLANNER_NODE,
-        QUESTION_ORGANIZER_NODE,
-        PURE_INTERRUPT_NODE,
-        DOCUMENT_WRITER_NODE,
+        WORKSPACE_MUTATOR_NODE,
+        DIRECT_RESPONSE_NODE,
       ];
 
-      for (const node of expectedNodes) {
-        expect(nodeKeys).toContain(node);
-      }
-      expect(nodeKeys).toHaveLength(14);
-    });
+      expect(new Set(canonicalIds).size).toBe(9);
+      expect(elixentAgentGraph).toBeInstanceOf(ElixentNativeGraphRunner);
+      expect(elixentAgentGraph.maxSuperSteps).toBe(25);
 
-    it("should compile cleanly with custom MemorySaver checkpointer", () => {
-      const checkpointer = new MemorySaver();
-      const app = createElixentAgentGraph({ checkpointer });
-
-      expect(app).toBeDefined();
-      expect(typeof app.invoke).toBe("function");
-      expect(typeof app.getState).toBe("function");
+      const customRunner = createElixentAgentGraph({ maxSuperSteps: 12 });
+      expect(customRunner).toBeInstanceOf(ElixentNativeGraphRunner);
+      expect(customRunner.maxSuperSteps).toBe(12);
     });
   });
 
-  // ==========================================================================
-  // Suite 2: 7-Stage End-to-End Happy Path Execution
-  // ==========================================================================
-  describe("2. Full 7-Stage Happy Path Flow", () => {
-    it("should execute START -> Orchestrator -> Search Loop -> Assumptions -> Linker -> JEV -> Classifier -> Commit -> Writer -> END", async () => {
-      const checkpointer = new MemorySaver();
-      const app = createElixentAgentGraph({ checkpointer });
-
-      const threadId = "thread-happy-path-1";
-      const config = {
-        configurable: {
-          thread_id: threadId,
-          userId: "user_test_happy",
-          workspaceProvider: mockProvider,
-        },
-      };
-
-      const initialState: Partial<AgentGraphState> = {
-        user_request: {
-          prompt: "Design high-performance modular caching subsystem",
-          projectId: "proj_happy_1",
-          targetFileIds: ["cache.md"],
-        },
-      };
-
-      const result = await app.invoke(initialState, config);
-
-      // 1. Completion & No unhandled suspension
-      expect(result).toBeDefined();
-      expect((result as any).__interrupt__).toBeUndefined();
-
-      // 2. Stage 0 Orchestrator & Messages
-      expect(result.messages).toBeDefined();
-      expect(result.messages.length).toBeGreaterThanOrEqual(3);
-      const firstMsg = result.messages[0];
-      expect(firstMsg._getType()).toBe("human");
-      expect(firstMsg.content).toContain("Design high-performance modular caching subsystem");
-
-      // 3. Stage 1 Search Report
-      expect(result.search_report).toBeDefined();
-      expect(result.search_report.inspectedPaths).toContain("cache.md#architecture-overview");
-
-      // 4. Stage 2 Assumptions
-      expect(result.assumptions).toBeDefined();
-      expect(result.assumptions.length).toBeGreaterThan(0);
-      expect(result.assumptions[0].statement).toContain("caching subsystem");
-
-      // 5. Stage 3 & 4 Master Ledger & Conformal APS
-      expect(result.master_ledger).toBeDefined();
-      const decisionNodes = Object.values(result.master_ledger);
-      expect(decisionNodes.length).toBeGreaterThan(0);
-      expect(decisionNodes[0].status).toBe("APPROVED_DIRECT");
-
-      // 6. Stage 5 Resolution Gate & Ledger Commit
-      expect(result.unresolved_ledger).toEqual([]);
-      expect(syncMasterLedgerToProjectStore).toHaveBeenCalled();
-
-      // 7. Stage 7 Document Writer & Clean Invalidation Reset
-      expect(result.invalidation_map).toEqual({});
-      const lastMsg = result.messages[result.messages.length - 1];
-      expect(lastMsg._getType()).toBe("ai");
-      expect(lastMsg.content).toContain("Document Writer Node completed");
-
-      // 8. Terminal Checkpoint State Verification
-      const stateSnapshot = await app.getState(config);
-      expect(stateSnapshot.next).toEqual([]);
-      expect(stateSnapshot.values.master_ledger).toBeDefined();
-      expect(stateSnapshot.values.unresolved_ledger).toEqual([]);
-    });
-  });
-
-  // ==========================================================================
-  // Suite 3: Stage 1 Exploration & Tool Loop Cycle
-  // ==========================================================================
-  describe("3. Stage 1 Tool Loop Inspection Cycle", () => {
-    it("should execute Search Agent -> Workspace Tool Node -> Search Agent -> Search Synthesizer loop cleanly", async () => {
-      const checkpointer = new MemorySaver();
-      const app = createElixentAgentGraph({ checkpointer });
-
-      const threadId = "thread-tool-loop-1";
-      const config = {
-        configurable: {
-          thread_id: threadId,
-          userId: "user_test_tool",
-          workspaceProvider: mockProvider,
-        },
-      };
-
-      const initialState: Partial<AgentGraphState> = {
-        user_request: {
-          prompt: "Audit storage engine architecture",
-          projectId: "proj_tool_1",
-          targetFileIds: ["storage.md"],
-        },
-      };
-
-      const result = await app.invoke(initialState, config);
-
-      // Verify workspaceProvider tool was actually called by workspaceToolNode
-      expect(mockProvider.listHeadingsTree).toHaveBeenCalledWith(["storage.md"]);
-
-      // Verify messages contain both the tool call from search agent and ToolMessage from workspace tool
-      const toolMessages = result.messages.filter((m) => m._getType() === "tool");
-      expect(toolMessages.length).toBeGreaterThan(0);
-
-      // Verify synthesized report contains evidence from the tool execution
-      expect(result.search_report.evidenceItems.length).toBeGreaterThan(0);
-      expect(result.search_report.inspectedPaths).toContain("storage.md#architecture-overview");
-    });
-  });
-
-  // ==========================================================================
-  // Suite 4: Stage 2 G-5 Conditional Edge Branching
-  // ==========================================================================
-  describe("4. Stage 2 G-5 Conditional Edge Branching", () => {
-    it("should short-circuit directly to document_writer_node when no assumptions exist and invalidation_map is empty", async () => {
-      const checkpointer = new MemorySaver();
-      const app = createElixentAgentGraph({ checkpointer });
-
-      const threadId = "thread-g5-short-circuit";
-      const config = {
-        configurable: {
-          thread_id: threadId,
-          userId: "user_test_g5",
-          workspaceProvider: mockProvider,
-        },
-      };
-
-      // Empty prompt yields 0 assumptions in deterministic fallback mode
-      const initialState: Partial<AgentGraphState> = {
-        user_request: {
-          prompt: "",
-          projectId: "proj_g5_empty",
-          targetFileIds: [],
-        },
-      };
-
-      const result = await app.invoke(initialState, config);
-
-      // When short-circuiting directly to document_writer_node:
-      // Master ledger remains empty (no JEV scoring executed)
-      expect(Object.keys(result.master_ledger)).toHaveLength(0);
-      expect(result.assumptions).toHaveLength(0);
-      expect(result.unresolved_ledger).toHaveLength(0);
-
-      // Document writer node runs and concludes
-      const lastMsg = result.messages[result.messages.length - 1];
-      expect(lastMsg._getType()).toBe("ai");
-      expect(lastMsg.content).toContain("Document Writer Node completed");
+  // =========================================================================
+  // Suite 2: Deterministic State-Predicate Routing Gates (G-01..G-06 + HITL)
+  // =========================================================================
+  describe("2. Deterministic State-Predicate Routing Gates (SRS-01 §3.2)", () => {
+    it.each<{ intent: InputIntentCategory | null; expected: string }>([
+      { intent: "CHAT_ONLY", expected: DIRECT_RESPONSE_NODE },
+      { intent: "WORKSPACE_READ_SEARCH", expected: SEARCH_DISCOVERY_NODE },
+      { intent: "DECISION_LEDGER_QUERY", expected: SEARCH_DISCOVERY_NODE },
+      { intent: "FAST_LOCAL_EDIT", expected: SEARCH_DISCOVERY_NODE },
+      { intent: "NEW_DOC_DRAFTING", expected: SEARCH_DISCOVERY_NODE },
+      { intent: "ARCHITECTURAL_MODIFICATION", expected: SEARCH_DISCOVERY_NODE },
+      { intent: "CONFLICTING_OVERRIDE", expected: SEARCH_DISCOVERY_NODE },
+      { intent: "FILE_STRUCTURE_MUTATION", expected: SEARCH_DISCOVERY_NODE },
+      { intent: "COMPOUND_MULTI_INTENT", expected: SEARCH_DISCOVERY_NODE },
+      { intent: null, expected: SEARCH_DISCOVERY_NODE },
+    ])("gateG01 routes classified_intent=$intent -> $expected", ({ intent, expected }) => {
+      const state = createInitialAgentGraphState({ classified_intent: intent });
+      expect(gateG01(state)).toBe(expected);
     });
 
-    it("should verify G-5 routing contract for gap loops and progression when loop ceiling is reached", async () => {
-      // 1. Direct contract verification of routeAfterAssumptions conditional routing
-      const stateWithGap = {
-        assumptions: [
-          {
-            assumptionId: "a1",
-            statement: "Unresolved gap in caching topology: needs inspection",
-            conceptTags: ["caching"],
-            affectedSections: [],
-            dependsOn: [],
-          },
-        ],
-        search_loop_count: 0,
-        search_report: { evidenceItems: [], inspectedPaths: [], summary: "" },
-        user_request: { prompt: "test", projectId: "p", targetFileIds: ["cache.md"] },
-      } as unknown as AgentGraphState;
-
-      const { routeAfterAssumptions } = await import(
-        "@/core/agent/nodes/assumption-and-linker-nodes"
-      );
-
-      // Under ceiling (< 3), routes back to search_agent_node
-      expect(routeAfterAssumptions(stateWithGap)).toBe("search_agent_node");
-
-      // At ceiling (>= 3), bypasses loop and advances to jev_structuring_node
-      const stateAtCeiling = {
-        ...stateWithGap,
-        search_loop_count: 3,
-      } as unknown as AgentGraphState;
-      expect(routeAfterAssumptions(stateAtCeiling)).toBe("jev_structuring_node");
-
-      // 2. Compiled StateGraph integration verification at loop ceiling
-      const checkpointer = new MemorySaver();
-      const app = createElixentAgentGraph({ checkpointer });
-
-      const threadId = "thread-g5-compiled-gap";
-      const config = {
-        configurable: {
-          thread_id: threadId,
-          userId: "user_test_g5_ceiling",
-          workspaceProvider: mockProvider,
-        },
-      };
-
-      const initialState: Partial<AgentGraphState> = {
-        user_request: {
-          prompt: "Verify caching system requirements with unresolved gap",
-          projectId: "proj_g5_compiled",
-          targetFileIds: ["cache.md"],
-        },
-        search_loop_count: 3,
-      };
-
-      const result = await app.invoke(initialState, config);
-      expect(result).toBeDefined();
-      expect(result.messages.length).toBeGreaterThanOrEqual(3);
-      const lastMsg = result.messages[result.messages.length - 1];
-      expect(lastMsg._getType()).toBe("ai");
-      expect(lastMsg.content).toContain("Document Writer Node completed");
-    });
-  });
-
-  // ==========================================================================
-  // Suite 5: Stage 5 G-6 Resolution Gate Branching & Loop Bounds
-  // ==========================================================================
-  describe("5. Stage 5 G-6 Resolution Gate Branching & Loop Bounds", () => {
-    it("should route to internal_gap_planner_node when unresolved items exist and search_loop_count < 3", async () => {
-      const checkpointer = new MemorySaver();
-      const app = createElixentAgentGraph({ checkpointer });
-
-      const threadId = "thread-g6-gap-loop";
-      const config = {
-        configurable: {
-          thread_id: threadId,
-          userId: "user_test_g6",
-          workspaceProvider: mockProvider,
-        },
-      };
-
-      // Prompt contains "insufficient_evidence" which triggers UNRESOLVED in JEV mock evaluation
-      const initialState: Partial<AgentGraphState> = {
-        user_request: {
-          prompt: "Evaluate abstain insufficient_evidence caching layer under ambiguous traffic",
-          projectId: "proj_g6_loop",
-          targetFileIds: ["cache.md"],
-        },
-        search_loop_count: 0,
-      };
-
-      const result = await app.invoke(initialState, config);
-
-      expect(result).toBeDefined();
-      // Internal gap planner populates local_inspection_state with topic or concept paths
-      expect(result.local_inspection_state.length).toBeGreaterThan(0);
-      expect(
-        result.local_inspection_state.some(
-          (p) => p.includes("topic:") || p.includes("concept:") || p.includes("cache.md"),
-        ),
-      ).toBe(true);
+    it.each<{ intent: InputIntentCategory | null; expected: string }>([
+      { intent: "WORKSPACE_READ_SEARCH", expected: DIRECT_RESPONSE_NODE },
+      { intent: "DECISION_LEDGER_QUERY", expected: DIRECT_RESPONSE_NODE },
+      { intent: "FAST_LOCAL_EDIT", expected: WORKSPACE_MUTATOR_NODE },
+      { intent: "NEW_DOC_DRAFTING", expected: ASSUMPTION_EXTRACTOR_NODE },
+      { intent: "ARCHITECTURAL_MODIFICATION", expected: ASSUMPTION_EXTRACTOR_NODE },
+      { intent: "CONFLICTING_OVERRIDE", expected: ASSUMPTION_EXTRACTOR_NODE },
+      { intent: "FILE_STRUCTURE_MUTATION", expected: ASSUMPTION_EXTRACTOR_NODE },
+      { intent: "COMPOUND_MULTI_INTENT", expected: ASSUMPTION_EXTRACTOR_NODE },
+      { intent: null, expected: ASSUMPTION_EXTRACTOR_NODE },
+    ])("gateG02 routes classified_intent=$intent -> $expected", ({ intent, expected }) => {
+      const state = createInitialAgentGraphState({ classified_intent: intent });
+      expect(gateG02(state)).toBe(expected);
     });
 
-    it("should cap at MAX_SEARCH_LOOPS = 3 and route to question_organizer_node when loops exhausted", async () => {
-      const checkpointer = new MemorySaver();
-      const app = createElixentAgentGraph({ checkpointer });
-
-      const threadId = "thread-g6-loop-cap";
-      const unresolvedItem = {
-        decisionId: "dec_exhausted_1",
-        topicSlug: "data_persistence",
-        questionPrompt: "Arbitrate between event sourcing and CRUD state",
-        conceptTags: ["storage_layer"],
-        status: "UNRESOLVED" as const,
-        reason: "Search loop limit reached with unresolved ambiguity",
-        options: [
-          {
-            optionKey: "opt_event_sourcing",
-            neutralSummary: "Adopt immutable event log",
-            rationaleAndPremises: "Complete auditability and temporal queries.",
-          },
-          {
-            optionKey: "opt_crud",
-            neutralSummary: "Adopt relational CRUD",
-            rationaleAndPremises: "Lower operational complexity and simpler schema evolutions.",
-          },
-        ],
-      };
-
-      const config = {
-        configurable: {
-          thread_id: threadId,
-          userId: "user_test_cap",
-          workspaceProvider: mockProvider,
-          scored_decisions: [unresolvedItem],
-        },
-      };
-
-      // Initializing search_loop_count = 3 forces resolutionGateRouter
-      // to route to question_organizer_node -> pure_interrupt_node
-      const initialState: Partial<AgentGraphState> = {
-        user_request: {
-          prompt: "Arbitrate data persistence design",
-          projectId: "proj_g6_cap",
-          targetFileIds: ["storage.md"],
-        },
-        search_loop_count: 3,
-      };
-
-      const result = await app.invoke(initialState, config);
-
-      // Verify that the graph suspended safely at pure_interrupt_node
-      expect((result as any).__interrupt__).toBeDefined();
-
-      const snapshot = await app.getState(config);
-      expect(snapshot.next).toEqual([PURE_INTERRUPT_NODE]);
-      expect(snapshot.values.question_queue).toBeDefined();
-      expect(snapshot.values.question_queue?.questions.length).toBeGreaterThan(0);
-      expect(snapshot.values.question_queue?.questions[0].questionId).toBe("dec_exhausted_1");
-    });
-  });
-
-  // ==========================================================================
-  // Suite 6: Stage 6 HITL Interrupt & Resume Lifecycle
-  // ==========================================================================
-  describe("6. Stage 6 HITL Interrupt & Resume Lifecycle", () => {
-    it("should suspend at pure_interrupt_node, preserve state in MemorySaver, and resume cleanly on Command", async () => {
-      const checkpointer = new MemorySaver();
-      const app = createElixentAgentGraph({ checkpointer });
-
-      const threadId = "thread-hitl-lifecycle-1";
-      const unresolvedDecision = {
-        decisionId: "dec_hitl_architecture",
-        topicSlug: "sync_protocol",
-        questionPrompt: "Adopt Diff3 three-way merge or CRDT Yjs?",
-        conceptTags: ["sync_engine"],
-        status: "UNRESOLVED" as const,
-        reason: "Conformal APS multi-option set: requires human architectural choice",
-        options: [
-          {
-            optionKey: "approve_conservative",
-            neutralSummary: "Adopt Diff3 three-way merge",
-            rationaleAndPremises: "Diff3 is optimal for single-user offline sync per ADR.",
-          },
-          {
-            optionKey: "adopt_direct_solution",
-            neutralSummary: "Adopt CRDT Yjs collaborative sync",
-            rationaleAndPremises: "Enables multi-user simultaneous real-time editing.",
-          },
-        ],
-      };
-
-      const config = {
-        configurable: {
-          thread_id: threadId,
-          userId: "user_hitl_test",
-          workspaceProvider: mockProvider,
-          scored_decisions: [unresolvedDecision],
-        },
-      };
-
-      // 1. First Pass: Triggers question_organizer_node -> pure_interrupt_node
-      const initialState: Partial<AgentGraphState> = {
-        user_request: {
-          prompt: "Choose sync protocol architecture",
-          projectId: "proj_hitl_1",
-          targetFileIds: ["sync.md"],
-        },
-        search_loop_count: 3,
-      };
-
-      const suspendResult = await app.invoke(initialState, config);
-
-      expect((suspendResult as any).__interrupt__).toBeDefined();
-
-      // Verify checkpoint preservation in MemorySaver
-      const suspendedState = await app.getState(config);
-      expect(suspendedState.next).toEqual([PURE_INTERRUPT_NODE]);
-      expect(suspendedState.values.question_queue).not.toBeNull();
-      const question = suspendedState.values.question_queue?.questions[0];
-      expect(question).toBeDefined();
-      expect(question?.questionId).toBe("dec_hitl_architecture");
-
-      // Verify question options are populated neutrally
-      expect(question?.options.length).toBeGreaterThanOrEqual(2);
-
-      // 2. Second Pass: Resumption using Command with valid user clarification
-      const resumeCommand = new Command({
-        resume: {
-          answers: [
+    it.each<{ label: string; overrides: Partial<AgentGraphState>; expected: string }>([
+      {
+        label: "zero assumptions and empty invalidation_map -> workspace_mutator_node",
+        overrides: { assumptions: [], invalidation_map: {} },
+        expected: WORKSPACE_MUTATOR_NODE,
+      },
+      {
+        label: "non-empty assumptions -> conflict_and_weight_gate_node",
+        overrides: {
+          assumptions: [
             {
-              questionId: question!.questionId,
-              selectedOptionKey: question!.options[0].optionKey,
-              userComment: "Diff3 is optimal for single-user offline sync per ADR.",
+              assumptionId: "a1",
+              statement: "Use Postgres",
+              conceptTags: ["data_modeling"],
+              affectedSections: [],
+              dependsOn: [],
             },
           ],
         },
-      });
+        expected: CONFLICT_AND_WEIGHT_GATE_NODE,
+      },
+      {
+        label: "empty assumptions with non-empty invalidation_map -> conflict_and_weight_gate_node",
+        overrides: {
+          assumptions: [],
+          invalidation_map: { dec_1: [{ fileId: "doc.md", headingSlug: "db" }] },
+        },
+        expected: CONFLICT_AND_WEIGHT_GATE_NODE,
+      },
+    ])("gateG03: $label", ({ overrides, expected }) => {
+      expect(gateG03(createInitialAgentGraphState(overrides))).toBe(expected);
+    });
 
-      const resumeConfig = {
-        configurable: {
-          thread_id: threadId,
-          userId: "user_hitl_test",
-          workspaceProvider: mockProvider,
+    it.each([
+      {
+        label: "Anti-Domino question_queue populated takes priority over evidence gap -> hitl_clarification_node",
+        overrides: {
+          question_queue: {
+            questions: [
+              {
+                questionId: "antidomino_1",
+                topicSlug: "auth",
+                questionPrompt: "Confirm override?",
+                options: [
+                  { optionKey: "preserve_prior", neutralSummary: "Keep" },
+                  { optionKey: "confirm_override", neutralSummary: "Override" },
+                ],
+              },
+            ],
+          },
+          search_loop_count: 1,
+          search_report: { evidenceItems: [], inspectedPaths: ["doc.md#sec"], summary: "" },
+          assumptions: [
+            {
+              assumptionId: "a1",
+              statement: "Gap",
+              conceptTags: [],
+              affectedSections: [{ fileId: "missing.md", headingSlug: "intro" }],
+              dependsOn: [],
+            },
+          ],
+        },
+        expected: HITL_CLARIFICATION_NODE,
+      },
+      {
+        label: "evidence gap with search_loop_count < 3 -> search_discovery_node",
+        overrides: {
+          search_loop_count: 2,
+          search_report: {
+            evidenceItems: [
+              { fileId: "doc-a.md", headingSlug: "h1", breadcrumb: ["H1"], textExcerpt: "x" },
+            ],
+            inspectedPaths: ["doc-a.md#h1"],
+            summary: "Partial",
+          },
+          assumptions: [
+            {
+              assumptionId: "a1",
+              statement: "Touches doc-b",
+              conceptTags: [],
+              affectedSections: [{ fileId: "doc-b.md", headingSlug: "h2" }],
+              dependsOn: [],
+            },
+          ],
+        },
+        expected: SEARCH_DISCOVERY_NODE,
+      },
+      {
+        label: "evidence gap at MAX_SEARCH_LOOPS ceiling (3) -> jev_conformal_scorer_node",
+        overrides: {
+          search_loop_count: 3,
+          search_report: {
+            evidenceItems: [],
+            inspectedPaths: ["doc-a.md#h1"],
+            summary: "Ceiling reached",
+          },
+          assumptions: [
+            {
+              assumptionId: "a1",
+              statement: "Touches doc-b",
+              conceptTags: [],
+              affectedSections: [{ fileId: "doc-b.md", headingSlug: "h2" }],
+              dependsOn: [],
+            },
+          ],
+        },
+        expected: JEV_CONFORMAL_SCORER_NODE,
+      },
+      {
+        label: "all affected sections covered by evidence -> jev_conformal_scorer_node",
+        overrides: {
+          search_loop_count: 1,
+          search_report: {
+            evidenceItems: [
+              { fileId: "doc-a.md", headingSlug: "h1", breadcrumb: ["H1"], textExcerpt: "x" },
+            ],
+            inspectedPaths: ["doc-a.md#h1"],
+            summary: "Complete",
+          },
+          assumptions: [
+            {
+              assumptionId: "a1",
+              statement: "Covered",
+              conceptTags: [],
+              affectedSections: [{ fileId: "doc-a.md", headingSlug: "h1" }],
+              dependsOn: [],
+            },
+          ],
+        },
+        expected: JEV_CONFORMAL_SCORER_NODE,
+      },
+    ])("gateG04: $label", ({ overrides, expected }) => {
+      expect(gateG04(createInitialAgentGraphState(overrides))).toBe(expected);
+    });
+
+    it.each<{
+      label: string;
+      permissionMode: "safe" | "semi_auto" | "full_auto";
+      unresolvedCount: number;
+      actions: PendingFileLifecycleAction[];
+      expected: string;
+    }>([
+      {
+        label: "unresolved decisions -> hitl_clarification_node",
+        permissionMode: "full_auto",
+        unresolvedCount: 1,
+        actions: [],
+        expected: HITL_CLARIFICATION_NODE,
+      },
+      {
+        label: "unapproved DELETE_FILE in safe mode -> hitl_clarification_node",
+        permissionMode: "safe",
+        unresolvedCount: 0,
+        actions: [
+          { actionId: "d1", type: "DELETE_FILE", relativePath: "old.md", fileId: "f1", rationale: "obsolete" },
+        ],
+        expected: HITL_CLARIFICATION_NODE,
+      },
+      {
+        label: "unapproved DELETE_FILE in semi_auto mode -> hitl_clarification_node",
+        permissionMode: "semi_auto",
+        unresolvedCount: 0,
+        actions: [
+          { actionId: "d1", type: "DELETE_FILE", relativePath: "old.md", fileId: "f1", rationale: "obsolete" },
+        ],
+        expected: HITL_CLARIFICATION_NODE,
+      },
+      {
+        label: "unapproved DELETE_FILE in full_auto mode -> ledger_commit_node",
+        permissionMode: "full_auto",
+        unresolvedCount: 0,
+        actions: [
+          { actionId: "d1", type: "DELETE_FILE", relativePath: "old.md", fileId: "f1", rationale: "obsolete" },
+        ],
+        expected: LEDGER_COMMIT_NODE,
+      },
+      {
+        label: "approved DELETE_FILE in safe mode -> ledger_commit_node",
+        permissionMode: "safe",
+        unresolvedCount: 0,
+        actions: [
+          {
+            actionId: "d1",
+            type: "DELETE_FILE",
+            relativePath: "old.md",
+            fileId: "f1",
+            rationale: "obsolete",
+            approved: true,
+          },
+        ],
+        expected: LEDGER_COMMIT_NODE,
+      },
+      {
+        label: "all decisions resolved and no deletions -> ledger_commit_node",
+        permissionMode: "safe",
+        unresolvedCount: 0,
+        actions: [
+          { actionId: "c1", type: "CREATE_FILE", relativePath: "new.md", rationale: "new spec" },
+        ],
+        expected: LEDGER_COMMIT_NODE,
+      },
+    ])("gateG05: $label", ({ permissionMode, unresolvedCount, actions, expected }) => {
+      const state = createInitialAgentGraphState({
+        user_request: {
+          prompt: "test",
+          workspaceId: "ws-1",
+          turnId: "t-1",
+          targetFileIds: [],
+          permissionMode,
+          selectedSystem2ModelId: "google/gemini-3.8-flash",
+        },
+        unresolved_ledger:
+          unresolvedCount > 0
+            ? [
+                {
+                  decisionId: "dec-u1",
+                  topicSlug: "t",
+                  questionPrompt: "q",
+                  conceptTags: [],
+                  reason: "ambiguous",
+                },
+              ]
+            : [],
+        pending_file_actions: actions,
+      });
+      expect(gateG05(state)).toBe(expected);
+    });
+
+    it.each([
+      {
+        label: "unconstrained assumptions with empty scored_decisions (Anti-Domino bypass) -> jev_conformal_scorer_node",
+        overrides: {
+          assumptions: [
+            {
+              assumptionId: "a1",
+              statement: "Confirmed override assumption",
+              conceptTags: [],
+              affectedSections: [],
+              dependsOn: [],
+            },
+          ],
           scored_decisions: [],
         },
-      };
-
-      const resumedResult = await app.invoke(resumeCommand as any, resumeConfig);
-
-      // Verify graph continued to completion without unhandled interruption
-      expect((resumedResult as any).__interrupt__).toBeUndefined();
-
-      // Verify pureInterruptNode cleaned question_queue and unresolved_ledger
-      expect(resumedResult.question_queue).toBeNull();
-      expect(resumedResult.unresolved_ledger).toEqual([]);
-
-      // Verify confirmation message was emitted
-      const clarificationMsg = resumedResult.messages.find(
-        (m) =>
-          typeof m.content === "string" &&
-          m.content.includes("User clarification submitted for 1 item(s)"),
-      );
-      expect(clarificationMsg).toBeDefined();
-
-      // Verify terminal checkpoint is clean
-      const finalState = await app.getState(config);
-      expect(finalState.next).toEqual([]);
-      expect(finalState.values.question_queue).toBeNull();
-      expect(finalState.values.unresolved_ledger).toEqual([]);
-    });
-  });
-
-  // ==========================================================================
-  // Suite 7: Stage 6 Financial Gate Interrupt
-  // ==========================================================================
-  describe("7. Stage 6 Financial Gate Interrupt", () => {
-    it("should immediately pause at pure_interrupt_node when credit failure occurs", async () => {
-      const checkpointer = new MemorySaver();
-      const app = createElixentAgentGraph({ checkpointer });
-
-      const threadId = "thread-financial-gate-1";
-      const config = {
-        configurable: {
-          thread_id: threadId,
-          userId: "user_broke_test",
-          workspaceProvider: mockProvider,
+        expected: JEV_CONFORMAL_SCORER_NODE,
+      },
+      {
+        label: "scored_decisions already populated -> ledger_commit_node",
+        overrides: {
+          assumptions: [
+            {
+              assumptionId: "a1",
+              statement: "Resolved via HITL",
+              conceptTags: [],
+              affectedSections: [],
+              dependsOn: [],
+            },
+          ],
+          scored_decisions: [{ decisionId: "a1", status: "APPROVED_DIRECT" }],
         },
-      };
+        expected: LEDGER_COMMIT_NODE,
+      },
+      {
+        label: "all assumptions constrainedByPrior -> ledger_commit_node",
+        overrides: {
+          assumptions: [
+            {
+              assumptionId: "a1",
+              statement: "Preserved prior",
+              conceptTags: [],
+              affectedSections: [],
+              dependsOn: [],
+              constrainedByPrior: true,
+            } as AgentGraphState["assumptions"][number],
+          ],
+          scored_decisions: [],
+        },
+        expected: LEDGER_COMMIT_NODE,
+      },
+    ])("gateAfterHitlClarification: $label", ({ overrides, expected }) => {
+      expect(gateAfterHitlClarification(createInitialAgentGraphState(overrides))).toBe(expected);
+    });
 
-      // Seed state up to question_organizer_node transition with credit failure flag
-      // When question_queue is null, pure_interrupt_node emits financial interrupt payload
-      await app.updateState(
-        config,
-        {
+    it.each([
+      {
+        label: "no invalidations, no file actions, no target files -> direct_response_node",
+        overrides: {},
+        expected: DIRECT_RESPONSE_NODE,
+      },
+      {
+        label: "invalidation_map non-empty -> workspace_mutator_node",
+        overrides: { invalidation_map: { d1: [{ fileId: "doc.md", headingSlug: "intro" }] } },
+        expected: WORKSPACE_MUTATOR_NODE,
+      },
+      {
+        label: "pending_file_actions non-empty -> workspace_mutator_node",
+        overrides: {
+          pending_file_actions: [
+            { actionId: "c1", type: "CREATE_FILE" as const, relativePath: "docs/new.md", rationale: "draft" },
+          ],
+        },
+        expected: WORKSPACE_MUTATOR_NODE,
+      },
+      {
+        label: "targetFileIds non-empty -> workspace_mutator_node",
+        overrides: {
           user_request: {
-            prompt: "Design large scale distributed filesystem",
-            projectId: "proj_fin_1",
-            targetFileIds: ["fs.md"],
+            prompt: "edit",
+            workspaceId: "ws-1",
+            turnId: "t-1",
+            targetFileIds: ["doc.md"],
+            permissionMode: "safe" as const,
+            selectedSystem2ModelId: "google/gemini-3.8-flash",
           },
-          question_queue: null,
-          unresolved_ledger: [],
         },
-        QUESTION_ORGANIZER_NODE,
-      );
-
-      // Invoking from QUESTION_ORGANIZER_NODE transitions to PURE_INTERRUPT_NODE
-      const result = await app.invoke(null, config);
-
-      expect((result as any).__interrupt__).toBeDefined();
-
-      const snapshot = await app.getState(config);
-      expect(snapshot.next).toEqual([PURE_INTERRUPT_NODE]);
-
-      // Verify typed financial interrupt payload
-      const interruptTask = snapshot.tasks.find((t) => t.name === PURE_INTERRUPT_NODE);
-      expect(interruptTask?.interrupts).toBeDefined();
-      expect(interruptTask?.interrupts.length).toBeGreaterThan(0);
-
-      const payload = interruptTask?.interrupts[0]?.value as any;
-      expect(payload.code).toBe("INSUFFICIENT_CREDITS");
-      expect(payload.message).toContain("Credit balance exhausted");
+        expected: WORKSPACE_MUTATOR_NODE,
+      },
+    ])("gateG06: $label", ({ overrides, expected }) => {
+      expect(gateG06(createInitialAgentGraphState(overrides))).toBe(expected);
     });
   });
 
-  // ==========================================================================
-  // Suite 8: Checkpoint State Retrieval & Thread Isolation
-  // ==========================================================================
-  describe("8. Checkpoint State Retrieval, Idempotency & Thread Isolation", () => {
-    it("should retrieve immutable 12-channel state snapshots idempotently via getState", async () => {
-      const checkpointer = new MemorySaver();
-      const app = createElixentAgentGraph({ checkpointer });
+  // =========================================================================
+  // Suite 3: End-to-End Native Graph Execution Paths
+  // =========================================================================
+  describe("3. End-to-End Native Graph Execution Paths", () => {
+    it("executes CHAT_ONLY fast path: Node 1 -> G-01 -> Node 9 -> END", async () => {
+      const provider = createMockWorkspaceProvider();
+      const { ctx } = createRuntimeContext(provider, { threadId: "th-chat-only" });
+      const runner = createElixentAgentGraph();
 
-      const threadId = "thread-idempotency-1";
-      const config = {
-        configurable: {
-          thread_id: threadId,
-          userId: "user_test_idem",
-          workspaceProvider: mockProvider,
-        },
-      };
-
-      const initialState: Partial<AgentGraphState> = {
+      const initialState = createInitialAgentGraphState({
         user_request: {
-          prompt: "Perform architectural baseline verification",
-          projectId: "proj_idem_1",
-          targetFileIds: ["baseline.md"],
+          prompt: "Hello there, how are you?",
+          workspaceId: provider.workspaceId,
+          turnId: "turn-chat-1",
+          targetFileIds: [],
+          permissionMode: "safe",
+          selectedSystem2ModelId: "google/gemini-3.8-flash",
         },
-      };
+      });
 
-      await app.invoke(initialState, config);
+      const { yields, finalState } = await collectGraphStream(runner, initialState, ctx);
 
-      const snapshot1 = await app.getState(config);
-      const snapshot2 = await app.getState(config);
+      expect(yields.map((y) => y.nodeId)).toEqual([
+        INTENT_AND_SCOPE_ROUTER_NODE,
+        DIRECT_RESPONSE_NODE,
+      ]);
+      expect(finalState.classified_intent).toBe("CHAT_ONLY");
+      expect(finalState.messages.some((m) => m.role === "assistant")).toBe(true);
+      expect(provider.writeDecisionLedger).not.toHaveBeenCalled();
+      expect(provider.mergeSectionThreeWay).not.toHaveBeenCalled();
+    });
 
-      // Verify all 12 state channels are present and deeply equivalent
-      const channels = [
-        "messages",
-        "user_request",
-        "search_report",
-        "local_inspection_state",
-        "assumptions",
-        "master_ledger",
-        "project_taxonomy",
-        "unresolved_ledger",
-        "invalidation_map",
-        "question_queue",
-        "budget_tracking",
-        "search_loop_count",
-      ];
+    it("executes WORKSPACE_READ_SEARCH path: Node 1 -> G-01 -> Node 2 -> G-02 -> Node 9 -> END", async () => {
+      const provider = createMockWorkspaceProvider();
+      const { ctx } = createRuntimeContext(provider, { threadId: "th-read-search" });
+      const runner = createElixentAgentGraph();
 
-      for (const channel of channels) {
-        expect(snapshot1.values[channel]).toBeDefined();
-        expect(snapshot1.values[channel]).toEqual(snapshot2.values[channel]);
+      const initialState = createInitialAgentGraphState({
+        user_request: {
+          prompt: "Summarize the caching architecture documentation",
+          workspaceId: provider.workspaceId,
+          turnId: "turn-search-1",
+          targetFileIds: ["cache.md"],
+          permissionMode: "safe",
+          selectedSystem2ModelId: "google/gemini-3.8-flash",
+        },
+      });
+
+      const { yields, finalState } = await collectGraphStream(runner, initialState, ctx);
+
+      expect(yields.map((y) => y.nodeId)).toEqual([
+        INTENT_AND_SCOPE_ROUTER_NODE,
+        SEARCH_DISCOVERY_NODE,
+        DIRECT_RESPONSE_NODE,
+      ]);
+      expect(finalState.classified_intent).toBe("WORKSPACE_READ_SEARCH");
+      expect(finalState.search_report.evidenceItems.length).toBeGreaterThan(0);
+      expect(finalState.messages.some((m) => m.role === "assistant")).toBe(true);
+    });
+
+    it("executes FAST_LOCAL_EDIT path: Node 1 -> G-01 -> Node 2 -> G-02 -> Node 8 -> END with ghost_hunk_proposed", async () => {
+      const provider = createMockWorkspaceProvider();
+      const { ctx, events } = createRuntimeContext(provider, {
+        threadId: "th-fast-edit",
+        permissionMode: "safe",
+      });
+      const runner = createElixentAgentGraph();
+
+      const initialState = createInitialAgentGraphState({
+        user_request: {
+          prompt: "Fix typo and polish the caching paragraph",
+          workspaceId: provider.workspaceId,
+          turnId: "turn-fast-1",
+          targetFileIds: ["cache.md"],
+          permissionMode: "safe",
+          selectedSystem2ModelId: "google/gemini-3.8-flash",
+        },
+      });
+
+      const { yields, finalState } = await collectGraphStream(runner, initialState, ctx);
+
+      expect(yields.map((y) => y.nodeId)).toEqual([
+        INTENT_AND_SCOPE_ROUTER_NODE,
+        SEARCH_DISCOVERY_NODE,
+        WORKSPACE_MUTATOR_NODE,
+      ]);
+      expect(finalState.classified_intent).toBe("FAST_LOCAL_EDIT");
+      expect(finalState.invalidation_map).toEqual({});
+      expect(provider.mergeSectionThreeWay).toHaveBeenCalledTimes(1);
+      expect(events.some((e) => e.type === "ghost_hunk_proposed")).toBe(true);
+    });
+
+    it("executes full 8-node architectural modification pipeline with encrypted checkpoints and ledger commit", async () => {
+      const provider = createMockWorkspaceProvider();
+      const { ctx } = createRuntimeContext(provider, { threadId: "th-arch-full" });
+      const runner = createElixentAgentGraph();
+
+      const initialState = createInitialAgentGraphState({
+        user_request: {
+          prompt: "Update database architecture design for modular caching",
+          workspaceId: provider.workspaceId,
+          turnId: "turn-arch-1",
+          targetFileIds: ["cache.md"],
+          permissionMode: "safe",
+          selectedSystem2ModelId: "google/gemini-3.8-flash",
+        },
+      });
+
+      const { yields, finalState } = await collectGraphStream(runner, initialState, ctx);
+
+      expect(yields.map((y) => y.nodeId)).toEqual([
+        INTENT_AND_SCOPE_ROUTER_NODE,
+        SEARCH_DISCOVERY_NODE,
+        ASSUMPTION_EXTRACTOR_NODE,
+        CONFLICT_AND_WEIGHT_GATE_NODE,
+        JEV_CONFORMAL_SCORER_NODE,
+        LEDGER_COMMIT_NODE,
+        WORKSPACE_MUTATOR_NODE,
+      ]);
+
+      expect(finalState.classified_intent).toBe("ARCHITECTURAL_MODIFICATION");
+      expect(Object.keys(finalState.master_ledger).length).toBeGreaterThan(0);
+      expect(finalState.unresolved_ledger).toEqual([]);
+      expect(finalState.invalidation_map).toEqual({});
+      expect(provider.writeDecisionLedger).toHaveBeenCalledTimes(1);
+      expect(provider.mergeSectionThreeWay).toHaveBeenCalledTimes(1);
+
+      // Every completed node persisted 1 encrypted AES-256-GCM checkpoint row
+      const persisted = Array.from(checkpointRows.values()).filter(
+        (r) => r.threadId === "th-arch-full",
+      );
+      expect(persisted).toHaveLength(7);
+      for (const row of persisted) {
+        const parsed = JSON.parse(row.encryptedStateBlob.toString("utf-8"));
+        expect(isEncryptedCheckpointEnvelope(parsed)).toBe(true);
       }
     });
+  });
 
-    it("should maintain strict execution and checkpoint isolation across different thread IDs", async () => {
-      const checkpointer = new MemorySaver();
-      const app = createElixentAgentGraph({ checkpointer });
-
-      const configA = {
-        configurable: {
-          thread_id: "thread-isolated-A",
-          userId: "user_A",
-          workspaceProvider: mockProvider,
-        },
-      };
-
-      const configB = {
-        configurable: {
-          thread_id: "thread-isolated-B",
-          userId: "user_B",
-          workspaceProvider: mockProvider,
-        },
-      };
-
-      await app.invoke(
+  // =========================================================================
+  // Suite 4: Native HITL Interrupt & Checkpoint Resumption Lifecycle
+  // =========================================================================
+  describe("4. Native HITL Clarification Interrupt & Checkpoint Resumption", () => {
+    it("suspends at hitl_clarification_node on unresolved JEV output and resumes cleanly into ledger_commit_node -> workspace_mutator_node", async () => {
+      mockEvaluateDecisionBatch.mockResolvedValueOnce([
         {
-          user_request: {
-            prompt: "Thread A Prompt",
-            projectId: "proj_A",
-            targetFileIds: ["fileA.md"],
-          },
+          decisionId: "dec_sync_protocol",
+          topicSlug: "sync_protocol",
+          questionPrompt: "Adopt Diff3 three-way merge or CRDT Yjs?",
+          conceptTags: ["system_architecture"],
+          status: "UNRESOLVED",
+          impactTier: "CORE_ARCHITECTURAL",
+          isLoadBearing: true,
+          selectedOptionKey: null,
+          selectionRationale: "",
+          runnerUpOptionKey: null,
+          evaluatedAlternatives: [
+            {
+              optionKey: "adopt_diff3",
+              neutralSummary: "Diff3 three-way merge",
+              rationaleAndPremises: "Optimal for single-user offline sync.",
+              normalizedProbability: 0.52,
+            },
+            {
+              optionKey: "adopt_crdt",
+              neutralSummary: "CRDT Yjs collaborative merge",
+              rationaleAndPremises: "Enables real-time multi-user editing.",
+              normalizedProbability: 0.48,
+            },
+          ],
+          predictionSetCore: ["adopt_diff3", "adopt_crdt"],
+          predictionSetPeriph: ["adopt_diff3", "adopt_crdt"],
+          dominanceMargin: 0.04,
+          evidenceGrounding: 0.5,
+          reason: "Conformal APS multi-option set requires human choice",
         },
-        configA,
+      ]);
+
+      const provider = createMockWorkspaceProvider();
+      const runner = createElixentAgentGraph();
+      const threadId = "th-hitl-e2e-1";
+
+      // Pass 1: Runs Node 1 -> 2 -> 3 -> 4 -> 5 -> G-05 -> Node 6 (INTERRUPTED)
+      const pass1 = createRuntimeContext(provider, { threadId, turnId: "turn-hitl-1" });
+      const initialState = createInitialAgentGraphState({
+        user_request: {
+          prompt: "Modify sync system architecture protocol",
+          workspaceId: provider.workspaceId,
+          turnId: "turn-hitl-1",
+          targetFileIds: ["sync.md"],
+          permissionMode: "safe",
+          selectedSystem2ModelId: "google/gemini-3.8-flash",
+        },
+      });
+
+      const { yields: yields1, finalState: suspendedState } = await collectGraphStream(
+        runner,
+        initialState,
+        pass1.ctx,
       );
 
-      await app.invoke(
+      const lastYield1 = yields1[yields1.length - 1];
+      expect(lastYield1.nodeId).toBe(HITL_CLARIFICATION_NODE);
+      expect(lastYield1.status).toBe("INTERRUPTED");
+      expect(lastYield1.interruptReason).toBe("HITL_CLARIFICATION_REQUIRED");
+      expect(suspendedState.question_queue?.questions).toHaveLength(1);
+      expect(suspendedState.question_queue?.questions[0].questionId).toBe("dec_sync_protocol");
+
+      const checkpoint1 = await runner.loadLatestCheckpoint(provider.workspaceId, threadId);
+      expect(checkpoint1?.status).toBe("INTERRUPTED");
+      expect(checkpoint1?.nodeId).toBe(HITL_CLARIFICATION_NODE);
+
+      // Pass 2: Resume from encrypted checkpoint with user's choice -> Node 6 -> Node 7 -> Node 8 -> END
+      const pass2 = createRuntimeContext(provider, { threadId, turnId: "turn-hitl-2" });
+      const { yields: yields2, finalState: resumedState } = await collectGraphStream(
+        runner,
         {
-          user_request: {
-            prompt: "Thread B Prompt",
-            projectId: "proj_B",
-            targetFileIds: ["fileB.md"],
+          resumeFromCheckpoint: true,
+          stateOverrides: {
+            clarification_answers: {
+              answers: [
+                {
+                  questionId: "dec_sync_protocol",
+                  selectedOptionKey: "adopt_diff3",
+                  customNotes: "Diff3 fits single-user offline architecture.",
+                },
+              ],
+            },
           },
         },
-        configB,
+        pass2.ctx,
       );
 
-      const stateA = await app.getState(configA);
-      const stateB = await app.getState(configB);
+      expect(yields2.map((y) => y.nodeId)).toEqual([
+        HITL_CLARIFICATION_NODE,
+        LEDGER_COMMIT_NODE,
+        WORKSPACE_MUTATOR_NODE,
+      ]);
+      expect(resumedState.question_queue).toBeNull();
+      expect(resumedState.unresolved_ledger).toEqual([]);
+      expect(resumedState.master_ledger["dec_sync_protocol"]?.selectedOptionKey).toBe(
+        "adopt_diff3",
+      );
+      expect(resumedState.master_ledger["dec_sync_protocol"]?.provenance).toBe(
+        "USER_EXPLICIT_HITL",
+      );
+      expect(resumedState.invalidation_map).toEqual({});
+      expect(provider.writeDecisionLedger).toHaveBeenCalledTimes(1);
+    });
+  });
 
-      expect(stateA.values.user_request.projectId).toBe("proj_A");
-      expect(stateB.values.user_request.projectId).toBe("proj_B");
+  // =========================================================================
+  // Suite 5: Financial Gate Native Interrupt & Multi-Thread Isolation
+  // =========================================================================
+  describe("5. Financial Gate Interrupt & Multi-Thread Checkpoint Isolation", () => {
+    it("freezes graph immediately with INSUFFICIENT_CREDITS when a metered node cannot afford reservation", async () => {
+      creditGateControl.failOnNodeId = SEARCH_DISCOVERY_NODE;
+      creditGateControl.availableMicro = 150;
+      creditGateControl.requiredMicro = 420_000;
 
-      expect(stateA.values.user_request.targetFileIds).toEqual(["fileA.md"]);
-      expect(stateB.values.user_request.targetFileIds).toEqual(["fileB.md"]);
+      const provider = createMockWorkspaceProvider();
+      const { ctx, events } = createRuntimeContext(provider, {
+        threadId: "th-credit-stop",
+      });
+      const runner = createElixentAgentGraph();
+
+      const initialState = createInitialAgentGraphState({
+        user_request: {
+          prompt: "Update security architecture spec",
+          workspaceId: provider.workspaceId,
+          turnId: "turn-broke",
+          targetFileIds: ["cache.md"],
+          permissionMode: "safe",
+          selectedSystem2ModelId: "google/gemini-4-argon",
+        },
+      });
+
+      const { yields } = await collectGraphStream(runner, initialState, ctx);
+
+      expect(yields.map((y) => [y.nodeId, y.status])).toEqual([
+        [INTENT_AND_SCOPE_ROUTER_NODE, "COMPLETED"],
+        [SEARCH_DISCOVERY_NODE, "INTERRUPTED"],
+      ]);
+      expect(yields[1].interruptReason).toBe("INSUFFICIENT_CREDITS");
+      expect(yields[1].interruptPayload).toEqual({
+        availableMicro: 150,
+        requiredMicro: 420_000,
+      });
+      expect(events.some((e) => e.type === "interrupt")).toBe(true);
+      expect(events.some((e) => e.type === "done")).toBe(false);
+
+      const saved = await runner.loadLatestCheckpoint(provider.workspaceId, "th-credit-stop");
+      expect(saved?.status).toBe("INTERRUPTED");
+      expect(saved?.nodeId).toBe(SEARCH_DISCOVERY_NODE);
+    });
+
+    it("isolates encrypted checkpoints cleanly across concurrent thread IDs", async () => {
+      const providerA = createMockWorkspaceProvider("ws-iso-a");
+      const providerB = createMockWorkspaceProvider("ws-iso-b");
+      const runner = createElixentAgentGraph();
+
+      const ctxA = createRuntimeContext(providerA, { threadId: "thread-isolated-A" }).ctx;
+      const ctxB = createRuntimeContext(providerB, { threadId: "thread-isolated-B" }).ctx;
+
+      await runner.invoke(
+        createInitialAgentGraphState({
+          user_request: {
+            prompt: "Hello from Thread A",
+            workspaceId: "ws-iso-a",
+            turnId: "turn-a",
+            targetFileIds: [],
+            permissionMode: "safe",
+            selectedSystem2ModelId: "google/gemini-3.8-flash",
+          },
+        }),
+        ctxA,
+      );
+
+      await runner.invoke(
+        createInitialAgentGraphState({
+          user_request: {
+            prompt: "Hello from Thread B",
+            workspaceId: "ws-iso-b",
+            turnId: "turn-b",
+            targetFileIds: [],
+            permissionMode: "full_auto",
+            selectedSystem2ModelId: "google/gemini-4-argon",
+          },
+        }),
+        ctxB,
+      );
+
+      const snapA = await runner.loadLatestCheckpoint("ws-iso-a", "thread-isolated-A");
+      const snapB = await runner.loadLatestCheckpoint("ws-iso-b", "thread-isolated-B");
+
+      expect(snapA?.state.user_request.prompt).toBe("Hello from Thread A");
+      expect(snapB?.state.user_request.prompt).toBe("Hello from Thread B");
+      expect(snapA?.state.user_request.permissionMode).toBe("safe");
+      expect(snapB?.state.user_request.permissionMode).toBe("full_auto");
     });
   });
 });
