@@ -14,7 +14,7 @@ automated tests remain the single source of truth for all technical claims.
 docs/
 ├── README.md                          ← you are here (structural master index)
 ├── DOCUMENTATION_GUIDELINES.md        ← repository-visible authoring standards & planning governance
-├── CHANGELOG.md                       ← release history (Elixent v0.1.0 to v0.26.0; archived LUGX v1.0.0–v1.46.3)
+├── CHANGELOG.md                       ← release history (Elixent v0.1.0 to v0.26.1; archived LUGX v1.0.0–v1.46.3)
 ├── TECHNICAL_DEBT_REGISTER.md         ← living technical debt & architectural decisions (TD-01 to TD-21)
 ├── METRICS.json                       ← automated single source of truth for test & suite metrics
 │
@@ -293,7 +293,7 @@ docs/
 ## 4. Verification Commands
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 155 unit suites (3140 tests) · 22 live suites (101 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 155 unit suites (3151 tests) · 22 live suites (101 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ```bash
@@ -302,7 +302,7 @@ npm run lint:links      # deterministic markdown internal link verification (zer
 npm run test:ci-gate    # deterministic CI gating simulation matrix (30 assertions, zero broken contracts)
 npx tsc --noEmit        # strict TypeScript type-checking (0 errors)
 npm run audit:ci        # dependency security gate: production fail-closed (0 vulnerabilities) + dev allowlist (TD-15)
-npm run test            # pure unit, contract, and vault cryptographic test suites (155 files, 3140 tests via vitest.config.mts)
+npm run test            # pure unit, contract, and vault cryptographic test suites (155 files, 3151 tests via vitest.config.mts)
 npm run test:live       # live database integration suites against isolated test PostgreSQL/Neon (22 files, 101 tests via vitest.live.config.mts)
 npm run test:e2e        # browser-driven E2E user journeys (14 specs, 15 scenarios via Playwright / Chromium)
 npm run test:all        # full suite execution (unit + live)

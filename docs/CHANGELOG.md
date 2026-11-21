@@ -4,6 +4,23 @@ All notable architectural, engineering, and governance changes to the **Elixent*
 
 ---
 
+## [0.26.1] - 2026-11-21 (E2E Root-Cause Remediation, Agent Workspace Resolution, Fail-Fast AI Gateway & CI Stage 6 Hardening)
+
+### Production Fixes (`src/server/routes/agent.routes.ts`, `src/lib/ai/`)
+- **Strict Workspace UUID Resolution & Legacy `projectId` Compatibility (`src/server/routes/agent.routes.ts`):** Checked explicit `workspaceId` presence on the raw JSON request body prior to `parseAgentStreamPayload` normalization (`hasExplicitWorkspaceId`), returning RFC 7807 `400` ProblemDetails for malformed explicit UUIDs and `404` for unowned workspaces via `resolveOrEnsureWorkspaceId` (`WorkspaceNotFoundError`), while resolving legacy non-UUID `projectId` callers to the user's Default Workspace UUID (`resolveDefaultWorkspaceUuid` / `deriveDefaultWorkspaceId`) before creating `CloudPostgresWorkspaceProvider` or persisting `agent_checkpoints`.
+- **Fail-Fast AI Gateway Classification & Retry Isolation (`src/lib/ai/client.ts`, `src/lib/ai/key-rotation.ts`):** Passed `maxRetries: 0` to Vercel AI SDK `generateText` (`executeStructuredGeneration`, `executeToolAgentGeneration`) and `streamText` (`executeStreamingGeneration`) to eliminate nested `3x` SDK retry amplification inside the key-rotation loop, and updated `classifyGeminiError` to classify HTTP `404` and model-not-found errors (`model not found`, `is not found`, `not supported for generatecontent`) as non-rotatable `invalid_request` (`retryableWithKey: false`).
+
+### CI Stage 6 & Playwright E2E Harness Hardening (`.github/workflows/ci.yml`, `e2e/`, `playwright.config.ts`)
+- **Stage 6 Schema Synchronization Gate (`.github/workflows/ci.yml`):** Added mandatory `node scripts/verify-migrations.mjs` execution inside Stage 6 (`Execute Playwright E2E Test Suites`) immediately after secret verification and before `npx playwright test`, emitting a fail-closed error and step summary if migrations fail.
+- **Fail-Fast E2E Global Setup & Transparent Auth Diagnostics (`e2e/global-setup.ts`, `playwright.config.ts`, `e2e/fixtures/auth-fixture.ts`):** Added `e2e/global-setup.ts` enforcing `assertSafeTestDatabaseUrl`, executing `SELECT 1` (surfacing `28P01` credential failures before spawning browsers), and verifying required schema tables (`users`, `workspaces`, `files`, `agent_checkpoints`, `credit_ledger_transactions`, `user_vault_profiles`); updated `auth-fixture.ts` (`assertAuthResponseOk`) to report HTTP status and response body on `/api/test/e2e-auth` failure.
+- **Deterministic E2E Spec Fixes (`e2e/specs/04-offline-sync-conflict.spec.ts`, `e2e/specs/12-vault-ai-shield.spec.ts`):** Updated Scenario 4 to replace the document content via `ControlOrMeta+a` so local and remote Line 1 edits genuinely overlap (triggering `ConflictDialog` while keeping `LUGX-054` word-level Diff3 auto-merge intact), and updated Scenario 13 to probe `/api/agent/stream` with streaming `fetch` + `AbortController` (`HTTP 200`, `text/event-stream`, `event: start` frame) instead of buffering an open SSE stream to EOF.
+
+### Verification
+- **Unit & Integration Suites (`src/test/server/agent-routes.test.ts`, `src/test/agent/agent-stream-route.test.ts`, `src/test/ai/ai-key-rotation-400.test.ts`, `src/test/ai/ai-client.test.ts`):** Added 11 unit tests covering explicit `workspaceId` `400`/`404` guards, legacy `projectId` default UUID fallback, HTTP `404` non-rotatable classification, and `maxRetries: 0` SDK boundary configuration (`npm run test`: `155` unit suites / `3,151` tests passing).
+- **Full Gate Verification:** `npx tsc --noEmit` (`0` errors), `npm run lint` (`0` errors, `0` warnings), `npm run test:ci-gate` (`30/30` passed), `npm run test:e2e` (`14` specs / `15` journeys passing), `npm run docs:check` (100% synced), and `npm run lint:links` (`0` broken links).
+
+---
+
 ## [0.26.0] - 2026-11-20 (Phase 3: Elixent Native Graph Engine, 9 Canonical Nodes, Weight Gate & `@langchain/*` Purge)
 
 ### Native Graph Engine, 18-Channel State & Native Metered Gate (`Wave 3.1` · `ADR-009`, `SRS-01`)
