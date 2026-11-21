@@ -162,6 +162,48 @@ export interface UpdateVaultRecoveryEnvelopeInput {
   recoverySalt?: string;
 }
 
+export type WorkspacePermissionMode = "safe" | "semi_auto" | "full_auto";
+
+export interface WorkspaceRecord {
+  id: string;
+  userId: string;
+  name: string;
+  description: string | null;
+  isEncrypted: boolean;
+  defaultPermissionMode: WorkspacePermissionMode;
+  createdAt: WireTimestamp;
+  updatedAt: WireTimestamp;
+}
+
+export interface WorkspaceOpResult<T = WorkspaceRecord> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  status?: "unauthorized" | "not_found" | "forbidden" | "conflict" | "error";
+  statusCode?: number;
+}
+
+export interface CreateWorkspaceInput {
+  name: string;
+  description?: string | null;
+  isEncrypted?: boolean;
+  defaultPermissionMode?: WorkspacePermissionMode;
+}
+
+export interface UpdateWorkspaceInput {
+  name?: string;
+  description?: string | null;
+  isEncrypted?: boolean;
+  defaultPermissionMode?: WorkspacePermissionMode;
+}
+
+export interface DecryptedWorkspaceFilePayload {
+  fileId: string;
+  content: string;
+  expectedVersion?: number;
+  expectedETag?: string;
+}
+
 // ============================================================================
 // Shared Zod Validation Schemas
 // ============================================================================
@@ -234,4 +276,45 @@ export const updateVaultPasswordSchema = z.object({
 export const updateVaultRecoveryEnvelopeSchema = z.object({
   recoveryEncryptedMasterKey: z.string(),
   recoverySalt: z.string().optional(),
+});
+
+export const workspacePermissionModeSchema = z.enum([
+  "safe",
+  "semi_auto",
+  "full_auto",
+]);
+
+export const createWorkspaceSchema = z.object({
+  name: z.string().trim().min(1).max(255),
+  description: z.string().nullable().optional(),
+  isEncrypted: z.boolean().optional(),
+  defaultPermissionMode: workspacePermissionModeSchema.optional(),
+});
+
+export const updateWorkspaceSchema = z.object({
+  workspaceId: uuidStringSchema,
+  name: z.string().trim().min(1).max(255).optional(),
+  description: z.string().nullable().optional(),
+  isEncrypted: z.boolean().optional(),
+  defaultPermissionMode: workspacePermissionModeSchema.optional(),
+});
+
+export const deleteWorkspaceSchema = z.object({
+  workspaceId: uuidStringSchema,
+});
+
+export const decryptWorkspaceAllSchema = z.object({
+  workspaceId: uuidStringSchema,
+  decryptedFilesPayload: z.array(
+    z.object({
+      fileId: uuidStringSchema,
+      content: z.string(),
+      expectedVersion: z.number().int().optional(),
+      expectedETag: z.string().optional(),
+    })
+  ),
+});
+
+export const restoreWorkspaceFileSchema = z.object({
+  fileId: z.string().min(1),
 });

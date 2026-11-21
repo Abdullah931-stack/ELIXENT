@@ -22,7 +22,6 @@ import {
   type AgentPermissionMode,
 } from "@/core/agent/state";
 import type { IWorkspaceProvider } from "@/core/workspace/provider";
-import type { StreamGovernor } from "@/lib/metering/stream-governor";
 
 /**
  * Interrupt reasons supported by the Elixent Native Graph Engine and `agent_checkpoints`.
@@ -99,7 +98,6 @@ export interface AgentRuntimeContext {
   readonly permissionMode: AgentPermissionMode;
   readonly selectedSystem2ModelId: string;
   readonly workspaceProvider: IWorkspaceProvider;
-  readonly streamGovernor: StreamGovernor;
   readonly ephemeralVaultPayloads: ReadonlyMap<string, string>;
   readonly liveDocumentSnapshots: ReadonlyMap<string, string>;
   readonly emitSseEvent: (event: AgentStreamEvent) => void;

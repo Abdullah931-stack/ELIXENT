@@ -19,6 +19,13 @@ import {
 import { moveFile, getFolderChildren } from "@/server/actions/folders";
 import { importFile } from "@/server/actions/import-file";
 import {
+  listUserWorkspaces,
+  createWorkspace,
+  updateWorkspace,
+  deleteWorkspace,
+  decryptEntireWorkspace,
+} from "@/server/actions/workspaces";
+import {
   getUserVaultProfile,
   createUserVaultProfile,
   updateVaultPassword,
@@ -48,6 +55,11 @@ import {
   updateVaultRecoveryEnvelopeSchema,
   trimmedTitleSchema,
   uuidStringSchema,
+  createWorkspaceSchema,
+  updateWorkspaceSchema,
+  deleteWorkspaceSchema,
+  decryptWorkspaceAllSchema,
+  restoreWorkspaceFileSchema,
   type UpdateFileOptions,
   type DeleteFileOptions,
   type ImportEncryptionOptions,
@@ -215,6 +227,22 @@ async function handleGetFile(fileId: string) {
   return await getFile(fileId);
 }
 
+function mapWorkspaceStatusCode(
+  statusCode?: number
+): 200 | 400 | 401 | 403 | 404 | 409 | 500 {
+  switch (statusCode) {
+    case 400:
+    case 401:
+    case 403:
+    case 404:
+    case 409:
+    case 500:
+      return statusCode;
+    default:
+      return 200;
+  }
+}
+
 export const rpcRoutes = new Hono()
   // -------------------------------------------------------------
   // Files & Folders
@@ -305,12 +333,7 @@ export const rpcRoutes = new Hono()
   )
   .post(
     "/files/restore",
-    zValidator(
-      "json",
-      z.object({
-        fileId: z.string(),
-      })
-    ),
+    zValidator("json", restoreWorkspaceFileSchema),
     async (c) => {
       const { fileId } = c.req.valid("json");
       const result = await restoreFile(fileId);
@@ -671,6 +694,50 @@ export const rpcRoutes = new Hono()
     }
     const balance = await getUserCreditBalance(user.id);
     return c.json({ success: true as const, balanceMicro: balance.toString() }, 200);
-  });
+  })
+
+  // -------------------------------------------------------------
+  // Workspaces
+  // -------------------------------------------------------------
+  .get("/workspaces/list", async (c) => {
+    const result = await listUserWorkspaces();
+    return c.json(result, mapWorkspaceStatusCode(result.statusCode));
+  })
+  .post(
+    "/workspaces/create",
+    zValidator("json", createWorkspaceSchema),
+    async (c) => {
+      const input = c.req.valid("json");
+      const result = await createWorkspace(input);
+      return c.json(result, mapWorkspaceStatusCode(result.statusCode));
+    }
+  )
+  .post(
+    "/workspaces/update",
+    zValidator("json", updateWorkspaceSchema),
+    async (c) => {
+      const { workspaceId, ...rest } = c.req.valid("json");
+      const result = await updateWorkspace(workspaceId, rest);
+      return c.json(result, mapWorkspaceStatusCode(result.statusCode));
+    }
+  )
+  .post(
+    "/workspaces/delete",
+    zValidator("json", deleteWorkspaceSchema),
+    async (c) => {
+      const { workspaceId } = c.req.valid("json");
+      const result = await deleteWorkspace(workspaceId);
+      return c.json(result, mapWorkspaceStatusCode(result.statusCode));
+    }
+  )
+  .post(
+    "/workspaces/decrypt-all",
+    zValidator("json", decryptWorkspaceAllSchema),
+    async (c) => {
+      const { workspaceId, decryptedFilesPayload } = c.req.valid("json");
+      const result = await decryptEntireWorkspace(workspaceId, decryptedFilesPayload);
+      return c.json(result, mapWorkspaceStatusCode(result.statusCode));
+    }
+  );
 
 export type AppType = typeof rpcRoutes;

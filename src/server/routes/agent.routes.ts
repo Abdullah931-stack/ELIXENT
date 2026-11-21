@@ -6,8 +6,8 @@
  *
  * Specifications & Architectural Invariants:
  * 1. ELIXENT-ARCH-03 §5.1 & §5.2: Transient EphemeralVaultMemoryMap hydration and zeroing.
- * 2. ELIXENT-ARCH-02 §6: StreamGovernor dynamic multi-slice reservation, runway monitoring,
- *    and fail-closed termination.
+ * 2. SRS-04 §3.2 REQ-METER-02 (BUG-04): Single-layer open-ceiling metering inside graph nodes
+ *    (`withMeteredNodeGate`); zero route-level StreamGovernor double-metering.
  * 3. Hono Route Standards: background flush via `scheduleAfterResponse() (ADR-007 ALS)`.
  * 4. Zero-Knowledge Hygiene: Vault plaintexts never enter persistent state or error logs.
  */
@@ -48,7 +48,6 @@ import {
   parseMarkdownHeadingTree,
   extractSectionBySlug,
 } from "@/core/ast/heading-slicer";
-import { StreamGovernor } from "@/lib/metering/stream-governor";
 import { flushPendingSettlementsToPostgres } from "@/server/services/ai-settlement-service";
 import { sanitizeLogMessage } from "@/lib/sync/log-sanitizer";
 import { db } from "@/server/db";
@@ -57,16 +56,6 @@ import {
   resolveOrEnsureWorkspaceId,
   WorkspaceNotFoundError,
 } from "@/server/actions/workspaces";
-
-/**
- * Default model identifier used for agent state graph streaming.
- */
-const AGENT_STREAM_MODEL_ID = "google/gemini-3.8-flash";
-
-/**
- * Initial reservation tokens (1,200 tokens = 10s chunk @ V=120).
- */
-const INITIAL_RESERVATION_TOKENS = 1200;
 
 /**
  * Strict UUID pattern for validating explicit workspaceId and projectId UUIDs.
@@ -351,7 +340,7 @@ export async function handleAgentStreamPost(req: Request): Promise<Response> {
 
   const operationId = `op_${crypto.randomUUID()}`;
 
-  // 4. Initialize Stream AbortController & StreamGovernor
+  // 4. Initialize Stream AbortController
   const abortController = new AbortController();
   if (req.signal.aborted) {
     abortController.abort(req.signal.reason);
@@ -364,18 +353,6 @@ export async function handleAgentStreamPost(req: Request): Promise<Response> {
       { once: true }
     );
   }
-
-  const governor = new StreamGovernor(
-    user.id,
-    operationId,
-    AGENT_STREAM_MODEL_ID,
-    INITIAL_RESERVATION_TOKENS,
-    abortController,
-    {
-      threadId: payload.threadId,
-      stepKey: operationId,
-    }
-  );
 
   // 5. Schedule background settlement flush to PostgreSQL via scheduleAfterResponse() (ADR-007 ALS)
   scheduleAfterResponse(async () => {
@@ -410,7 +387,7 @@ export async function handleAgentStreamPost(req: Request): Promise<Response> {
             const turnId = payload.turnId ?? operationId;
             const permissionMode = payload.permissionMode ?? "safe";
             const selectedSystem2ModelId =
-              payload.selectedSystem2ModelId ?? AGENT_STREAM_MODEL_ID;
+              payload.selectedSystem2ModelId ?? "google/gemini-3.8-flash";
 
             const graphInput: GraphExecutionInput =
               payload.resumePayload !== undefined
@@ -448,7 +425,6 @@ export async function handleAgentStreamPost(req: Request): Promise<Response> {
               permissionMode,
               selectedSystem2ModelId,
               workspaceProvider,
-              streamGovernor: governor,
               ephemeralVaultPayloads: new Map(
                 Object.entries(payload.ephemeralVaultPayloads ?? {})
               ),
@@ -545,21 +521,6 @@ export async function handleAgentStreamPost(req: Request): Promise<Response> {
                 continue;
               }
 
-              // Meter chunk through StreamGovernor
-              const chunkStr = typeof chunk === "string" ? chunk : JSON.stringify(chunk);
-              const permitted = await governor.onTokenChunk(chunkStr);
-
-              if (!permitted) {
-                abortController.abort("GOVERNOR_QUOTA_EXHAUSTED");
-                const quotaErrorFrame = formatSSE("error", {
-                  type: "error",
-                  code: "QUOTA_EXCEEDED",
-                  message: "Streaming credit quota exhausted or slice hold expired",
-                });
-                controller.enqueue(encoder.encode(quotaErrorFrame));
-                break;
-              }
-
               // Skip duplicate final update frame for direct_response_node (already streamed via emitSseEvent)
               if (
                 chunk &&
@@ -621,11 +582,6 @@ export async function handleAgentStreamPost(req: Request): Promise<Response> {
       } finally {
         zeroOutEphemeralVaultMemory();
         try {
-          await governor.settle(abortController.signal.aborted ? "ABORTED" : "SETTLED");
-        } catch {
-          // Enforce fail-closed settlement
-        }
-        try {
           controller.close();
         } catch {
           // Safe ignore
@@ -635,11 +591,6 @@ export async function handleAgentStreamPost(req: Request): Promise<Response> {
     async cancel(reason) {
       abortController.abort(reason);
       zeroOutEphemeralVaultMemory();
-      try {
-        await governor.settle("ABORTED");
-      } catch {
-        // Enforce fail-closed settlement
-      }
     },
   });
 

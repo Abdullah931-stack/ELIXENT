@@ -5,14 +5,10 @@ import { handleAgentStreamPost as agentStreamRoute } from "@/server/routes/agent
 const {
     mockRequireAuthenticatedUser,
     mockGraphStream,
-    mockGovernorOnTokenChunk,
-    mockGovernorSettle,
     mockDb,
 } = vi.hoisted(() => ({
     mockRequireAuthenticatedUser: vi.fn(),
     mockGraphStream: vi.fn(),
-    mockGovernorOnTokenChunk: vi.fn(),
-    mockGovernorSettle: vi.fn(),
     mockDb: {
         query: {
             users: { findFirst: vi.fn() },
@@ -68,19 +64,10 @@ vi.mock("@/core/agent/graph", () => ({
     },
 }));
 
-vi.mock("@/lib/metering/stream-governor", () => ({
-    StreamGovernor: class MockStreamGovernor {
-        onTokenChunk = mockGovernorOnTokenChunk;
-        settle = mockGovernorSettle;
-    },
-}));
-
 describe("Phase 11: Replay Attack Defense & Request Fingerprint Validation", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockRequireAuthenticatedUser.mockResolvedValue({ id: "user_test_replay" });
-        mockGovernorOnTokenChunk.mockResolvedValue(true);
-        mockGovernorSettle.mockResolvedValue({ status: "SETTLED" });
     });
 
     it("computes deterministic SHA-256 fingerprint from (userId, operation, fileId, text)", () => {

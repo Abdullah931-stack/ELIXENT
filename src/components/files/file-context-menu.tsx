@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Trash2, Edit3, Copy, FolderInput, RotateCcw, Lock, Unlock, Loader2 } from "lucide-react";
 import {
     deleteFile,
-    restoreFile,
+    restoreWorkspaceFileRpc,
     renameFile,
     copyFile,
     moveFile,
@@ -91,7 +91,7 @@ export function FileContextMenu({
     async function handleRestore() {
         setIsTransforming(true);
         try {
-            const result = await restoreFile(fileId);
+            const result = await restoreWorkspaceFileRpc(fileId);
             if (result.success) {
                 onRefresh?.();
                 onClose();

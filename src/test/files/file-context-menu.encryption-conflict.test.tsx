@@ -14,7 +14,7 @@ vi.mock("@/client/rpc-client", () => ({
     toggleFileEncryption: vi.fn(),
     getFile: vi.fn(),
     deleteFile: vi.fn(),
-    restoreFile: vi.fn(),
+    restoreWorkspaceFileRpc: vi.fn(),
     renameFile: vi.fn(),
     copyFile: vi.fn(),
     moveFile: vi.fn(),

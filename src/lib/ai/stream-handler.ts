@@ -44,10 +44,35 @@ export interface AgentInterruptItem {
     when?: string;
 }
 
+export interface AgentStreamGhostHunkProposedEvent {
+    type: 'ghost_hunk_proposed';
+    fileId: string;
+    headingSlug: string;
+    hunks: Array<Record<string, unknown>>;
+}
+
+export interface AgentStreamFileMutatedEvent {
+    type: 'file_mutated';
+    fileId: string;
+    relativePath: string;
+    action: 'created' | 'deleted' | 'updated';
+}
+
+export interface AgentStreamVaultFileCommitRequiredEvent {
+    type: 'vault_file_commit_required';
+    fileId: string;
+    relativePath: string;
+    mergedContent: string;
+}
+
 export interface AgentStreamInterruptEvent {
     type: 'interrupt';
     threadId: string;
     operationId: string;
+    nodeId?: string;
+    stepIndex?: number;
+    interruptReason?: string;
+    interruptPayload?: Record<string, unknown>;
     interrupts: AgentInterruptItem[];
 }
 
@@ -67,12 +92,18 @@ export interface AgentStreamDoneEvent {
 export type AgentStreamEvent =
     | AgentStreamStartEvent
     | AgentStreamUpdateEvent
+    | AgentStreamGhostHunkProposedEvent
+    | AgentStreamFileMutatedEvent
+    | AgentStreamVaultFileCommitRequiredEvent
     | AgentStreamInterruptEvent
     | AgentStreamErrorEvent
     | AgentStreamDoneEvent;
 
 export type StreamStartEvent = AgentStreamStartEvent;
 export type StreamUpdateEvent = AgentStreamUpdateEvent;
+export type StreamGhostHunkProposedEvent = AgentStreamGhostHunkProposedEvent;
+export type StreamFileMutatedEvent = AgentStreamFileMutatedEvent;
+export type StreamVaultFileCommitRequiredEvent = AgentStreamVaultFileCommitRequiredEvent;
 export type StreamInterruptEvent = AgentStreamInterruptEvent;
 export type StreamErrorEvent = AgentStreamErrorEvent;
 export type StreamDoneEvent = AgentStreamDoneEvent;
@@ -116,6 +147,9 @@ export interface StreamHandlerOptions {
     liveDocumentSnapshots?: Record<string, string>;
     onStart?: (event: AgentStreamStartEvent) => void;
     onUpdate?: (event: AgentStreamUpdateEvent) => void;
+    onGhostHunkProposed?: (event: AgentStreamGhostHunkProposedEvent) => void;
+    onFileMutated?: (event: AgentStreamFileMutatedEvent) => void;
+    onVaultFileCommitRequired?: (event: AgentStreamVaultFileCommitRequiredEvent) => void;
     onInterrupt?: (event: AgentStreamInterruptEvent) => void;
     onDone?: (event: AgentStreamDoneEvent) => void;
     onError: (error: AgentStreamError | Error) => void;
@@ -248,6 +282,14 @@ function buildRequestPayload(options: StreamHandlerOptions): AgentStreamRequestP
         });
     }
 
+    const hasExplicitWorkspaceId =
+        typeof rawCandidate.workspaceId === 'string' &&
+        rawCandidate.workspaceId.trim().length > 0;
+    if (!hasExplicitWorkspaceId && 'workspaceId' in parsed.data) {
+        const { workspaceId: _synthesizedWorkspaceId, ...wirePayload } = parsed.data;
+        return wirePayload;
+    }
+
     return parsed.data;
 }
 
@@ -289,28 +331,96 @@ function normalizeParsedFrame(
         };
     }
 
+    if (resolvedType === 'ghost_hunk_proposed') {
+        if (
+            typeof parsed.fileId === 'string' &&
+            typeof parsed.headingSlug === 'string' &&
+            Array.isArray(parsed.hunks)
+        ) {
+            return {
+                type: 'ghost_hunk_proposed',
+                fileId: parsed.fileId,
+                headingSlug: parsed.headingSlug,
+                hunks: parsed.hunks.filter(
+                    (h): h is Record<string, unknown> =>
+                        h !== null && typeof h === 'object' && !Array.isArray(h)
+                ),
+            };
+        }
+        return null;
+    }
+
+    if (resolvedType === 'file_mutated') {
+        if (
+            typeof parsed.fileId === 'string' &&
+            typeof parsed.relativePath === 'string' &&
+            (parsed.action === 'created' ||
+                parsed.action === 'deleted' ||
+                parsed.action === 'updated')
+        ) {
+            return {
+                type: 'file_mutated',
+                fileId: parsed.fileId,
+                relativePath: parsed.relativePath,
+                action: parsed.action,
+            };
+        }
+        return null;
+    }
+
+    if (resolvedType === 'vault_file_commit_required') {
+        if (
+            typeof parsed.fileId === 'string' &&
+            typeof parsed.relativePath === 'string' &&
+            typeof parsed.mergedContent === 'string'
+        ) {
+            return {
+                type: 'vault_file_commit_required',
+                fileId: parsed.fileId,
+                relativePath: parsed.relativePath,
+                mergedContent: parsed.mergedContent,
+            };
+        }
+        return null;
+    }
+
     if (resolvedType === 'interrupt') {
+        const interruptReason =
+            typeof parsed.interruptReason === 'string' ? parsed.interruptReason : undefined;
+        const interruptPayload =
+            parsed.interruptPayload !== null &&
+            typeof parsed.interruptPayload === 'object' &&
+            !Array.isArray(parsed.interruptPayload)
+                ? (parsed.interruptPayload as Record<string, unknown>)
+                : undefined;
+        const defaultResumable = interruptReason !== 'INSUFFICIENT_CREDITS';
+
         const rawInterrupts = Array.isArray(parsed.interrupts)
             ? parsed.interrupts
             : '__interrupt__' in parsed && Array.isArray(parsed.__interrupt__)
               ? (parsed.__interrupt__ as unknown[])
               : 'value' in parsed
-                ? [{ value: parsed.value, resumable: true }]
-                : [];
+                ? [{ value: parsed.value, resumable: defaultResumable }]
+                : interruptReason !== undefined || interruptPayload !== undefined
+                  ? [{ value: interruptPayload ?? { interruptReason }, resumable: defaultResumable }]
+                  : [];
 
         const normalizedInterrupts: AgentInterruptItem[] = rawInterrupts.map((item) => {
             if (item && typeof item === 'object' && 'value' in item) {
                 const record = item as Record<string, unknown>;
                 return {
                     value: record.value,
-                    resumable: typeof record.resumable === 'boolean' ? record.resumable : true,
+                    resumable:
+                        typeof record.resumable === 'boolean'
+                            ? record.resumable
+                            : defaultResumable,
                     ...(Array.isArray(record.ns) ? { ns: record.ns.map(String) } : {}),
                     ...(typeof record.when === 'string' ? { when: record.when } : {}),
                 };
             }
             return {
                 value: item,
-                resumable: true,
+                resumable: defaultResumable,
             };
         });
 
@@ -318,6 +428,10 @@ function normalizeParsedFrame(
             type: 'interrupt',
             threadId: typeof parsed.threadId === 'string' ? parsed.threadId : fallbackThreadId,
             operationId: typeof parsed.operationId === 'string' ? parsed.operationId : '',
+            ...(typeof parsed.nodeId === 'string' ? { nodeId: parsed.nodeId } : {}),
+            ...(typeof parsed.stepIndex === 'number' ? { stepIndex: parsed.stepIndex } : {}),
+            ...(interruptReason !== undefined ? { interruptReason } : {}),
+            ...(interruptPayload !== undefined ? { interruptPayload } : {}),
             interrupts: normalizedInterrupts,
         };
     }
@@ -359,6 +473,9 @@ export async function consumeAgentStream(options: StreamHandlerOptions): Promise
     const {
         onStart,
         onUpdate,
+        onGhostHunkProposed,
+        onFileMutated,
+        onVaultFileCommitRequired,
         onInterrupt,
         onDone,
         onError,
@@ -538,6 +655,18 @@ export async function consumeAgentStream(options: StreamHandlerOptions): Promise
                     } else {
                         onUpdate?.(event);
                     }
+                    break;
+                }
+                case 'ghost_hunk_proposed': {
+                    onGhostHunkProposed?.(event);
+                    break;
+                }
+                case 'file_mutated': {
+                    onFileMutated?.(event);
+                    break;
+                }
+                case 'vault_file_commit_required': {
+                    onVaultFileCommitRequired?.(event);
                     break;
                 }
                 case 'interrupt': {

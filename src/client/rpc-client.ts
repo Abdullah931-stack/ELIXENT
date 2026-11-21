@@ -15,6 +15,12 @@ import type {
   CreateVaultProfileInput,
   UpdateVaultPasswordInput,
   UpdateVaultRecoveryEnvelopeInput,
+  WorkspacePermissionMode,
+  WorkspaceRecord,
+  WorkspaceOpResult,
+  CreateWorkspaceInput,
+  UpdateWorkspaceInput,
+  DecryptedWorkspaceFilePayload,
 } from "@/types/rpc-contracts";
 
 // ============================================================================
@@ -35,6 +41,12 @@ export type {
   CreateVaultProfileInput,
   UpdateVaultPasswordInput,
   UpdateVaultRecoveryEnvelopeInput,
+  WorkspacePermissionMode,
+  WorkspaceRecord,
+  WorkspaceOpResult,
+  CreateWorkspaceInput,
+  UpdateWorkspaceInput,
+  DecryptedWorkspaceFilePayload,
 } from "@/types/rpc-contracts";
 
 export interface ClientResponse<T = unknown> extends Response {
@@ -303,7 +315,9 @@ export async function deleteFile(
   );
 }
 
-export async function restoreFile(fileId: string): Promise<FileOpResult> {
+export async function restoreWorkspaceFileRpc(
+  fileId: string
+): Promise<FileOpResult> {
   const client = getRpcClient();
   return parseRpcResult<FileOpResult>(
     client.api.rpc.files.restore.$post({
@@ -682,4 +696,63 @@ export async function getCreditBalance(): Promise<bigint> {
 
   // Fatal error (HTTP >= 500, network error statusCode: 0): throw Error
   throw new Error(result.error || `Credit balance request failed with status ${result.statusCode}`);
+}
+
+// ============================================================================
+// Workspaces
+// ============================================================================
+
+export async function listWorkspacesRpc(): Promise<
+  WorkspaceOpResult<WorkspaceRecord[]>
+> {
+  const client = getRpcClient();
+  return parseRpcResult<WorkspaceOpResult<WorkspaceRecord[]>>(
+    client.api.rpc.workspaces.list.$get()
+  );
+}
+
+export async function createWorkspaceRpc(
+  input: CreateWorkspaceInput
+): Promise<WorkspaceOpResult<WorkspaceRecord>> {
+  const client = getRpcClient();
+  return parseRpcResult<WorkspaceOpResult<WorkspaceRecord>>(
+    client.api.rpc.workspaces.create.$post({
+      json: input,
+    })
+  );
+}
+
+export async function updateWorkspaceRpc(
+  workspaceId: string,
+  input: UpdateWorkspaceInput
+): Promise<WorkspaceOpResult<WorkspaceRecord>> {
+  const client = getRpcClient();
+  return parseRpcResult<WorkspaceOpResult<WorkspaceRecord>>(
+    client.api.rpc.workspaces.update.$post({
+      json: { workspaceId, ...input },
+    })
+  );
+}
+
+export async function deleteWorkspaceRpc(
+  workspaceId: string
+): Promise<WorkspaceOpResult<null>> {
+  const client = getRpcClient();
+  return parseRpcResult<WorkspaceOpResult<null>>(
+    client.api.rpc.workspaces.delete.$post({
+      json: { workspaceId },
+    })
+  );
+}
+
+export async function decryptEntireWorkspaceRpc(
+  workspaceId: string,
+  decryptedFilesPayload: DecryptedWorkspaceFilePayload[]
+): Promise<WorkspaceOpResult<WorkspaceRecord>> {
+  const client = getRpcClient();
+  return parseRpcResult<WorkspaceOpResult<WorkspaceRecord>>(
+    client.api.rpc.workspaces["decrypt-all"].$post({
+      json: { workspaceId, decryptedFilesPayload },
+    })
+  );
 }

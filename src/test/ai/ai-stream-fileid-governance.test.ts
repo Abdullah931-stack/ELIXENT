@@ -24,11 +24,9 @@ import { runWithEphemeralVaultScope } from '@/lib/vault/ephemeral-memory-map';
 const {
     mockRequireAuthenticatedUser,
     mockGraphStream,
-    mockGovernorSettle,
 } = vi.hoisted(() => ({
     mockRequireAuthenticatedUser: vi.fn(),
     mockGraphStream: vi.fn(),
-    mockGovernorSettle: vi.fn(),
 }));
 
 vi.mock('@/server/auth/session', () => ({
@@ -51,13 +49,6 @@ vi.mock('@/lib/rate-limit', () => ({
 vi.mock('@/core/agent/graph', () => ({
     elixentAgentGraph: {
         stream: mockGraphStream,
-    },
-}));
-
-vi.mock('@/lib/metering/stream-governor', () => ({
-    StreamGovernor: class MockStreamGovernor {
-        onTokenChunk = vi.fn().mockResolvedValue(true);
-        settle = mockGovernorSettle.mockResolvedValue({ status: 'SETTLED' });
     },
 }));
 

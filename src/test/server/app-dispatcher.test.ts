@@ -74,48 +74,8 @@ const {
   mockAdminListUsers,
   mockAdminCreateUser,
   mockAnonSignInWithPassword,
-  governorState,
   graphState,
-  MockStreamGovernor,
 } = vi.hoisted(() => {
-  const governorState = {
-    permitted: true,
-    instances: [] as any[],
-  };
-
-  class MockStreamGovernor {
-    public userId: string;
-    public operationId: string;
-    public modelId: string;
-    public initialTokens: number;
-    public abortController: AbortController;
-    public settledStatus: string | null = null;
-
-    constructor(
-      userId: string,
-      operationId: string,
-      modelId: string,
-      initialTokens: number,
-      abortController: AbortController
-    ) {
-      this.userId = userId;
-      this.operationId = operationId;
-      this.modelId = modelId;
-      this.initialTokens = initialTokens;
-      this.abortController = abortController;
-      governorState.instances.push(this);
-    }
-
-    async onTokenChunk(): Promise<boolean> {
-      return governorState.permitted;
-    }
-
-    async settle(status: "SETTLED" | "ABORTED" = "SETTLED"): Promise<{ status: string }> {
-      this.settledStatus = status;
-      return { status };
-    }
-  }
-
   return {
     mockGetUser: vi.fn(),
     mockCreateClient: vi.fn(),
@@ -142,8 +102,6 @@ const {
     mockAdminListUsers: vi.fn(),
     mockAdminCreateUser: vi.fn(),
     mockAnonSignInWithPassword: vi.fn(),
-    governorState,
-    MockStreamGovernor,
     graphState: {
       chunksToEmit: ['data: {"event":"token","data":"Hello from agent"}\n\n'],
     },
@@ -381,11 +339,7 @@ vi.mock("@/server/db", () => ({
   },
 }));
 
-// 9. LangGraph & Stream Governor (Agent Stream)
-
-vi.mock("@/lib/metering/stream-governor", () => ({
-  StreamGovernor: MockStreamGovernor,
-}));
+// 9. LangGraph (Agent Stream)
 
 vi.mock("@/core/agent/graph", () => ({
   elixentAgentGraph: {
@@ -469,8 +423,6 @@ describe("Master Hono Application Dispatcher (src/server/app.ts)", () => {
     mockIsRedisConfigured.mockReturnValue(true);
     mockRedisSet.mockResolvedValue("OK");
     mockRedisDel.mockResolvedValue(1);
-    governorState.permitted = true;
-    governorState.instances = [];
   });
 
   afterEach(() => {

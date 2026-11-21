@@ -18,7 +18,7 @@
  *    - Shows alert on RPC delete failure.
  * 3. Restore Tombstoned Item:
  *    - Renders "استعادة" button when isDeleted is true.
- *    - Dispatches RPC `restoreFile(fileId)`.
+ *    - Dispatches RPC `restoreWorkspaceFileRpc(fileId)`.
  *    - Calls onRefresh() and onClose() on successful restore.
  *    - Shows alert on RPC restore failure.
  * 4. Copy & Move Integration via RPC Client:
@@ -34,7 +34,7 @@ import { FileContextMenu } from "@/components/files/file-context-menu";
 
 const {
     mockDeleteFile,
-    mockRestoreFile,
+    mockRestoreWorkspaceFileRpc,
     mockRenameFile,
     mockCopyFile,
     mockMoveFile,
@@ -43,7 +43,7 @@ const {
     mockGetUserVaultProfile,
 } = vi.hoisted(() => ({
     mockDeleteFile: vi.fn(),
-    mockRestoreFile: vi.fn(),
+    mockRestoreWorkspaceFileRpc: vi.fn(),
     mockRenameFile: vi.fn(),
     mockCopyFile: vi.fn(),
     mockMoveFile: vi.fn(),
@@ -54,7 +54,7 @@ const {
 
 vi.mock("@/client/rpc-client", () => ({
     deleteFile: (...args: any[]) => mockDeleteFile(...args),
-    restoreFile: (...args: any[]) => mockRestoreFile(...args),
+    restoreWorkspaceFileRpc: (...args: any[]) => mockRestoreWorkspaceFileRpc(...args),
     renameFile: (...args: any[]) => mockRenameFile(...args),
     copyFile: (...args: any[]) => mockCopyFile(...args),
     moveFile: (...args: any[]) => mockMoveFile(...args),
@@ -243,8 +243,8 @@ describe("FileContextMenu RPC Operations", () => {
     });
 
     describe("3. Restore Tombstoned Item", () => {
-        it("renders restore button for deleted files and invokes RPC restoreFile", async () => {
-            mockRestoreFile.mockResolvedValueOnce({ success: true });
+        it("renders restore button for deleted files and invokes RPC restoreWorkspaceFileRpc", async () => {
+            mockRestoreWorkspaceFileRpc.mockResolvedValueOnce({ success: true });
 
             render(
                 <FileContextMenu
@@ -268,11 +268,39 @@ describe("FileContextMenu RPC Operations", () => {
             fireEvent.click(restoreBtn);
 
             await waitFor(() => {
-                expect(mockRestoreFile).toHaveBeenCalledWith("file-deleted-id");
+                expect(mockRestoreWorkspaceFileRpc).toHaveBeenCalledWith("file-deleted-id");
             });
 
             expect(mockOnRefresh).toHaveBeenCalledTimes(1);
             expect(mockOnClose).toHaveBeenCalledTimes(1);
+        });
+
+        it("alerts error when restoreWorkspaceFileRpc returns success: false without closing menu", async () => {
+            mockRestoreWorkspaceFileRpc.mockResolvedValueOnce({
+                success: false,
+                error: "Retention window expired",
+            });
+
+            render(
+                <FileContextMenu
+                    isOpen={true}
+                    onClose={mockOnClose}
+                    fileId="file-expired-id"
+                    fileName="expired.md"
+                    isFolder={false}
+                    isDeleted={true}
+                    onRefresh={mockOnRefresh}
+                />
+            );
+
+            fireEvent.click(screen.getByText("استعادة"));
+
+            await waitFor(() => {
+                expect(window.alert).toHaveBeenCalledWith("Retention window expired");
+            });
+
+            expect(mockOnRefresh).not.toHaveBeenCalled();
+            expect(mockOnClose).not.toHaveBeenCalled();
         });
     });
 
@@ -394,8 +422,8 @@ describe("FileContextMenu RPC Operations", () => {
             expect(mockOnClose).not.toHaveBeenCalled();
         });
 
-        it("handles restoreFile RPC rejection gracefully with alert and without crashing", async () => {
-            mockRestoreFile.mockRejectedValueOnce(new Error("Transaction aborted"));
+        it("handles restoreWorkspaceFileRpc RPC rejection gracefully with alert and without crashing", async () => {
+            mockRestoreWorkspaceFileRpc.mockRejectedValueOnce(new Error("Transaction aborted"));
 
             render(
                 <FileContextMenu

@@ -61,7 +61,6 @@ import type {
   SectionReadResult,
   WorkspaceTreeEntry,
 } from "@/core/workspace/provider";
-import type { StreamGovernor } from "@/lib/metering/stream-governor";
 
 // ---------------------------------------------------------------------------
 // Hoisted In-Memory External Boundary Stubs (Postgres Checkpoints, AI, JEV, Credit Gate)
@@ -363,7 +362,6 @@ function createRuntimeContext(
     permissionMode: "safe",
     selectedSystem2ModelId: "google/gemini-3.8-flash",
     workspaceProvider,
-    streamGovernor: {} as StreamGovernor,
     ephemeralVaultPayloads: new Map(),
     liveDocumentSnapshots: new Map(),
     emitSseEvent: (e) => events.push(e),

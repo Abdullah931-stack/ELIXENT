@@ -57,7 +57,6 @@ import type {
   SectionReadResult,
   WorkspaceTreeEntry,
 } from "@/core/workspace/provider";
-import type { StreamGovernor } from "@/lib/metering/stream-governor";
 
 const mockExecuteStreamingGeneration = vi.hoisted(() => vi.fn());
 const mockGetApiKeys = vi.hoisted(() => vi.fn<() => string[]>());
@@ -220,7 +219,6 @@ function createRuntimeContext(
     permissionMode: "semi_auto",
     selectedSystem2ModelId: "google/gemini-3.8-flash",
     workspaceProvider,
-    streamGovernor: {} as StreamGovernor,
     ephemeralVaultPayloads: new Map(),
     liveDocumentSnapshots: new Map(),
     emitSseEvent: (e) => events.push(e),

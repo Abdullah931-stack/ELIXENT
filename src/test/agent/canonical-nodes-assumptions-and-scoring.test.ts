@@ -24,7 +24,6 @@ import {
 import type { AgentRuntimeContext } from "@/core/agent/engine/runner";
 import type { DecisionGraphNode } from "@/core/agent/atms/dag";
 import type { IWorkspaceProvider } from "@/core/workspace/provider";
-import type { StreamGovernor } from "@/lib/metering/stream-governor";
 import { calibrationStore } from "@/lib/jev/calibration-store";
 import {
   runWithEphemeralVaultScope,
@@ -85,7 +84,6 @@ function createRuntimeContext(
     permissionMode: "safe",
     selectedSystem2ModelId: "google/gemini-3.8-flash",
     workspaceProvider: {} as IWorkspaceProvider,
-    streamGovernor: {} as StreamGovernor,
     ephemeralVaultPayloads: new Map(),
     liveDocumentSnapshots: new Map(),
     emitSseEvent: () => {},

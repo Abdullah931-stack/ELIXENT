@@ -72,6 +72,11 @@ const {
   mockUpdateUserProfile,
   mockGetUserCreditBalance,
   mockGetUser,
+  mockListUserWorkspaces,
+  mockCreateWorkspace,
+  mockUpdateWorkspace,
+  mockDeleteWorkspace,
+  mockDecryptEntireWorkspace,
 } = vi.hoisted(() => ({
   mockCreateFile: vi.fn(),
   mockUpdateFileContent: vi.fn(),
@@ -100,6 +105,11 @@ const {
   mockUpdateUserProfile: vi.fn(),
   mockGetUserCreditBalance: vi.fn(),
   mockGetUser: vi.fn(),
+  mockListUserWorkspaces: vi.fn(),
+  mockCreateWorkspace: vi.fn(),
+  mockUpdateWorkspace: vi.fn(),
+  mockDeleteWorkspace: vi.fn(),
+  mockDecryptEntireWorkspace: vi.fn(),
 }));
 
 vi.mock("@/server/actions/files", () => ({
@@ -144,6 +154,14 @@ vi.mock("@/server/actions/auth-actions", () => ({
 
 vi.mock("@/server/services/ai-settlement-service", () => ({
   getUserCreditBalance: (...args: unknown[]) => mockGetUserCreditBalance(...args),
+}));
+
+vi.mock("@/server/actions/workspaces", () => ({
+  listUserWorkspaces: () => mockListUserWorkspaces(),
+  createWorkspace: (...args: unknown[]) => mockCreateWorkspace(...args),
+  updateWorkspace: (...args: unknown[]) => mockUpdateWorkspace(...args),
+  deleteWorkspace: (...args: unknown[]) => mockDeleteWorkspace(...args),
+  decryptEntireWorkspace: (...args: unknown[]) => mockDecryptEntireWorkspace(...args),
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -446,6 +464,17 @@ describe("Wave 3.2 Hono RPC Routes (src/server/routes/rpc.routes.ts)", () => {
 
       expect(res.status).toBe(200);
       expect(mockRestoreFile).toHaveBeenCalledWith("f_res_1");
+    });
+
+    it("POST /files/restore: rejects empty fileId with 400 Bad Request without calling restoreFile", async () => {
+      const res = await rpcRoutes.request("/files/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileId: "" }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(mockRestoreFile).not.toHaveBeenCalled();
     });
 
     it("POST /files/copy: delegates file duplication with encryptedOverride", async () => {
@@ -1169,5 +1198,178 @@ describe("Wave 3.2 Hono RPC Routes (src/server/routes/rpc.routes.ts)", () => {
       });
       expect(mockGetUserCreditBalance).toHaveBeenCalledWith("usr_billing_verified");
     });
+  });
+
+  // ==========================================================================
+  // Workspace RPC Endpoints
+  // ==========================================================================
+
+  describe("Workspace Endpoints", () => {
+    const wsId = "550e8400-e29b-41d4-a716-446655440001";
+    const fileId = "550e8400-e29b-41d4-a716-446655440002";
+
+    it("GET /workspaces/list: delegates to listUserWorkspaces and maps status codes", async () => {
+      mockListUserWorkspaces.mockResolvedValueOnce({
+        success: true,
+        data: [{ id: wsId, name: "Default Workspace" }],
+      });
+
+      const res = await rpcRoutes.request("/workspaces/list", { method: "GET" });
+      expect(res.status).toBe(200);
+      expect(mockListUserWorkspaces).toHaveBeenCalledTimes(1);
+
+      mockListUserWorkspaces.mockResolvedValueOnce({
+        success: false,
+        status: "unauthorized",
+        statusCode: 401,
+        error: "Authentication required",
+      });
+
+      const unauthRes = await rpcRoutes.request("/workspaces/list", { method: "GET" });
+      expect(unauthRes.status).toBe(401);
+    });
+
+    it("POST /workspaces/create: validates payload with createWorkspaceSchema and maps 409 conflict", async () => {
+      const invalidRes = await rpcRoutes.request("/workspaces/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "   " }),
+      });
+      expect(invalidRes.status).toBe(400);
+      expect(mockCreateWorkspace).not.toHaveBeenCalled();
+
+      mockCreateWorkspace.mockResolvedValueOnce({
+        success: false,
+        status: "conflict",
+        statusCode: 409,
+        error: "A workspace with this name already exists",
+      });
+
+      const conflictRes = await rpcRoutes.request("/workspaces/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Research", isEncrypted: true }),
+      });
+      expect(conflictRes.status).toBe(409);
+      expect(mockCreateWorkspace).toHaveBeenCalledWith({
+        name: "Research",
+        isEncrypted: true,
+      });
+    });
+
+    it("POST /workspaces/update: validates workspaceId UUID and delegates to updateWorkspace", async () => {
+      mockUpdateWorkspace.mockResolvedValueOnce({
+        success: true,
+        data: { id: wsId, name: "Updated Name" },
+      });
+
+      const res = await rpcRoutes.request("/workspaces/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceId: wsId,
+          name: "Updated Name",
+          defaultPermissionMode: "full_auto",
+        }),
+      });
+      expect(res.status).toBe(200);
+      expect(mockUpdateWorkspace).toHaveBeenCalledWith(wsId, {
+        name: "Updated Name",
+        defaultPermissionMode: "full_auto",
+      });
+    });
+
+    it("POST /workspaces/delete: delegates to deleteWorkspace and maps 403 forbidden", async () => {
+      mockDeleteWorkspace.mockResolvedValueOnce({
+        success: false,
+        status: "forbidden",
+        statusCode: 403,
+        error: "Cannot delete the default workspace",
+      });
+
+      const res = await rpcRoutes.request("/workspaces/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspaceId: wsId }),
+      });
+      expect(res.status).toBe(403);
+      expect(mockDeleteWorkspace).toHaveBeenCalledWith(wsId);
+    });
+
+    it("POST /workspaces/decrypt-all: validates payload and delegates to decryptEntireWorkspace", async () => {
+      mockDecryptEntireWorkspace.mockResolvedValueOnce({
+        success: true,
+        data: { id: wsId, isEncrypted: false },
+      });
+
+      const res = await rpcRoutes.request("/workspaces/decrypt-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceId: wsId,
+          decryptedFilesPayload: [{ fileId, content: "decrypted text", expectedVersion: 2 }],
+        }),
+      });
+      expect(res.status).toBe(200);
+      expect(mockDecryptEntireWorkspace).toHaveBeenCalledWith(wsId, [
+        { fileId, content: "decrypted text", expectedVersion: 2 },
+      ]);
+    });
+
+    it.each([
+      { statusCode: 400, expectedHttp: 400 },
+      { statusCode: 401, expectedHttp: 401 },
+      { statusCode: 403, expectedHttp: 403 },
+      { statusCode: 404, expectedHttp: 404 },
+      { statusCode: 409, expectedHttp: 409 },
+      { statusCode: 500, expectedHttp: 500 },
+      { statusCode: 418, expectedHttp: 200 },
+      { statusCode: undefined, expectedHttp: 200 },
+    ])(
+      "maps workspace action statusCode=$statusCode to HTTP $expectedHttp",
+      async ({ statusCode, expectedHttp }) => {
+        mockListUserWorkspaces.mockResolvedValueOnce({
+          success: statusCode === undefined,
+          statusCode,
+          error: statusCode ? `err-${statusCode}` : undefined,
+          data: statusCode === undefined ? [] : undefined,
+        });
+
+        const res = await rpcRoutes.request("/workspaces/list", { method: "GET" });
+        expect(res.status).toBe(expectedHttp);
+      }
+    );
+
+    it.each([
+      ["POST /workspaces/create invalid mode", "/workspaces/create", { name: "Spec", defaultPermissionMode: "invalid" }],
+      ["POST /workspaces/create >255 char name", "/workspaces/create", { name: "x".repeat(256) }],
+      ["POST /workspaces/update non-UUID workspaceId", "/workspaces/update", { workspaceId: "not-a-uuid", name: "Valid" }],
+      ["POST /workspaces/delete non-UUID workspaceId", "/workspaces/delete", { workspaceId: "not-a-uuid" }],
+      [
+        "POST /workspaces/decrypt-all non-UUID nested fileId",
+        "/workspaces/decrypt-all",
+        { workspaceId: wsId, decryptedFilesPayload: [{ fileId: "bad-file-id", content: "plain" }] },
+      ],
+      [
+        "POST /workspaces/decrypt-all non-integer expectedVersion",
+        "/workspaces/decrypt-all",
+        { workspaceId: wsId, decryptedFilesPayload: [{ fileId, content: "plain", expectedVersion: 2.5 }] },
+      ],
+    ])(
+      "rejects malformed workspace payload with 400 before invoking server action (%s)",
+      async (_label, endpoint, body) => {
+        const res = await rpcRoutes.request(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+
+        expect(res.status).toBe(400);
+        expect(mockCreateWorkspace).not.toHaveBeenCalled();
+        expect(mockUpdateWorkspace).not.toHaveBeenCalled();
+        expect(mockDeleteWorkspace).not.toHaveBeenCalled();
+        expect(mockDecryptEntireWorkspace).not.toHaveBeenCalled();
+      }
+    );
   });
 });

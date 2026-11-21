@@ -35,7 +35,7 @@ import {
   toggleFileEncryption,
   renameFile,
   deleteFile,
-  restoreFile,
+  restoreWorkspaceFileRpc,
   copyFile,
   moveFile,
   importFile,
@@ -57,6 +57,11 @@ import {
   updateUserProfile,
   getCreditBalance,
   getCreditBalanceResult,
+  listWorkspacesRpc,
+  createWorkspaceRpc,
+  updateWorkspaceRpc,
+  deleteWorkspaceRpc,
+  decryptEntireWorkspaceRpc,
 } from "@/client/rpc-client";
 
 // ---------------------------------------------------------------------------
@@ -91,6 +96,11 @@ const {
   mockServerUpdateUserProfile,
   mockServerGetUser,
   mockServerGetUserCreditBalance,
+  mockServerListUserWorkspaces,
+  mockServerCreateWorkspace,
+  mockServerUpdateWorkspace,
+  mockServerDeleteWorkspace,
+  mockServerDecryptEntireWorkspace,
 } = vi.hoisted(() => ({
   mockServerCreateFile: vi.fn(),
   mockServerUpdateFileContent: vi.fn(),
@@ -119,6 +129,11 @@ const {
   mockServerUpdateUserProfile: vi.fn(),
   mockServerGetUser: vi.fn(),
   mockServerGetUserCreditBalance: vi.fn(),
+  mockServerListUserWorkspaces: vi.fn(),
+  mockServerCreateWorkspace: vi.fn(),
+  mockServerUpdateWorkspace: vi.fn(),
+  mockServerDeleteWorkspace: vi.fn(),
+  mockServerDecryptEntireWorkspace: vi.fn(),
 }));
 
 vi.mock("@/server/actions/files", () => ({
@@ -163,6 +178,14 @@ vi.mock("@/server/actions/auth-actions", () => ({
 
 vi.mock("@/server/services/ai-settlement-service", () => ({
   getUserCreditBalance: (...args: unknown[]) => mockServerGetUserCreditBalance(...args),
+}));
+
+vi.mock("@/server/actions/workspaces", () => ({
+  listUserWorkspaces: () => mockServerListUserWorkspaces(),
+  createWorkspace: (...args: unknown[]) => mockServerCreateWorkspace(...args),
+  updateWorkspace: (...args: unknown[]) => mockServerUpdateWorkspace(...args),
+  deleteWorkspace: (...args: unknown[]) => mockServerDeleteWorkspace(...args),
+  decryptEntireWorkspace: (...args: unknown[]) => mockServerDecryptEntireWorkspace(...args),
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -296,6 +319,7 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
     it("DEF-A01 regression: purges isVitestBridgeActive, dynamic server imports, and @vite-ignore from src/client/rpc-client.ts", async () => {
       const rpcClientMod = await import("@/client/rpc-client");
       expect((rpcClientMod as Record<string, unknown>).isVitestBridgeActive).toBeUndefined();
+      expect((rpcClientMod as Record<string, unknown>).restoreFile).toBeUndefined();
 
       const expectedExports = [
         "createElixentRpcClient",
@@ -310,7 +334,7 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
         "toggleFileEncryption",
         "renameFile",
         "deleteFile",
-        "restoreFile",
+        "restoreWorkspaceFileRpc",
         "copyFile",
         "moveFile",
         "importFile",
@@ -332,6 +356,11 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
         "updateUserProfile",
         "getCreditBalance",
         "getCreditBalanceResult",
+        "listWorkspacesRpc",
+        "createWorkspaceRpc",
+        "updateWorkspaceRpc",
+        "deleteWorkspaceRpc",
+        "decryptEntireWorkspaceRpc",
       ];
       for (const exportName of expectedExports) {
         expect(typeof (rpcClientMod as Record<string, unknown>)[exportName]).toBe("function");
@@ -400,7 +429,7 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
       await deleteFile("f_1", { expectedVersion: 2 });
       expect(mockServerDeleteFile).toHaveBeenCalledWith("f_1", { expectedVersion: 2 });
 
-      await restoreFile("f_1");
+      await restoreWorkspaceFileRpc("f_1");
       expect(mockServerRestoreFile).toHaveBeenCalledWith("f_1");
 
       await copyFile("f_1", "fld_1", 2);
@@ -898,6 +927,125 @@ describe("Typed RPC Client (`src/client/rpc-client.ts`)", () => {
         error: "Unauthorized",
       });
       expect(mockServerGetUserCreditBalance).not.toHaveBeenCalled();
+    });
+
+    it("routes workspace CRUD and decrypt-all RPCs through Hono HTTP loopback transport", async () => {
+      const wsId = "550e8400-e29b-41d4-a716-446655440001";
+      const fileId = "550e8400-e29b-41d4-a716-446655440002";
+
+      mockServerListUserWorkspaces.mockResolvedValueOnce({ success: true, data: [{ id: wsId, name: "Main" }] });
+      mockServerCreateWorkspace.mockResolvedValueOnce({ success: true, data: { id: wsId, name: "Research" } });
+      mockServerUpdateWorkspace.mockResolvedValueOnce({ success: true, data: { id: wsId, name: "Research v2" } });
+      mockServerDeleteWorkspace.mockResolvedValueOnce({ success: true, data: null });
+      mockServerDecryptEntireWorkspace.mockResolvedValueOnce({ success: true, data: { id: wsId, isEncrypted: false } });
+
+      const listed = await listWorkspacesRpc();
+      expect(listed.success).toBe(true);
+      expect(mockServerListUserWorkspaces).toHaveBeenCalledTimes(1);
+
+      const created = await createWorkspaceRpc({ name: "Research", isEncrypted: true });
+      expect(created.success).toBe(true);
+      expect(mockServerCreateWorkspace).toHaveBeenCalledWith({ name: "Research", isEncrypted: true });
+
+      const updated = await updateWorkspaceRpc(wsId, { name: "Research v2" });
+      expect(updated.success).toBe(true);
+      expect(mockServerUpdateWorkspace).toHaveBeenCalledWith(wsId, { name: "Research v2" });
+
+      const deleted = await deleteWorkspaceRpc(wsId);
+      expect(deleted.success).toBe(true);
+      expect(mockServerDeleteWorkspace).toHaveBeenCalledWith(wsId);
+
+      const decrypted = await decryptEntireWorkspaceRpc(wsId, [{ fileId, content: "plain" }]);
+      expect(decrypted.success).toBe(true);
+      expect(mockServerDecryptEntireWorkspace).toHaveBeenCalledWith(wsId, [{ fileId, content: "plain" }]);
+    });
+
+    it("enforces Zod HTTP boundary validation for Wave 4.1 workspace and restore facades without invoking server actions", async () => {
+      const validWsId = "550e8400-e29b-41d4-a716-446655440001";
+
+      const badCreate = await createWorkspaceRpc({ name: "   " });
+      expect(badCreate.success).toBe(false);
+      expect(typeof badCreate.error).toBe("string");
+
+      const badUpdate = await updateWorkspaceRpc("not-a-uuid", { name: "Valid" });
+      expect(badUpdate.success).toBe(false);
+
+      const badDelete = await deleteWorkspaceRpc("not-a-uuid");
+      expect(badDelete.success).toBe(false);
+
+      const badDecrypt = await decryptEntireWorkspaceRpc(validWsId, [
+        { fileId: "not-a-uuid", content: "plain" },
+      ]);
+      expect(badDecrypt.success).toBe(false);
+
+      const badRestore = await restoreWorkspaceFileRpc("");
+      expect(badRestore.success).toBe(false);
+
+      expect(mockServerCreateWorkspace).not.toHaveBeenCalled();
+      expect(mockServerUpdateWorkspace).not.toHaveBeenCalled();
+      expect(mockServerDeleteWorkspace).not.toHaveBeenCalled();
+      expect(mockServerDecryptEntireWorkspace).not.toHaveBeenCalled();
+      expect(mockServerRestoreFile).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { status: "unauthorized" as const, statusCode: 401, error: "Authentication required" },
+      { status: "forbidden" as const, statusCode: 403, error: "Cannot delete default workspace" },
+      { status: "not_found" as const, statusCode: 404, error: "Workspace not found" },
+      { status: "conflict" as const, statusCode: 409, error: "Duplicate workspace name" },
+      { status: "error" as const, statusCode: 500, error: "Database failure" },
+    ])(
+      "preserves structured error payload for HTTP $statusCode workspace response over loopback wire",
+      async ({ status, statusCode, error }) => {
+        const wsId = "550e8400-e29b-41d4-a716-446655440001";
+        mockServerDeleteWorkspace.mockResolvedValueOnce({
+          success: false,
+          status,
+          statusCode,
+          error,
+        });
+
+        const res = await deleteWorkspaceRpc(wsId);
+        expect(res).toMatchObject({
+          success: false,
+          status,
+          statusCode,
+          error,
+        });
+      }
+    );
+
+    it("serializes restoreWorkspaceFileRpc and decryptEntireWorkspaceRpc to exact Hono RPC endpoints over custom fetch", async () => {
+      const wsId = "550e8400-e29b-41d4-a716-446655440001";
+      const fileId = "550e8400-e29b-41d4-a716-446655440002";
+      const customFetch = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ success: true, data: { id: wsId } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+      setRpcClientFetch(customFetch as unknown as typeof fetch);
+
+      await restoreWorkspaceFileRpc(fileId);
+      await decryptEntireWorkspaceRpc(wsId, [
+        { fileId, content: "plaintext", expectedVersion: 3, expectedETag: '"etag-3"' },
+      ]);
+
+      expect(customFetch).toHaveBeenCalledTimes(2);
+      const [restoreUrl, restoreInit] = customFetch.mock.calls[0];
+      expect(restoreUrl.toString()).toContain("/api/rpc/files/restore");
+      expect(restoreInit?.method).toBe("POST");
+      expect(JSON.parse(restoreInit?.body as string)).toEqual({ fileId });
+
+      const [decryptUrl, decryptInit] = customFetch.mock.calls[1];
+      expect(decryptUrl.toString()).toContain("/api/rpc/workspaces/decrypt-all");
+      expect(decryptInit?.method).toBe("POST");
+      expect(JSON.parse(decryptInit?.body as string)).toEqual({
+        workspaceId: wsId,
+        decryptedFilesPayload: [
+          { fileId, content: "plaintext", expectedVersion: 3, expectedETag: '"etag-3"' },
+        ],
+      });
     });
   });
 });

@@ -30,7 +30,6 @@ import type {
   NodeExecutionResult,
 } from "@/core/agent/engine/runner";
 import type { IWorkspaceProvider } from "@/core/workspace/provider";
-import type { StreamGovernor } from "@/lib/metering/stream-governor";
 
 const mockIsRedisConfigured = vi.hoisted(() => vi.fn());
 const mockGetUserCreditBalance = vi.hoisted(() => vi.fn());
@@ -182,7 +181,6 @@ function createRuntimeContext(
     permissionMode: "safe",
     selectedSystem2ModelId: "google/gemini-3.8-flash",
     workspaceProvider: {} as IWorkspaceProvider,
-    streamGovernor: {} as StreamGovernor,
     ephemeralVaultPayloads: new Map(),
     liveDocumentSnapshots: new Map(),
     emitSseEvent: () => {},

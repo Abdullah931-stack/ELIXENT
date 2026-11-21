@@ -4,6 +4,11 @@ import {
     consumeAIStream,
     parseHttpStreamError,
     AgentStreamError,
+    type AgentStreamEvent,
+    type AgentStreamGhostHunkProposedEvent,
+    type AgentStreamFileMutatedEvent,
+    type AgentStreamVaultFileCommitRequiredEvent,
+    type AgentStreamInterruptEvent,
 } from '@/lib/ai/stream-handler';
 import { validateStreamMarkdownOutput } from '@/lib/parsers/stream-markdown';
 
@@ -427,6 +432,345 @@ describe('Agent SSE / NDJSON Stream Parser & Validator (Phase 11 / Wave 11.1)', 
             const err429 = parseHttpStreamError(429, 'Too Many Requests', '');
             expect(err429.code).toBe('RATE_LIMIT_EXCEEDED');
             expect(err429.retryable).toBe(true);
+        });
+    });
+
+    describe('Wave 4.1 Multi-File, ZK Commit & Native Interrupt Framing', () => {
+        function sseStreamResponse(rawSse: string): Response {
+            const stream = new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode(rawSse));
+                    controller.close();
+                },
+            });
+            return new Response(stream, {
+                status: 200,
+                headers: { 'Content-Type': 'text/event-stream; charset=utf-8' },
+            });
+        }
+
+        it('dispatches ghost_hunk_proposed, file_mutated, and vault_file_commit_required frames without dropping events', async () => {
+            const rawSse =
+                `event: start\ndata: {"type":"start","sessionId":"s-w4","threadId":"thread-test-1","operationId":"op-w4"}\n\n` +
+                // Header-only type fallback + non-object hunk filtering
+                `event: ghost_hunk_proposed\ndata: ${JSON.stringify({
+                    fileId: 'file-1',
+                    headingSlug: 'auth-flow',
+                    hunks: [
+                        { from: 10, to: 24, replacementText: 'JWT Ed25519' },
+                        null,
+                        'stray-string',
+                        ['nested-array'],
+                    ],
+                })}\n\n` +
+                `event: file_mutated\ndata: ${JSON.stringify({
+                    type: 'file_mutated',
+                    fileId: 'file-2',
+                    relativePath: 'docs/architecture.md',
+                    action: 'created',
+                })}\n\n` +
+                `event: vault_file_commit_required\ndata: ${JSON.stringify({
+                    type: 'vault_file_commit_required',
+                    fileId: 'file-zk-1',
+                    relativePath: 'vault/secrets.md',
+                    mergedContent: '# Secrets\nRotated client-side',
+                })}\n\n` +
+                `event: done\ndata: {"type":"done","threadId":"thread-test-1","operationId":"op-w4"}\n\n`;
+
+            vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseStreamResponse(rawSse)));
+
+            const ghostHunks: AgentStreamGhostHunkProposedEvent[] = [];
+            const mutations: AgentStreamFileMutatedEvent[] = [];
+            const vaultCommits: AgentStreamVaultFileCommitRequiredEvent[] = [];
+            const allEvents: AgentStreamEvent[] = [];
+
+            await consumeAgentStream({
+                ...BASE_PAYLOAD,
+                onEvent: (ev) => allEvents.push(ev),
+                onGhostHunkProposed: (ev) => ghostHunks.push(ev),
+                onFileMutated: (ev) => mutations.push(ev),
+                onVaultFileCommitRequired: (ev) => vaultCommits.push(ev),
+                onError: (err) => {
+                    throw err;
+                },
+            });
+
+            expect(ghostHunks).toEqual([
+                {
+                    type: 'ghost_hunk_proposed',
+                    fileId: 'file-1',
+                    headingSlug: 'auth-flow',
+                    hunks: [{ from: 10, to: 24, replacementText: 'JWT Ed25519' }],
+                },
+            ]);
+            expect(mutations).toEqual([
+                {
+                    type: 'file_mutated',
+                    fileId: 'file-2',
+                    relativePath: 'docs/architecture.md',
+                    action: 'created',
+                },
+            ]);
+            expect(vaultCommits).toEqual([
+                {
+                    type: 'vault_file_commit_required',
+                    fileId: 'file-zk-1',
+                    relativePath: 'vault/secrets.md',
+                    mergedContent: '# Secrets\nRotated client-side',
+                },
+            ]);
+            expect(allEvents.map((e) => e.type)).toEqual([
+                'start',
+                'ghost_hunk_proposed',
+                'file_mutated',
+                'vault_file_commit_required',
+                'done',
+            ]);
+        });
+
+        it.each(['created', 'updated', 'deleted'] as const)(
+            'decodes file_mutated frames for action=%s',
+            async (action) => {
+                const rawSse =
+                    `event: start\ndata: {"type":"start","sessionId":"s1","threadId":"thread-test-1","operationId":"op1"}\n\n` +
+                    `event: file_mutated\ndata: ${JSON.stringify({
+                        type: 'file_mutated',
+                        fileId: `file-${action}`,
+                        relativePath: `docs/${action}.md`,
+                        action,
+                    })}\n\n` +
+                    `event: done\ndata: {"type":"done","threadId":"thread-test-1","operationId":"op1"}\n\n`;
+
+                vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseStreamResponse(rawSse)));
+
+                const received: AgentStreamFileMutatedEvent[] = [];
+                await consumeAgentStream({
+                    ...BASE_PAYLOAD,
+                    onFileMutated: (ev) => received.push(ev),
+                    onError: (err) => {
+                        throw err;
+                    },
+                });
+
+                expect(received).toEqual([
+                    {
+                        type: 'file_mutated',
+                        fileId: `file-${action}`,
+                        relativePath: `docs/${action}.md`,
+                        action,
+                    },
+                ]);
+            }
+        );
+
+        it.each([
+            ['ghost_hunk_proposed missing hunks array', 'ghost_hunk_proposed', { type: 'ghost_hunk_proposed', fileId: 'f1', headingSlug: 'intro', hunks: 'not-array' }],
+            ['ghost_hunk_proposed missing fileId', 'ghost_hunk_proposed', { type: 'ghost_hunk_proposed', headingSlug: 'intro', hunks: [] }],
+            ['file_mutated invalid action', 'file_mutated', { type: 'file_mutated', fileId: 'f1', relativePath: 'a.md', action: 'renamed' }],
+            ['file_mutated missing relativePath', 'file_mutated', { type: 'file_mutated', fileId: 'f1', action: 'updated' }],
+            ['vault_file_commit_required missing mergedContent', 'vault_file_commit_required', { type: 'vault_file_commit_required', fileId: 'f1', relativePath: 'secret.md' }],
+        ])('ignores malformed frame (%s) without crashing or firing mutation callbacks', async (_label, eventName, payload) => {
+            const rawSse =
+                `event: start\ndata: {"type":"start","sessionId":"s1","threadId":"thread-test-1","operationId":"op1"}\n\n` +
+                `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n` +
+                `event: done\ndata: {"type":"done","threadId":"thread-test-1","operationId":"op1"}\n\n`;
+
+            vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseStreamResponse(rawSse)));
+
+            const onGhostHunkProposed = vi.fn();
+            const onFileMutated = vi.fn();
+            const onVaultFileCommitRequired = vi.fn();
+            const onDone = vi.fn();
+
+            await consumeAgentStream({
+                ...BASE_PAYLOAD,
+                onGhostHunkProposed,
+                onFileMutated,
+                onVaultFileCommitRequired,
+                onDone,
+                onError: (err) => {
+                    throw err;
+                },
+            });
+
+            expect(onGhostHunkProposed).not.toHaveBeenCalled();
+            expect(onFileMutated).not.toHaveBeenCalled();
+            expect(onVaultFileCommitRequired).not.toHaveBeenCalled();
+            expect(onDone).toHaveBeenCalledTimes(1);
+        });
+
+        it.each([
+            {
+                label: 'INSUFFICIENT_CREDITS with omitted interrupts array defaults resumable=false',
+                frame: {
+                    type: 'interrupt',
+                    threadId: 'thread-test-1',
+                    operationId: 'op-credit',
+                    nodeId: 'assumption_extractor_node',
+                    stepIndex: 3,
+                    interruptReason: 'INSUFFICIENT_CREDITS',
+                    interruptPayload: { availableMicro: 50, requiredMicro: 120_000 },
+                },
+                expectedResumable: false,
+                expectedReason: 'INSUFFICIENT_CREDITS',
+            },
+            {
+                label: 'INSUFFICIENT_CREDITS with interrupts item lacking explicit resumable defaults resumable=false',
+                frame: {
+                    type: 'interrupt',
+                    threadId: 'thread-test-1',
+                    operationId: 'op-credit-2',
+                    nodeId: 'jev_conformal_scorer_node',
+                    stepIndex: 4,
+                    interruptReason: 'INSUFFICIENT_CREDITS',
+                    interruptPayload: { availableMicro: 0, requiredMicro: 90_000 },
+                    interrupts: [{ value: { code: 'INSUFFICIENT_CREDITS', availableMicro: 0 } }],
+                },
+                expectedResumable: false,
+                expectedReason: 'INSUFFICIENT_CREDITS',
+            },
+            {
+                label: 'HITL_CLARIFICATION_REQUIRED preserves node metadata, ns/when, and defaults resumable=true',
+                frame: {
+                    type: 'interrupt',
+                    threadId: 'thread-test-1',
+                    operationId: 'op-hitl',
+                    nodeId: 'hitl_clarification_node',
+                    stepIndex: 5,
+                    interruptReason: 'HITL_CLARIFICATION_REQUIRED',
+                    interruptPayload: { questionQueue: { questions: [{ questionId: 'q1' }] } },
+                    interrupts: [
+                        {
+                            value: { questions: [{ questionId: 'q1' }], interruptReason: 'HITL_CLARIFICATION_REQUIRED' },
+                            ns: ['graph', 'hitl'],
+                            when: 'before_commit',
+                        },
+                    ],
+                },
+                expectedResumable: true,
+                expectedReason: 'HITL_CLARIFICATION_REQUIRED',
+            },
+            {
+                label: 'FILE_DELETION_APPROVAL_REQUIRED defaults resumable=true when synthesized from interruptPayload',
+                frame: {
+                    type: 'interrupt',
+                    threadId: 'thread-test-1',
+                    operationId: 'op-del',
+                    nodeId: 'workspace_mutator_node',
+                    stepIndex: 6,
+                    interruptReason: 'FILE_DELETION_APPROVAL_REQUIRED',
+                    interruptPayload: { targetFileId: 'file-obsolete' },
+                },
+                expectedResumable: true,
+                expectedReason: 'FILE_DELETION_APPROVAL_REQUIRED',
+            },
+        ])(
+            'preserves native interrupt metadata and resumable semantics: $label',
+            async ({ frame, expectedResumable, expectedReason }) => {
+                const rawSse =
+                    `event: start\ndata: {"type":"start","sessionId":"s1","threadId":"thread-test-1","operationId":"${frame.operationId}"}\n\n` +
+                    `event: interrupt\ndata: ${JSON.stringify(frame)}\n\n`;
+
+                vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseStreamResponse(rawSse)));
+
+                let receivedInterrupt: AgentStreamInterruptEvent | null = null;
+                let receivedError: unknown = null;
+
+                await consumeAgentStream({
+                    ...BASE_PAYLOAD,
+                    onInterrupt: (ev) => {
+                        receivedInterrupt = ev;
+                    },
+                    onError: (err) => {
+                        receivedError = err;
+                    },
+                });
+
+                expect(receivedError).toBeNull();
+                expect(receivedInterrupt).not.toBeNull();
+                expect(receivedInterrupt).toMatchObject({
+                    type: 'interrupt',
+                    threadId: 'thread-test-1',
+                    operationId: frame.operationId,
+                    nodeId: frame.nodeId,
+                    stepIndex: frame.stepIndex,
+                    interruptReason: expectedReason,
+                    interruptPayload: frame.interruptPayload,
+                });
+                expect(receivedInterrupt!.interrupts).toHaveLength(1);
+                expect(receivedInterrupt!.interrupts[0].resumable).toBe(expectedResumable);
+            }
+        );
+
+        it('omits synthesized workspaceId on the wire when caller only provides legacy projectId (both flat options and options.payload)', async () => {
+            const fetchMock = vi.fn().mockImplementation(async () =>
+                sseStreamResponse(
+                    `event: start\ndata: {"type":"start","sessionId":"s1","threadId":"thread-test-1","operationId":"op1"}\n\n` +
+                        `event: done\ndata: {"type":"done","threadId":"thread-test-1","operationId":"op1"}\n\n`
+                )
+            );
+            vi.stubGlobal('fetch', fetchMock);
+
+            // 1. Flat top-level options (projectId only)
+            await consumeAgentStream({
+                threadId: 'thread-legacy-flat',
+                projectId: 'legacy-project-slug',
+                targetFileIds: ['file-1'],
+                prompt: 'Audit flat call',
+                onError: (err) => {
+                    throw err;
+                },
+            });
+
+            const flatBody = JSON.parse(fetchMock.mock.calls[0][1].body as string) as Record<
+                string,
+                unknown
+            >;
+            expect(flatBody.projectId).toBe('legacy-project-slug');
+            expect('workspaceId' in flatBody).toBe(false);
+
+            // 2. Structured payload (projectId only, with System 2 model & permissionMode)
+            await consumeAgentStream({
+                payload: {
+                    threadId: 'thread-legacy-payload',
+                    projectId: 'legacy-project-slug-2',
+                    targetFileIds: ['file-2'],
+                    selectedSystem2ModelId: 'google/gemini-3.1-pro',
+                    permissionMode: 'full_auto',
+                    resumePayload: { resumeReason: 'INSUFFICIENT_CREDITS' },
+                },
+                onError: (err) => {
+                    throw err;
+                },
+            });
+
+            const payloadBody = JSON.parse(fetchMock.mock.calls[1][1].body as string) as Record<
+                string,
+                unknown
+            >;
+            expect(payloadBody.projectId).toBe('legacy-project-slug-2');
+            expect(payloadBody.selectedSystem2ModelId).toBe('google/gemini-3.1-pro');
+            expect(payloadBody.permissionMode).toBe('full_auto');
+            expect('workspaceId' in payloadBody).toBe(false);
+
+            // 3. Explicit workspaceId MUST be preserved verbatim on the wire
+            const explicitWorkspaceId = '550e8400-e29b-41d4-a716-446655440099';
+            await consumeAgentStream({
+                payload: {
+                    threadId: 'thread-explicit-ws',
+                    workspaceId: explicitWorkspaceId,
+                    targetFileIds: ['file-3'],
+                },
+                onError: (err) => {
+                    throw err;
+                },
+            });
+
+            const explicitBody = JSON.parse(fetchMock.mock.calls[2][1].body as string) as Record<
+                string,
+                unknown
+            >;
+            expect(explicitBody.workspaceId).toBe(explicitWorkspaceId);
         });
     });
 });

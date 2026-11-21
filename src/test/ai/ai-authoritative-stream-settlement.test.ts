@@ -5,16 +5,12 @@ const {
     mockAfterCallbacks,
     mockRequireAuthenticatedUser,
     mockGraphStream,
-    mockGovernorOnTokenChunk,
-    mockGovernorSettle,
     mockFlushPendingSettlements,
     mockZeroOutVaultMemory,
 } = vi.hoisted(() => ({
     mockAfterCallbacks: [] as Array<() => Promise<void> | void>,
     mockRequireAuthenticatedUser: vi.fn(),
     mockGraphStream: vi.fn(),
-    mockGovernorOnTokenChunk: vi.fn(),
-    mockGovernorSettle: vi.fn(),
     mockFlushPendingSettlements: vi.fn(),
     mockZeroOutVaultMemory: vi.fn(),
 }));
@@ -34,13 +30,6 @@ vi.mock("@/lib/rate-limit", () => ({
 vi.mock("@/core/agent/graph", () => ({
     elixentAgentGraph: {
         stream: mockGraphStream,
-    },
-}));
-
-vi.mock("@/lib/metering/stream-governor", () => ({
-    StreamGovernor: class MockStreamGovernor {
-        onTokenChunk = mockGovernorOnTokenChunk;
-        settle = mockGovernorSettle;
     },
 }));
 
@@ -67,8 +56,6 @@ describe("Phase 11: Authoritative Server-Side Agent Stream Settlement (/api/agen
         setScheduleAfterResponseListener((cb) => mockAfterCallbacks.push(cb));
         mockAfterCallbacks.length = 0;
         mockRequireAuthenticatedUser.mockResolvedValue({ id: "user_test_1" });
-        mockGovernorOnTokenChunk.mockResolvedValue(true);
-        mockGovernorSettle.mockResolvedValue({ status: "SETTLED" });
         mockFlushPendingSettlements.mockResolvedValue({ flushedCount: 1, netDeltaMicro: BigInt(-1000) });
     });
 
@@ -100,7 +87,7 @@ describe("Phase 11: Authoritative Server-Side Agent Stream Settlement (/api/agen
         });
     }
 
-    it("settles StreamGovernor as SETTLED on normal completion and schedules PostgreSQL background flush via after()", async () => {
+    it("completes SSE stream with zero route-level double-metering and schedules PostgreSQL background flush via after()", async () => {
         mockGraphStream.mockResolvedValueOnce(
             (async function* () {
                 yield { document_writer_node: { status: "writing", text: "Hello " } };
@@ -127,8 +114,6 @@ describe("Phase 11: Authoritative Server-Side Agent Stream Settlement (/api/agen
         expect(frames.some((f) => f.event === "update")).toBe(true);
         expect(frames[frames.length - 1].event).toBe("done");
 
-        expect(mockGovernorOnTokenChunk).toHaveBeenCalledTimes(2);
-        expect(mockGovernorSettle).toHaveBeenCalledWith("SETTLED");
         expect(mockZeroOutVaultMemory).toHaveBeenCalled();
 
         expect(mockAfterCallbacks).toHaveLength(1);
@@ -136,7 +121,7 @@ describe("Phase 11: Authoritative Server-Side Agent Stream Settlement (/api/agen
         expect(mockFlushPendingSettlements).toHaveBeenCalledWith("user_test_1");
     });
 
-    it("settles StreamGovernor as ABORTED and emits error frame when upstream graph throws", async () => {
+    it("emits STREAM_EXECUTION_ERROR, zeroes vault memory, and still schedules PostgreSQL flush when upstream graph throws", async () => {
         mockGraphStream.mockResolvedValueOnce(
             (async function* () {
                 yield { search_agent_node: { status: "searching" } };
@@ -163,20 +148,25 @@ describe("Phase 11: Authoritative Server-Side Agent Stream Settlement (/api/agen
         expect(errorFrame).toBeDefined();
         expect(errorFrame?.data.code).toBe("STREAM_EXECUTION_ERROR");
 
-        expect(mockGovernorSettle).toHaveBeenCalledWith("ABORTED");
         expect(mockZeroOutVaultMemory).toHaveBeenCalled();
+        expect(mockAfterCallbacks).toHaveLength(1);
+        await mockAfterCallbacks[0]();
+        expect(mockFlushPendingSettlements).toHaveBeenCalledWith("user_test_1");
     });
 
-    it("aborts stream and settles StreamGovernor as ABORTED when credit runway is exhausted mid-stream", async () => {
-        mockGovernorOnTokenChunk
-            .mockResolvedValueOnce(true)
-            .mockResolvedValueOnce(false);
-
+    it("emits INSUFFICIENT_CREDITS interrupt frame, suppresses done, zeroes vault memory, and schedules PostgreSQL flush", async () => {
         mockGraphStream.mockResolvedValueOnce(
             (async function* () {
-                yield { document_writer_node: { chunk: 1 } };
-                yield { document_writer_node: { chunk: 2 } };
-                yield { document_writer_node: { chunk: 3 } };
+                yield {
+                    nodeId: "document_writer_node",
+                    stepIndex: 2,
+                    status: "INTERRUPTED",
+                    interruptReason: "INSUFFICIENT_CREDITS",
+                    interruptPayload: {
+                        availableMicro: 100,
+                        requiredMicro: 50_000,
+                    },
+                };
             })()
         );
 
@@ -195,15 +185,31 @@ describe("Phase 11: Authoritative Server-Side Agent Stream Settlement (/api/agen
         expect(res.status).toBe(200);
 
         const frames = await drainSSEFrames(res);
-        const errorFrame = frames.find((f) => f.event === "error");
-        expect(errorFrame).toBeDefined();
-        expect(errorFrame?.data.code).toBe("QUOTA_EXCEEDED");
+        const interruptFrame = frames.find((f) => f.event === "interrupt");
+        expect(interruptFrame).toBeDefined();
+        expect(interruptFrame?.data).toMatchObject({
+            type: "interrupt",
+            interruptReason: "INSUFFICIENT_CREDITS",
+            interrupts: [
+                {
+                    resumable: false,
+                    value: {
+                        code: "INSUFFICIENT_CREDITS",
+                        availableMicro: 100,
+                        requiredMicro: 50_000,
+                    },
+                },
+            ],
+        });
         expect(frames.some((f) => f.event === "done")).toBe(false);
+        expect(mockZeroOutVaultMemory).toHaveBeenCalled();
 
-        expect(mockGovernorSettle).toHaveBeenCalledWith("ABORTED");
+        expect(mockAfterCallbacks).toHaveLength(1);
+        await mockAfterCallbacks[0]();
+        expect(mockFlushPendingSettlements).toHaveBeenCalledWith("user_test_1");
     });
 
-    it("settles StreamGovernor as ABORTED and zeroes vault memory when client cancels the response stream", async () => {
+    it("zeroes vault memory cleanly when client cancels the response stream", async () => {
         mockGraphStream.mockImplementationOnce(async () => {
             return (async function* () {
                 await new Promise(() => {
@@ -229,7 +235,7 @@ describe("Phase 11: Authoritative Server-Side Agent Stream Settlement (/api/agen
 
         await res.body!.cancel("Client disconnected");
 
-        expect(mockGovernorSettle).toHaveBeenCalledWith("ABORTED");
         expect(mockZeroOutVaultMemory).toHaveBeenCalled();
+        expect(mockAfterCallbacks).toHaveLength(1);
     });
 });

@@ -5,7 +5,7 @@
  * fail-closed rate limiting, RFC 7807 problem details error responses,
  * Zod payload parsing & strict sanitization, happy-path SSE event streaming,
  * native checkpoint resumption (`resumeFromCheckpoint: true`), native `GraphStreamYield`
- * interrupt normalization, StreamGovernor quota enforcement,
+ * interrupt normalization, single-layer open-ceiling metering,
  * real zero-knowledge memory wiping (Buffer.fill(0)), and scheduleAfterResponse() (ADR-007 ALS) settlement scheduling.
  */
 
@@ -40,8 +40,6 @@ const {
   authConfig,
   rateLimitConfig,
   graphConfigState,
-  governorConfigState,
-  MockGovernor,
   mockFlushPendingSettlements,
 } = vi.hoisted(() => {
   const scheduledAfterCallbacks: Array<() => Promise<void> | void> = [];
@@ -67,62 +65,8 @@ const {
     errorToThrow: null as unknown,
     lastInput: null as unknown,
     lastConfig: null as unknown,
+    onYieldChunk: null as ((idx: number) => void) | null,
   };
-
-  const governorConfigState = {
-    permitted: true,
-    instances: [] as any[],
-  };
-
-  class MockGovernor {
-    public userId: string;
-    public operationId: string;
-    public modelId: string;
-    public initialTokens: number;
-    public abortController: AbortController;
-    public options: unknown;
-
-    public tokenChunks: Array<string | number> = [];
-    public settledStatus: string | null = null;
-    public isAborted = false;
-
-    constructor(
-      userId: string,
-      operationId: string,
-      modelId: string,
-      initialTokens: number,
-      abortController: AbortController,
-      options?: unknown
-    ) {
-      this.userId = userId;
-      this.operationId = operationId;
-      this.modelId = modelId;
-      this.initialTokens = initialTokens;
-      this.abortController = abortController;
-      this.options = options;
-      governorConfigState.instances.push(this);
-    }
-
-    async onTokenChunk(chunkText: string | number): Promise<boolean> {
-      this.tokenChunks.push(chunkText);
-      if (!governorConfigState.permitted) {
-        this.isAborted = true;
-        this.abortController.abort("QUOTA_EXCEEDED");
-        return false;
-      }
-      return true;
-    }
-
-    abort(reason?: string): void {
-      this.isAborted = true;
-      this.abortController.abort(reason);
-    }
-
-    async settle(status: "SETTLED" | "ABORTED" = "SETTLED"): Promise<{ status: string }> {
-      this.settledStatus = status;
-      return { status };
-    }
-  }
 
   const mockFlushPendingSettlements = vi.fn(async (_userId: string) => ({
     flushedCount: 1,
@@ -135,8 +79,6 @@ const {
     authConfig,
     rateLimitConfig,
     graphConfigState,
-    governorConfigState,
-    MockGovernor,
     mockFlushPendingSettlements,
   };
 });
@@ -183,18 +125,16 @@ vi.mock("@/core/agent/graph", () => ({
       }
 
       async function* generator() {
+        let idx = 0;
         for (const chunk of graphConfigState.chunksToEmit) {
           yield chunk;
+          graphConfigState.onYieldChunk?.(idx++);
         }
       }
 
       return generator();
     }),
   },
-}));
-
-vi.mock("@/lib/metering/stream-governor", () => ({
-  StreamGovernor: MockGovernor,
 }));
 
 vi.mock("@/server/services/ai-settlement-service", () => ({
@@ -283,8 +223,6 @@ describe("POST /api/agent/stream Route Handler", () => {
     vi.clearAllMocks();
     setScheduleAfterResponseListener((cb) => scheduledAfterCallbacks.push(cb));
     scheduledAfterCallbacks.length = 0;
-    governorConfigState.instances.length = 0;
-    governorConfigState.permitted = true;
     authConfig.isAuthenticated = true;
     authConfig.authErrorMessage = "Authentication required: no active server session";
     rateLimitConfig.success = true;
@@ -293,6 +231,7 @@ describe("POST /api/agent/stream Route Handler", () => {
     graphConfigState.chunksToEmit = [];
     graphConfigState.errorToThrow = null;
     graphConfigState.lastInput = null;
+    graphConfigState.onYieldChunk = null;
     graphConfigState.lastConfig = null;
   });
 
@@ -491,11 +430,6 @@ describe("POST /api/agent/stream Route Handler", () => {
 
       expect(frames[3].event).toBe("done");
       expect(frames[3].data.threadId).toBe("thread-abc-123");
-
-      // Verify Governor settlement
-      expect(governorConfigState.instances.length).toBe(1);
-      expect(governorConfigState.instances[0].settledStatus).toBe("SETTLED");
-      expect(governorConfigState.instances[0].tokenChunks.length).toBe(2);
     });
 
     it("should pass full 18-channel AgentGraphState and typed AgentRuntimeContext on initial invocation", async () => {
@@ -621,39 +555,6 @@ describe("POST /api/agent/stream Route Handler", () => {
       expect(frames.some((f) => f.event === "error")).toBe(true);
       expect(hasActiveVaultPlaintextInMemory()).toBe(false);
       expect(getActiveEphemeralVaultPlaintexts()).toEqual([]);
-
-      // Governor settled with ABORTED status
-      expect(governorConfigState.instances[0].settledStatus).toBe("ABORTED");
-    });
-
-    it("should zero out memory and settle governor when StreamGovernor quota is exhausted", async () => {
-      governorConfigState.permitted = false; // Governor rejects chunks immediately
-      graphConfigState.chunksToEmit = [{ heavy_chunk: "A".repeat(500) }];
-
-      const req = new Request("http://localhost:3000/api/agent/stream", {
-        method: "POST",
-        body: JSON.stringify({
-          threadId: "thread-quota-exhausted",
-          projectId: "project-vault",
-          targetFileIds: ["file-enc-1"],
-          ephemeralVaultPayloads: {
-            "file-enc-1#sec-1": "Secret that must be wiped after quota exhaustion",
-          },
-        }),
-        headers: { "Content-Type": "application/json" },
-      });
-
-      const res = await route.POST(req);
-      const text = await readStreamToText(res);
-      const frames = parseSSEFrames(text);
-
-      const errorFrame = frames.find((f) => f.event === "error");
-      expect(errorFrame).toBeDefined();
-      expect(errorFrame?.data.code).toBe("QUOTA_EXCEEDED");
-
-      expect(hasActiveVaultPlaintextInMemory()).toBe(false);
-      expect(getActiveEphemeralVaultPlaintexts()).toEqual([]);
-      expect(governorConfigState.instances[0].settledStatus).toBe("ABORTED");
     });
   });
 
@@ -706,7 +607,6 @@ describe("POST /api/agent/stream Route Handler", () => {
         ],
       });
       expect(hasActiveVaultPlaintextInMemory()).toBe(false);
-      expect(governorConfigState.instances[0].settledStatus).toBe("SETTLED");
     });
   });
 
@@ -960,27 +860,21 @@ describe("POST /api/agent/stream Route Handler", () => {
       const frames = parseSSEFrames(text);
       expect(frames.filter((f) => f.event === "update")).toHaveLength(0);
       expect(frames.filter((f) => f.event === "done")).toHaveLength(0);
-      expect(governorConfigState.instances[0].settledStatus).toBe("ABORTED");
       expect(hasActiveVaultPlaintextInMemory()).toBe(false);
     });
 
     it("should abort execution mid-stream when req.signal fires abort event during chunk emission", async () => {
       const abortCtrl = new AbortController();
-      let emitCount = 0;
       graphConfigState.chunksToEmit = [
         { step: 1 },
         { step: 2 },
         { step: 3 },
       ];
-
-      const originalOnTokenChunk = MockGovernor.prototype.onTokenChunk;
-      const tokenSpy = vi.spyOn(MockGovernor.prototype, "onTokenChunk").mockImplementation(async function (this: any, chunk) {
-        emitCount++;
-        if (emitCount === 1) {
+      graphConfigState.onYieldChunk = (idx) => {
+        if (idx === 0) {
           abortCtrl.abort("user_disconnected");
         }
-        return originalOnTokenChunk.call(this, chunk);
-      });
+      };
 
       const req = new Request("http://localhost:3000/api/agent/stream", {
         method: "POST",
@@ -997,14 +891,12 @@ describe("POST /api/agent/stream Route Handler", () => {
       const text = await readStreamToText(res);
       const frames = parseSSEFrames(text);
 
+      expect(frames.filter((f) => f.event === "update")).toHaveLength(1);
       expect(frames.some((f) => f.event === "done")).toBe(false);
       expect(hasActiveVaultPlaintextInMemory()).toBe(false);
-      expect(governorConfigState.instances[0].settledStatus).toBe("ABORTED");
-
-      tokenSpy.mockRestore();
     });
 
-    it("should settle governor with ABORTED and wipe memory on stream cancellation (reader.cancel())", async () => {
+    it("should wipe memory on stream cancellation (reader.cancel())", async () => {
       graphConfigState.chunksToEmit = [{ step: 1 }, { step: 2 }];
 
       const req = new Request("http://localhost:3000/api/agent/stream", {
@@ -1022,7 +914,6 @@ describe("POST /api/agent/stream Route Handler", () => {
       await reader?.read();
       await reader?.cancel("navigated_away");
 
-      expect(governorConfigState.instances[0].settledStatus).toBe("ABORTED");
       expect(hasActiveVaultPlaintextInMemory()).toBe(false);
     });
   });
@@ -1081,7 +972,6 @@ describe("POST /api/agent/stream Route Handler", () => {
           },
         ],
       });
-      expect(governorConfigState.instances[0].settledStatus).toBe("SETTLED");
     });
 
     it("should preserve compatibility for inline __interrupt__ mock chunks without emitting a trailing done frame", async () => {

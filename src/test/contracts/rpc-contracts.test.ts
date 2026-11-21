@@ -34,11 +34,18 @@ import {
   updateVaultRecoveryEnvelopeSchema,
   uuidStringSchema,
   trimmedTitleSchema,
+  workspacePermissionModeSchema,
+  createWorkspaceSchema,
+  updateWorkspaceSchema,
+  deleteWorkspaceSchema,
+  decryptWorkspaceAllSchema,
+  restoreWorkspaceFileSchema,
   type WireTimestamp,
   type FileRecord,
   type VaultProfileRecord,
   type UserProfileRecord,
   type ImportFileResult,
+  type WorkspaceRecord,
 } from "@/types/rpc-contracts";
 import type { AppType } from "@/server/app";
 import type { AppType as RpcAppType } from "@/server/routes/rpc.routes";
@@ -121,6 +128,12 @@ describe("Shared RPC Domain Contracts & Validation Schemas (src/types/rpc-contra
         "CreateVaultProfileInput",
         "UpdateVaultPasswordInput",
         "UpdateVaultRecoveryEnvelopeInput",
+        "WorkspacePermissionMode",
+        "WorkspaceRecord",
+        "WorkspaceOpResult",
+        "CreateWorkspaceInput",
+        "UpdateWorkspaceInput",
+        "DecryptedWorkspaceFilePayload",
       ];
 
       for (const typeName of expectedTypes) {
@@ -691,8 +704,140 @@ describe("Shared RPC Domain Contracts & Validation Schemas (src/types/rpc-contra
       expectTypeOf<AssertNoBigInt<BillingResponse>>().toEqualTypeOf<true>();
       expectTypeOf<AssertNoBigInt<ImportResponse>>().toEqualTypeOf<true>();
 
+      type WorkspaceListResponse = InferResponseType<RpcClient["api"]["rpc"]["workspaces"]["list"]["$get"], 200>;
+      type WorkspaceCreateResponse = InferResponseType<RpcClient["api"]["rpc"]["workspaces"]["create"]["$post"], 200>;
+      type WorkspaceDecryptResponse = InferResponseType<RpcClient["api"]["rpc"]["workspaces"]["decrypt-all"]["$post"], 200>;
+      type RestoreFileResponse = InferResponseType<RpcClient["api"]["rpc"]["files"]["restore"]["$post"], 200>;
+
+      expectTypeOf<AssertNoBigInt<WorkspaceListResponse>>().toEqualTypeOf<true>();
+      expectTypeOf<AssertNoBigInt<WorkspaceCreateResponse>>().toEqualTypeOf<true>();
+      expectTypeOf<AssertNoBigInt<WorkspaceDecryptResponse>>().toEqualTypeOf<true>();
+      expectTypeOf<AssertNoBigInt<RestoreFileResponse>>().toEqualTypeOf<true>();
+
       // Verify rpcRoutes export AppType alias
       expectTypeOf<RpcAppType>().toBeObject();
+    });
+  });
+
+  // ==========================================================================
+  // 9. Wave 4.1 Workspace & File Restore Contracts (Phase 4)
+  // ==========================================================================
+
+  describe("9. Workspace & File Restore Schemas (Wave 4.1)", () => {
+    const validWsId = "550e8400-e29b-41d4-a716-446655440010";
+    const validFileId = "550e8400-e29b-41d4-a716-446655440011";
+
+    it("serializes WorkspaceRecord WireTimestamp fields across JSON wire roundtrip", () => {
+      const now = new Date("2026-11-21T12:00:00.000Z");
+      const record: WorkspaceRecord = {
+        id: validWsId,
+        userId: "user-1",
+        name: "Engineering",
+        description: null,
+        isEncrypted: true,
+        defaultPermissionMode: "semi_auto",
+        createdAt: now,
+        updatedAt: now,
+      };
+      const wire: WorkspaceRecord = JSON.parse(JSON.stringify(record));
+      expect(wire.createdAt).toBe(now.toISOString());
+      expect(wire.updatedAt).toBe(now.toISOString());
+      expectTypeOf<WorkspaceRecord["createdAt"]>().toEqualTypeOf<WireTimestamp>();
+      expectTypeOf<WorkspaceRecord["updatedAt"]>().toEqualTypeOf<WireTimestamp>();
+    });
+
+    it.each(["safe", "semi_auto", "full_auto"] as const)(
+      "workspacePermissionModeSchema accepts %s",
+      (mode) => {
+        expect(workspacePermissionModeSchema.safeParse(mode).success).toBe(true);
+      }
+    );
+
+    it("workspacePermissionModeSchema rejects unknown mode values", () => {
+      expect(workspacePermissionModeSchema.safeParse("autonomous").success).toBe(false);
+    });
+
+    it("createWorkspaceSchema trims name and enforces length/type constraints", () => {
+      const valid = createWorkspaceSchema.safeParse({
+        name: "  Core Research  ",
+        description: null,
+        isEncrypted: true,
+        defaultPermissionMode: "full_auto",
+      });
+      expect(valid.success).toBe(true);
+      if (valid.success) {
+        expect(valid.data.name).toBe("Core Research");
+      }
+
+      expect(createWorkspaceSchema.safeParse({ name: "a".repeat(255) }).success).toBe(true);
+    });
+
+    it.each([
+      ["empty name", { name: "" }],
+      ["whitespace-only name", { name: "   \t\n " }],
+      ["name exceeding 255 chars", { name: "a".repeat(256) }],
+      ["invalid permission mode", { name: "Docs", defaultPermissionMode: "yolo" }],
+      ["non-boolean isEncrypted", { name: "Docs", isEncrypted: "true" }],
+    ])("createWorkspaceSchema rejects invalid payload (%s)", (_label, invalid) => {
+      expect(createWorkspaceSchema.safeParse(invalid).success).toBe(false);
+    });
+
+    it.each([
+      ["valid partial update", { workspaceId: validWsId, name: "  Renamed  ", defaultPermissionMode: "semi_auto" }, true],
+      ["valid id-only payload", { workspaceId: validWsId }, true],
+      ["non-UUID workspaceId", { workspaceId: "ws-not-uuid", name: "Valid" }, false],
+      ["whitespace-only name", { workspaceId: validWsId, name: "   " }, false],
+      ["name > 255 chars", { workspaceId: validWsId, name: "x".repeat(256) }, false],
+      ["invalid defaultPermissionMode", { workspaceId: validWsId, defaultPermissionMode: "auto" }, false],
+    ])("updateWorkspaceSchema (%s)", (_label, payload, expected) => {
+      const res = updateWorkspaceSchema.safeParse(payload);
+      expect(res.success).toBe(expected);
+      if (res.success && "name" in payload && typeof payload.name === "string") {
+        expect(res.data.name).toBe(payload.name.trim());
+      }
+    });
+
+    it.each([
+      ["valid UUID", { workspaceId: validWsId }, true],
+      ["non-UUID", { workspaceId: "default" }, false],
+      ["missing workspaceId", {}, false],
+    ])("deleteWorkspaceSchema (%s)", (_label, payload, expected) => {
+      expect(deleteWorkspaceSchema.safeParse(payload).success).toBe(expected);
+    });
+
+    it.each([
+      [
+        "valid payload with optional OCC fields",
+        {
+          workspaceId: validWsId,
+          decryptedFilesPayload: [
+            { fileId: validFileId, content: "# Plain", expectedVersion: 2, expectedETag: '"etag-2"' },
+          ],
+        },
+        true,
+      ],
+      ["valid empty decryptedFilesPayload", { workspaceId: validWsId, decryptedFilesPayload: [] }, true],
+      ["non-UUID workspaceId", { workspaceId: "ws-bad", decryptedFilesPayload: [] }, false],
+      [
+        "non-UUID nested fileId",
+        { workspaceId: validWsId, decryptedFilesPayload: [{ fileId: "not-a-uuid", content: "x" }] },
+        false,
+      ],
+      [
+        "fractional expectedVersion",
+        { workspaceId: validWsId, decryptedFilesPayload: [{ fileId: validFileId, content: "x", expectedVersion: 1.5 }] },
+        false,
+      ],
+    ])("decryptWorkspaceAllSchema (%s)", (_label, payload, expected) => {
+      expect(decryptWorkspaceAllSchema.safeParse(payload).success).toBe(expected);
+    });
+
+    it.each([
+      ["non-empty fileId", { fileId: validFileId }, true],
+      ["empty string fileId", { fileId: "" }, false],
+      ["missing fileId", {}, false],
+    ])("restoreWorkspaceFileSchema (%s)", (_label, payload, expected) => {
+      expect(restoreWorkspaceFileSchema.safeParse(payload).success).toBe(expected);
     });
   });
 });

@@ -49,7 +49,6 @@ import type {
   SectionReadResult,
   WorkspaceTreeEntry,
 } from "@/core/workspace/provider";
-import type { StreamGovernor } from "@/lib/metering/stream-governor";
 import {
   runWithEphemeralVaultScope,
   storeEphemeralVaultSection,
@@ -226,7 +225,6 @@ function createRuntimeContext(
     permissionMode: "safe",
     selectedSystem2ModelId: "google/gemini-3.8-flash",
     workspaceProvider,
-    streamGovernor: {} as StreamGovernor,
     ephemeralVaultPayloads: new Map(),
     liveDocumentSnapshots: new Map(),
     emitSseEvent: (e) => events.push(e),

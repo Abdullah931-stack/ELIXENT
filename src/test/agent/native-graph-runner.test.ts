@@ -12,7 +12,7 @@
  * and `@/server/services/ai-settlement-service`) are stubbed in memory.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, expectTypeOf, vi, beforeEach } from "vitest";
 import {
   ElixentNativeGraphRunner,
   MaxSuperStepsExceededError,
@@ -42,7 +42,6 @@ import {
   type RedisEvalClient,
 } from "@/lib/metering/lua-scripts";
 import type { IWorkspaceProvider } from "@/core/workspace/provider";
-import type { StreamGovernor } from "@/lib/metering/stream-governor";
 
 interface PersistedCheckpointRow {
   threadId: string;
@@ -158,7 +157,6 @@ function createTestRuntimeContext(
     permissionMode: "safe",
     selectedSystem2ModelId: "google/gemini-3.8-flash",
     workspaceProvider: {} as IWorkspaceProvider,
-    streamGovernor: {} as StreamGovernor,
     ephemeralVaultPayloads: new Map(),
     liveDocumentSnapshots: new Map(),
     emitSseEvent: (event) => {
@@ -686,6 +684,55 @@ describe("ElixentNativeGraphRunner (ADR-009 & SRS-01 §2.3)", () => {
       expect(persisted).toHaveLength(1);
       expect(persisted[0].status).toBe("INTERRUPTED");
       expect(persisted[0].interruptReason).toBe("INSUFFICIENT_CREDITS");
+    });
+
+    it("enforces BUG-04 clean-cut removal of streamGovernor from AgentRuntimeContext and forwards node mutation SSE events", async () => {
+      // Static type invariant: AgentRuntimeContext must never re-introduce streamGovernor
+      expectTypeOf<AgentRuntimeContext>().not.toHaveProperty("streamGovernor");
+
+      const mutatorNode: AgentGraphNodeFn = async (_state, ctx) => {
+        expect("streamGovernor" in ctx).toBe(false);
+        ctx.emitSseEvent({
+          type: "ghost_hunk_proposed",
+          fileId: "file-a",
+          headingSlug: "overview",
+          hunks: [{ from: 0, to: 5, replacementText: "Draft" }],
+        });
+        ctx.emitSseEvent({
+          type: "file_mutated",
+          fileId: "file-b",
+          relativePath: "docs/new.md",
+          action: "created",
+        });
+        ctx.emitSseEvent({
+          type: "vault_file_commit_required",
+          fileId: "file-enc",
+          relativePath: "vault/plan.md",
+          mergedContent: "# Merged ZK Content",
+        });
+        return {
+          status: "COMPLETED",
+          stateDelta: { local_inspection_state: ["file-a#overview"] },
+        };
+      };
+
+      const runner = new ElixentNativeGraphRunner({
+        entryNodeId: "mutator",
+        nodes: { mutator: mutatorNode },
+        edges: { mutator: null },
+      });
+
+      const { ctx, events } = createTestRuntimeContext({ threadId: "thread-w4-events" });
+      await runner.invoke(createInitialAgentGraphState(), ctx);
+
+      expect(events.map((e) => e.type)).toEqual([
+        "start",
+        "ghost_hunk_proposed",
+        "file_mutated",
+        "vault_file_commit_required",
+        "update",
+        "done",
+      ]);
     });
   });
 });
