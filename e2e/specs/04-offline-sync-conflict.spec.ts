@@ -29,6 +29,7 @@ test.describe("Scenario 4: Offline-First Sync & Interactive Conflict Resolution"
         const cmContent = page.locator(".cm-content");
         await expect(cmContent).toBeVisible({ timeout: 15000 });
         await expect(cmContent).toContainText("Original Title");
+        await expect(cmContent).toHaveAttribute("contenteditable", "true", { timeout: 15000 });
 
         // 2. Go offline
         await context.setOffline(true);

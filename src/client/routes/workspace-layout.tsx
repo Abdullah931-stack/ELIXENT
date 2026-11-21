@@ -6,6 +6,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { Button } from "@/components/ui/button";
 import { Settings, Home } from "lucide-react";
 import {
+    buildLoginRedirectPath,
     resolveInitialClientUserIdSync,
     resolveLocalFirstAuthUser,
 } from "@/lib/auth/client-identity";
@@ -15,38 +16,52 @@ export function WorkspaceLayoutRouteView() {
     const [isLoading, setIsLoading] = useState<boolean>(() => resolveInitialClientUserIdSync() === null);
 
     useEffect(() => {
-        let cancelled = false;
+        const controller = new AbortController();
+        const { signal } = controller;
 
-        resolveLocalFirstAuthUser({
-            onSessionExpired: () => {
-                if (!cancelled && (typeof navigator === "undefined" || navigator.onLine !== false)) {
-                    setUserId(null);
-                    setIsLoading(false);
-                    navigateTo("/login");
-                }
-            },
-        })
-            .then((user) => {
-                if (cancelled) return;
-                if (!user) {
-                    if (typeof navigator === "undefined" || navigator.onLine !== false) {
-                        setIsLoading(false);
-                        navigateTo("/login");
-                    }
-                    return;
-                }
-                setUserId(user.id);
+        const handleSessionExpired = () => {
+            if (!signal.aborted && (typeof navigator === "undefined" || navigator.onLine !== false)) {
+                setUserId(null);
                 setIsLoading(false);
+                navigateTo(buildLoginRedirectPath());
+            }
+        };
+
+        const verifySession = () => {
+            resolveLocalFirstAuthUser({
+                onSessionExpired: handleSessionExpired,
+                signal,
             })
-            .catch(() => {
-                if (!cancelled && (typeof navigator === "undefined" || navigator.onLine !== false)) {
+                .then((user) => {
+                    if (signal.aborted) return;
+                    if (user) {
+                        setUserId(user.id);
+                    }
                     setIsLoading(false);
-                    navigateTo("/login");
-                }
-            });
+                })
+                .catch(() => {
+                    if (signal.aborted) return;
+                    setIsLoading(false);
+                });
+        };
+
+        verifySession();
+
+        const handleOnline = () => {
+            if (!signal.aborted) {
+                verifySession();
+            }
+        };
+
+        if (typeof window !== "undefined") {
+            window.addEventListener("online", handleOnline);
+        }
 
         return () => {
-            cancelled = true;
+            controller.abort();
+            if (typeof window !== "undefined") {
+                window.removeEventListener("online", handleOnline);
+            }
         };
     }, []);
 

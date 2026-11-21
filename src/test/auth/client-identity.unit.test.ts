@@ -12,6 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+    buildLoginRedirectPath,
     resolveInitialClientUserIdSync,
     persistLocalClientUserId,
     clearLocalClientUserId,
@@ -200,6 +201,9 @@ describe("Local-First Client Identity (`src/lib/auth/client-identity.ts`)", () =
             expect(user).toEqual({ id: "cached_user_instant" });
             // Immediate return (0ms) happened before background promise finished
             expect(serverResolved).toBe(false);
+            await vi.waitFor(() => {
+                expect(serverResolved).toBe(true);
+            });
         });
 
         it("does NOT invoke onSessionExpired on network failure or offline state", async () => {
@@ -284,6 +288,241 @@ describe("Local-First Client Identity (`src/lib/auth/client-identity.ts`)", () =
 
             expect(user).toBeNull();
             expect(onSessionExpired).toHaveBeenCalledTimes(1);
+        });
+
+        it("cold-start with no local identity does NOT invoke onSessionExpired on transient network error", async () => {
+            const onSessionExpired = vi.fn();
+            mockGetUser.mockRejectedValue(new Error("Failed to fetch"));
+
+            const user = await resolveLocalFirstAuthUser({ onSessionExpired });
+
+            expect(user).toBeNull();
+            expect(onSessionExpired).not.toHaveBeenCalled();
+        });
+
+        it("does NOT clear local identity or invoke onSessionExpired when AbortSignal aborts before background 401 settles", async () => {
+            persistLocalClientUserId("cached_abort_user");
+            const onSessionExpired = vi.fn();
+            const controller = new AbortController();
+
+            let resolveGetUser!: (val: unknown) => void;
+            mockGetUser.mockImplementation(
+                () =>
+                    new Promise((resolve) => {
+                        resolveGetUser = resolve;
+                    })
+            );
+
+            const user = await resolveLocalFirstAuthUser({
+                onSessionExpired,
+                signal: controller.signal,
+            });
+            expect(user).toEqual({ id: "cached_abort_user" });
+
+            controller.abort();
+            resolveGetUser({
+                data: { user: null },
+                error: { status: 401, message: "Unauthorized", code: "session_expired" },
+            });
+
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            expect(onSessionExpired).not.toHaveBeenCalled();
+            expect(document.cookie).toContain("elixent_uid=cached_abort_user");
+        });
+
+        it("does NOT invoke onSessionExpired when AbortSignal aborts during cold-start getUser", async () => {
+            const onSessionExpired = vi.fn();
+            const controller = new AbortController();
+
+            let resolveGetUser!: (val: unknown) => void;
+            mockGetUser.mockImplementation(
+                () =>
+                    new Promise((resolve) => {
+                        resolveGetUser = resolve;
+                    })
+            );
+
+            const promise = resolveLocalFirstAuthUser({
+                onSessionExpired,
+                signal: controller.signal,
+            });
+
+            await vi.waitFor(() => {
+                expect(mockGetUser).toHaveBeenCalledTimes(1);
+            });
+            controller.abort();
+            resolveGetUser({ data: { user: null }, error: null });
+
+            const user = await promise;
+            expect(user).toBeNull();
+            expect(onSessionExpired).not.toHaveBeenCalled();
+        });
+
+        it("trusts local identity offline without calling getUser and returns null offline on cold-start without eviction", async () => {
+            const originalOnLine = Object.getOwnPropertyDescriptor(Navigator.prototype, "onLine");
+            Object.defineProperty(Navigator.prototype, "onLine", {
+                configurable: true,
+                get: () => false,
+            });
+
+            try {
+                // Cached offline user
+                persistLocalClientUserId("offline_cached_user");
+                const onExpiredCached = vi.fn();
+                const cached = await resolveLocalFirstAuthUser({ onSessionExpired: onExpiredCached });
+                expect(cached).toEqual({ id: "offline_cached_user" });
+                expect(mockGetUser).not.toHaveBeenCalled();
+                expect(onExpiredCached).not.toHaveBeenCalled();
+                expect(window.localStorage.getItem("elixent_uid")).toBe("offline_cached_user");
+
+                // Cold-start offline (no local identity)
+                clearAllCookiesAndStorage();
+                const onExpiredCold = vi.fn();
+                const cold = await resolveLocalFirstAuthUser({ onSessionExpired: onExpiredCold });
+                expect(cold).toBeNull();
+                expect(mockGetUser).not.toHaveBeenCalled();
+                expect(onExpiredCold).not.toHaveBeenCalled();
+            } finally {
+                if (originalOnLine) {
+                    Object.defineProperty(Navigator.prototype, "onLine", originalOnLine);
+                }
+            }
+        });
+
+        it.each([
+            ["DOMException AbortError", () => new DOMException("The operation was aborted", "AbortError")],
+            ["Error with name AbortError", () => Object.assign(new Error("Request aborted"), { name: "AbortError" })],
+            ["network timeout error", () => new Error("Request timeout while refreshing token")],
+        ])("does NOT evict local identity or invoke onSessionExpired on transient %s", async (_label, makeErr) => {
+            persistLocalClientUserId("resilient_abort_user");
+            const onSessionExpired = vi.fn();
+            mockGetUser.mockRejectedValueOnce(makeErr());
+
+            const user = await resolveLocalFirstAuthUser({ onSessionExpired });
+            expect(user).toEqual({ id: "resilient_abort_user" });
+            await new Promise((resolve) => setTimeout(resolve, 20));
+
+            expect(onSessionExpired).not.toHaveBeenCalled();
+            expect(window.localStorage.getItem("elixent_uid")).toBe("resilient_abort_user");
+
+            // Also verify cold-start does not trigger onSessionExpired on AbortError
+            clearAllCookiesAndStorage();
+            mockGetUser.mockRejectedValueOnce(makeErr());
+            const cold = await resolveLocalFirstAuthUser({ onSessionExpired });
+            expect(cold).toBeNull();
+            expect(onSessionExpired).not.toHaveBeenCalled();
+        });
+
+        it("skips getUser completely when passed a pre-aborted AbortSignal", async () => {
+            const controller = new AbortController();
+            controller.abort();
+            const onSessionExpired = vi.fn();
+
+            persistLocalClientUserId("pre_aborted_user");
+            const cached = await resolveLocalFirstAuthUser({
+                onSessionExpired,
+                signal: controller.signal,
+            });
+            expect(cached).toEqual({ id: "pre_aborted_user" });
+            expect(mockGetUser).not.toHaveBeenCalled();
+            expect(onSessionExpired).not.toHaveBeenCalled();
+
+            clearAllCookiesAndStorage();
+            const cold = await resolveLocalFirstAuthUser({
+                onSessionExpired,
+                signal: controller.signal,
+            });
+            expect(cold).toBeNull();
+            expect(mockGetUser).not.toHaveBeenCalled();
+            expect(onSessionExpired).not.toHaveBeenCalled();
+        });
+
+        it("does NOT evict identity when connectivity drops offline mid-request before a 401 settles", async () => {
+            const originalOnLine = Object.getOwnPropertyDescriptor(Navigator.prototype, "onLine");
+            let isOnline = true;
+            Object.defineProperty(Navigator.prototype, "onLine", {
+                configurable: true,
+                get: () => isOnline,
+            });
+
+            try {
+                persistLocalClientUserId("mid_flight_offline_user");
+                const onSessionExpired = vi.fn();
+                let resolveGetUser!: (val: unknown) => void;
+                mockGetUser.mockImplementationOnce(
+                    () =>
+                        new Promise((resolve) => {
+                            resolveGetUser = resolve;
+                        })
+                );
+
+                await resolveLocalFirstAuthUser({ onSessionExpired });
+                await vi.waitFor(() => expect(mockGetUser).toHaveBeenCalledTimes(1));
+
+                isOnline = false;
+                resolveGetUser({
+                    data: { user: null },
+                    error: { status: 401, message: "Unauthorized" },
+                });
+
+                await new Promise((resolve) => setTimeout(resolve, 20));
+                expect(onSessionExpired).not.toHaveBeenCalled();
+                expect(window.localStorage.getItem("elixent_uid")).toBe("mid_flight_offline_user");
+            } finally {
+                if (originalOnLine) {
+                    Object.defineProperty(Navigator.prototype, "onLine", originalOnLine);
+                }
+            }
+        });
+    });
+
+    // =========================================================================
+    // 4. Login Redirect Path Builder (`buildLoginRedirectPath`)
+    // =========================================================================
+    describe("4. Login Redirect Path Builder (`buildLoginRedirectPath`)", () => {
+        it("preserves valid relative pathname and search query in redirectTo", () => {
+            expect(buildLoginRedirectPath("/workspace/editor/doc-123?tab=notes")).toBe(
+                "/login?redirectTo=%2Fworkspace%2Feditor%2Fdoc-123%3Ftab%3Dnotes"
+            );
+        });
+
+        it("reads window.location pathname + search when currentPath argument is omitted", () => {
+            const originalLocation = window.location;
+            Object.defineProperty(window, "location", {
+                configurable: true,
+                writable: true,
+                value: {
+                    ...originalLocation,
+                    pathname: "/workspace/editor/doc-win",
+                    search: "?mode=focus",
+                },
+            });
+            try {
+                expect(buildLoginRedirectPath()).toBe(
+                    "/login?redirectTo=%2Fworkspace%2Feditor%2Fdoc-win%3Fmode%3Dfocus"
+                );
+            } finally {
+                Object.defineProperty(window, "location", {
+                    configurable: true,
+                    writable: true,
+                    value: originalLocation,
+                });
+            }
+        });
+
+        it.each([
+            ["empty string", ""],
+            ["root path", "/"],
+            ["/login exact", "/login"],
+            ["/login with query loop", "/login?redirectTo=%2Fworkspace"],
+            ["/login nested subpath", "/login/callback"],
+            ["external https URL", "https://evil.com/phish"],
+            ["protocol-relative URL", "//evil.com/phish"],
+            ["backslash protocol bypass", "/\\evil.com"],
+            ["percent-encoded double slash", "/%2F%2Fevil.com"],
+            ["javascript pseudo-protocol", "/javascript:alert(1)"],
+        ])("falls back to /login for unsafe or loop path (%s)", (_label, candidate) => {
+            expect(buildLoginRedirectPath(candidate)).toBe("/login");
         });
     });
 });

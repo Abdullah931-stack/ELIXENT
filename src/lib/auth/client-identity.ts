@@ -1,8 +1,39 @@
 import type { createClient } from "@/lib/supabase/client";
+import { resolveSafeRedirectPath } from "@/lib/auth/safe-redirect";
 
 export interface LocalClientUserIdentity {
     id: string;
     source: "cookie" | "storage" | "server";
+}
+
+/**
+ * Builds a safe `/login?redirectTo=...` path from the current or provided relative path.
+ * Falls back to `"/login"` when no valid non-`/login`, non-root internal path is available.
+ */
+export function buildLoginRedirectPath(currentPath?: string): string {
+    const rawPath =
+        currentPath !== undefined
+            ? currentPath
+            : typeof window !== "undefined" && window.location
+              ? `${window.location.pathname}${window.location.search}`
+              : "";
+
+    if (!rawPath) {
+        return "/login";
+    }
+
+    const safePath = resolveSafeRedirectPath(rawPath, "/login");
+    if (
+        !safePath ||
+        safePath === "/" ||
+        safePath === "/login" ||
+        safePath.startsWith("/login?") ||
+        safePath.startsWith("/login/")
+    ) {
+        return "/login";
+    }
+
+    return `/login?redirectTo=${encodeURIComponent(safePath)}`;
 }
 
 function safeBase64Decode(str: string): string | null {
@@ -188,6 +219,8 @@ function isExplicitAuthRejection(error: unknown, status?: number): boolean {
         }
         const message = (errObj.message || "").toLowerCase();
         if (
+            errObj.name === "AbortError" ||
+            message.includes("abort") ||
             message.includes("fetch") ||
             message.includes("network") ||
             message.includes("offline") ||
@@ -331,7 +364,9 @@ export function clearLocalClientUserId(): void {
  */
 export async function resolveLocalFirstAuthUser(options?: {
     onSessionExpired?: () => void;
+    signal?: AbortSignal;
 }): Promise<{ id: string; [key: string]: unknown } | null> {
+    const signal = options?.signal;
     const isOffline = typeof navigator !== "undefined" && navigator.onLine === false;
 
     let client: ReturnType<typeof createClient> | null = null;
@@ -345,21 +380,24 @@ export async function resolveLocalFirstAuthUser(options?: {
     const localUserId = resolveInitialClientUserIdSync();
 
     if (localUserId) {
-        if (!isOffline && client && typeof client.auth?.getUser === "function") {
+        if (!isOffline && !signal?.aborted && client && typeof client.auth?.getUser === "function") {
             void (async () => {
                 try {
+                    if (signal?.aborted) return;
                     const { data, error } = await client.auth.getUser();
+                    if (signal?.aborted) return;
                     if (data?.user?.id) {
                         persistLocalClientUserId(data.user.id);
                     } else if (error) {
                         const status = (error as { status?: number })?.status;
                         const isStillOnline = typeof navigator === "undefined" || navigator.onLine !== false;
-                        if (isStillOnline && isExplicitAuthRejection(error, status)) {
+                        if (!signal?.aborted && isStillOnline && isExplicitAuthRejection(error, status)) {
                             clearLocalClientUserId();
                             options?.onSessionExpired?.();
                         }
                     }
                 } catch (err) {
+                    if (signal?.aborted) return;
                     const isStillOnline = typeof navigator === "undefined" || navigator.onLine !== false;
                     if (isStillOnline && isExplicitAuthRejection(err)) {
                         clearLocalClientUserId();
@@ -371,12 +409,15 @@ export async function resolveLocalFirstAuthUser(options?: {
         return { id: localUserId };
     }
 
-    if (isOffline || !client || typeof client.auth?.getUser !== "function") {
+    if (signal?.aborted || isOffline || !client || typeof client.auth?.getUser !== "function") {
         return null;
     }
 
     try {
         const { data, error } = await client.auth.getUser();
+        if (signal?.aborted) {
+            return null;
+        }
         if (data?.user?.id) {
             persistLocalClientUserId(data.user.id);
             return { ...data.user, id: data.user.id };
@@ -385,6 +426,7 @@ export async function resolveLocalFirstAuthUser(options?: {
         const status = (error as { status?: number })?.status;
         const isStillOnline = typeof navigator === "undefined" || navigator.onLine !== false;
         if (
+            !signal?.aborted &&
             isStillOnline &&
             (isExplicitAuthRejection(error, status) || (!error && data?.user === null))
         ) {
@@ -393,6 +435,9 @@ export async function resolveLocalFirstAuthUser(options?: {
         }
         return null;
     } catch (err) {
+        if (signal?.aborted) {
+            return null;
+        }
         const isStillOnline = typeof navigator === "undefined" || navigator.onLine !== false;
         if (isStillOnline && isExplicitAuthRejection(err)) {
             clearLocalClientUserId();

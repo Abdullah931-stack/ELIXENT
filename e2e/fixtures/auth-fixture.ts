@@ -1,4 +1,4 @@
-import { test as base, expect, type APIResponse } from "@playwright/test";
+import { test as base, expect, type APIResponse, type Page } from "@playwright/test";
 import { cleanupE2EUser } from "./test-db";
 
 export interface AuthenticatedUser {
@@ -25,6 +25,29 @@ async function assertAuthResponseOk(
             `[E2E Auth Fixture] ${action} failed for ${email}: POST /api/test/e2e-auth returned HTTP ${status}. Response body: ${bodyText}`
         );
     }
+}
+
+async function hydrateWorkspaceSession(page: Page, expectedUserId: string): Promise<void> {
+    await page.goto("/workspace", { waitUntil: "domcontentloaded" });
+
+    await page.waitForFunction(
+        (uid) => {
+            if (window.location.pathname.startsWith("/login")) {
+                return true;
+            }
+            const hasStorageUid = window.localStorage?.getItem("elixent_uid") === uid;
+            const hasCookieUid =
+                document.cookie.includes(`elixent_uid=${encodeURIComponent(uid)}`) ||
+                document.cookie.includes(`elixent_uid=${uid}`);
+            const hasWorkspaceMain = document.querySelector("main") !== null;
+            return hasWorkspaceMain && (hasStorageUid || hasCookieUid);
+        },
+        expectedUserId,
+        { timeout: 15000 }
+    );
+
+    expect(page.url()).not.toMatch(/\/login/);
+    await expect(page).toHaveURL(/\/workspace/);
 }
 
 export const test = base.extend<{
@@ -66,9 +89,8 @@ export const test = base.extend<{
             await context.addCookies(cookiesToAdd);
         }
 
-        // Navigate page to load workspace with the established cookies
-        await page.goto("/workspace");
-        await page.waitForLoadState("domcontentloaded");
+        // Navigate page to load workspace and wait deterministically for auth hydration
+        await hydrateWorkspaceSession(page, testUser.userId);
 
         await provide(testUser);
 
@@ -102,8 +124,7 @@ export const test = base.extend<{
                 await context.addCookies(cookiesToAdd);
             }
 
-            await page.goto("/workspace");
-            await page.waitForLoadState("domcontentloaded");
+            await hydrateWorkspaceSession(page, user.userId);
         };
 
         await provide(loginFn);

@@ -31,6 +31,7 @@ test.describe("Scenario 3: Native CodeMirror 6 Markdown & BiDi RTL", () => {
         const cmContent = page.locator(".cm-content");
         await expect(cmContent).toBeVisible();
         await expect(cmContent).toContainText("مرحبا بكم في محرر ماركداون");
+        await expect(cmContent).toHaveAttribute("contenteditable", "true", { timeout: 15000 });
 
         // 5. Verify BiDi auto-detection / RTL attribute on Arabic text lines
         const arabicLine = page.locator('.cm-line[dir="auto"], .cm-line[dir="rtl"], .cm-line.cm-bidi-rtl').first();
