@@ -313,6 +313,22 @@ export function classifyGeminiError(error: unknown): GeminiErrorClassification {
         };
     }
 
+    // Check for 404 Not Found / Model Not Found or Unsupported (Non-recoverable with another key or model)
+    if (
+        statusCode === 404 ||
+        message.includes("model not found") ||
+        message.includes("is not found") ||
+        message.includes("not supported for generatecontent")
+    ) {
+        return {
+            category: "invalid_request",
+            statusCode: 404,
+            retryableWithKey: false,
+            retryableWithModel: false,
+            reason: "Requested AI model not found or unsupported (non-rotatable)",
+        };
+    }
+
     // Check for 400 Bad Request / Invalid Argument / Safety Filters (Non-recoverable with another key)
     if (
         statusCode === 400 ||

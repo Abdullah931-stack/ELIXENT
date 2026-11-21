@@ -164,6 +164,7 @@ export async function executeStructuredGeneration<T>(options: {
                 system: options.system,
                 prompt: options.prompt,
                 output: Output.object({ schema: options.schema }),
+                maxRetries: 0,
                 abortSignal: options.abortSignal,
             });
 
@@ -295,6 +296,7 @@ export async function executeToolAgentGeneration(options: {
                 prompt: options.prompt,
                 tools: options.tools,
                 stopWhen: stepCountIs(options.maxSteps ?? 6),
+                maxRetries: 0,
                 abortSignal: options.abortSignal,
             });
 
@@ -401,6 +403,7 @@ export async function executeStreamingGeneration(options: {
             model: modelInstance,
             system: options.system,
             prompt: options.prompt,
+            maxRetries: 0,
             abortSignal: options.abortSignal,
             onFinish: async () => {
                 try {

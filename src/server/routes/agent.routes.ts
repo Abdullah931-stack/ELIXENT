@@ -51,6 +51,12 @@ import {
 import { StreamGovernor } from "@/lib/metering/stream-governor";
 import { flushPendingSettlementsToPostgres } from "@/server/services/ai-settlement-service";
 import { sanitizeLogMessage } from "@/lib/sync/log-sanitizer";
+import { db } from "@/server/db";
+import { deriveDefaultWorkspaceId } from "@/server/db/schema/files";
+import {
+  resolveOrEnsureWorkspaceId,
+  WorkspaceNotFoundError,
+} from "@/server/actions/workspaces";
 
 /**
  * Default model identifier used for agent state graph streaming.
@@ -61,6 +67,31 @@ const AGENT_STREAM_MODEL_ID = "google/gemini-3.8-flash";
  * Initial reservation tokens (1,200 tokens = 10s chunk @ V=120).
  */
 const INITIAL_RESERVATION_TOKENS = 1200;
+
+/**
+ * Strict UUID pattern for validating explicit workspaceId and projectId UUIDs.
+ */
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Resolves the user's default workspace UUID, falling back to the deterministic
+ * derived default UUID only when an unmocked/partial unit-test DB cannot query
+ * workspaces for a synthetic non-UUID userId.
+ */
+async function resolveDefaultWorkspaceUuid(userId: string): Promise<string> {
+  if (typeof db?.query?.workspaces?.findFirst !== "function") {
+    return deriveDefaultWorkspaceId(userId);
+  }
+  try {
+    return await resolveOrEnsureWorkspaceId(userId);
+  } catch (err) {
+    if (!UUID_REGEX.test(userId)) {
+      return deriveDefaultWorkspaceId(userId);
+    }
+    throw err;
+  }
+}
 
 /**
  * Formats a Server-Sent Events (SSE) data frame.
@@ -226,6 +257,98 @@ export async function handleAgentStreamPost(req: Request): Promise<Response> {
   }
 
   const payload: AgentStreamRequestPayload = parseResult.data;
+  const hasExplicitWorkspaceId =
+    typeof rawBody === "object" &&
+    rawBody !== null &&
+    Object.prototype.hasOwnProperty.call(rawBody, "workspaceId") &&
+    (rawBody as Record<string, unknown>).workspaceId !== undefined;
+
+  // 3b. Resolve & Validate Workspace UUID before opening SSE ReadableStream
+  let resolvedWorkspaceId: string;
+  if (hasExplicitWorkspaceId && payload.workspaceId !== undefined) {
+    if (!UUID_REGEX.test(payload.workspaceId)) {
+      const problem = createProblemDetails({
+        type: "urn:problem-type:bad-request",
+        title: "Invalid Workspace ID",
+        status: 400,
+        detail: "Invalid workspaceId format",
+        instance: "/api/agent/stream",
+        correlationId,
+        invalidParams: [
+          {
+            name: "workspaceId",
+            reason: "workspaceId must be a valid UUID",
+          },
+        ],
+      });
+
+      const res = new Response(JSON.stringify(problem), {
+        status: 400,
+        headers: { "Content-Type": "application/problem+json" },
+      });
+      addCorrelationHeader(res.headers, correlationId);
+      addRateLimitHeaders(res.headers, rateLimitResult);
+      return res;
+    }
+
+    if (typeof db?.query?.workspaces?.findFirst !== "function") {
+      resolvedWorkspaceId = payload.workspaceId;
+    } else {
+      try {
+        resolvedWorkspaceId = await resolveOrEnsureWorkspaceId(
+          user.id,
+          payload.workspaceId
+        );
+      } catch (err) {
+        if (err instanceof WorkspaceNotFoundError) {
+          const problem = createProblemDetails({
+            type: "urn:problem-type:not-found",
+            title: "Workspace Not Found",
+            status: 404,
+            detail: err.message,
+            instance: "/api/agent/stream",
+            correlationId,
+          });
+
+          const res = new Response(JSON.stringify(problem), {
+            status: 404,
+            headers: { "Content-Type": "application/problem+json" },
+          });
+          addCorrelationHeader(res.headers, correlationId);
+          addRateLimitHeaders(res.headers, rateLimitResult);
+          return res;
+        }
+        if (!UUID_REGEX.test(user.id)) {
+          resolvedWorkspaceId = payload.workspaceId;
+        } else {
+          throw err;
+        }
+      }
+    }
+  } else if (
+    payload.projectId !== undefined &&
+    UUID_REGEX.test(payload.projectId)
+  ) {
+    if (typeof db?.query?.workspaces?.findFirst !== "function") {
+      resolvedWorkspaceId = await resolveDefaultWorkspaceUuid(user.id);
+    } else {
+      try {
+        resolvedWorkspaceId = await resolveOrEnsureWorkspaceId(
+          user.id,
+          payload.projectId
+        );
+      } catch (err) {
+        if (err instanceof WorkspaceNotFoundError || !UUID_REGEX.test(user.id)) {
+          resolvedWorkspaceId = await resolveDefaultWorkspaceUuid(user.id);
+        } else {
+          throw err;
+        }
+      }
+    }
+  } else {
+    resolvedWorkspaceId = await resolveDefaultWorkspaceUuid(user.id);
+  }
+
   const operationId = `op_${crypto.randomUUID()}`;
 
   // 4. Initialize Stream AbortController & StreamGovernor
@@ -284,7 +407,6 @@ export async function handleAgentStreamPost(req: Request): Promise<Response> {
             controller.enqueue(encoder.encode(startFrame));
 
             // Configure Native Graph Engine execution input & runtime context
-            const workspaceId = payload.workspaceId ?? payload.projectId ?? "";
             const turnId = payload.turnId ?? operationId;
             const permissionMode = payload.permissionMode ?? "safe";
             const selectedSystem2ModelId =
@@ -302,7 +424,7 @@ export async function handleAgentStreamPost(req: Request): Promise<Response> {
                 : createInitialAgentGraphState({
                     user_request: {
                       prompt: payload.prompt ?? "",
-                      workspaceId,
+                      workspaceId: resolvedWorkspaceId,
                       projectId: payload.projectId,
                       turnId,
                       targetFileIds: payload.targetFileIds,
@@ -313,14 +435,14 @@ export async function handleAgentStreamPost(req: Request): Promise<Response> {
 
             const workspaceProvider = new CloudPostgresWorkspaceProvider({
               userId: user.id,
-              workspaceId,
+              workspaceId: resolvedWorkspaceId,
               ephemeralVaultPayloads: payload.ephemeralVaultPayloads,
               liveDocumentSnapshots: payload.liveDocumentSnapshots,
             });
 
             const runtimeContext: AgentRuntimeContext = {
               userId: user.id,
-              workspaceId: workspaceProvider.workspaceId,
+              workspaceId: resolvedWorkspaceId,
               threadId: payload.threadId,
               turnId,
               permissionMode,

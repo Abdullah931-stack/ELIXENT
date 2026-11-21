@@ -382,14 +382,41 @@ jobs:
             fi
           fi
 
-          # 5. Execute Playwright Tests and capture exit code
+          # 5. Verify Database Migrations before launching Playwright
+          echo "Verifying database migrations on target test database..."
+          set +e
+          node scripts/verify-migrations.mjs
+          MIGRATION_EXIT_CODE=$?
+          set -e
+
+          if [ $MIGRATION_EXIT_CODE -ne 0 ]; then
+            echo "::error::Stage 6 Playwright E2E failed: Database migration verification failed with exit code $MIGRATION_EXIT_CODE."
+            if [ -n "$GITHUB_STEP_SUMMARY" ]; then
+              printf "%s\n" \
+                "## ❌ Stage 6: Playwright E2E Browser Testing — FAILED (Database Migration Drift)" \
+                "" \
+                "> [!CAUTION]" \
+                "> Database migration verification failed before Playwright launch (Exit Code: $MIGRATION_EXIT_CODE)." \
+                "> Ensure \`TEST_DATABASE_URL\` has all migrations applied and matches the repository schema." \
+                "" \
+                "| Metric / Parameter | Value |" \
+                "| :--- | :--- |" \
+                "| **Execution Status** | ❌ FAILED (Migration Exit Code: $MIGRATION_EXIT_CODE) |" \
+                "| **Workflow Context** | \`$REF\` (\`$EVENT_NAME\`) |" \
+                "| **Protected Gate** | \`$IS_PROTECTED\` |" \
+                >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit $MIGRATION_EXIT_CODE
+          fi
+
+          # 6. Execute Playwright Tests and capture exit code
           echo "Running Playwright E2E user journeys against isolated environment..."
           set +e
           npx playwright test
           TEST_EXIT_CODE=$?
           set -e
 
-          # 6. Record Outcome in Step Summary
+          # 7. Record Outcome in Step Summary
           if [ $TEST_EXIT_CODE -ne 0 ]; then
             echo "::error::Stage 6 Playwright E2E failed with exit code $TEST_EXIT_CODE."
             if [ -n "$GITHUB_STEP_SUMMARY" ]; then
