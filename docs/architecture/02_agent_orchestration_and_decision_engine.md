@@ -507,9 +507,9 @@ According to the execution semantics of LangGraph.js Interrupts, invoking `new C
 Phase 11 connects the compiled LangGraph `StateGraph` to the user via interactive presentation surfaces:
 
 1. **Architectural Agent Chat Panel (`src/components/agent/chat-panel.tsx`):**
-   - Renders active 7-stage graph progression in real time from SSE `update` events.
-   - Provides an interactive accordion inspecting the committed ATMS decision ledger (`master_ledger`), displaying each decision's rationale and evaluated alternatives with contextual exclusion reasons.
-   - Hosts multi-hunk review controls (`Accept All / Reject All`) and prompt input with vault/offline status awareness.
+   - Renders graph progression in real time from SSE `update` events.
+   - Provides an interactive viewer inspecting the committed ATMS decision ledger (`master_ledger`), displaying each decision's rationale and evaluated alternatives with contextual exclusion reasons.
+   - Hosts multi-hunk review controls (`Accept All / Reject All`), manual `System 2` generative model selection (`agent-system2-model-select`, filtered from `src/config/models.config.json` where `executionMode === "STREAMING_GENERATIVE"` with per-1K input/output credit rates), 3-mode permission controls (`safe`, `semi_auto`, `full_auto` via `agent-permission-mode-*`), a recoverable `INSUFFICIENT_CREDITS` paused state card (`agent-insufficient-credits-card` + `agent-resume-task-button` invoking `resumeInsufficientCreditsTask`), and prompt input with vault/offline status awareness.
 
 2. **HITL Clarification Card (`src/components/agent/hitl-question-card.tsx`):**
    - Displays structured question batches emitted by Stage 6 (`pure_interrupt_node`).

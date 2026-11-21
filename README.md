@@ -20,7 +20,7 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai-sdk.dev"><img src="https://img.shields.io/badge/Vercel_AI_SDK-v7_(@ai--sdk/google)-8E75B2?style=for-the-badge&logo=vercel" alt="Vercel AI SDK v7" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-155%20Suites%20·%203151%2F3151%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 3151 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-156%20Suites%20·%203281%2F3281%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 3281 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-22%20Suites%20·%20101%2F101%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 101 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
@@ -163,7 +163,7 @@ lugx/
 │       └── cron.yml               # Scheduled maintenance workflow (Daily 03:00 UTC & Quota sweepers)
 ├── docs/                          # Comprehensive technical documentation & governance
 │   ├── README.md                  # Master structural map and documentation index
-│   ├── CHANGELOG.md               # Versioned engineering changelog (Elixent v0.1.0 to v0.26.0; archived LUGX v1.0.0–v1.46.3)
+│   ├── CHANGELOG.md               # Versioned engineering changelog (Elixent v0.1.0 to v0.27.0; archived LUGX v1.0.0–v1.46.3)
 │   ├── TECHNICAL_DEBT_REGISTER.md # Living register of accepted debts and resolution history
 │   ├── DOCUMENTATION_GUIDELINES.md# Rules for authoring, linking, and updating documentation
 │   ├── Plans/                     # Active official execution plans (elixent-architectural-evolution-execution-plan.md)
@@ -312,7 +312,7 @@ npm run start
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 155 | 3151 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 156 | 3281 | 100% ✅ |
 | **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 22 | 101 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
@@ -327,7 +327,7 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).               |
 
 ```bash
-# Execute unit/contract test suites (155 test files, 3151 tests)
+# Execute unit/contract test suites (156 test files, 3281 tests)
 npm run test
 
 # Execute live database integration test suites on isolated Neon branch (22 test files, 101 tests)
@@ -762,7 +762,8 @@ flowchart TD
 
 To connect the autonomous agent core with the human editor, Elixent Phase 11 introduces the interactive `AgentChatPanel`, `HITLQuestionCard` clarification cards, debounced incremental sync without 412 conflicts, and real-time micro-credit balance views:
 
-- **Architectural Agent Chat Panel (`src/components/agent/chat-panel.tsx`):** Slide-out workspace drawer displaying real-time 7-stage graph execution progress, accordion-based ATMS master decision ledger viewer (`selectionRationale`, `evaluatedAlternatives`), active ghost hunk review controls, and session lifecycle management.
+- **Architectural Agent Chat Panel (`src/components/agent/chat-panel.tsx`):** Slide-out workspace drawer displaying graph execution progress, ATMS master decision ledger cards (`selectionRationale`, `evaluatedAlternatives`), active ghost hunk review controls, manual `System 2` model selection (`agent-system2-model-select`, populated from `src/config/models.config.json` `STREAMING_GENERATIVE` models with credit rates), 3-mode permission toggles (`safe`, `semi_auto`, `full_auto`), and a recoverable `INSUFFICIENT_CREDITS` checkpoint resume card (`paused_insufficient_credits` -> `resumeInsufficientCreditsTask`).
+- **Single-Layer SSE Transport, Multi-File Decoder & Workspace Hono RPC (`src/server/routes/agent.routes.ts`, `src/lib/ai/stream-handler.ts`, `src/server/routes/rpc.routes.ts`, `src/client/rpc-client.ts`):** Eliminates outer route-level `StreamGovernor` double-billing (`withMeteredNodeGate` meters strictly inside graph nodes), decodes typed `ghost_hunk_proposed`, `file_mutated`, `vault_file_commit_required`, and enriched `interrupt` frames in `consumeAgentStream`, and exposes typed workspace CRUD / all-or-nothing decryption / file-restore RPC facades (`listWorkspacesRpc`, `createWorkspaceRpc`, `updateWorkspaceRpc`, `deleteWorkspaceRpc`, `decryptEntireWorkspaceRpc`, `restoreWorkspaceFileRpc`).
 - **Human-in-the-Loop Clarification Gate (`src/components/agent/hitl-question-card.tsx`):** Renders diagnostic question batches emitted by Stage 6 interrupts (`pure_interrupt_node`) with real-time `ClarificationResponseSchema` validation before stateless graph resumption via `POST /api/agent/stream`.
 - **Incremental Sync Contract & 412 Elimination (`src/hooks/use-editor-orchestrator.ts` & `src/hooks/use-ai-stream.ts`):** Replaces legacy client-side `commitAIFileOperation` with an immediate local IndexedDB write (`localRevision += 1`) and debounced server autosave via `useEditorAutosave` (800ms–1000ms), coalescing rapid ghost hunk acceptances into a single server save and eliminating self-inflicted 412 conflicts.
 - **Real-Time Credit Balance Presentation (`src/client/routes/dashboard-page.tsx` & `src/client/routes/account-page.tsx`):** Replaced legacy word-count quota displays with server-authoritative micro-credit balance tracking via `getCreditBalance()` (`@/client/rpc-client` -> `GET /api/rpc/billing/credit-balance`) and tier visual progress indicators.

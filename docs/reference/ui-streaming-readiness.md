@@ -54,14 +54,16 @@ flowchart TD
 
 ## 4. Session Finite State Machine (FSM)
 
-The agent session transitions through 8 deterministic states governed by `src/lib/ai/stream-session.ts`:
+The agent session transitions through 9 deterministic states governed by `src/lib/ai/stream-session.ts`:
 
 ```mermaid
 stateDiagram-v2
     [*] --> idle
     idle --> running_graph: startAgentSession() (POST /api/agent/stream)
     running_graph --> awaiting_hitl: interrupt frame received (question_queue populated)
-    awaiting_hitl --> running_graph: resumeAgentInterrupt() (new Command({ resume }))
+    awaiting_hitl --> running_graph: resumeAgentInterrupt() (POST /api/agent/stream resumePayload)
+    running_graph --> paused_insufficient_credits: interrupt frame (INSUFFICIENT_CREDITS)
+    paused_insufficient_credits --> running_graph: resumeInsufficientCreditsTask() (checkpoint resume)
     running_graph --> streaming_hunks: section synthesis active (ghost hunks rendered)
     streaming_hunks --> preview_ready: graph execution complete (all hunks parked)
     
@@ -70,15 +72,18 @@ stateDiagram-v2
 
     running_graph --> aborted: stopAIOperation() (client abort)
     awaiting_hitl --> aborted: stopAIOperation() (client abort)
+    paused_insufficient_credits --> aborted: stopAIOperation() (client abort)
     streaming_hunks --> aborted: stopAIOperation() (client abort)
 
-    running_graph --> failed: Stream error / rate limit / quota exhausted
+    running_graph --> failed: Stream error / rate limit / runtime failure
     awaiting_hitl --> failed: Network or validation failure
+    paused_insufficient_credits --> failed: Resume validation or network failure
     streaming_hunks --> failed: Stream connection dropped
 
     completed --> idle: resetAI() / recycled
     aborted --> idle: resetAI() / recycled
     failed --> idle: resetAI() / recycled
+    paused_insufficient_credits --> idle: resetAI() / recycled
 ```
 
 ---
@@ -188,48 +193,52 @@ tested and ready for progressive canary activation by setting the flag to `true`
 As part of the Elixent autonomous agent architecture (`ELIXENT-ARCH-03` §5.1, `ELIXENT-ARCH-02` & `SRS-01`), the unified route `POST /api/agent/stream` serves server-authoritative Server-Sent Events (SSE) for `ElixentNativeGraphRunner` state machine execution:
 
 ### 8.1 Route Handler & Stream Execution Invariants
-- **Hono SSE Route Handler (`agentRoutes` / `handleAgentStreamPost`):** Served as a persistent Web-standard Hono `ReadableStream<Uint8Array>` handler (`POST /api/agent/stream` in `src/server/routes/agent.routes.ts`) with `AbortController` cancellation bound to `req.signal` and `ReadableStream.cancel()`, `StreamGovernor` multi-slice Redis leases (`120s` TTL via `LEASE_TTL_SECONDS`), and background PostgreSQL settlement flush via `scheduleAfterResponse()` (ADR-007 ALS).
+- **Hono SSE Route Handler (`agentRoutes` / `handleAgentStreamPost`):** Served as a persistent Web-standard Hono `ReadableStream<Uint8Array>` handler (`POST /api/agent/stream` in `src/server/routes/agent.routes.ts`) with `AbortController` cancellation bound to `req.signal` and `ReadableStream.cancel()`, single-layer open-ceiling metering inside graph nodes (`withMeteredNodeGate`; outer route-level `StreamGovernor` purged in Phase 4 / `v0.27.0`), `CloudPostgresWorkspaceProvider` injection, and background PostgreSQL settlement flush via `scheduleAfterResponse()` (ADR-007 ALS).
 - **Pre-Execution Auth Guard:** Invokes `requireAuthenticatedUser()` prior to reading the request body; unauthenticated requests fail immediately with RFC 7807 `401 Unauthorized` (`urn:problem-type:unauthorized`).
 - **Fail-Closed Stream Rate Limiting:** Enforces `aiStreamRateLimiter.limit(user.id)`; returns RFC 7807 `429 Too Many Requests` if the user exceeds limits or Redis is unavailable.
 - **Strict Payload Schema (`src/core/agent/stream-payload.ts`):** Validated via `parseAgentStreamPayload`:
   - `threadId`: string (max 256 chars, required).
   - `workspaceId`: string (max 256 chars, optional; required if `projectId` is omitted).
   - `projectId`: string (max 256 chars, optional legacy alias for `workspaceId`).
-  - `turnId`: string (max 256 chars, optional; defaults to generated UUID).
+  - `turnId`: string (max 256 chars, optional; defaults to route `operationId`).
   - `prompt`: string (max 100,000 chars, optional).
   - `targetFileIds`: string array (max 100 files, required).
   - `permissionMode`: `"safe" | "semi_auto" | "full_auto"` (optional, defaults to `"safe"`).
-  - `selectedSystem2ModelId`: string (max 256 chars, optional, defaults to `"google/gemini-3.1-pro"`).
-  - `resumePayload`: unknown (optional, passed to `elixentAgentGraph.stream({ resumePayload }, runtimeContext)`).
+  - `selectedSystem2ModelId`: string (max 256 chars, optional, defaults to `"google/gemini-3.8-flash"`).
+  - `resumePayload`: unknown (optional, passed to `elixentAgentGraph.stream({ resumeFromCheckpoint: true, stateOverrides: { clarification_answers: resumePayload } }, runtimeContext)`).
   - `ephemeralVaultPayloads`: Record<string, string> (max 100 keys, max 2MB per document, optional).
   - `liveDocumentSnapshots`: Record<string, string> (max 100 keys, max 2MB per document, optional).
   Schema violations return RFC 7807 `400 Bad Request` with `invalidParams` details.
 
 ### 8.2 SSE Event Framing (`text/event-stream`)
-The route returns an SSE stream with headers `Content-Type: text/event-stream; charset=utf-8`, `Cache-Control: no-cache, no-transform`, and `X-Accel-Buffering: no`:
+The route returns an SSE stream with headers `Content-Type: text/event-stream; charset=utf-8`, `Cache-Control: no-cache, no-transform`, and `X-Accel-Buffering: no`, decoded client-side by `consumeAgentStream` (`src/lib/ai/stream-handler.ts`):
 
 | Event | Frame Structure | Trigger / Semantics |
 | :--- | :--- | :--- |
 | `start` | `event: start\ndata: {"type":"start","sessionId":"...","threadId":"...","operationId":"...","correlationId":"..."}\n\n` | Emitted immediately upon successful connection and stream initialization. |
-| `update` | `event: update\ndata: {"type":"update","chunk":{...}}\n\n` | Emitted for intermediate graph execution steps, messages, and state transitions. |
-| `interrupt` | `event: interrupt\ndata: {"type":"interrupt","threadId":"...","operationId":"...","interrupts":[...]}\n\n` | Emitted when LangGraph suspends for human-in-the-loop input or credit replenishment. |
-| `error` | `event: error\ndata: {"type":"error","code":"QUOTA_EXCEEDED"|"STREAM_EXECUTION_ERROR","message":"..."}\n\n` | Emitted on unhandled graph exceptions or quota exhaustion; aborts the stream. |
-| `done` | `event: done\ndata: {"type":"done","threadId":"...","operationId":"..."}\n\n` | Emitted upon clean graph completion to signal EOF to the client. |
+| `update` | `event: update\ndata: {"type":"update","chunk":{...}}\n\n` | Emitted for intermediate graph execution steps, messages, and state transitions (and direct `direct_response_node` updates via `emitSseEvent`). |
+| `ghost_hunk_proposed` | `event: ghost_hunk_proposed\ndata: {"type":"ghost_hunk_proposed","fileId":"...","headingSlug":"...","hunks":[...]}\n\n` | Emitted via `emitSseEvent` by `workspace_mutator_node` in `safe` mode; decoded by `onGhostHunkProposed` in `stream-handler.ts` and consumed by `useAIStream` (filtering mismatched `fileId` frames for active-file ghost hunks). |
+| `file_mutated` | `event: file_mutated\ndata: {"type":"file_mutated","fileId":"...","relativePath":"...","action":"created"\|"deleted"\|"updated"}\n\n` | Emitted via `emitSseEvent` on autonomous file creation, deletion, or unencrypted update; decoded by `onFileMutated` in `stream-handler.ts`. |
+| `vault_file_commit_required` | `event: vault_file_commit_required\ndata: {"type":"vault_file_commit_required","fileId":"...","relativePath":"...","mergedContent":"..."}\n\n` | Emitted via `emitSseEvent` when an encrypted document or `decisions.ledger.json` requires client-side re-encryption; decoded by `onVaultFileCommitRequired` in `stream-handler.ts`. |
+| `interrupt` | `event: interrupt\ndata: {"type":"interrupt","threadId":"...","operationId":"...","nodeId":"...","stepIndex":0,"interruptReason":"...","interruptPayload":{...},"interrupts":[...]}\n\n` | Emitted when `ElixentNativeGraphRunner` yields `status: "INTERRUPTED"` for HITL clarification, Anti-Domino confirmation, file deletion approval, or `INSUFFICIENT_CREDITS` pause. |
+| `error` | `event: error\ndata: {"type":"error","code":"STREAM_EXECUTION_ERROR"\|"STREAM_RUNTIME_ERROR","message":"..."}\n\n` | Emitted on unhandled graph or runtime exceptions; aborts the stream. |
+| `done` | `event: done\ndata: {"type":"done","threadId":"...","operationId":"..."}\n\n` | Emitted upon clean graph completion (suppressed when interrupted or aborted) to signal EOF to the client. |
 
 ### 8.3 Metering & Memory Hygiene
-- **StreamGovernor Runway Metering:** Initial reservation of 1,200 tokens via `StreamGovernor(userId, operationId, "google/gemini-3.8-flash")`. Every token chunk is metered in real time; if quota is exhausted, governor aborts the stream with `GOVERNOR_QUOTA_EXHAUSTED`.
+- **Single-Layer Open-Ceiling Node Metering (`SRS-04 §3.2 REQ-METER-02`):** Route-level `StreamGovernor` framing was purged from `src/server/routes/agent.routes.ts` and `AgentRuntimeContext` in Phase 4 (`v0.27.0`) so SSE state frames are never double-billed; all model-consuming graph nodes meter strictly once via `withMeteredNodeGate` using `ctx.selectedSystem2ModelId` (for System 2 nodes) and emit native `INSUFFICIENT_CREDITS` interrupts upon wallet depletion.
 - **Background Settlement via `scheduleAfterResponse`:** Asynchronous credit settlement persistence is queued via `scheduleAfterResponse(async () => { await flushPendingSettlementsToPostgres(user.id); })`, decoupling database write latency from client stream closure.
 - **Zero-Knowledge Buffer Cleansing:** Decrypted file plaintexts loaded into `EphemeralVaultMemoryMap` via `runWithEphemeralVaultScope` are deterministically wiped (`Buffer.fill(0)`) in both normal completion and stream abort/cancel handlers via `zeroOutEphemeralVaultMemory()`.
 
 ---
 
-## 9. Architectural Agent Chat Panel, HITL Question Cards & Incremental Editor Sync (Phase 11)
+## 9. Architectural Agent Chat Panel, HITL Question Cards & Incremental Editor Sync (Phases 11 & 4)
 
-Phase 11 completes the end-to-end integration of the autonomous architectural agent into the client presentation and editing layer:
+Phases 11 and 4 complete the interactive presentation, System 2 model controls, permission modes, and credit-exhaustion recovery surfaces:
 
 ### 9.1 Agent Chat Panel (`src/components/agent/chat-panel.tsx`)
-- **7-Stage Architectural Progress:** Ephemeral visual indicator displaying active graph stages (`Orchestrator`, `Structural Inspection`, `Assumption Analysis`, `Decision Audit`, `Conformal Triage`, `HITL Clarification`, `Document Writer`).
-- **ATMS Decision Ledger (`master_ledger`):** Live accordion view rendering committed architectural decisions, rationale summaries, and evaluated alternatives with exclusion reasons.
+- **Graph Execution Progress:** Ephemeral visual indicator displaying active graph stages and status (`idle`, `running_graph`, `awaiting_hitl`, `paused_insufficient_credits`, `streaming_hunks`, `preview_ready`, `completed`, `aborted`, `failed`).
+- **System 2 Model Selector & Permission Modes (Phase 4 / `v0.27.0`):** Populates `agent-system2-model-select` dynamically from `src/config/models.config.json` entries where `executionMode === "STREAMING_GENERATIVE"` (displaying input/output credits per 1K tokens), renders the 3-mode permission selector (`safe`, `semi_auto`, `full_auto` via `agent-permission-mode-*`), and displays the `INSUFFICIENT_CREDITS` recovery banner (`agent-insufficient-credits-card` + `agent-resume-task-button`) to resume from the saved checkpoint via `resumeInsufficientCreditsTask`.
+- **ATMS Decision Ledger (`master_ledger`):** Live viewer rendering committed architectural decisions, rationale summaries, and evaluated alternatives with exclusion reasons.
 - **Prompt Composer & Lifecycle Controls:** Provides session initiation, abort (`stopAIOperation`), reset (`resetAI`), and vault lock status badges with automatic dark-theme styling.
 
 ### 9.2 Human-in-the-Loop Clarification Gate (`src/components/agent/hitl-question-card.tsx`)
@@ -238,7 +247,7 @@ Phase 11 completes the end-to-end integration of the autonomous architectural ag
 - **Stateless Resumption:** Submits validated user responses to `/api/agent/stream` passing `resumePayload`, resuming the graph execution thread with zero duplicate billing.
 
 ### 9.3 Client Hook Orchestration (`useAIStream` & `useEditorOrchestrator`)
-- **Decoupled Architecture:** `useAIStream` coordinates stream consumption (`consumeAgentStream`), event handling, and multi-hunk ghost state in CodeMirror 6.
+- **Decoupled Architecture:** `useAIStream` coordinates stream consumption (`consumeAgentStream`), event handling (including `onGhostHunkProposed` active-file ghost hunk upserts, `INSUFFICIENT_CREDITS` checkpoint pause/resume, and `selectedSystem2ModelId`/`permissionMode` forwarding), and multi-hunk ghost state in CodeMirror 6.
 - **Programmatic Transaction Isolation:** Dispatches all ghost hunk applications inside `onProgrammaticTransaction`, raising `isProgrammaticUpdateRef` in `useEditorOrchestrator` to prevent false classification as manual user edits.
 - **Incremental Sync Contract (412 Elimination):** Ghost hunk acceptance writes directly to local IndexedDB (`localRevision += 1`) and notifies `useEditorAutosave`, coalescing multiple rapid hunk acceptances into a single debounced server save (800ms–1000ms) with matching `expectedVersion`, permanently eliminating self-inflicted 412 Precondition Failed conflicts.
 

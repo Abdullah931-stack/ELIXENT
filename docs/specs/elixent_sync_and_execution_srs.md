@@ -83,25 +83,32 @@ export function persistLocalClientUserId(userId: string): void;
 export function clearLocalClientUserId(): void;
 
 /**
+ * Builds a safe `/login?redirectTo=...` path from the current or provided relative path.
+ * Falls back to `"/login"` for root, `/login*`, or unsafe external/protocol-relative paths.
+ */
+export function buildLoginRedirectPath(currentPath?: string): string;
+
+/**
  * Executes dual-mode Local-First identity verification:
  * - Returns local cookie identity immediately when present.
  * - When online, verifies the session against the server in the background and invokes
- *   onSessionExpired only on explicit server auth rejection (never on network errors).
+ *   onSessionExpired only on explicit server auth rejection (never on AbortError or network errors).
  * - When offline, trusts the local cookie identity and defers server verification until online.
  */
 export async function resolveLocalFirstAuthUser(options?: {
     onSessionExpired?: () => void;
-}): Promise<{ id: string } | null>;
+    signal?: AbortSignal;
+}): Promise<{ id: string; [key: string]: unknown } | null>;
 ```
 
 ### 3.3. Route & Orchestrator Wiring
 
-1. **`src/client/routes/workspace-layout.tsx` (Lines `10–45`):**
+1. **`src/client/routes/workspace-layout.tsx`:**
    - Initialize `userId` and `isLoading` synchronously from `resolveInitialClientUserIdSync()`.
-   - Replace `resolveAuthUser` with `resolveLocalFirstAuthUser({ onSessionExpired: () => navigateTo("/login") })`.
-2. **`src/client/routes/editor-page.tsx` (Lines `28`, `153–165`):**
+   - Run `resolveLocalFirstAuthUser({ onSessionExpired, signal })` with an unmount `AbortController`, redirecting via `navigateTo(buildLoginRedirectPath())` strictly inside `onSessionExpired` when online, and subscribe to `window` `"online"` events to re-verify the session upon reconnection.
+2. **`src/client/routes/editor-page.tsx`:**
    - Initialize `const [userId, setUserId] = useState<string | null>(() => resolveInitialClientUserIdSync());`.
-   - Use `resolveLocalFirstAuthUser({ onSessionExpired: () => navigate("/login") })` in `useEffect`.
+   - Use `resolveLocalFirstAuthUser({ onSessionExpired, signal })` with an unmount `AbortController` in `useEffect`, redirecting via `navigate(buildLoginRedirectPath())` strictly inside `onSessionExpired` when online.
 3. **`src/client/routes/workspace-page.tsx`, `dashboard-page.tsx`, `account-page.tsx`, `src/components/layout/sidebar.tsx`, `src/components/files/file-context-menu.tsx`, and `src/client/rpc-client.ts`:**
    - Replace direct client `supabase.auth.getUser()` calls with `resolveLocalFirstAuthUser`, and invoke `clearLocalClientUserId()` inside `signOut()` (`src/client/rpc-client.ts:413`).
 4. **Initial Baseline Persistence Guard (`src/hooks/use-editor-orchestrator.ts`):**

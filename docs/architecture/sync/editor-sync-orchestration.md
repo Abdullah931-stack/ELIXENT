@@ -827,7 +827,7 @@ Release v0.20.5 (`ELIXENT-SRS-LOCAL-FIRST-SYNC-v2.0`) remediates the cold-start 
 - **0ms Cold-Start Extraction:** Client route components (`workspace-layout.tsx`, `editor-page.tsx`, `workspace-page.tsx`, `dashboard-page.tsx`, `account-page.tsx`), navigation sidebars, and context menus extract `userId` synchronously (0ms) from local browser cookies (`elixent_uid` and Supabase auth token cookies including `.0` / `.1` chunking) or localStorage fallback via `resolveInitialClientUserIdSync()` (`src/lib/auth/client-identity.ts`).
 - **Unblocking IndexedDB & Editor Hydration:** The editor surface paints and initializes the per-user IndexedDB database (`textai_db_${userId}`) on the initial render tick without awaiting network round-trips (`supabase.auth.getUser()`).
 - **Offline Editing Continuity:** When offline (`navigator.onLine === false`), the local cookie identity is trusted unconditionally, enabling full local editing without blocking or redirecting to `/login`.
-- **Background Online Session Verification:** When online, `resolveLocalFirstAuthUser()` verifies the session against the server in the background and triggers `onSessionExpired` to redirect to `/login` only upon explicit server authentication revocation (`401 Unauthorized` / `invalid_jwt` / `session_expired`), never on transient network errors or timeouts.
+- **Background Online Session Verification & Reconnection Guard (Hardened in `v0.27.0` Wave 4.3):** When online, `resolveLocalFirstAuthUser({ onSessionExpired, signal })` verifies the session against the server in the background (with `AbortSignal` unmount cancellation) and triggers `onSessionExpired` only upon explicit server authentication revocation (`401`/`403`, `invalid_jwt`, `session_expired`, or cold-start `user: null`), never on `AbortError`, transient network errors, timeouts, or mid-flight offline drops. `WorkspaceLayoutRouteView` (`workspace-layout.tsx`) and `EditorPage` (`editor-page.tsx`) redirect exclusively inside `onSessionExpired` using `buildLoginRedirectPath()` (preserving safe `?redirectTo=` targets via `resolveSafeRedirectPath`), and `WorkspaceLayoutRouteView` attaches a `window` `"online"` listener to re-verify sessions automatically when connectivity returns.
 - **Provider-Agnostic Seam (Better Auth Readiness):** All client identity logic is decoupled from direct Supabase primitives into `src/lib/auth/client-identity.ts`, persisting a first-party readable identity cookie (`elixent_uid`, `Path=/; SameSite=Lax; Max-Age=2592000`) and clearing it via `clearLocalClientUserId()` inside `signOut()` (`src/client/rpc-client.ts`).
 - **Initial Baseline Persistence Guard:** In `useEditorOrchestrator`, `initialBaselinePersistedRef` ensures that if initial file loading completes before `syncHook.isInitialized` transitions to true, a dedicated effect commits the clean baseline snapshot to IndexedDB as soon as `syncHook.isInitialized` becomes true.
 
@@ -877,7 +877,7 @@ React editor state is **never** flushed unconditionally during routine sync cycl
   - **Vault Subsystem Total:** 10/10 test files, 178/178 tests passing (100% success rate).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 155 unit suites (3151 tests) · 22 live suites (101 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 156 unit suites (3281 tests) · 22 live suites (101 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
   - **TypeScript Typecheck:** `npx tsc --noEmit` exits with code 0 (zero errors).

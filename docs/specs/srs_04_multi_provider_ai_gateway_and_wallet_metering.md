@@ -7,7 +7,7 @@
 | **Governing ADRs**          | [`ADR-004`](../architecture/01_architecture_vision_and_adrs.md), [`ADR-007`](../architecture/adrs/adr_007_dual_plane_separation_and_als_request_context.md), [`ADR-009`](../architecture/adrs/adr_009_native_graph_orchestration_engine.md)                                                                                    |
 | **Reference Baseline**      | `Elixent v0.22.0` (`Vite 6 SPA + TanStack Router + Hono RPC`)                                                                                                                                                                                                                                                                  |
 | **Target Repository Scope** | `../../src/config/models.config.json`, `../../src/lib/ai/client.ts`, `../../src/lib/metering/constants.ts`, `../../src/lib/metering/derivation.ts`, `../../src/lib/metering/node-gate.ts`, `../../src/lib/metering/stream-governor.ts`, `../../src/server/routes/agent.routes.ts`, `../../src/components/agent/chat-panel.tsx` |
-| **Status**                  | `APPROVED FOR IMPLEMENTATION (v1.1 Audited)`                                                                                                                                                                                                                                                                                   |
+| **Status**                  | `IMPLEMENTED THROUGH PHASE 4 (v0.27.0 — Phases 1, 3 & 4 Complete)`                                                                                                                                                                                                                                                               |
 
 ## 1. Purpose, Scope & Architectural Traceability
 
@@ -138,7 +138,7 @@ sequenceDiagram
      - Discrete and tool-loop nodes (`search_discovery_node`, `assumption_extractor_node`, `conflict_and_weight_gate_node`, `jev_conformal_scorer_node`) meter via `withMeteredNodeGate` using the exact `usage.inputTokens` and `usage.outputTokens` returned by `Vercel AI SDK v7` / `POST /v1/decisions`.
      - Streaming nodes (`workspace_mutator_node`, `direct_response_node`) meter via a per-invocation `StreamGovernor` bound to `ctx.selectedSystem2ModelId`.
 2. **Mandatory Initial Redis Lease Reservation in `StreamGovernor` (`REQ-METER-03`):**
-   - Before consuming any streamed chunks, `StreamGovernor.initializeLease()` (Planned / New) MUST invoke `ensureWalletLoadedFlushFirst` and `executeReserveOrExtend` in Redis to reserve the initial slice (`initialReservationTokens`). Setting `totalTokensReserved` in memory without an active Redis lease is strictly prohibited.
+   - Before consuming any streamed chunks, `StreamGovernor.initializeLease()` (Implemented in Phase 1) MUST invoke `ensureWalletLoadedFlushFirst` and `executeReserveOrExtend` in Redis to reserve the initial slice (`initialReservationTokens`). Setting `totalTokensReserved` in memory without an active Redis lease is strictly prohibited.
 3. **First-Class `INSUFFICIENT_CREDITS` Interrupt Signal (`REQ-METER-04`):**
    - When `executeReserveOrExtend` returns `canAfford === false`, `withMeteredNodeGate` and `StreamGovernor` return a typed `NodeExecutionResult` with `status: "INTERRUPTED"` and `interruptReason: "INSUFFICIENT_CREDITS"`, which `Elixent Native Graph Engine` checkpoints in `agent_checkpoints` (`nextNodeId = currentNodeId`) so the user can top up their wallet and resume from the exact interrupted node.
 
