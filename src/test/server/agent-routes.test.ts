@@ -25,6 +25,8 @@ import type {
   AgentRuntimeContext,
   GraphStreamYield,
 } from "@/core/agent/engine/runner";
+import type { AgentGraphState } from "@/core/agent/state";
+import { deriveDefaultWorkspaceId } from "@/server/db/schema/files";
 import {
   hasActiveVaultPlaintextInMemory,
   getActiveEphemeralVaultPlaintexts,
@@ -44,6 +46,7 @@ const {
   governorState,
   MockStreamGovernor,
   mockFlushPendingSettlements,
+  workspaceDbState,
 } = vi.hoisted(() => {
   const scheduledAfterTasks: Array<() => Promise<void> | void> = [];
 
@@ -137,6 +140,10 @@ const {
     netDeltaMicro: BigInt(-500000),
   }));
 
+  const workspaceDbState = {
+    findFirstResult: undefined as { id: string } | undefined,
+  };
+
   return {
     scheduledAfterTasks,
     mockUser,
@@ -146,6 +153,7 @@ const {
     governorState,
     MockStreamGovernor,
     mockFlushPendingSettlements,
+    workspaceDbState,
   };
 });
 
@@ -222,10 +230,34 @@ vi.mock("@/server/services/ai-settlement-service", () => ({
     mockFlushPendingSettlements(userId),
 }));
 
+vi.mock("@/server/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/server/db")>();
+  return {
+    ...actual,
+    db: {
+      query: {
+        workspaces: {
+          findFirst: vi.fn(async () => workspaceDbState.findFirstResult),
+        },
+        files: {
+          findFirst: vi.fn(async () => undefined),
+        },
+      },
+      insert: vi.fn(() => ({
+        values: vi.fn(() => ({
+          onConflictDoNothing: vi.fn(async () => undefined),
+        })),
+      })),
+    },
+  };
+});
+
 import {
   handleAgentStreamPost,
   agentRoutes,
 } from "@/server/routes/agent.routes";
+
+const DEFAULT_WORKSPACE_UUID = deriveDefaultWorkspaceId(mockUser.id);
 
 // ---------------------------------------------------------------------------
 // Test Helpers
@@ -283,6 +315,7 @@ describe("Web-Standard Hono Agent Route Module (src/server/routes/agent.routes.t
     graphState.lastInput = null;
     graphState.lastConfig = null;
     graphState.onStreamStart = null;
+    workspaceDbState.findFirstResult = { id: DEFAULT_WORKSPACE_UUID };
   });
 
   afterEach(() => {
@@ -415,7 +448,7 @@ describe("Web-Standard Hono Agent Route Module (src/server/routes/agent.routes.t
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           threadId: "th-native-credit",
-          workspaceId: "ws-credit-1",
+          workspaceId: DEFAULT_WORKSPACE_UUID,
           targetFileIds: ["file-1"],
         }),
       });
@@ -475,7 +508,7 @@ describe("Web-Standard Hono Agent Route Module (src/server/routes/agent.routes.t
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           threadId: "th-native-hitl",
-          workspaceId: "ws-hitl-1",
+          workspaceId: DEFAULT_WORKSPACE_UUID,
           targetFileIds: ["file-1"],
         }),
       });
@@ -563,7 +596,7 @@ describe("Web-Standard Hono Agent Route Module (src/server/routes/agent.routes.t
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           threadId: "th-non-dup",
-          workspaceId: "ws-non-dup",
+          workspaceId: DEFAULT_WORKSPACE_UUID,
           targetFileIds: ["doc-1"],
         }),
       });
@@ -706,7 +739,7 @@ describe("Web-Standard Hono Agent Route Module (src/server/routes/agent.routes.t
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           threadId: "th-hono-router",
-          workspaceId: "ws-hono",
+          workspaceId: DEFAULT_WORKSPACE_UUID,
           targetFileIds: ["file-hono-1"],
           resumePayload,
         }),
@@ -723,6 +756,108 @@ describe("Web-Standard Hono Agent Route Module (src/server/routes/agent.routes.t
           clarification_answers: resumePayload,
         },
       });
+    });
+  });
+
+  describe("Workspace UUID Validation & Legacy projectId Resolution", () => {
+    it("returns 400 RFC 7807 Problem Details when explicit workspaceId is not a valid UUID", async () => {
+      const req = new Request("http://localhost/api/agent/stream", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Correlation-ID": "corr-ws-invalid-uuid",
+        },
+        body: JSON.stringify({
+          threadId: "th-invalid-ws",
+          workspaceId: "ws-not-a-uuid",
+          targetFileIds: ["file-1"],
+        }),
+      });
+
+      const res = await handleAgentStreamPost(req);
+      expect(res.status).toBe(400);
+      expect(res.headers.get("Content-Type")).toBe("application/problem+json");
+      expect(res.headers.get("X-Correlation-ID")).toBe("corr-ws-invalid-uuid");
+
+      const body = await res.json();
+      expect(body).toMatchObject({
+        type: "urn:problem-type:bad-request",
+        title: "Invalid Workspace ID",
+        status: 400,
+        detail: "Invalid workspaceId format",
+        instance: "/api/agent/stream",
+        correlationId: "corr-ws-invalid-uuid",
+        invalidParams: [
+          {
+            name: "workspaceId",
+            reason: "workspaceId must be a valid UUID",
+          },
+        ],
+      });
+    });
+
+    it("returns 404 RFC 7807 Problem Details when explicit valid UUID workspaceId is not owned by the authenticated user", async () => {
+      workspaceDbState.findFirstResult = undefined;
+
+      const unownedWorkspaceId = "99999999-9999-4999-8999-999999999999";
+      const req = new Request("http://localhost/api/agent/stream", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Correlation-ID": "corr-ws-unowned",
+        },
+        body: JSON.stringify({
+          threadId: "th-unowned-ws",
+          workspaceId: unownedWorkspaceId,
+          targetFileIds: ["file-1"],
+        }),
+      });
+
+      const res = await handleAgentStreamPost(req);
+      expect(res.status).toBe(404);
+      expect(res.headers.get("Content-Type")).toBe("application/problem+json");
+      expect(res.headers.get("X-Correlation-ID")).toBe("corr-ws-unowned");
+
+      const body = await res.json();
+      expect(body).toMatchObject({
+        type: "urn:problem-type:not-found",
+        title: "Workspace Not Found",
+        status: 404,
+        instance: "/api/agent/stream",
+        correlationId: "corr-ws-unowned",
+      });
+    });
+
+    it("resolves legacy non-UUID projectId (without explicit workspaceId) to the user's Default Workspace UUID", async () => {
+      workspaceDbState.findFirstResult = undefined;
+      graphState.chunksToEmit = [{ ok: true }];
+
+      const req = new Request("http://localhost/api/agent/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          threadId: "th-legacy-proj",
+          projectId: "legacy-project-slug-42",
+          targetFileIds: ["file-1"],
+          prompt: "Summarize document",
+        }),
+      });
+
+      const res = await handleAgentStreamPost(req);
+      expect(res.status).toBe(200);
+      await drainSSE(res);
+
+      const expectedDefaultUuid = deriveDefaultWorkspaceId(mockUser.id);
+      expect(expectedDefaultUuid).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      );
+
+      const stateInput = graphState.lastInput as AgentGraphState;
+      expect(stateInput.user_request.workspaceId).toBe(expectedDefaultUuid);
+      expect(stateInput.user_request.projectId).toBe("legacy-project-slug-42");
+
+      const runtimeCtx = graphState.lastConfig as AgentRuntimeContext;
+      expect(runtimeCtx.workspaceId).toBe(expectedDefaultUuid);
     });
   });
 });

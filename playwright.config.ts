@@ -34,6 +34,7 @@ const BASE_URL = `http://localhost:${PORT}`;
 
 export default defineConfig({
     testDir: './e2e/specs',
+    globalSetup: './e2e/global-setup.ts',
     fullyParallel: false, // Single worker to prevent concurrent database mutation races on shared test branch
     workers: 1,
     forbidOnly: !!process.env.CI,

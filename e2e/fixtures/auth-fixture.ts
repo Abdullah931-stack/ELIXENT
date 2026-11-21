@@ -1,4 +1,4 @@
-import { test as base, expect } from "@playwright/test";
+import { test as base, expect, type APIResponse } from "@playwright/test";
 import { cleanupE2EUser } from "./test-db";
 
 export interface AuthenticatedUser {
@@ -11,6 +11,20 @@ interface TestAuthCookie {
     name: string;
     value: string;
     path?: string;
+}
+
+async function assertAuthResponseOk(
+    response: APIResponse,
+    action: string,
+    email: string
+): Promise<void> {
+    if (!response.ok()) {
+        const status = response.status();
+        const bodyText = await response.text().catch(() => "<unreadable response body>");
+        throw new Error(
+            `[E2E Auth Fixture] ${action} failed for ${email}: POST /api/test/e2e-auth returned HTTP ${status}. Response body: ${bodyText}`
+        );
+    }
 }
 
 export const test = base.extend<{
@@ -34,7 +48,7 @@ export const test = base.extend<{
             },
         });
 
-        expect(response.ok()).toBeTruthy();
+        await assertAuthResponseOk(response, "authSession bootstrap", testUser.email);
         const json = await response.json();
         testUser.userId = json.user.id;
 
@@ -71,7 +85,7 @@ export const test = base.extend<{
                     displayName: user.displayName,
                 },
             });
-            expect(response.ok()).toBeTruthy();
+            await assertAuthResponseOk(response, "loginAs", user.email);
             const json = await response.json();
             user.userId = json.user.id;
 

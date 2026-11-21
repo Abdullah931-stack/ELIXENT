@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { classifyGeminiError } from "@/lib/ai/key-rotation";
+import { classifyGeminiError, shouldRotateOnError } from "@/lib/ai/key-rotation";
 
 describe("Phase 11: Gemini HTTP 400 Key-Failure Error Classification", () => {
     const AUTH_400_VECTORS = [
@@ -64,6 +64,38 @@ describe("Phase 11: Gemini HTTP 400 Key-Failure Error Classification", () => {
             expect(classification.statusCode).toBe(400);
             expect(classification.retryableWithKey).toBe(false);
             expect(classification.retryableWithModel).toBe(false);
+        }
+    );
+
+    const MODEL_NOT_FOUND_404_VECTORS = [
+        {
+            label: "explicit HTTP 404 status",
+            error: Object.assign(new Error("Request failed with status 404"), { status: 404 }),
+        },
+        {
+            label: "model not found message",
+            error: new Error("Requested model not found in registry"),
+        },
+        {
+            label: "Google v1beta is not found message",
+            error: new Error("models/gemini-3.8-flash is not found for API version v1beta"),
+        },
+        {
+            label: "not supported for generateContent message",
+            error: new Error("models/embedding-001 is not supported for generateContent"),
+        },
+    ];
+
+    test.each(MODEL_NOT_FOUND_404_VECTORS)(
+        "classifies 404 / model-not-found ('$label') as invalid_request and non-rotatable",
+        ({ error }) => {
+            const classification = classifyGeminiError(error);
+
+            expect(classification.category).toBe("invalid_request");
+            expect(classification.statusCode).toBe(404);
+            expect(classification.retryableWithKey).toBe(false);
+            expect(classification.retryableWithModel).toBe(false);
+            expect(shouldRotateOnError(error)).toBe(false);
         }
     );
 });

@@ -15,6 +15,7 @@ import type {
   GraphStreamYield,
 } from "@/core/agent/engine/runner";
 import type { AgentGraphState } from "@/core/agent/state";
+import { deriveDefaultWorkspaceId } from "@/server/db/schema/files";
 import { setScheduleAfterResponseListener } from "@/server/context/request-context";
 import {
   hasActiveVaultPlaintextInMemory,
@@ -199,6 +200,28 @@ vi.mock("@/lib/metering/stream-governor", () => ({
 vi.mock("@/server/services/ai-settlement-service", () => ({
   flushPendingSettlementsToPostgres: (userId: string) => mockFlushPendingSettlements(userId),
 }));
+
+vi.mock("@/server/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/server/db")>();
+  return {
+    ...actual,
+    db: {
+      query: {
+        workspaces: {
+          findFirst: vi.fn(async () => ({ id: deriveDefaultWorkspaceId(mockUser.id) })),
+        },
+        files: {
+          findFirst: vi.fn(async () => undefined),
+        },
+      },
+      insert: vi.fn(() => ({
+        values: vi.fn(() => ({
+          onConflictDoNothing: vi.fn(async () => undefined),
+        })),
+      })),
+    },
+  };
+});
 
 // Import route module AFTER mocks
 import { handleAgentStreamPost as POST } from "@/server/routes/agent.routes";
@@ -494,10 +517,12 @@ describe("POST /api/agent/stream Route Handler", () => {
       const res = await route.POST(req);
       await readStreamToText(res);
 
+      const expectedWorkspaceId = deriveDefaultWorkspaceId(mockUser.id);
+
       const stateInput = graphConfigState.lastInput as AgentGraphState;
       expect(stateInput.user_request).toMatchObject({
         prompt: "Draft system spec",
-        workspaceId: "project-200",
+        workspaceId: expectedWorkspaceId,
         projectId: "project-200",
         targetFileIds: ["file-a", "file-b"],
         permissionMode: "semi_auto",
@@ -509,7 +534,7 @@ describe("POST /api/agent/stream Route Handler", () => {
       const runtimeCtx = graphConfigState.lastConfig as AgentRuntimeContext;
       expect(runtimeCtx.threadId).toBe("thread-100");
       expect(runtimeCtx.userId).toBe(mockUser.id);
-      expect(runtimeCtx.workspaceId).toBe("project-200");
+      expect(runtimeCtx.workspaceId).toBe(expectedWorkspaceId);
       expect(runtimeCtx.permissionMode).toBe("semi_auto");
       expect(runtimeCtx.selectedSystem2ModelId).toBe("google/gemini-4-argon");
       expect(typeof runtimeCtx.emitSseEvent).toBe("function");

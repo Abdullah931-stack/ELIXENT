@@ -444,6 +444,25 @@ describe('AI Client (Vercel AI SDK v7 Gateway & Model Registry)', () => {
             expect(mockStore.get('gemini:current_key_index')).toBeUndefined();
         });
 
+        it('fails fast on 404 model-not-found without rotating keys or retrying', async () => {
+            const error404 = Object.assign(
+                new Error('models/gemini-missing is not found for API version v1beta'),
+                { status: 404 }
+            );
+            sdkMocks.generateTextMock.mockRejectedValueOnce(error404);
+
+            await expect(
+                executeStructuredGeneration({
+                    modelId: 'google/gemini-missing',
+                    schema: testSchema,
+                    prompt: 'Missing model probe',
+                })
+            ).rejects.toThrow('is not found');
+
+            expect(sdkMocks.generateTextMock).toHaveBeenCalledTimes(1);
+            expect(mockStore.get('gemini:current_key_index')).toBeUndefined();
+        });
+
         it('records model failure and rethrows on 503 overload', async () => {
             const error503 = new Error('503 Service Unavailable: The model is overloaded');
             sdkMocks.generateTextMock.mockRejectedValueOnce(error503);
@@ -566,6 +585,67 @@ describe('AI Client (Vercel AI SDK v7 Gateway & Model Registry)', () => {
                     abortSignal: controller.signal,
                 })
             ).rejects.toThrow('Stream aborted before initialization');
+        });
+    });
+
+    // =========================================================================
+    // AI SDK Boundary Retry Isolation (`maxRetries: 0`)
+    // =========================================================================
+    describe('AI SDK Boundary Retry Isolation (maxRetries: 0)', () => {
+        it.each([
+            [
+                'executeStructuredGeneration -> generateText',
+                async () => {
+                    sdkMocks.generateTextMock.mockResolvedValueOnce({
+                        output: { ok: true },
+                        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+                        finishReason: 'stop',
+                    });
+                    await executeStructuredGeneration({
+                        modelId: 'google/gemini-3.8-flash',
+                        schema: z.object({ ok: z.boolean() }),
+                        prompt: 'Retry isolation check',
+                    });
+                    return sdkMocks.generateTextMock.mock.calls[0]?.[0];
+                },
+            ],
+            [
+                'executeToolAgentGeneration -> generateText',
+                async () => {
+                    sdkMocks.generateTextMock.mockResolvedValueOnce({
+                        text: 'Done',
+                        toolCalls: [],
+                        toolResults: [],
+                        steps: [],
+                        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+                        finishReason: 'stop',
+                    });
+                    await executeToolAgentGeneration({
+                        modelId: 'google/gemini-3.1-pro',
+                        tools: {} as ToolSet,
+                        prompt: 'Retry isolation check',
+                    });
+                    return sdkMocks.generateTextMock.mock.calls[0]?.[0];
+                },
+            ],
+            [
+                'executeStreamingGeneration -> streamText',
+                async () => {
+                    sdkMocks.streamTextMock.mockReturnValueOnce({
+                        textStream: (async function* () {
+                            yield 'ok';
+                        })(),
+                    });
+                    await executeStreamingGeneration({
+                        modelId: 'google/gemini-3.8-flash',
+                        prompt: 'Retry isolation check',
+                    });
+                    return sdkMocks.streamTextMock.mock.calls[0]?.[0];
+                },
+            ],
+        ])('%s disables internal SDK retries with maxRetries: 0', async (_label, invokeAndCaptureCall) => {
+            const sdkCallOptions = await invokeAndCaptureCall();
+            expect(sdkCallOptions).toEqual(expect.objectContaining({ maxRetries: 0 }));
         });
     });
 });

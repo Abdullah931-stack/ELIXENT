@@ -36,15 +36,16 @@ test.describe("Scenario 4: Offline-First Sync & Interactive Conflict Resolution"
         // 3. Concurrently update document on server directly with version 2
         await simulateRemoteFileUpdate(
             doc.id,
-            "# Line 1: Server Remote Edit Conflicting\nLine 2: Base content\nLine 3: Tail",
+            "# Server Remote Rewrite Beta\nLine 2: Base content\nLine 3: Tail",
             2
         );
 
-        // 4. In the UI, perform offline edit on the same line to force true 3-way conflict
-        const firstLine = page.locator(".cm-line").first();
-        await firstLine.click();
-        await page.keyboard.press("Home");
-        await page.keyboard.type("Client Local Edit - ");
+        // 4. In the UI, deterministically replace the full document offline (immune to CM6 heading
+        //    decorations) so Line 1 genuinely overlaps with the remote rewrite and triggers ConflictDialog
+        await cmContent.click();
+        await page.keyboard.press("ControlOrMeta+a");
+        await page.keyboard.press("Backspace");
+        await page.keyboard.type("# Client Local Rewrite Alpha\nLine 2: Base content\nLine 3: Tail");
 
         // 5. Restore online state and trigger save
         await context.setOffline(false);
@@ -74,6 +75,6 @@ test.describe("Scenario 4: Offline-First Sync & Interactive Conflict Resolution"
 
         const resolvedDoc = await getDbFile(doc.id);
         expect(resolvedDoc?.version).toBeGreaterThan(1);
-        expect(resolvedDoc?.content).toContain("Client Local Edit");
+        expect(resolvedDoc?.content).toContain("Client Local Rewrite Alpha");
     });
 });
