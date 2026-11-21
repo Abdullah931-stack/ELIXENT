@@ -82,8 +82,13 @@ export interface UseEditorOrchestratorReturn {
     masterDecisionLedger: Record<string, ATMSDecisionNode>;
     activeGhostHunks: GhostHunk[];
     activeGhostHunksCount: number;
+    selectedSystem2ModelId: string;
+    setSelectedSystem2ModelId: (modelId: string) => void;
+    permissionMode: "safe" | "semi_auto" | "full_auto";
+    setPermissionMode: (mode: "safe" | "semi_auto" | "full_auto") => void;
     startAgentSession: (prompt: string, targetFileIds?: string[]) => Promise<void>;
     resumeAgentInterrupt: (response: ClarificationResponse) => Promise<void>;
+    resumeInsufficientCreditsTask: () => Promise<void>;
     stopAIOperation: () => void;
     resetAI: () => void;
     acceptGhostHunk: (hunkId: string) => void;
@@ -1804,8 +1809,13 @@ export function useEditorOrchestrator({
         masterDecisionLedger: aiStream.masterDecisionLedger,
         activeGhostHunks: aiStream.activeGhostHunks,
         activeGhostHunksCount: aiStream.activeGhostHunksCount,
+        selectedSystem2ModelId: aiStream.selectedSystem2ModelId,
+        setSelectedSystem2ModelId: aiStream.setSelectedSystem2ModelId,
+        permissionMode: aiStream.permissionMode,
+        setPermissionMode: aiStream.setPermissionMode,
         startAgentSession,
         resumeAgentInterrupt,
+        resumeInsufficientCreditsTask: aiStream.resumeInsufficientCreditsTask,
         stopAIOperation: aiStream.stopStream,
         resetAI: aiStream.reset,
         acceptGhostHunk,

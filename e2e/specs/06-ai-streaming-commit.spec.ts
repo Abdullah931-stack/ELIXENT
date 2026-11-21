@@ -42,7 +42,7 @@ test.describe("Scenario 6: AI Streaming, Dynamic Ghost Preview & Atomic Commit",
                             operationId: reqOpId,
                             userId: authSession.userId,
                             threadId: doc.id,
-                            modelId: "google/gemini-2.5-flash",
+                            modelId: "google/gemini-3.8-flash",
                             executionMode: "STREAMING_GENERATIVE",
                             inputTokens: 50,
                             outputTokens: 25,
@@ -57,18 +57,18 @@ test.describe("Scenario 6: AI Streaming, Dynamic Ghost Preview & Atomic Commit",
 
             const sseBody = [
                 `event: start\ndata: ${JSON.stringify({ type: "start", sessionId: `sess_${Date.now()}`, threadId: doc.id, operationId: reqOpId })}\n\n`,
-                `event: update\ndata: ${JSON.stringify({
-                    type: "update",
-                    chunk: {
-                        hunks: [
-                            {
-                                hunkId: "hunk_1",
-                                headingSlug: "original-document-text",
-                                replacementText: "# Original Document Text\nImproved with state-of-the-art AI.",
-                                status: "preview_ready",
-                            },
-                        ],
-                    },
+                `event: ghost_hunk_proposed\ndata: ${JSON.stringify({
+                    type: "ghost_hunk_proposed",
+                    fileId: doc.id,
+                    headingSlug: "original-document-text",
+                    hunks: [
+                        {
+                            hunkId: "hunk_1",
+                            headingSlug: "original-document-text",
+                            replacementText: "# Original Document Text\nImproved with state-of-the-art AI.",
+                            status: "preview_ready",
+                        },
+                    ],
                 })}\n\n`,
                 `event: done\ndata: ${JSON.stringify({ type: "done", threadId: doc.id, operationId: reqOpId })}\n\n`,
             ].join("");

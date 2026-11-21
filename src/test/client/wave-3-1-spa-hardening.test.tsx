@@ -19,7 +19,13 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
-import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
+import {
+    createMemoryHistory,
+    createRootRoute,
+    createRoute,
+    createRouter,
+    RouterProvider,
+} from "@tanstack/react-router";
 
 const {
     mockGetUser,
@@ -102,10 +108,11 @@ vi.mock("@/components/layout/sidebar", () => ({
 import { router } from "@/client/router";
 import { registerRouter, type RouterNavigator } from "@/client/navigation";
 import { setRpcClientFetch } from "@/client/rpc-client";
-import { clearLocalClientUserId } from "@/lib/auth/client-identity";
+import { clearLocalClientUserId, persistLocalClientUserId } from "@/lib/auth/client-identity";
 import { LoginRouteView } from "@/client/routes/login-page";
 import DashboardPage, { DashboardRouteView } from "@/client/routes/dashboard-page";
 import AccountPage from "@/client/routes/account-page";
+import WorkspaceLayoutRouteView from "@/client/routes/workspace-layout";
 import WorkspacePage from "@/client/routes/workspace-page";
 import EditorPage from "@/client/routes/editor-page";
 
@@ -648,6 +655,262 @@ describe("Wave 3.1 SPA Hardening & Edge Cases", () => {
             fireEvent.click(screen.getByRole("button", { name: /return to workspace/i }));
             vi.advanceTimersByTime(400);
             expect(assignSpy).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("6. WorkspaceLayoutRouteView & EditorPage offline-first auth & redirectTo", () => {
+        const originalOnLineDescriptor = Object.getOwnPropertyDescriptor(Navigator.prototype, "onLine");
+
+        function renderWorkspaceLayoutInRouter() {
+            const root = createRootRoute({
+                component: WorkspaceLayoutRouteView,
+            });
+            const index = createRoute({
+                getParentRoute: () => root,
+                path: "/",
+                component: () => <div data-testid="mock-workspace-child">Child</div>,
+            });
+            const testRouter = createRouter({
+                routeTree: root.addChildren([index]),
+                history: createMemoryHistory({ initialEntries: ["/"] }),
+            });
+            return render(<RouterProvider router={testRouter} />);
+        }
+
+        afterEach(() => {
+            if (originalOnLineDescriptor) {
+                Object.defineProperty(Navigator.prototype, "onLine", originalOnLineDescriptor);
+            }
+        });
+
+        it("preserves redirectTo on WorkspaceLayoutRouteView when session is explicitly expired", async () => {
+            const spyNav = createSpyNavigator();
+            registerRouter(spyNav);
+            Object.defineProperty(window, "location", {
+                configurable: true,
+                writable: true,
+                value: {
+                    ...originalLocation,
+                    pathname: "/workspace/editor/doc-77",
+                    search: "?view=split",
+                },
+            });
+            mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+
+            renderWorkspaceLayoutInRouter();
+
+            await waitFor(() => {
+                expect(spyNav.navigate).toHaveBeenCalledWith({
+                    to: "/login?redirectTo=%2Fworkspace%2Feditor%2Fdoc-77%3Fview%3Dsplit",
+                    replace: undefined,
+                });
+            });
+        });
+
+        it("does NOT redirect to /login on transient network error and keeps workspace usable", async () => {
+            const spyNav = createSpyNavigator();
+            registerRouter(spyNav);
+            Object.defineProperty(window, "location", {
+                configurable: true,
+                writable: true,
+                value: {
+                    ...originalLocation,
+                    pathname: "/workspace",
+                    search: "",
+                },
+            });
+            mockGetUser.mockRejectedValue(new Error("Failed to fetch"));
+
+            renderWorkspaceLayoutInRouter();
+
+            await waitFor(() => {
+                expect(screen.getByTestId("mock-sidebar")).toBeTruthy();
+            });
+            expect(spyNav.navigate).not.toHaveBeenCalled();
+        });
+
+        it("re-verifies offline session on window online event and redirects with redirectTo if server rejects", async () => {
+            const spyNav = createSpyNavigator();
+            registerRouter(spyNav);
+            persistLocalClientUserId("offline-user-1");
+
+            Object.defineProperty(window, "location", {
+                configurable: true,
+                writable: true,
+                value: {
+                    ...originalLocation,
+                    pathname: "/workspace/editor/doc-offline",
+                    search: "",
+                },
+            });
+
+            let isOnline = false;
+            Object.defineProperty(Navigator.prototype, "onLine", {
+                configurable: true,
+                get: () => isOnline,
+            });
+
+            mockGetUser.mockResolvedValue({
+                data: { user: null },
+                error: { status: 401, message: "Unauthorized", code: "session_expired" },
+            });
+
+            renderWorkspaceLayoutInRouter();
+
+            await waitFor(() => {
+                expect(screen.getByTestId("mock-sidebar").getAttribute("data-user-id")).toBe("offline-user-1");
+            });
+            expect(mockGetUser).not.toHaveBeenCalled();
+
+            isOnline = true;
+            window.dispatchEvent(new Event("online"));
+
+            await waitFor(() => {
+                expect(spyNav.navigate).toHaveBeenCalledWith({
+                    to: "/login?redirectTo=%2Fworkspace%2Feditor%2Fdoc-offline",
+                    replace: undefined,
+                });
+            });
+        });
+
+        it("preserves redirectTo on EditorPage when onSessionExpired fires", async () => {
+            const spyNav = createSpyNavigator();
+            registerRouter(spyNav);
+            setupDefaultOrchestrator();
+            Object.defineProperty(window, "location", {
+                configurable: true,
+                writable: true,
+                value: {
+                    ...originalLocation,
+                    pathname: "/workspace/editor/file-99",
+                    search: "",
+                },
+            });
+            mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+
+            render(<EditorPage />);
+
+            await waitFor(() => {
+                expect(spyNav.navigate).toHaveBeenCalledWith({
+                    to: "/login?redirectTo=%2Fworkspace%2Feditor%2Ffile-99",
+                    replace: undefined,
+                });
+            });
+        });
+
+        it("removes window online listener and aborts verification when WorkspaceLayoutRouteView unmounts", async () => {
+            const spyNav = createSpyNavigator();
+            registerRouter(spyNav);
+            persistLocalClientUserId("unmount-user-1");
+
+            let isOnline = false;
+            Object.defineProperty(Navigator.prototype, "onLine", {
+                configurable: true,
+                get: () => isOnline,
+            });
+            mockGetUser.mockResolvedValue({
+                data: { user: null },
+                error: { status: 401, message: "Unauthorized" },
+            });
+
+            const { unmount } = renderWorkspaceLayoutInRouter();
+
+            await waitFor(() => {
+                expect(screen.getByTestId("mock-sidebar").getAttribute("data-user-id")).toBe("unmount-user-1");
+            });
+
+            unmount();
+
+            // Connectivity returns AFTER unmount -> listener MUST be cleaned up
+            isOnline = true;
+            window.dispatchEvent(new Event("online"));
+            await new Promise((resolve) => setTimeout(resolve, 25));
+
+            expect(mockGetUser).not.toHaveBeenCalled();
+            expect(spyNav.navigate).not.toHaveBeenCalled();
+        });
+
+        it("keeps user in workspace on window online re-verification when server returns valid user or transient AbortError", async () => {
+            const spyNav = createSpyNavigator();
+            registerRouter(spyNav);
+            persistLocalClientUserId("offline-user-keep");
+
+            let isOnline = false;
+            Object.defineProperty(Navigator.prototype, "onLine", {
+                configurable: true,
+                get: () => isOnline,
+            });
+
+            renderWorkspaceLayoutInRouter();
+            await waitFor(() => {
+                expect(screen.getByTestId("mock-sidebar").getAttribute("data-user-id")).toBe("offline-user-keep");
+            });
+
+            // 1. Transient AbortError on reconnect must NOT evict or redirect
+            mockGetUser.mockRejectedValueOnce(new DOMException("Aborted", "AbortError"));
+            isOnline = true;
+            window.dispatchEvent(new Event("online"));
+            await waitFor(() => expect(mockGetUser).toHaveBeenCalledTimes(1));
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            expect(spyNav.navigate).not.toHaveBeenCalled();
+            expect(window.localStorage.getItem("elixent_uid")).toBe("offline-user-keep");
+
+            // 2. Valid user response on reconnect keeps workspace active
+            mockGetUser.mockResolvedValueOnce({
+                data: { user: { id: "offline-user-keep" } },
+                error: null,
+            });
+            window.dispatchEvent(new Event("online"));
+            await waitFor(() => expect(mockGetUser).toHaveBeenCalledTimes(2));
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            expect(spyNav.navigate).not.toHaveBeenCalled();
+        });
+
+        it("does NOT redirect EditorPage when offline, on transient AbortError, or after unmount", async () => {
+            const spyNav = createSpyNavigator();
+            registerRouter(spyNav);
+            setupDefaultOrchestrator();
+            persistLocalClientUserId("editor-offline-user");
+
+            // 1. Offline mount skips network and never redirects
+            let isOnline = false;
+            Object.defineProperty(Navigator.prototype, "onLine", {
+                configurable: true,
+                get: () => isOnline,
+            });
+
+            const first = render(<EditorPage />);
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            expect(mockGetUser).not.toHaveBeenCalled();
+            expect(spyNav.navigate).not.toHaveBeenCalled();
+            first.unmount();
+
+            // 2. Online transient AbortError does not evict or redirect
+            isOnline = true;
+            mockGetUser.mockRejectedValueOnce(new DOMException("Aborted", "AbortError"));
+            const second = render(<EditorPage />);
+            await waitFor(() => expect(mockGetUser).toHaveBeenCalledTimes(1));
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            expect(spyNav.navigate).not.toHaveBeenCalled();
+            expect(window.localStorage.getItem("elixent_uid")).toBe("editor-offline-user");
+            second.unmount();
+
+            // 3. Unmount aborts in-flight cold-start auth check before 401/null triggers navigate
+            window.localStorage.clear();
+            document.cookie = "elixent_uid=; Path=/; Max-Age=0";
+            let resolveInFlight!: (val: unknown) => void;
+            mockGetUser.mockImplementationOnce(
+                () =>
+                    new Promise((resolve) => {
+                        resolveInFlight = resolve;
+                    })
+            );
+            const third = render(<EditorPage />);
+            await waitFor(() => expect(mockGetUser).toHaveBeenCalledTimes(2));
+            third.unmount();
+            resolveInFlight({ data: { user: null }, error: null });
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            expect(spyNav.navigate).not.toHaveBeenCalled();
         });
     });
 });

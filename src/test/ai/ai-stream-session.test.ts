@@ -27,6 +27,7 @@ describe('AIStreamSession State Machine, Monotonic Token & Integrity Guards (Pha
             expect(isTerminalStatus('idle')).toBe(false);
             expect(isTerminalStatus('running_graph')).toBe(false);
             expect(isTerminalStatus('awaiting_hitl')).toBe(false);
+            expect(isTerminalStatus('paused_insufficient_credits')).toBe(false);
             expect(isTerminalStatus('streaming_hunks')).toBe(false);
             expect(isTerminalStatus('preview_ready')).toBe(false);
         });
@@ -38,6 +39,7 @@ describe('AIStreamSession State Machine, Monotonic Token & Integrity Guards (Pha
             expect(isActiveStreamStatus('preview_ready')).toBe(true);
 
             expect(isActiveStreamStatus('idle')).toBe(false);
+            expect(isActiveStreamStatus('paused_insufficient_credits')).toBe(false);
             expect(isActiveStreamStatus('completed')).toBe(false);
             expect(isActiveStreamStatus('aborted')).toBe(false);
             expect(isActiveStreamStatus('failed')).toBe(false);
@@ -169,6 +171,61 @@ describe('AIStreamSession State Machine, Monotonic Token & Integrity Guards (Pha
             expect(session.status).toBe('failed');
             expect(session.failureReason).toBe('INSUFFICIENT_CREDITS (402)');
             expect(isTerminalStatus(session.status)).toBe(true);
+        });
+
+        it.each([
+            ['idle', 'paused_insufficient_credits', true],
+            ['running_graph', 'paused_insufficient_credits', true],
+            ['awaiting_hitl', 'paused_insufficient_credits', true],
+            ['streaming_hunks', 'paused_insufficient_credits', true],
+            ['preview_ready', 'paused_insufficient_credits', true],
+            ['paused_insufficient_credits', 'paused_insufficient_credits', true],
+            ['paused_insufficient_credits', 'running_graph', true],
+            ['paused_insufficient_credits', 'aborted', true],
+            ['paused_insufficient_credits', 'failed', true],
+            ['paused_insufficient_credits', 'idle', true],
+            ['paused_insufficient_credits', 'completed', false],
+            ['paused_insufficient_credits', 'preview_ready', false],
+            ['paused_insufficient_credits', 'streaming_hunks', false],
+            ['paused_insufficient_credits', 'awaiting_hitl', false],
+        ] as const)(
+            'enforces paused_insufficient_credits FSM transition (%s -> %s = %s)',
+            (from, to, expected) => {
+                expect(isValidTransition(from, to)).toBe(expected);
+            }
+        );
+
+        it('supports pause on INSUFFICIENT_CREDITS and deterministic resume back to running_graph -> completed', () => {
+            const session = createStreamSession({
+                sessionId: 's-credit-pause',
+                fileId: 'file-credit-1',
+                originalMarkdown: '# Spec',
+                originalText: '# Spec',
+                expectedVersion: 1,
+                originalEtag: 'etag-1',
+                editorGeneration: 1,
+            });
+
+            transitionSession(session, 'running_graph');
+            const initialFirstChunkAt = session.firstChunkAt;
+
+            transitionSession(
+                session,
+                'paused_insufficient_credits',
+                'INSUFFICIENT_CREDITS: Credit balance exhausted.'
+            );
+            expect(session.status).toBe('paused_insufficient_credits');
+            expect(session.failureReason).toBe('INSUFFICIENT_CREDITS: Credit balance exhausted.');
+            expect(isTerminalStatus(session.status)).toBe(false);
+            expect(() => transitionSession(session, 'completed')).toThrowError(/Invalid transition/);
+
+            transitionSession(session, 'running_graph');
+            expect(session.status).toBe('running_graph');
+            expect(session.firstChunkAt).toBe(initialFirstChunkAt);
+
+            transitionSession(session, 'completed');
+            expect(session.status).toBe('completed');
+            expect(session.completedAt).toBeTypeOf('number');
         });
     });
 

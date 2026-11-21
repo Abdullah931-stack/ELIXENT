@@ -20,6 +20,7 @@ import { isSystemReservedDecisionId } from "@/core/agent/taxonomy/predefined-tag
 import type { GhostHunk } from "@/components/editor/markdown/types";
 import { HITLQuestionCard } from "@/components/agent/hitl-question-card";
 import { Button } from "@/components/ui/button";
+import modelsConfig from "@/config/models.config.json";
 import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
@@ -27,12 +28,15 @@ import {
   Check,
   CheckCircle2,
   Circle,
+  Coins,
+  Cpu,
   GitBranch,
   Layers,
   Loader2,
   Lock,
   Play,
   RotateCcw,
+  Shield,
   ShieldAlert,
   Sparkles,
   Square,
@@ -40,10 +44,13 @@ import {
   X,
 } from "lucide-react";
 
+export type AgentPermissionMode = "safe" | "semi_auto" | "full_auto";
+
 export type AgentSessionStatus =
   | "idle"
   | "running_graph"
   | "awaiting_hitl"
+  | "paused_insufficient_credits"
   | "streaming_hunks"
   | "preview_ready"
   | "completed"
@@ -62,11 +69,16 @@ export interface AgentChatPanelProps {
   activeGhostHunksCount?: number;
   activeGhostHunks?: ReadonlyArray<GhostHunk>;
   error?: string | null;
+  selectedSystem2ModelId: string;
+  onSelectSystem2Model: (modelId: string) => void;
+  permissionMode: AgentPermissionMode;
+  onSelectPermissionMode: (mode: AgentPermissionMode) => void;
   onStartSession: (
     prompt: string,
     targetFileIds?: string[]
   ) => void | Promise<void>;
   onResumeInterrupt: (response: ClarificationResponse) => void | Promise<void>;
+  onResumeInsufficientCredits: () => void | Promise<void>;
   onStopSession?: () => void;
   onResetSession?: () => void;
   onAcceptGhostHunk?: (hunkId: string) => void;
@@ -80,6 +92,44 @@ export interface AgentChatPanelProps {
   isOffline?: boolean;
   className?: string;
 }
+
+interface ModelConfigEntry {
+  modelId: string;
+  executionMode: string;
+  creditsPer1kInput: number;
+  creditsPer1kOutput: number;
+}
+
+function formatSystem2ModelName(modelId: string): string {
+  const rawSlug = modelId.includes("/")
+    ? modelId.split("/").slice(1).join("/")
+    : modelId;
+  return rawSlug
+    .split("-")
+    .map((part) => {
+      if (/^\d/.test(part)) return part;
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
+    .join(" ");
+}
+
+const SYSTEM2_GENERATIVE_MODELS = (
+  Object.values(modelsConfig.models) as ModelConfigEntry[]
+)
+  .filter((entry) => entry.executionMode === "STREAMING_GENERATIVE")
+  .map((entry) => ({
+    ...entry,
+    displayName: formatSystem2ModelName(entry.modelId),
+  }));
+
+const PERMISSION_MODE_OPTIONS: ReadonlyArray<{
+  id: AgentPermissionMode;
+  label: string;
+}> = [
+  { id: "safe", label: "Safe" },
+  { id: "semi_auto", label: "Semi-Auto" },
+  { id: "full_auto", label: "Full-Auto" },
+];
 
 export interface AgentGraphStageDefinition {
   readonly id:
@@ -227,6 +277,15 @@ function computeStageStates(
     return AGENT_GRAPH_STAGES.map((_, idx) => {
       if (idx < activeIdx) return "completed";
       if (idx === activeIdx) return "active";
+      return "upcoming";
+    });
+  }
+
+  if (status === "paused_insufficient_credits") {
+    const pauseIdx = explicitIndex ?? 0;
+    return AGENT_GRAPH_STAGES.map((_, idx) => {
+      if (idx < pauseIdx) return "completed";
+      if (idx === pauseIdx) return "active";
       return "upcoming";
     });
   }
@@ -555,8 +614,13 @@ export function AgentChatPanel({
   activeGhostHunksCount,
   activeGhostHunks,
   error = null,
+  selectedSystem2ModelId,
+  onSelectSystem2Model,
+  permissionMode,
+  onSelectPermissionMode,
   onStartSession,
   onResumeInterrupt,
+  onResumeInsufficientCredits,
   onStopSession,
   onResetSession,
   onAcceptGhostHunk,
@@ -573,6 +637,7 @@ export function AgentChatPanel({
   const [prompt, setPrompt] = useState("");
   const [isStarting, setIsStarting] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
+  const [isResumingCredits, setIsResumingCredits] = useState(false);
 
   const stageStates = useMemo(
     () => computeStageStates(status, currentStage),
@@ -591,11 +656,13 @@ export function AgentChatPanel({
 
   const isRunning =
     status === "running_graph" || status === "streaming_hunks";
+  const isPausedInsufficientCredits = status === "paused_insufficient_credits";
   const isResettable =
     status === "completed" ||
     status === "failed" ||
     status === "aborted" ||
-    status === "preview_ready";
+    status === "preview_ready" ||
+    status === "paused_insufficient_credits";
   const hasActiveQuestions =
     Array.isArray(activeQuestionQueue) && activeQuestionQueue.length > 0;
   const showHITLSection = hasActiveQuestions || status === "awaiting_hitl";
@@ -643,6 +710,16 @@ export function AgentChatPanel({
     },
     [isExecutionBlocked, isResuming, onResumeInterrupt]
   );
+
+  const handleResumeCreditsClick = useCallback(async () => {
+    if (isResumingCredits || isExecutionBlocked) return;
+    setIsResumingCredits(true);
+    try {
+      await onResumeInsufficientCredits();
+    } finally {
+      setIsResumingCredits(false);
+    }
+  }, [isExecutionBlocked, isResumingCredits, onResumeInsufficientCredits]);
 
   if (!isOpen) {
     return null;
@@ -743,7 +820,7 @@ export function AgentChatPanel({
           </div>
         )}
 
-        {error && (
+        {error && !isPausedInsufficientCredits && (
           <div
             role="alert"
             data-testid="agent-error-alert"
@@ -753,6 +830,50 @@ export function AgentChatPanel({
             <div className="flex-1 min-w-0">
               <p className="font-semibold text-rose-300">Agent Execution Error</p>
               <p className="mt-0.5 break-words">{error}</p>
+            </div>
+          </div>
+        )}
+
+        {isPausedInsufficientCredits && (
+          <div
+            role="alert"
+            data-testid="agent-insufficient-credits-card"
+            className="rounded-xl border border-amber-500/40 bg-amber-950/30 p-3.5 text-xs text-amber-100 space-y-2.5"
+          >
+            <div className="flex items-start gap-2">
+              <Coins className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0 space-y-1">
+                <p className="font-semibold text-amber-200">
+                  Credit Balance Exhausted (INSUFFICIENT_CREDITS)
+                </p>
+                <p className="text-amber-200/80 leading-relaxed">
+                  {error ||
+                    "Your credit balance is depleted. Top up credits or select a lower-cost System 2 model, then resume from your saved checkpoint."}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end">
+              <Button
+                type="button"
+                size="sm"
+                variant="primary"
+                onClick={handleResumeCreditsClick}
+                disabled={isResumingCredits || isExecutionBlocked}
+                data-testid="agent-resume-task-button"
+                className="gap-1.5"
+              >
+                {isResumingCredits ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>Resuming...</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-3.5 w-3.5" />
+                    <span>Resume Task</span>
+                  </>
+                )}
+              </Button>
             </div>
           </div>
         )}
@@ -984,6 +1105,68 @@ export function AgentChatPanel({
         data-testid="agent-prompt-form"
         className="border-t border-zinc-800 bg-zinc-900/60 p-3.5 space-y-2.5 shrink-0"
       >
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <label
+              htmlFor="agent-system2-model-select"
+              className="flex items-center gap-1 text-[11px] font-medium text-zinc-400 shrink-0"
+            >
+              <Cpu className="h-3 w-3 text-indigo-400" />
+              <span>Model</span>
+            </label>
+            <select
+              id="agent-system2-model-select"
+              data-testid="agent-system2-model-select"
+              value={selectedSystem2ModelId}
+              onChange={(e) => onSelectSystem2Model(e.target.value)}
+              disabled={isRunning || isStarting}
+              className="flex-1 min-w-0 rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-200 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500/40 disabled:opacity-60"
+            >
+              {SYSTEM2_GENERATIVE_MODELS.map((model) => (
+                <option key={model.modelId} value={model.modelId}>
+                  {model.displayName} ({model.creditsPer1kInput.toFixed(2)} in /{" "}
+                  {model.creditsPer1kOutput.toFixed(2)} out per 1K)
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center justify-between gap-2">
+            <span className="flex items-center gap-1 text-[11px] font-medium text-zinc-400 shrink-0">
+              <Shield className="h-3 w-3 text-indigo-400" />
+              <span>Mode</span>
+            </span>
+            <div
+              role="group"
+              aria-label="Agent Permission Mode"
+              data-testid="agent-permission-mode-selector"
+              className="inline-flex rounded-md border border-zinc-800 bg-zinc-950 p-0.5"
+            >
+              {PERMISSION_MODE_OPTIONS.map((mode) => {
+                const isSelected = permissionMode === mode.id;
+                return (
+                  <button
+                    key={mode.id}
+                    type="button"
+                    data-testid={`agent-permission-mode-${mode.id}`}
+                    aria-pressed={isSelected}
+                    disabled={isRunning || isStarting}
+                    onClick={() => onSelectPermissionMode(mode.id)}
+                    className={cn(
+                      "px-2 py-0.5 text-[11px] font-medium rounded transition-colors disabled:opacity-60",
+                      isSelected
+                        ? "bg-indigo-600 text-white"
+                        : "text-zinc-400 hover:text-zinc-200"
+                    )}
+                  >
+                    {mode.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
         <textarea
           data-testid="agent-prompt-input"
           value={prompt}

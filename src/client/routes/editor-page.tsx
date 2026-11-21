@@ -13,6 +13,7 @@ import { SearchReplace } from "@/components/editor/search-replace";
 import { countWords, detectTextDirection, countCharacters } from "@/lib/utils";
 import { Loader2, AlertTriangle, Lock } from "lucide-react";
 import {
+    buildLoginRedirectPath,
     resolveInitialClientUserIdSync,
     resolveLocalFirstAuthUser,
 } from "@/lib/auth/client-identity";
@@ -106,8 +107,13 @@ export default function EditorPage() {
         masterDecisionLedger,
         activeGhostHunks,
         activeGhostHunksCount,
+        selectedSystem2ModelId,
+        setSelectedSystem2ModelId,
+        permissionMode,
+        setPermissionMode,
         startAgentSession,
         resumeAgentInterrupt,
+        resumeInsufficientCreditsTask,
         stopAIOperation,
         resetAI,
         acceptGhostHunk,
@@ -151,25 +157,30 @@ export default function EditorPage() {
 
     // Fetch authenticated user ID
     useEffect(() => {
-        let isCancelled = false;
+        const controller = new AbortController();
+        const { signal } = controller;
+
         resolveLocalFirstAuthUser({
             onSessionExpired: () => {
-                if (!isCancelled && (typeof navigator === "undefined" || navigator.onLine !== false)) {
-                    navigate("/login");
+                if (!signal.aborted && (typeof navigator === "undefined" || navigator.onLine !== false)) {
+                    navigate(buildLoginRedirectPath());
                 }
             },
+            signal,
         })
             .then((user) => {
-                if (!isCancelled && user) {
+                if (!signal.aborted && user) {
                     setUserId(user.id);
                 }
             })
             .catch((authErr) => {
-                console.warn("[Editor] resolveLocalFirstAuthUser exception:", authErr);
+                if (!signal.aborted) {
+                    console.warn("[Editor] resolveLocalFirstAuthUser exception:", authErr);
+                }
             });
 
         return () => {
-            isCancelled = true;
+            controller.abort();
         };
     }, [navigate]);
 
@@ -403,7 +414,11 @@ export default function EditorPage() {
             {/* Work Area: Editor Canvas + Side-by-Side Agent Chat Panel */}
             <div className="flex-1 flex overflow-hidden relative">
                 {/* Editor - Scrollable container */}
-                <div className="flex-1 overflow-auto custom-scrollbar relative">
+                <div
+                    className="flex-1 overflow-auto custom-scrollbar relative"
+                    data-hydration-status={hydration}
+                    aria-busy={hydration === "hydrating"}
+                >
                     {hydration === "hydrating" && !adapter?.getValue() && (
                         <div className="absolute inset-0 bg-zinc-950/80 backdrop-blur-xs z-10 flex flex-col items-center justify-center gap-3">
                             <Loader2 className="w-7 h-7 animate-spin text-indigo-400" />
@@ -485,8 +500,13 @@ export default function EditorPage() {
                     activeGhostHunksCount={activeGhostHunksCount}
                     activeGhostHunks={activeGhostHunks}
                     error={aiError}
+                    selectedSystem2ModelId={selectedSystem2ModelId}
+                    onSelectSystem2Model={setSelectedSystem2ModelId}
+                    permissionMode={permissionMode}
+                    onSelectPermissionMode={setPermissionMode}
                     onStartSession={startAgentSession}
                     onResumeInterrupt={resumeAgentInterrupt}
+                    onResumeInsufficientCredits={resumeInsufficientCreditsTask}
                     onStopSession={stopAIOperation}
                     onResetSession={resetAI}
                     onAcceptGhostHunk={acceptGhostHunk}

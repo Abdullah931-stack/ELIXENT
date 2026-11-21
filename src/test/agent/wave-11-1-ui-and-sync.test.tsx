@@ -29,6 +29,8 @@ vi.mock("@/lib/ai/stream-handler", async (importOriginal) => {
     };
 });
 
+import modelsConfig from "@/config/models.config.json";
+import { AgentStreamRequestPayloadSchema } from "@/core/agent/stream-payload";
 import { useAIStream } from "@/hooks/use-ai-stream";
 
 const SAMPLE_QUESTIONS: HITLQuestionItem[] = [
@@ -322,11 +324,20 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
     });
 
     describe("2. AgentChatPanel Component", () => {
+        const makeRequiredPanelProps = () => ({
+            selectedSystem2ModelId: "google/gemini-3.8-flash",
+            onSelectSystem2Model: vi.fn(),
+            permissionMode: "safe" as const,
+            onSelectPermissionMode: vi.fn(),
+            onResumeInsufficientCredits: vi.fn(),
+        });
+
         it("returns null when isOpen is false", () => {
             const { container } = render(
                 <AgentChatPanel
                     isOpen={false}
                     status="idle"
+                    {...makeRequiredPanelProps()}
                     onStartSession={vi.fn()}
                     onResumeInterrupt={vi.fn()}
                 />
@@ -339,6 +350,7 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
                 <AgentChatPanel
                     status="running_graph"
                     currentStage="confidence_classifier_node"
+                    {...makeRequiredPanelProps()}
                     onStartSession={vi.fn()}
                     onResumeInterrupt={vi.fn()}
                 />
@@ -355,6 +367,7 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
             rerender(
                 <AgentChatPanel
                     status="awaiting_hitl"
+                    {...makeRequiredPanelProps()}
                     onStartSession={vi.fn()}
                     onResumeInterrupt={vi.fn()}
                 />
@@ -366,6 +379,7 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
             rerender(
                 <AgentChatPanel
                     status="streaming_hunks"
+                    {...makeRequiredPanelProps()}
                     onStartSession={vi.fn()}
                     onResumeInterrupt={vi.fn()}
                 />
@@ -376,6 +390,7 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
             rerender(
                 <AgentChatPanel
                     status="preview_ready"
+                    {...makeRequiredPanelProps()}
                     onStartSession={vi.fn()}
                     onResumeInterrupt={vi.fn()}
                 />
@@ -396,6 +411,7 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
                 <AgentChatPanel
                     status="preview_ready"
                     masterDecisionLedger={ledgerWithReservedRecord}
+                    {...makeRequiredPanelProps()}
                     onStartSession={vi.fn()}
                     onResumeInterrupt={vi.fn()}
                 />
@@ -454,6 +470,7 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
                 <AgentChatPanel
                     status="preview_ready"
                     activeGhostHunks={hunks}
+                    {...makeRequiredPanelProps()}
                     onStartSession={vi.fn()}
                     onResumeInterrupt={vi.fn()}
                     onAcceptGhostHunk={onAcceptGhostHunk}
@@ -488,6 +505,7 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
                 <AgentChatPanel
                     status="idle"
                     targetFileIds={["file-1"]}
+                    {...makeRequiredPanelProps()}
                     onStartSession={onStartSession}
                     onResumeInterrupt={vi.fn()}
                     onStopSession={onStopSession}
@@ -516,6 +534,7 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
                     isEncrypted={true}
                     allowAIOnEncryptedFiles={false}
                     error="VAULT_AI_ACCESS_DENIED"
+                    {...makeRequiredPanelProps()}
                     onStartSession={onStartSession}
                     onResumeInterrupt={vi.fn()}
                     onResetSession={onResetSession}
@@ -533,6 +552,7 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
                 <AgentChatPanel
                     status="preview_ready"
                     masterDecisionLedger={[SAMPLE_DECISION_NODE]}
+                    {...makeRequiredPanelProps()}
                     onStartSession={vi.fn()}
                     onResumeInterrupt={vi.fn()}
                 />
@@ -548,6 +568,7 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
                 <AgentChatPanel
                     status="awaiting_hitl"
                     activeQuestionQueue={[SAMPLE_QUESTIONS[0]]}
+                    {...makeRequiredPanelProps()}
                     onStartSession={vi.fn()}
                     onResumeInterrupt={onResumeInterrupt}
                 />
@@ -568,6 +589,7 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
                 <AgentChatPanel
                     status="idle"
                     isOffline={true}
+                    {...makeRequiredPanelProps()}
                     onStartSession={onStartSession}
                     onResumeInterrupt={vi.fn()}
                 />
@@ -585,6 +607,7 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
             const { rerender } = render(
                 <AgentChatPanel
                     status="running_graph"
+                    {...makeRequiredPanelProps()}
                     onStartSession={vi.fn()}
                     onResumeInterrupt={vi.fn()}
                     onStopSession={onStopSession}
@@ -598,6 +621,7 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
             rerender(
                 <AgentChatPanel
                     status="streaming_hunks"
+                    {...makeRequiredPanelProps()}
                     onStartSession={vi.fn()}
                     onResumeInterrupt={vi.fn()}
                     onStopSession={onStopSession}
@@ -612,6 +636,7 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
                 <AgentChatPanel
                     status="idle"
                     masterDecisionLedger={{}}
+                    {...makeRequiredPanelProps()}
                     onStartSession={vi.fn()}
                     onResumeInterrupt={vi.fn()}
                 />
@@ -621,6 +646,147 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
             expect(screen.getByTestId("agent-decision-ledger-empty").textContent).toContain(
                 "No architectural decisions recorded"
             );
+        });
+
+        it("renders System 2 model selector and 3-mode permission selector and invokes callbacks", () => {
+            const onSelectSystem2Model = vi.fn();
+            const onSelectPermissionMode = vi.fn();
+            render(
+                <AgentChatPanel
+                    status="idle"
+                    {...makeRequiredPanelProps()}
+                    onSelectSystem2Model={onSelectSystem2Model}
+                    onSelectPermissionMode={onSelectPermissionMode}
+                    onStartSession={vi.fn()}
+                    onResumeInterrupt={vi.fn()}
+                />
+            );
+
+            const modelSelect = screen.getByTestId("agent-system2-model-select") as HTMLSelectElement;
+            expect(modelSelect.options.length).toBe(3);
+            expect(modelSelect.textContent).toContain("Gemini 4 Argon");
+            expect(modelSelect.textContent).toContain("Gemini 3.8 Flash");
+            expect(modelSelect.textContent).toContain("Gemini 3.1 Pro");
+            expect(modelSelect.textContent).toContain("0.15 in / 0.60 out");
+
+            fireEvent.change(modelSelect, { target: { value: "google/gemini-4-argon" } });
+            expect(onSelectSystem2Model).toHaveBeenCalledWith("google/gemini-4-argon");
+
+            expect(screen.getByTestId("agent-permission-mode-selector")).toBeDefined();
+            fireEvent.click(screen.getByTestId("agent-permission-mode-semi_auto"));
+            expect(onSelectPermissionMode).toHaveBeenCalledWith("semi_auto");
+
+            fireEvent.click(screen.getByTestId("agent-permission-mode-full_auto"));
+            expect(onSelectPermissionMode).toHaveBeenCalledWith("full_auto");
+        });
+
+        it("renders INSUFFICIENT_CREDITS paused card and invokes onResumeInsufficientCredits on Resume Task click", async () => {
+            const onResumeInsufficientCredits = vi.fn();
+            render(
+                <AgentChatPanel
+                    status="paused_insufficient_credits"
+                    error="INSUFFICIENT_CREDITS: Credit balance exhausted."
+                    {...makeRequiredPanelProps()}
+                    onResumeInsufficientCredits={onResumeInsufficientCredits}
+                    onStartSession={vi.fn()}
+                    onResumeInterrupt={vi.fn()}
+                />
+            );
+
+            const card = screen.getByTestId("agent-insufficient-credits-card");
+            expect(card).toBeDefined();
+            expect(card.textContent).toContain("INSUFFICIENT_CREDITS");
+            expect(screen.queryByTestId("agent-error-alert")).toBeNull();
+
+            fireEvent.click(screen.getByTestId("agent-resume-task-button"));
+            await waitFor(() => {
+                expect(onResumeInsufficientCredits).toHaveBeenCalledTimes(1);
+            });
+        });
+
+        it("strictly lists ONLY STREAMING_GENERATIVE models from models.config.json with exact credit rates and locks controls only while running", () => {
+            const onSelectSystem2Model = vi.fn();
+            const onSelectPermissionMode = vi.fn();
+
+            const expectedGenerative = Object.values(modelsConfig.models).filter(
+                (m) => m.executionMode === "STREAMING_GENERATIVE"
+            );
+            const nonGenerativeIds = Object.values(modelsConfig.models)
+                .filter((m) => m.executionMode !== "STREAMING_GENERATIVE")
+                .map((m) => m.modelId);
+
+            const { rerender } = render(
+                <AgentChatPanel
+                    status="paused_insufficient_credits"
+                    currentStage="decision_scorer_node"
+                    error={null}
+                    {...makeRequiredPanelProps()}
+                    permissionMode="semi_auto"
+                    onSelectSystem2Model={onSelectSystem2Model}
+                    onSelectPermissionMode={onSelectPermissionMode}
+                    onStartSession={vi.fn()}
+                    onResumeInterrupt={vi.fn()}
+                    onResetSession={vi.fn()}
+                />
+            );
+
+            const modelSelect = screen.getByTestId("agent-system2-model-select") as HTMLSelectElement;
+            const optionValues = Array.from(modelSelect.options).map((o) => o.value);
+            expect(optionValues).toEqual(expectedGenerative.map((m) => m.modelId));
+            for (const forbiddenId of nonGenerativeIds) {
+                expect(optionValues).not.toContain(forbiddenId);
+            }
+            for (const model of expectedGenerative) {
+                const opt = Array.from(modelSelect.options).find((o) => o.value === model.modelId);
+                expect(opt?.textContent).toContain(
+                    `${model.creditsPer1kInput.toFixed(2)} in / ${model.creditsPer1kOutput.toFixed(2)} out per 1K`
+                );
+            }
+
+            // Permission mode aria-pressed state & controls remain enabled during paused_insufficient_credits
+            expect(screen.getByTestId("agent-permission-mode-safe").getAttribute("aria-pressed")).toBe("false");
+            expect(screen.getByTestId("agent-permission-mode-semi_auto").getAttribute("aria-pressed")).toBe("true");
+            expect(screen.getByTestId("agent-permission-mode-full_auto").getAttribute("aria-pressed")).toBe("false");
+            expect(modelSelect.disabled).toBe(false);
+            expect((screen.getByTestId("agent-permission-mode-safe") as HTMLButtonElement).disabled).toBe(false);
+
+            fireEvent.click(screen.getByTestId("agent-permission-mode-safe"));
+            expect(onSelectPermissionMode).toHaveBeenCalledWith("safe");
+
+            // Paused fallback guidance, Reset button availability, and non-failed active stage
+            expect(screen.getByTestId("agent-insufficient-credits-card").textContent).toContain(
+                "select a lower-cost System 2 model"
+            );
+            expect(screen.getByTestId("agent-reset-button")).toBeDefined();
+            expect(screen.getByTestId("agent-stage-assumptions_jev").getAttribute("data-stage-state")).toBe("active");
+
+            // While running_graph, model & permission selectors MUST be disabled
+            rerender(
+                <AgentChatPanel
+                    status="running_graph"
+                    {...makeRequiredPanelProps()}
+                    onSelectSystem2Model={onSelectSystem2Model}
+                    onSelectPermissionMode={onSelectPermissionMode}
+                    onStartSession={vi.fn()}
+                    onResumeInterrupt={vi.fn()}
+                />
+            );
+            expect((screen.getByTestId("agent-system2-model-select") as HTMLSelectElement).disabled).toBe(true);
+            expect((screen.getByTestId("agent-permission-mode-safe") as HTMLButtonElement).disabled).toBe(true);
+            expect((screen.getByTestId("agent-permission-mode-semi_auto") as HTMLButtonElement).disabled).toBe(true);
+            expect((screen.getByTestId("agent-permission-mode-full_auto") as HTMLButtonElement).disabled).toBe(true);
+
+            // Offline blocks Resume Task button in paused_insufficient_credits state
+            rerender(
+                <AgentChatPanel
+                    status="paused_insufficient_credits"
+                    isOffline={true}
+                    {...makeRequiredPanelProps()}
+                    onStartSession={vi.fn()}
+                    onResumeInterrupt={vi.fn()}
+                />
+            );
+            expect((screen.getByTestId("agent-resume-task-button") as HTMLButtonElement).disabled).toBe(true);
         });
     });
 
@@ -952,8 +1118,10 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
                 "# Storage Layer\n\nLegacy storage description.\n\n# Network Layer\n\nTCP transport."
             );
 
-            // 1. INSUFFICIENT_CREDITS interrupt
+            // 1. INSUFFICIENT_CREDITS interrupt -> paused_insufficient_credits + resume
             mockConsumeAgentStream.mockImplementationOnce(async (opts: StreamHandlerOptions) => {
+                expect(opts.payload?.selectedSystem2ModelId).toBe("google/gemini-3.8-flash");
+                expect(opts.payload?.permissionMode).toBe("safe");
                 opts.onStart?.({
                     type: "start",
                     sessionId: "s-402",
@@ -964,6 +1132,7 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
                     type: "interrupt",
                     threadId: "t-402",
                     operationId: "op-402",
+                    interruptReason: "INSUFFICIENT_CREDITS",
                     interrupts: [
                         {
                             value: {
@@ -986,8 +1155,39 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
                 await result.current.startAgentSession("Run deep synthesis");
             });
 
-            expect(result.current.status).toBe("failed");
+            expect(result.current.status).toBe("paused_insufficient_credits");
             expect(result.current.error).toContain("INSUFFICIENT_CREDITS: Token quota exceeded");
+
+            act(() => {
+                result.current.setSelectedSystem2ModelId("google/gemini-4-argon");
+                result.current.setPermissionMode("semi_auto");
+            });
+
+            mockConsumeAgentStream.mockImplementationOnce(async (opts: StreamHandlerOptions) => {
+                expect(opts.payload?.selectedSystem2ModelId).toBe("google/gemini-4-argon");
+                expect(opts.payload?.permissionMode).toBe("semi_auto");
+                expect(opts.payload?.resumePayload).toEqual({
+                    resumeReason: "INSUFFICIENT_CREDITS",
+                });
+                opts.onStart?.({
+                    type: "start",
+                    sessionId: "s-402-resume",
+                    threadId: "t-402",
+                    operationId: "op-402-resume",
+                });
+                opts.onDone?.({
+                    type: "done",
+                    threadId: "t-402",
+                    operationId: "op-402-resume",
+                });
+            });
+
+            await act(async () => {
+                await result.current.resumeInsufficientCreditsTask();
+            });
+
+            expect(result.current.status).toBe("completed");
+            expect(result.current.error).toBeNull();
 
             // 2. Client-side synthesis fallback when document_writer_node emits ledger + invalidation_map
             mockConsumeAgentStream.mockImplementationOnce(async (opts: StreamHandlerOptions) => {
@@ -1329,6 +1529,278 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
 
             expect(result.current.status).toBe("aborted");
             expect(abortSpy).toHaveBeenCalled();
+        });
+
+        it("forwards selectedSystem2ModelId & permissionMode on startAgentSession and resumeAgentInterrupt, and preserves paused_insufficient_credits across EOF onDone", async () => {
+            const editor = createSimpleEditor("# Spec\n\nBody.");
+            const onError = vi.fn();
+
+            const { result } = renderHook(() =>
+                useAIStream({
+                    fileId: "file-w42-hook",
+                    projectId: "proj-w42-hook",
+                    editor,
+                    onError,
+                })
+            );
+
+            // Defaults
+            expect(result.current.selectedSystem2ModelId).toBe("google/gemini-3.8-flash");
+            expect(result.current.permissionMode).toBe("safe");
+
+            // Update state + verify HITL interrupt -> resumeAgentInterrupt carries selected model & permission mode
+            act(() => {
+                result.current.setSelectedSystem2ModelId("google/gemini-3.1-pro");
+                result.current.setPermissionMode("full_auto");
+            });
+
+            mockConsumeAgentStream.mockImplementationOnce(async (opts: StreamHandlerOptions) => {
+                expect(opts.payload?.selectedSystem2ModelId).toBe("google/gemini-3.1-pro");
+                expect(opts.payload?.permissionMode).toBe("full_auto");
+                expect(AgentStreamRequestPayloadSchema.safeParse(opts.payload).success).toBe(true);
+                opts.onStart?.({
+                    type: "start",
+                    sessionId: "s-hitl-w42",
+                    threadId: "t-hitl-w42",
+                    operationId: "op-hitl-w42",
+                });
+                opts.onInterrupt?.({
+                    type: "interrupt",
+                    threadId: "t-hitl-w42",
+                    operationId: "op-hitl-w42",
+                    interruptReason: "HITL_CLARIFICATION_REQUIRED",
+                    interrupts: [{ value: { questions: [SAMPLE_QUESTIONS[0]] }, resumable: true }],
+                });
+                opts.onDone?.({
+                    type: "done",
+                    threadId: "t-hitl-w42",
+                    operationId: "op-hitl-w42",
+                });
+            });
+
+            await act(async () => {
+                await result.current.startAgentSession("Analyze storage");
+            });
+            expect(result.current.status).toBe("awaiting_hitl");
+
+            // Resume HITL with top-level interruptReason=INSUFFICIENT_CREDITS (no value.code) + EOF onDone
+            mockConsumeAgentStream.mockImplementationOnce(async (opts: StreamHandlerOptions) => {
+                expect(opts.payload?.selectedSystem2ModelId).toBe("google/gemini-3.1-pro");
+                expect(opts.payload?.permissionMode).toBe("full_auto");
+                expect(AgentStreamRequestPayloadSchema.safeParse(opts.payload).success).toBe(true);
+                opts.onStart?.({
+                    type: "start",
+                    sessionId: "s-credit-top",
+                    threadId: "t-hitl-w42",
+                    operationId: "op-credit-top",
+                });
+                opts.onInterrupt?.({
+                    type: "interrupt",
+                    threadId: "t-hitl-w42",
+                    operationId: "op-credit-top",
+                    interruptReason: "INSUFFICIENT_CREDITS",
+                    interrupts: [{ value: { availableMicro: 0 }, resumable: false }],
+                });
+                // stream-handler emits onDone on clean EOF after interrupt; status MUST remain paused
+                opts.onDone?.({
+                    type: "done",
+                    threadId: "t-hitl-w42",
+                    operationId: "op-credit-top",
+                });
+            });
+
+            await act(async () => {
+                await result.current.resumeAgentInterrupt({
+                    answers: [{ questionId: "q_storage_engine", selectedOptionKey: "opt_postgres" }],
+                });
+            });
+
+            expect(result.current.status).toBe("paused_insufficient_credits");
+            expect(result.current.error).toBe("INSUFFICIENT_CREDITS: Credit balance exhausted.");
+            expect(onError).toHaveBeenCalledWith(
+                expect.objectContaining({ code: "INSUFFICIENT_CREDITS", status: 402 })
+            );
+
+            // Resume after credit pause must satisfy AgentStreamRequestPayloadSchema
+            mockConsumeAgentStream.mockImplementationOnce(async (opts: StreamHandlerOptions) => {
+                expect(AgentStreamRequestPayloadSchema.safeParse(opts.payload).success).toBe(true);
+                expect(opts.payload?.resumePayload).toEqual({
+                    resumeReason: "INSUFFICIENT_CREDITS",
+                });
+                opts.onStart?.({
+                    type: "start",
+                    sessionId: "s-credit-ok",
+                    threadId: "t-hitl-w42",
+                    operationId: "op-credit-ok",
+                });
+                opts.onDone?.({
+                    type: "done",
+                    threadId: "t-hitl-w42",
+                    operationId: "op-credit-ok",
+                });
+            });
+
+            await act(async () => {
+                await result.current.resumeInsufficientCreditsTask();
+            });
+            expect(result.current.status).toBe("completed");
+        });
+
+        it("wires onGhostHunkProposed through streaming_hunks -> preview_ready -> acceptAllGhostHunks", async () => {
+            const editor = createSimpleEditor("# Original Document Text\nNeeds AI improvement.");
+            const onAllHunksAccepted = vi.fn();
+
+            mockConsumeAgentStream.mockImplementationOnce(async (opts: StreamHandlerOptions) => {
+                opts.onStart?.({
+                    type: "start",
+                    sessionId: "s-ghost-proposed",
+                    threadId: "t-ghost-proposed",
+                    operationId: "op-ghost-proposed",
+                });
+                opts.onGhostHunkProposed?.({
+                    type: "ghost_hunk_proposed",
+                    fileId: "file-ghost-proposed",
+                    headingSlug: "original-document-text",
+                    hunks: [
+                        {
+                            hunkId: "hunk_1",
+                            headingSlug: "original-document-text",
+                            replacementText: "# Original Document Text\nImproved with state-of-the-art AI.",
+                            status: "preview_ready",
+                        },
+                    ],
+                });
+                opts.onDone?.({
+                    type: "done",
+                    threadId: "t-ghost-proposed",
+                    operationId: "op-ghost-proposed",
+                });
+            });
+
+            const { result } = renderHook(() =>
+                useAIStream({
+                    fileId: "file-ghost-proposed",
+                    editor,
+                    onAllHunksAccepted,
+                })
+            );
+
+            await act(async () => {
+                await result.current.startAgentSession("Improve document with AI");
+            });
+
+            expect(result.current.status).toBe("preview_ready");
+            expect(result.current.activeGhostHunks).toHaveLength(1);
+            expect(result.current.activeGhostHunks[0]?.hunkId).toBe("hunk_1");
+            expect(result.current.activeGhostHunks[0]?.headingSlug).toBe("original-document-text");
+            expect(result.current.activeGhostHunks[0]?.replacementText).toContain(
+                "Improved with state-of-the-art AI."
+            );
+
+            act(() => {
+                result.current.acceptAllGhostHunks();
+            });
+
+            expect(editor.getValue()).toContain("Improved with state-of-the-art AI.");
+            expect(result.current.activeGhostHunks).toHaveLength(0);
+            expect(onAllHunksAccepted).toHaveBeenCalledTimes(1);
+            expect(result.current.status).toBe("completed");
+        });
+
+        it("enforces fileId mismatch, empty hunks, headingSlug inheritance, streaming_hunks -> preview_ready transition, and stale session guards in onGhostHunkProposed", async () => {
+            const editor = createSimpleEditor("# Intro\nOld intro body.");
+
+            let capturedOpts: StreamHandlerOptions | null = null;
+            mockConsumeAgentStream.mockImplementationOnce(async (opts: StreamHandlerOptions) => {
+                capturedOpts = opts;
+                opts.onStart?.({
+                    type: "start",
+                    sessionId: "s-ghost-guards",
+                    threadId: "t-ghost-guards",
+                    operationId: "op-ghost-guards",
+                });
+            });
+
+            const { result } = renderHook(() =>
+                useAIStream({
+                    fileId: "file-active-1",
+                    editor,
+                })
+            );
+
+            await act(async () => {
+                await result.current.startAgentSession("Refine intro");
+            });
+            expect(result.current.status).toBe("running_graph");
+
+            // 1. Mismatched fileId MUST be ignored
+            act(() => {
+                capturedOpts?.onGhostHunkProposed?.({
+                    type: "ghost_hunk_proposed",
+                    fileId: "file-other-999",
+                    headingSlug: "intro",
+                    hunks: [{ hunkId: "wrong-file-hunk", replacementText: "Should not apply" }],
+                });
+            });
+            expect(result.current.activeGhostHunks).toHaveLength(0);
+            expect(result.current.status).toBe("running_graph");
+
+            // 2. Empty hunks array MUST be a safe no-op
+            act(() => {
+                capturedOpts?.onGhostHunkProposed?.({
+                    type: "ghost_hunk_proposed",
+                    fileId: "file-active-1",
+                    headingSlug: "intro",
+                    hunks: [],
+                });
+            });
+            expect(result.current.activeGhostHunks).toHaveLength(0);
+            expect(result.current.status).toBe("running_graph");
+
+            // 3. Matching fileId with omitted hunk-level headingSlug inherits top-level headingSlug
+            //    and transitions running_graph -> streaming_hunks -> preview_ready on done
+            act(() => {
+                capturedOpts?.onGhostHunkProposed?.({
+                    type: "ghost_hunk_proposed",
+                    fileId: "file-active-1",
+                    headingSlug: "intro",
+                    hunks: [
+                        {
+                            hunkId: "inherited-hunk-1",
+                            replacementText: "# Intro\nRefined intro body.",
+                        },
+                    ],
+                });
+            });
+            expect(result.current.status).toBe("streaming_hunks");
+            expect(result.current.activeGhostHunks).toHaveLength(1);
+            expect(result.current.activeGhostHunks[0]?.headingSlug).toBe("intro");
+
+            act(() => {
+                capturedOpts?.onDone?.({
+                    type: "done",
+                    threadId: "t-ghost-guards",
+                    operationId: "op-ghost-guards",
+                });
+            });
+            expect(result.current.status).toBe("preview_ready");
+
+            // 4. Stale / aborted session MUST discard late onGhostHunkProposed callbacks
+            act(() => {
+                result.current.stopStream();
+            });
+            expect(result.current.status).toBe("aborted");
+
+            act(() => {
+                capturedOpts?.onGhostHunkProposed?.({
+                    type: "ghost_hunk_proposed",
+                    fileId: "file-active-1",
+                    headingSlug: "intro",
+                    hunks: [{ hunkId: "late-stale-hunk", replacementText: "Stale write" }],
+                });
+            });
+            expect(result.current.activeGhostHunks).toHaveLength(0);
+            expect(result.current.status).toBe("aborted");
         });
     });
 });

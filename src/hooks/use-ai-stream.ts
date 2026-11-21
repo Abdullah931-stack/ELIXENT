@@ -115,6 +115,8 @@ export interface StartAgentSessionParams {
     allowAIOnEncryptedFiles?: boolean;
     ephemeralVaultPayloads?: Record<string, string>;
     liveDocumentSnapshots?: Record<string, string>;
+    selectedSystem2ModelId?: string;
+    permissionMode?: 'safe' | 'semi_auto' | 'full_auto';
 }
 
 const KNOWN_STATE_CHANNELS = new Set([
@@ -334,6 +336,12 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         Record<string, ATMSDecisionNode>
     >({});
     const [activeGhostHunks, setActiveGhostHunks] = useState<GhostHunk[]>([]);
+    const [selectedSystem2ModelId, setSelectedSystem2ModelId] = useState<string>(
+        'google/gemini-3.8-flash'
+    );
+    const [permissionMode, setPermissionMode] = useState<'safe' | 'semi_auto' | 'full_auto'>(
+        'safe'
+    );
     const [clientGeneratedThreadId] = useState<string>(() => `thread_${crypto.randomUUID()}`);
     const [sessionThreadId, setSessionThreadId] = useState<string | null>(null);
 
@@ -341,9 +349,13 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
 
     const optsRef = useRef<UseAIStreamOptions>(options);
     const threadIdRef = useRef<string>(activeThreadId);
+    const selectedSystem2ModelIdRef = useRef<string>(selectedSystem2ModelId);
+    const permissionModeRef = useRef<'safe' | 'semi_auto' | 'full_auto'>(permissionMode);
     useLayoutEffect(() => {
         optsRef.current = options;
         threadIdRef.current = activeThreadId;
+        selectedSystem2ModelIdRef.current = selectedSystem2ModelId;
+        permissionModeRef.current = permissionMode;
     });
 
     const activeSessionRef = useRef<AIStreamSession | null>(null);
@@ -1129,6 +1141,36 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                         }
                     }
                 },
+                onGhostHunkProposed: (ghostEvt) => {
+                    if (isStaleSessionEvent(session, activeSessionRef.current)) {
+                        return;
+                    }
+                    if (
+                        ghostEvt.fileId &&
+                        session.fileId &&
+                        session.fileId !== 'default-file' &&
+                        ghostEvt.fileId !== session.fileId
+                    ) {
+                        return;
+                    }
+                    if (!Array.isArray(ghostEvt.hunks) || ghostEvt.hunks.length === 0) {
+                        return;
+                    }
+
+                    const normalizedEntries = ghostEvt.hunks.map((entry) => ({
+                        ...entry,
+                        headingSlug: entry.headingSlug ?? ghostEvt.headingSlug,
+                        fileId: entry.fileId ?? ghostEvt.fileId,
+                    }));
+
+                    const liveContent = resolveLiveContent(editor);
+                    const hunks = buildGhostHunksFromRawEntries(
+                        normalizedEntries,
+                        liveContent,
+                        masterDecisionLedgerRef.current
+                    );
+                    upsertHunksIntoSession(session, editor, hunks);
+                },
                 onInterrupt: (interruptEvt: AgentStreamInterruptEvent) => {
                     if (isStaleSessionEvent(session, activeSessionRef.current)) {
                         return;
@@ -1138,26 +1180,23 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                         ClarifyingQuestionBatch['questions'][number]
                     > = [];
 
+                    let insufficientCreditsMsg: string | null = null;
+                    if (interruptEvt.interruptReason === 'INSUFFICIENT_CREDITS') {
+                        insufficientCreditsMsg = 'INSUFFICIENT_CREDITS: Credit balance exhausted.';
+                    }
+
                     for (const intr of interruptEvt.interrupts) {
                         const val = intr.value;
                         if (val && typeof val === 'object' && !Array.isArray(val)) {
                             const rec = val as Record<string, unknown>;
-                            if (rec.code === 'INSUFFICIENT_CREDITS') {
-                                const msg =
-                                    typeof rec.message === 'string' && rec.message.trim()
-                                        ? `INSUFFICIENT_CREDITS: ${rec.message.trim()}`
-                                        : 'INSUFFICIENT_CREDITS: Credit balance exhausted.';
-                                setError(msg);
-                                transitionSession(session, 'failed', msg);
-                                setStatus('failed');
-                                optsRef.current.onError?.(
-                                    new AgentStreamError({
-                                        code: 'INSUFFICIENT_CREDITS',
-                                        status: 402,
-                                        message: msg,
-                                    })
-                                );
-                                return;
+                            if (rec.code === 'INSUFFICIENT_CREDITS' || insufficientCreditsMsg !== null) {
+                                if (typeof rec.message === 'string' && rec.message.trim()) {
+                                    insufficientCreditsMsg = `INSUFFICIENT_CREDITS: ${rec.message.trim()}`;
+                                } else if (insufficientCreditsMsg === null) {
+                                    insufficientCreditsMsg =
+                                        'INSUFFICIENT_CREDITS: Credit balance exhausted.';
+                                }
+                                continue;
                             }
                             if (Array.isArray(rec.questions)) {
                                 extractedQuestions.push(
@@ -1167,6 +1206,24 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                         } else if (Array.isArray(val)) {
                             extractedQuestions.push(...normalizeQuestionsList(val));
                         }
+                    }
+
+                    if (insufficientCreditsMsg !== null) {
+                        setError(insufficientCreditsMsg);
+                        transitionSession(
+                            session,
+                            'paused_insufficient_credits',
+                            insufficientCreditsMsg
+                        );
+                        setStatus('paused_insufficient_credits');
+                        optsRef.current.onError?.(
+                            new AgentStreamError({
+                                code: 'INSUFFICIENT_CREDITS',
+                                status: 402,
+                                message: insufficientCreditsMsg,
+                            })
+                        );
+                        return;
                     }
 
                     if (extractedQuestions.length > 0) {
@@ -1183,7 +1240,11 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                         return;
                     }
 
-                    if (hitlInterrupted || session.status === 'awaiting_hitl') {
+                    if (
+                        hitlInterrupted ||
+                        session.status === 'awaiting_hitl' ||
+                        session.status === 'paused_insufficient_credits'
+                    ) {
                         return;
                     }
 
@@ -1349,11 +1410,18 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
 
             activeSessionRef.current = session;
 
+            const effectiveModelId =
+                params.selectedSystem2ModelId ?? selectedSystem2ModelIdRef.current;
+            const effectivePermissionMode =
+                params.permissionMode ?? permissionModeRef.current;
+
             const requestPayload: AgentStreamRequestPayload = {
                 threadId,
                 projectId,
                 prompt,
                 targetFileIds,
+                selectedSystem2ModelId: effectiveModelId,
+                permissionMode: effectivePermissionMode,
                 ...(vaultAndSnapshots.ephemeralVaultPayloads
                     ? { ephemeralVaultPayloads: vaultAndSnapshots.ephemeralVaultPayloads }
                     : {}),
@@ -1442,6 +1510,8 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 threadId,
                 projectId,
                 targetFileIds,
+                selectedSystem2ModelId: selectedSystem2ModelIdRef.current,
+                permissionMode: permissionModeRef.current,
                 resumePayload: { answers: validation.data.answers },
                 ...(vaultAndSnapshots.ephemeralVaultPayloads
                     ? { ephemeralVaultPayloads: vaultAndSnapshots.ephemeralVaultPayloads }
@@ -1453,6 +1523,74 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         },
         [executeStreamCycle, resolveEditor, resolveVaultAndSnapshots]
     );
+
+    /**
+     * Resumes a paused agent session (`paused_insufficient_credits`) from its saved checkpoint.
+     */
+    const resumeInsufficientCreditsTask = useCallback(async (): Promise<void> => {
+        const editor = resolveEditor();
+        const prevSession = activeSessionRef.current;
+        const activeFileId =
+            prevSession?.fileId ||
+            optsRef.current.fileId ||
+            targetFileIdsRef.current[0] ||
+            'default-file';
+        const threadId =
+            prevSession?.threadId || optsRef.current.threadId || threadIdRef.current;
+        const projectId =
+            prevSession?.projectId ||
+            optsRef.current.projectId ||
+            projectIdRef.current ||
+            activeFileId;
+        const targetFileIds =
+            prevSession?.targetFileIds && prevSession.targetFileIds.length > 0
+                ? prevSession.targetFileIds
+                : targetFileIdsRef.current.length > 0
+                  ? targetFileIdsRef.current
+                  : [activeFileId];
+
+        const vaultAndSnapshots = resolveVaultAndSnapshots({
+            activeFileId,
+            targetFileIds,
+            editor,
+        });
+
+        if (vaultAndSnapshots.blocked) {
+            return;
+        }
+
+        setError(null);
+
+        const resumedSession = createStreamSession({
+            threadId,
+            projectId,
+            fileId: activeFileId,
+            targetFileIds,
+            originalMarkdown: vaultAndSnapshots.liveDocumentSnapshots[activeFileId] ?? '',
+            expectedVersion:
+                prevSession?.expectedVersion ?? optsRef.current.getLatestVersion?.() ?? 1,
+            originalEtag:
+                prevSession?.originalEtag ?? optsRef.current.getLatestETag?.() ?? null,
+            editorGeneration: prevSession?.editorGeneration ?? 1,
+        });
+
+        activeSessionRef.current = resumedSession;
+
+        const requestPayload: AgentStreamRequestPayload = {
+            threadId,
+            projectId,
+            targetFileIds,
+            selectedSystem2ModelId: selectedSystem2ModelIdRef.current,
+            permissionMode: permissionModeRef.current,
+            resumePayload: { resumeReason: 'INSUFFICIENT_CREDITS' },
+            ...(vaultAndSnapshots.ephemeralVaultPayloads
+                ? { ephemeralVaultPayloads: vaultAndSnapshots.ephemeralVaultPayloads }
+                : {}),
+            liveDocumentSnapshots: vaultAndSnapshots.liveDocumentSnapshots,
+        };
+
+        await executeStreamCycle(resumedSession, requestPayload, editor);
+    }, [executeStreamCycle, resolveEditor, resolveVaultAndSnapshots]);
 
     useLayoutEffect(() => {
         acceptGhostHunkRef.current = acceptGhostHunk;
@@ -1475,6 +1613,10 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         masterDecisionLedger,
         activeGhostHunks,
         activeGhostHunksCount,
+        selectedSystem2ModelId,
+        setSelectedSystem2ModelId,
+        permissionMode,
+        setPermissionMode,
         threadId: activeThreadId,
         isLoading: status === 'running_graph' || status === 'streaming_hunks',
         isStreaming: status === 'running_graph' || status === 'streaming_hunks',
@@ -1483,6 +1625,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         isAwaitingHitl: status === 'awaiting_hitl',
         startAgentSession,
         resumeAgentInterrupt,
+        resumeInsufficientCreditsTask,
         acceptGhostHunk,
         rejectGhostHunk,
         acceptAllGhostHunks,

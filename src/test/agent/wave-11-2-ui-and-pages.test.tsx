@@ -245,8 +245,13 @@ vi.mock("@/hooks/use-editor-orchestrator", () => ({
         masterDecisionLedger: [],
         activeGhostHunks: [],
         activeGhostHunksCount: 0,
+        selectedSystem2ModelId: "google/gemini-3.8-flash",
+        setSelectedSystem2ModelId: vi.fn(),
+        permissionMode: "safe" as const,
+        setPermissionMode: vi.fn(),
         startAgentSession: vi.fn(),
         resumeAgentInterrupt: vi.fn(),
+        resumeInsufficientCreditsTask: vi.fn(),
         stopAIOperation: vi.fn(),
         resetAI: vi.fn(),
         acceptGhostHunk: vi.fn(),
@@ -1146,6 +1151,45 @@ describe("Phase 11 — Wave 11.2 UI Components & Orchestration Suite", () => {
             expect(mockAdapterInstance.setDirectionSettings).toHaveBeenLastCalledWith({
                 mode: "auto",
                 lockCodeBlocksLTR: true,
+            });
+        });
+
+        it("wires System 2 model selector, permission mode buttons, and INSUFFICIENT_CREDITS Resume Task button into AgentChatPanel", async () => {
+            const setModelMock = vi.fn();
+            const setModeMock = vi.fn();
+            const resumeCreditsMock = vi.fn();
+
+            mockOrchestratorData = {
+                aiStatus: "paused_insufficient_credits",
+                aiError: "INSUFFICIENT_CREDITS: Credit balance exhausted.",
+                selectedSystem2ModelId: "google/gemini-3.1-pro",
+                setSelectedSystem2ModelId: setModelMock,
+                permissionMode: "semi_auto",
+                setPermissionMode: setModeMock,
+                resumeInsufficientCreditsTask: resumeCreditsMock,
+            };
+
+            await renderEditorPage();
+
+            fireEvent.click(screen.getByTestId("ai-toolbar-agent-toggle"));
+
+            await waitFor(() => {
+                expect(screen.getByTestId("agent-chat-panel")).toBeDefined();
+            });
+
+            const modelSelect = screen.getByTestId("agent-system2-model-select") as HTMLSelectElement;
+            expect(modelSelect.value).toBe("google/gemini-3.1-pro");
+            fireEvent.change(modelSelect, { target: { value: "google/gemini-3.8-flash" } });
+            expect(setModelMock).toHaveBeenCalledWith("google/gemini-3.8-flash");
+
+            expect(screen.getByTestId("agent-permission-mode-semi_auto").getAttribute("aria-pressed")).toBe("true");
+            fireEvent.click(screen.getByTestId("agent-permission-mode-full_auto"));
+            expect(setModeMock).toHaveBeenCalledWith("full_auto");
+
+            expect(screen.getByTestId("agent-insufficient-credits-card")).toBeDefined();
+            fireEvent.click(screen.getByTestId("agent-resume-task-button"));
+            await waitFor(() => {
+                expect(resumeCreditsMock).toHaveBeenCalledTimes(1);
             });
         });
     });

@@ -10,6 +10,7 @@ export type AIStreamStatus =
     | 'idle'
     | 'running_graph'
     | 'awaiting_hitl'
+    | 'paused_insufficient_credits'
     | 'streaming_hunks'
     | 'preview_ready'
     | 'completed'
@@ -64,6 +65,7 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, readonly AIStreamStatus[]> = {
         'idle',
         'running_graph',
         'awaiting_hitl',
+        'paused_insufficient_credits',
         'streaming_hunks',
         'preview_ready',
         'completed',
@@ -73,6 +75,7 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, readonly AIStreamStatus[]> = {
     running_graph: [
         'running_graph',
         'awaiting_hitl',
+        'paused_insufficient_credits',
         'streaming_hunks',
         'preview_ready',
         'completed',
@@ -83,9 +86,17 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, readonly AIStreamStatus[]> = {
     awaiting_hitl: [
         'awaiting_hitl',
         'running_graph',
+        'paused_insufficient_credits',
         'streaming_hunks',
         'preview_ready',
         'completed',
+        'aborted',
+        'failed',
+        'idle',
+    ],
+    paused_insufficient_credits: [
+        'paused_insufficient_credits',
+        'running_graph',
         'aborted',
         'failed',
         'idle',
@@ -94,6 +105,7 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, readonly AIStreamStatus[]> = {
         'streaming_hunks',
         'running_graph',
         'awaiting_hitl',
+        'paused_insufficient_credits',
         'preview_ready',
         'completed',
         'aborted',
@@ -105,6 +117,7 @@ const ALLOWED_TRANSITIONS: Record<AIStreamStatus, readonly AIStreamStatus[]> = {
         'completed',
         'running_graph',
         'awaiting_hitl',
+        'paused_insufficient_credits',
         'streaming_hunks',
         'aborted',
         'failed',

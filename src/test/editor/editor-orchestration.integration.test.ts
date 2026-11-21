@@ -1115,4 +1115,109 @@ describe("Editor Orchestration & Centralized Write Controller (Phase 3 Markdown 
             sessionKeyStore.purgeKeys(false);
         });
     });
+
+    describe("7. Wave 4.2 System 2 Model, Permission Mode & Credit Resume Wiring", () => {
+        it("exposes System 2 model/permission state and forwards updates into startAgentSession and resumeInsufficientCreditsTask", async () => {
+            const fileId = "file-wave42-orch";
+            const userId = "user-wave42-orch";
+            const adapter = createMockAdapter("# Initial Spec\n\nBody.");
+
+            vi.mocked(fileOps.getFile).mockResolvedValue({
+                success: true,
+                data: {
+                    id: fileId,
+                    title: "Spec.md",
+                    content: "# Initial Spec\n\nBody.",
+                    version: 1,
+                    etag: "etag-v1",
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                    userId,
+                    workspaceId: "550e8400-e29b-41d4-a716-446655440001",
+                    parentFolderId: null,
+                    isFolder: false,
+                    isAiExcluded: false,
+                    artifactRole: "document",
+                    isEncrypted: false,
+                    encryptionMetadata: null,
+                    deletedAt: null,
+                },
+            });
+
+            const { result } = renderHook(() =>
+                useEditorOrchestrator({ fileId, userId, adapter })
+            );
+
+            await waitFor(() => expect(result.current.title).toBe("Spec.md"));
+            expect(result.current.selectedSystem2ModelId).toBe("google/gemini-3.8-flash");
+            expect(result.current.permissionMode).toBe("safe");
+
+            act(() => {
+                result.current.setSelectedSystem2ModelId("google/gemini-3.1-pro");
+                result.current.setPermissionMode("full_auto");
+            });
+
+            expect(result.current.selectedSystem2ModelId).toBe("google/gemini-3.1-pro");
+            expect(result.current.permissionMode).toBe("full_auto");
+
+            mockConsumeAgentStream.mockImplementationOnce(async (opts: StreamHandlerOptions) => {
+                expect(opts.payload?.selectedSystem2ModelId).toBe("google/gemini-3.1-pro");
+                expect(opts.payload?.permissionMode).toBe("full_auto");
+                opts.onStart?.({
+                    type: "start",
+                    sessionId: "s-orch-402",
+                    threadId: "t-orch-402",
+                    operationId: "op-orch-402",
+                });
+                opts.onInterrupt?.({
+                    type: "interrupt",
+                    threadId: "t-orch-402",
+                    operationId: "op-orch-402",
+                    interruptReason: "INSUFFICIENT_CREDITS",
+                    interrupts: [{ value: { code: "INSUFFICIENT_CREDITS" }, resumable: false }],
+                });
+                opts.onDone?.({
+                    type: "done",
+                    threadId: "t-orch-402",
+                    operationId: "op-orch-402",
+                });
+            });
+
+            await act(async () => {
+                await result.current.startAgentSession("Draft architecture", [fileId]);
+            });
+
+            expect(result.current.aiStatus).toBe("paused_insufficient_credits");
+
+            act(() => {
+                result.current.setSelectedSystem2ModelId("google/gemini-3.8-flash");
+                result.current.setPermissionMode("semi_auto");
+            });
+
+            mockConsumeAgentStream.mockImplementationOnce(async (opts: StreamHandlerOptions) => {
+                expect(opts.payload?.selectedSystem2ModelId).toBe("google/gemini-3.8-flash");
+                expect(opts.payload?.permissionMode).toBe("semi_auto");
+                expect(opts.payload?.resumePayload).toEqual({
+                    resumeReason: "INSUFFICIENT_CREDITS",
+                });
+                opts.onStart?.({
+                    type: "start",
+                    sessionId: "s-orch-resumed",
+                    threadId: "t-orch-402",
+                    operationId: "op-orch-resumed",
+                });
+                opts.onDone?.({
+                    type: "done",
+                    threadId: "t-orch-402",
+                    operationId: "op-orch-resumed",
+                });
+            });
+
+            await act(async () => {
+                await result.current.resumeInsufficientCreditsTask();
+            });
+
+            expect(result.current.aiStatus).toBe("completed");
+        });
+    });
 });
