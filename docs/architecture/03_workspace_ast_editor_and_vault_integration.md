@@ -4,7 +4,7 @@
 | :--- | :--- |
 | **Document ID** | `ELIXENT-ARCH-03` |
 | **Classification** | `LIVING SUBSYSTEM SPEC` (`src/core/workspace/*`, `src/core/ast/*`, `src/components/editor/markdown/*`, `src/lib/vault/*`) |
-| **Version & Status** | `v3.2 — Accepted for Implementation (Accepted)` |
+| **Version & Status** | `v3.3 — Updated in Phase 5 (v0.28.0)` |
 | **SSOT Scope** | Unified Workspace Provider contract (`IWorkspaceProvider`), Hybrid AST and Lexical Search Engine (`Hybrid AST + Lexical/BM25 Search`), Fence-Aware Heading Slicer (`Fence-Aware Slicer`), Multi-Hunk Ghost Preview protocol (`Multi-Hunk Ghost`) and Incremental Sync with `Diff3` and `ETag`, and Zero-Knowledge Vault boundaries (`vault_ref://` and `EphemeralVaultMemoryMap`). |
 | **Suite Index** | • [01_architecture_vision_and_adrs](./01_architecture_vision_and_adrs.md)<br>• [02_agent_orchestration_and_decision_engine](./02_agent_orchestration_and_decision_engine.md)<br>• [04_credit_metering_and_settlement_architecture](./04_credit_metering_and_settlement_architecture.md)<br>• [05_data_contracts_and_lugx_migration_plan](./05_data_contracts_and_lugx_migration_plan.md) |
 
@@ -297,9 +297,11 @@ export interface MultiHunkGhostState {
 - **Editor Adapter Integration (`EditorAdapter`):** Exposed through engine-agnostic adapter methods in `src/components/editor/markdown/editor-adapter.ts` and `markdown-editor.tsx`:
   - `startGhostSession(sessionId, hunks)`
   - `upsertGhostHunk(hunk)`
-  - `acceptGhostHunk(hunkId): boolean`
+  - `acceptGhostHunk(hunkId): boolean` (single transaction tagged `Transaction.userEvent.of("ai.accept.hunk")` + `isolateHistory.of("full")`)
   - `rejectGhostHunk(hunkId): boolean`
-  - `acceptAllGhostHunks(): boolean`
+  - `acceptAllGhostHunks(): boolean` (single coalesced transaction tagged `Transaction.userEvent.of("ai.accept.all")` + `isolateHistory.of("full")`)
+  - `replaceRanges(changes)` (single coalesced transaction tagged `Transaction.userEvent.of("agent.mutation")` + `isolateHistory.of("full")`)
+  - `scrollToHeading(headingSlug: string): boolean` (locates heading via `extractSectionBySlug` and scrolls viewport via `EditorView.scrollIntoView(targetOffset, { y: "start" })`)
   - `getGhostHunks(): GhostHunk[]`
   - `clearGhostSession(): void`
 
@@ -337,13 +339,29 @@ sequenceDiagram
 1. **Independence of Financial Settlement from Editor Acceptance:** As established in `Phase 11` of `LUGX v1.46.3`, token costs are settled server-side upon generation; consequently, user acceptance or rejection of a ghost hunk is a **pure file editing and synchronization operation** that never re-invokes the billing engine.
 2. **Per-Hunk Atomic Undo (`Per-Hunk Atomic Undo`):** Accepting each `GhostHunk` is recorded as an independent CodeMirror transaction tagged with `Transaction.userEvent.of("ai.accept.hunk")`, so pressing `Ctrl+Z` cleanly reverts the last accepted hunk, whereas clicking **"Accept All Hunks (`Accept All Hunks`)"** applies all hunks in a single atomic CodeMirror transaction (`changes: hunks.map(...)`) that can be reverted all at once with a single `Ctrl+Z`.
 
-### 4.3. Client Presentation & Orchestrator Integration (Phase 11)
+### 4.3. Client Presentation, Multi-Tab Ghost Review, Decision Graph UI & Two-Tier Undo (Phases 11, 4 & 5)
 
-In Phase 11, the multi-hunk ghost extension and incremental sync contract are fully wired to the workspace editor:
+In Phases 11, 4, and 5 (`v0.28.0`), the multi-hunk ghost extension, multi-tab workspace shell, interactive decision graph, and two-tier rollback protocol are fully wired across the client workspace:
 
-1. **`AIToolbar` (`src/components/editor/ai-toolbar.tsx`):** Displays the architectural agent toggle button with active badge indicators, along with `Accept All` and `Reject All` multi-hunk ghost action controls.
-2. **`AgentChatPanel` (`src/components/agent/chat-panel.tsx`):** Slides out alongside the editor view, displaying graph progress, the ATMS decision ledger, `HITLQuestionCard` for interactive clarifications, manual `System 2` model selection (`models.config.json` `STREAMING_GENERATIVE` entries with credit rates), 3-mode permission controls (`safe`, `semi_auto`, `full_auto`), and the `paused_insufficient_credits` checkpoint resume card (`Resume Task`).
-3. **`useEditorOrchestrator` (`src/hooks/use-editor-orchestrator.ts`):** Coordinates multi-hunk actions (`acceptGhostHunk`, `rejectGhostHunk`, `acceptAllGhostHunks`, `rejectAllGhostHunks`), forwards `selectedSystem2ModelId`, `permissionMode`, and `resumeInsufficientCreditsTask` from `useAIStream` to `EditorPage`/`AgentChatPanel`, and handles immediate IndexedDB writes with debounced sequential server synchronization via `useEditorAutosave`.
+1. **`WorkspaceTabsProvider` & `WorkspaceTabBar` (`src/components/editor/workspace-tab-bar.tsx`, mounted in `src/client/routes/workspace-layout.tsx`):**
+   - Renders `openTabs: WorkspaceOpenTab[]` directly above `<Outlet />` with active tab highlighting, encrypted lock badge, dirty dot indicator, `pendingGhostCount` badge, and `(X)` close control (closing a tab retains its unresolved entries in `ghostHunksByFileId` and deterministically activates the adjacent open tab or navigates to `/workspace`).
+   - Persists `ghostHunksByFileId` and `turnIdByHunkId` encrypted at rest in IndexedDB `sync_metadata` (`pending_ghost_hunks_${workspaceId}` via `savePendingGhostHunks`, `loadPendingGhostHunks`, and `clearPendingGhostHunks`).
+   - Exposes `registerSaveFlushHandler` (`Save & Leave`) and `registerDiscardFlushHandler` (`Discard & Leave`, cancelling autosave timers and marking the editor clean before unmount).
+2. **`UnresolvedEditsTracker` (`src/components/editor/unresolved-edits-tracker.tsx`):**
+   - Rendered both in `WorkspaceTabBar` and compactly in the `Sidebar` Files header whenever `totalPendingGhostCount > 0`.
+   - Lists every file (open or closed) with unresolved `GhostHunk` entries and exposes `Open & Review`, `Accept All in Workspace`, and `Reject All in Workspace`.
+3. **`PendingEditsExitModal` (`src/components/editor/pending-edits-exit-modal.tsx`):**
+   - Uses TanStack Router's `useBlocker` (strictly without importing `src/client/router.tsx` per `DEF-13`) and a `beforeunload` guard whenever `totalPendingGhostCount > 0 || hasUnsavedDirtyBuffer`.
+   - Presents three explicit actions: **`Save & Leave`** (`acceptAllPendingInWorkspace` + save flush), **`Discard & Leave`** (`discardAllDirtyAndPending` invoking the registered discard flush handler before rejecting hunks), and **`Stay`** (`blocker.reset()`).
+4. **`DecisionGraphExplorer` & `Sidebar` Controls (`src/components/agent/decision-graph-explorer.tsx`, `src/components/layout/sidebar.tsx`):**
+   - Pure Native SVG directed graph (zero external graph libraries) using deterministic Kahn topological layering (`computeTopologicalLayers`) and clickable cubic Bézier edges (`DEPENDS_ON`, `REFINES`, `OVERRIDES`), paired with an Inspector Drawer showing `selectionRationale`, `changeWeight` breakdown ($W(d)$), upstream/downstream links, `evaluatedAlternatives`, depth filtering (`1 Hop`, `2 Hops`, `Full Chain` via `traverseDecisionDependencies`), `Download JSON`, and clickable `affectedSections` (`fileId#headingSlug`) that open the target tab and scroll to the heading via `adapter.scrollToHeading`.
+   - `Sidebar` hides `artifactRole === "decision_ledger"` from the Markdown tree, adds the workspace switcher (`Active Workspace` + `Create Workspace`), mounts the `Decision Graph` button with node-count badge and `Download JSON`, mounts `UnresolvedEditsTracker`, and provides `Export Workspace (.zip)` via `exportWorkspaceAsZip` (handling `ENCRYPTED_EXPORT_UNCONFIRMED`).
+5. **`WorkspaceDecryptionWarningModal` & `FileContextMenu` (`src/components/vault/workspace-decryption-warning-modal.tsx`, `src/components/files/file-context-menu.tsx`):**
+   - Intercepts single-file decryption inside encrypted workspaces (`workspace.isEncrypted === true`), displays the mandatory all-or-nothing warning, decrypts all non-deleted encrypted workspace files locally via `SyncCryptoGateway`, and invokes `decryptEntireWorkspaceRpc` transactionally upon confirmation.
+6. **`AIToolbar`, `AgentChatPanel` & Two-Tier Undo (`src/components/editor/ai-toolbar.tsx`, `src/components/agent/chat-panel.tsx`, `src/hooks/use-editor-orchestrator.ts`, `src/hooks/use-ai-stream.ts`, `src/lib/sync/rollback.ts`):**
+   - Purges legacy client-side `synthesizeAgentSectionContent` (`BUG-03`).
+   - `AgentChatPanel` displays graph progress, the ATMS decision ledger, `HITLQuestionCard`, manual `System 2` model selection (`models.config.json` `STREAMING_GENERATIVE` entries), 3-mode permission controls (`safe`, `semi_auto`, `full_auto`), `paused_insufficient_credits` recovery (`Resume Task`), one-time `zkAiNotice` (`elixent_zk_ai_notice_shown`), and **`Revert Turn`** / **`Revert Session`** controls (`mutatedTurns`).
+   - Enforces **`INV-UNDO-SYNC`** via `handleRevertTurn` and `handleRevertSession` in `useEditorOrchestrator`: validates `postTurnEtag` staleness, runs `syncRollback.rollbackAgentTurn(workspaceId, turnId)` (reverting modified files in IDB and pushing to server via `updateFileContent`/`toggleFileEncryption`, soft-deleting created files via `deleteFile`, and restoring deleted files via `restoreWorkspaceFileRpc`), cancels pending autosave timers, writes the restored content into CodeMirror via `adapter.setValue(restoredContent, "rollback")`, and clears dirty/ghost state.
 
 ## 5. Zero-Knowledge Vault Boundary and Isolated Ephemeral References (`Zero-Knowledge Vault Boundary & Ephemeral References`)
 
@@ -402,16 +420,17 @@ To preserve the end-to-end encryption (`Zero-Knowledge`) guarantees implemented 
 
 Because the `files.content` column in PostgreSQL stores `AES-256-GCM` ciphertext for which the server holds no decryption key, processing encrypted files (when `allowAIOnEncryptedFiles === true`) follows this strict protocol implemented in `src/lib/vault/ephemeral-memory-map.ts`:
 
-1. **Transient Per-Request Hydration via `AsyncLocalStorage` (`runWithEphemeralVaultScope`):**
-   - The client browser decrypts target files locally via `SyncCryptoGateway` and passes their plaintext in the transient `ephemeralVaultPayloads` field within the `POST /api/agent/stream` request (both on the initial request and on any resume request following an `interrupt`, because the initial request's memory is completely wiped upon suspension).
+1. **Transient Per-Request Hydration via `AsyncLocalStorage` (`runWithEphemeralVaultScope`) & Client Bridge (`hydrateWorkspaceVaultPayloads`):**
+   - Prior to opening `POST /api/agent/stream` (on initial turns, HITL resumptions, and credit resumptions), `useAIStream` (`src/hooks/use-ai-stream.ts`) executes `hydrateWorkspaceVaultPayloads` when `allowAIOnEncryptedFiles` is enabled and the vault is unlocked: it queries `getUserFiles()` to enforce workspace scoping (`workspaceId`) and exclusion (`!isAiExcluded`, `!deletedAt`, `!isFolder`), decrypts eligible encrypted files from IndexedDB and remote workspace records via `SyncCryptoGateway` (capped at `MAX_RECORD_KEYS`), caches pre-turn encrypted snapshots in `preTurnSnapshotsRef` for Tier 2 rollback, attaches plaintext in transient `ephemeralVaultPayloads`, and emits a one-time `zkAiNotice` persisted under `localStorage` key `elixent_zk_ai_notice_shown`.
    - Upon receiving the request on the server, `CloudPostgresWorkspaceProvider` slices the texts in `ephemeralVaultPayloads` in memory via the `Fence-Aware Heading Slicer` and stores each section as a `Uint8Array` inside the `EphemeralVaultMemoryMap` (`Map<string, Uint8Array>`) scoped strictly to the active request context using Node.js `AsyncLocalStorage`:
      ```typescript
      export async function runWithEphemeralVaultScope<T>(
        callback: () => Promise<T> | T
      ): Promise<T>;
      ```
+   - When the agent mutates an encrypted document or encrypted `decisions.ledger.json`, the server emits `event: vault_file_commit_required` with `mergedContent`; `useAIStream` (`onVaultFileCommitRequired`) records the pre-turn `IDBOperation` (`workspaceId`, `threadId`, `turnId`, `snapshot`), encrypts `mergedContent` locally via `SyncCryptoGateway.encryptOutbound`, commits the ciphertext envelope via `toggleFileEncryption`, and updates IndexedDB and the active editor buffer.
 2. **Prohibition of Storage in `AgentGraphState` & Canonical Pointer Format:**
-   - Inserting decrypted plaintext into `state.search_report` or any other channel in `AgentGraphState` is strictly prohibited, because `PostgresSaver` automatically persists a checkpoint snapshot after every node (`Super-step`).
+   - Inserting decrypted plaintext into `state.search_report` or any other channel in `AgentGraphState` is strictly prohibited, because `ElixentNativeGraphRunner` persists an encrypted checkpoint row into `agent_checkpoints` after every super-step.
    - Sliced sections are stored transiently via `storeEphemeralVaultSection(fileId, headingSlug, plaintext)`, which returns an opaque pointer formatted as:
      $$\text{vault\_ref://}\{fileId\}\#\{headingSlug\}$$
    - Pointer formatting and inspection are validated by `formatVaultRef(fileId, headingSlug)` and `isVaultRef(value)`.

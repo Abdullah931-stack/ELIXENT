@@ -20,7 +20,7 @@
   <a href="https://orm.drizzle.team"><img src="https://img.shields.io/badge/Drizzle_ORM-0.45.1-C5F74F?style=for-the-badge&logo=drizzle" alt="Drizzle ORM" /></a>
   <a href="https://ai-sdk.dev"><img src="https://img.shields.io/badge/Vercel_AI_SDK-v7_(@ai--sdk/google)-8E75B2?style=for-the-badge&logo=vercel" alt="Vercel AI SDK v7" /></a>
   <a href="https://stripe.com"><img src="https://img.shields.io/badge/Stripe-Fail--Closed_Webhooks-635BFF?style=for-the-badge&logo=stripe" alt="Stripe" /></a>
-  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-156%20Suites%20·%203281%2F3281%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 3281 Passing" /></a>
+  <a href="https://vitest.dev"><img src="https://img.shields.io/badge/Vitest-164%20Suites%20·%203331%2F3331%20Passing-6E9F18?style=for-the-badge&logo=vitest" alt="Vitest 3331 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Neon_Live_DB-22%20Suites%20·%20101%2F101%20Passing-00E599?style=for-the-badge&logo=postgresql" alt="Neon Live DB 101 Passing" /></a>
   <a href="#5-automated-test-suite"><img src="https://img.shields.io/badge/Playwright_E2E-14%20Specs%20·%2015%2F15%20Passing-blue?style=for-the-badge&logo=playwright" alt="Playwright E2E 15 Passing" /></a>
   <a href="#contributing--license"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge&logo=apache" alt="License Apache 2.0" /></a>
@@ -58,7 +58,7 @@
   - [14. Universal Concept Taxonomy, Unified Decision Client & Conformal APS Classifier](#14-universal-concept-taxonomy-unified-decision-client--conformal-aps-classifier)
   - [15. Justification-Driven ATMS DAG, Deterministic Candidate Retriever & Relational Linker](#15-justification-driven-atms-dag-deterministic-candidate-retriever--relational-linker)
   - [16. Elixent Native Graph Engine, 18-Channel AgentGraphState & 9 Replay-Safe Canonical Nodes](#16-elixent-native-graph-engine-18-channel-agentgraphstate--9-replay-safe-canonical-nodes)
-  - [17. Agent Chat Panel, HITL Question Cards & Incremental Editor Sync](#17-agent-chat-panel-hitl-question-cards--incremental-editor-sync)
+  - [17. Agent Chat Panel, Multi-Tab Ghost Review, Decision Graph UI & Two-Tier Undo](#17-agent-chat-panel-multi-tab-ghost-review-decision-graph-ui--two-tier-undo)
 - [Security Architecture](#security-architecture)
 - [Documentation Index](#documentation-index)
 - [Deployment Blueprints](#deployment-blueprints)
@@ -163,7 +163,7 @@ lugx/
 │       └── cron.yml               # Scheduled maintenance workflow (Daily 03:00 UTC & Quota sweepers)
 ├── docs/                          # Comprehensive technical documentation & governance
 │   ├── README.md                  # Master structural map and documentation index
-│   ├── CHANGELOG.md               # Versioned engineering changelog (Elixent v0.1.0 to v0.27.0; archived LUGX v1.0.0–v1.46.3)
+│   ├── CHANGELOG.md               # Versioned engineering changelog (Elixent v0.1.0 to v0.28.0; archived LUGX v1.0.0–v1.46.3)
 │   ├── TECHNICAL_DEBT_REGISTER.md # Living register of accepted debts and resolution history
 │   ├── DOCUMENTATION_GUIDELINES.md# Rules for authoring, linking, and updating documentation
 │   ├── Plans/                     # Active official execution plans (elixent-architectural-evolution-execution-plan.md)
@@ -183,11 +183,12 @@ lugx/
 │   │   ├── rpc-client.ts          # Transport-injectable typed Hono RPC client (hc<AppType>; zero server imports)
 │   │   └── styles/globals.css     # Client design tokens, Dark Glassmorphism, and Tailwind utilities
 │   ├── components/                # Modular React UI components
-│   │   ├── editor/                # Toolbar, direction menu, search-replace, streaming ghost widget
+│   │   ├── agent/                 # AgentChatPanel, HITLQuestionCard & pure Native SVG DecisionGraphExplorer
+│   │   ├── editor/                # WorkspaceTabBar, UnresolvedEditsTracker, PendingEditsExitModal, toolbar, search-replace, ghost widget
 │   │   │   └── markdown/          # Standalone CodeMirror 6 editor, adapter, and Bidi plugins
 │   │   ├── sync/                  # Conflict resolution split-diff dialog and sync status indicators
 │   │   ├── ui/                    # Base Radix UI primitives and modal dialogs
-│   │   └── vault/                 # Zero-Knowledge vault unlock, setup, PIN, and trust modals
+│   │   └── vault/                 # Zero-Knowledge vault unlock, setup, PIN, trust & WorkspaceDecryptionWarningModal
 │   ├── config/                    # Static configuration (models.config.json, tiers.config.ts)
 │   ├── hooks/                     # Custom React hooks (useSync, useEditorOrchestrator, useAIStream, useVault)
 │   ├── lib/
@@ -312,7 +313,7 @@ npm run start
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 156 | 3281 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 164 | 3331 | 100% ✅ |
 | **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 22 | 101 | 100% ✅ |
 | **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
@@ -327,7 +328,7 @@ The test suite is partitioned into three isolated tiers to ensure comprehensive 
 | `npm run test:all`  | Full Test Verification       | Comprehensive pre-deployment verification (unit + live).               |
 
 ```bash
-# Execute unit/contract test suites (156 test files, 3281 tests)
+# Execute unit/contract test suites (164 test files, 3331 tests)
 npm run test
 
 # Execute live database integration test suites on isolated Neon branch (22 test files, 101 tests)
@@ -758,16 +759,18 @@ flowchart TD
 - **18-Channel Typed `AgentGraphState` & Pure Reducers (`src/core/agent/state.ts` & `src/core/agent/reducers.ts`):** Pure TypeScript interface covering 18 JSON-serializable channels (`messages`, `user_request`, `classified_intent`, `search_report`, `local_inspection_state`, `assumptions`, `governing_constraints`, `scored_decisions`, `master_ledger`, `ledger_edges`, `project_taxonomy`, `unresolved_ledger`, `invalidation_map`, `pending_file_actions`, `question_queue`, `clarification_answers`, `budget_tracking`, `search_loop_count`). Reducers (`applyStateDelta`) enforce immutability, explicit `clearInvalidationMap` resets after `workspace_mutator_node`, `replaceMasterLedger` support for decision eviction, and monotonic loop clamping (`MAX_SEARCH_LOOPS = 3`).
 - **9 Replay-Safe Canonical Nodes & 6 State-Predicate Gates (`src/core/agent/nodes/*` & `src/core/agent/graph.ts`):** Replaces the legacy 14-node topology with 9 canonical nodes wired via `createElixentAgentGraph` and 6 pure routing gates (`gateG01..gateG06` + `gateAfterHitlClarification`), wrapped by the native `(state, ctx)` `withMeteredNodeGate` (`src/lib/metering/node-gate.ts`).
 
-### 17. Agent Chat Panel, HITL Question Cards & Incremental Editor Sync
+### 17. Agent Chat Panel, Multi-Tab Ghost Review, Decision Graph UI & Two-Tier Undo
 
-To connect the autonomous agent core with the human editor, Elixent Phase 11 introduces the interactive `AgentChatPanel`, `HITLQuestionCard` clarification cards, debounced incremental sync without 412 conflicts, and real-time micro-credit balance views:
+To connect the autonomous agent core with the multi-file editor workspace, Elixent combines the interactive `AgentChatPanel`, `HITLQuestionCard`, multi-tab persistent ghost review, Native SVG `DecisionGraphExplorer`, workspace Zero-Knowledge decryption governance, and Two-Tier Undo:
 
-- **Architectural Agent Chat Panel (`src/components/agent/chat-panel.tsx`):** Slide-out workspace drawer displaying graph execution progress, ATMS master decision ledger cards (`selectionRationale`, `evaluatedAlternatives`), active ghost hunk review controls, manual `System 2` model selection (`agent-system2-model-select`, populated from `src/config/models.config.json` `STREAMING_GENERATIVE` models with credit rates), 3-mode permission toggles (`safe`, `semi_auto`, `full_auto`), and a recoverable `INSUFFICIENT_CREDITS` checkpoint resume card (`paused_insufficient_credits` -> `resumeInsufficientCreditsTask`).
+- **Architectural Agent Chat Panel (`src/components/agent/chat-panel.tsx`):** Slide-out workspace drawer displaying graph execution progress, ATMS master decision ledger cards (`selectionRationale`, `evaluatedAlternatives`), active ghost hunk review controls, manual `System 2` model selection (`agent-system2-model-select`, populated from `src/config/models.config.json` `STREAMING_GENERATIVE` models with credit rates), 3-mode permission toggles (`safe`, `semi_auto`, `full_auto`), a recoverable `INSUFFICIENT_CREDITS` checkpoint resume card (`paused_insufficient_credits` -> `resumeInsufficientCreditsTask`), one-time `zkAiNotice` (`elixent_zk_ai_notice_shown`), and **`Revert Turn`** / **`Revert Session`** controls (`mutatedTurns`).
+- **Multi-Tab Workspace Shell, Persistent Ghost Review & 3-Choice Exit Guard (`src/components/editor/workspace-tab-bar.tsx`, `unresolved-edits-tracker.tsx`, `pending-edits-exit-modal.tsx`, `src/client/routes/workspace-layout.tsx`):** Renders `WorkspaceTabBar` directly above `<Outlet />` with active highlight, encrypted badge, dirty dot, and `pendingGhostCount` pill; closing a tab retains unresolved hunks in `ghostHunksByFileId` (persisted encrypted at rest in IndexedDB `sync_metadata` as `pending_ghost_hunks_${workspaceId}`); surfaces `UnresolvedEditsTracker` (`"N Unresolved Edits in M Files"`) in both `WorkspaceTabBar` and `Sidebar`; and intercepts workspace exits via TanStack Router `useBlocker` (zero `router.tsx` import per `DEF-13`) and `beforeunload` with `Save & Leave`, `Discard & Leave` (`registerDiscardFlushHandler`), and `Stay`.
+- **Pure Native SVG Decision Graph Explorer & Workspace Sidebar (`src/components/agent/decision-graph-explorer.tsx`, `src/components/layout/sidebar.tsx`):** Zero-library SVG directed graph using Kahn topological column layering (`computeTopologicalLayers`) and clickable Bézier edges (`DEPENDS_ON`, `REFINES`, `OVERRIDES`), paired with an Inspector Drawer (`selectionRationale`, 4-source `changeWeight` breakdown, upstream/downstream links, `evaluatedAlternatives`, `1 Hop` / `2 Hops` / `Full Chain` depth filter, `Download JSON`, and clickable `affectedSections` `#headingSlug` jump via `CodeMirrorEditorAdapter.scrollToHeading`). `Sidebar` hides `artifactRole === "decision_ledger"` from the Markdown tree and provides the workspace switcher, `Decision Graph` header button, and `Export Workspace (.zip)`.
+- **All-or-Nothing Encrypted Workspace Decryption & Pre-Stream ZK Bridge (`src/components/vault/workspace-decryption-warning-modal.tsx`, `src/components/files/file-context-menu.tsx`, `src/hooks/use-ai-stream.ts`):** Intercepts single-file decryption inside encrypted workspaces to enforce explicit full-workspace confirmation (`decryptEntireWorkspaceRpc`), hydrates workspace-scoped non-excluded encrypted files transiently into `ephemeralVaultPayloads` before `/api/agent/stream` (`hydrateWorkspaceVaultPayloads`), and handles `vault_file_commit_required` frames via client-side `SyncCryptoGateway.encryptOutbound` + `toggleFileEncryption`.
+- **Two-Tier Undo & `INV-UNDO-SYNC` (`src/components/editor/markdown/editor-adapter.ts`, `src/lib/sync/indexeddb.ts`, `src/lib/sync/rollback.ts`, `src/hooks/use-editor-orchestrator.ts`):** Tier 1 coalesces multi-range edits in `replaceRanges` (`Transaction.userEvent.of("agent.mutation")` + `isolateHistory.of("full")`) and `acceptAllGhostHunks` (`"ai.accept.all"`) for single-step `Ctrl + Z`; Tier 2 queries IndexedDB v2 composite index `idx_operations_workspace_turn` (`['workspaceId', 'turnId']`) via `SyncRollback.rollbackAgentTurn` (restoring `update` files in IDB and pushing to server via `updateFileContent`/`toggleFileEncryption`, soft-deleting `create` files via `deleteFile`, and restoring `delete` files via `restoreWorkspaceFileRpc`), while `handleRevertTurn`/`handleRevertSession` enforce `INV-UNDO-SYNC` (cancelling autosave, pushing restored content via `adapter.setValue(..., "rollback")`, and clearing dirty/ghost state).
 - **Single-Layer SSE Transport, Multi-File Decoder & Workspace Hono RPC (`src/server/routes/agent.routes.ts`, `src/lib/ai/stream-handler.ts`, `src/server/routes/rpc.routes.ts`, `src/client/rpc-client.ts`):** Eliminates outer route-level `StreamGovernor` double-billing (`withMeteredNodeGate` meters strictly inside graph nodes), decodes typed `ghost_hunk_proposed`, `file_mutated`, `vault_file_commit_required`, and enriched `interrupt` frames in `consumeAgentStream`, and exposes typed workspace CRUD / all-or-nothing decryption / file-restore RPC facades (`listWorkspacesRpc`, `createWorkspaceRpc`, `updateWorkspaceRpc`, `deleteWorkspaceRpc`, `decryptEntireWorkspaceRpc`, `restoreWorkspaceFileRpc`).
-- **Human-in-the-Loop Clarification Gate (`src/components/agent/hitl-question-card.tsx`):** Renders diagnostic question batches emitted by Stage 6 interrupts (`pure_interrupt_node`) with real-time `ClarificationResponseSchema` validation before stateless graph resumption via `POST /api/agent/stream`.
-- **Incremental Sync Contract & 412 Elimination (`src/hooks/use-editor-orchestrator.ts` & `src/hooks/use-ai-stream.ts`):** Replaces legacy client-side `commitAIFileOperation` with an immediate local IndexedDB write (`localRevision += 1`) and debounced server autosave via `useEditorAutosave` (800ms–1000ms), coalescing rapid ghost hunk acceptances into a single server save and eliminating self-inflicted 412 conflicts.
-- **Real-Time Credit Balance Presentation (`src/client/routes/dashboard-page.tsx` & `src/client/routes/account-page.tsx`):** Replaced legacy word-count quota displays with server-authoritative micro-credit balance tracking via `getCreditBalance()` (`@/client/rpc-client` -> `GET /api/rpc/billing/credit-balance`) and tier visual progress indicators.
-- **Final Purge of Legacy 5-Operation Modules & Full Test Migration (Phase 12 / `v0.12.0`):** Permanently deleted all 7 legacy 5-operation modules (`api/ai/stream/route.ts`, `pending-operation-store.ts`, `preview-buffer.ts`, `prompts.ts`, `quota-settlement-reducer.ts`, `ai-commit.ts`, `ai-ops.ts`), cleaned `models.config.json`, `tiers.config.ts`, `ai/client.ts`, and `ai-contracts.ts`, and migrated all unit, live, and E2E test suites to `/api/agent/stream`, `ai-settlement-service.ts`, and `MultiHunkGhostState`.
+- **Human-in-the-Loop Clarification Gate (`src/components/agent/hitl-question-card.tsx`):** Renders diagnostic question batches emitted by `hitl_clarification_node` with real-time `ClarificationResponseSchema` validation before stateless graph resumption via `POST /api/agent/stream`.
+- **Incremental Sync Contract & Real-Time Credit Balance (`src/hooks/use-editor-orchestrator.ts`, `src/client/routes/dashboard-page.tsx`, `src/client/routes/account-page.tsx`):** Coalesces rapid ghost hunk acceptances via immediate local IndexedDB writes (`localRevision += 1`) and debounced server autosave (`useEditorAutosave`, 800ms–1000ms), and surfaces server-authoritative micro-credit balances via `getCreditBalance()`.
 
 ---
 

@@ -7,7 +7,7 @@
 | **Governing ADRs**          | [`ADR-012`](../architecture/adrs/adr_012_json_decision_ledger_and_graph_traversal.md), [`ADR-015`](../architecture/adrs/adr_015_two_tier_workspace_undo_and_turn_rollback.md)                                                                                                                                                                                  |
 | **Reference Baseline**      | `Elixent v0.22.0` (`Vite 6 SPA + TanStack Router + Hono RPC`)                                                                                                                                                                                                                                                                                                  |
 | **Target Repository Scope** | `../../src/client/routes/workspace-layout.tsx`, `../../src/client/routes/editor-page.tsx`, `../../src/components/editor/**`, `../../src/components/agent/**`, `../../src/components/layout/sidebar.tsx`, `../../src/hooks/use-editor-orchestrator.ts`, `../../src/hooks/use-ai-stream.ts`, `../../src/lib/sync/idb-types.ts`, `../../src/lib/sync/rollback.ts` |
-| **Status**                  | `APPROVED FOR IMPLEMENTATION (v1.1 Audited)`                                                                                                                                                                                                                                                                                                                   |
+| **Status**                  | `IMPLEMENTED — Phases 4 & 5 (v0.27.0–v0.28.0); Phase 6 E2E Pending` |
 
 ## 1. Purpose, Scope & Architectural Traceability
 
@@ -17,8 +17,8 @@ This Software Requirements Specification (**SRS-03**) defines the client-side st
 | :-------------------------- | :------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`REQ-PERM-01 .. 03`**     | [`ADR-015`](../architecture/adrs/adr_015_two_tier_workspace_undo_and_turn_rollback.md) | `../../src/components/agent/chat-panel.tsx`, `../../src/hooks/use-ai-stream.ts`                                                                        | Implement `safe`, `semi_auto`, and `full_auto` permission modes governing content edits, file creation, and file deletion approval gates.                                                        |
 | **`REQ-TABS-01 .. 04`**     | Direct Product Requirement                                                             | `../../src/client/routes/workspace-layout.tsx`, `../../src/components/editor/markdown/types.ts`, `../../src/hooks/use-editor-orchestrator.ts`          | Provide a top `WorkspaceTabBar` supporting multi-file open tabs, simultaneous multi-file `GhostHunk` state (`ghostHunksByFileId`), and persistent pending edits even after a file tab is closed. |
-| **`REQ-EXIT-01 .. 03`**     | Direct Product Requirement                                                             | `../../src/components/editor/unresolved-edits-tracker.tsx` (Planned / New), `../../src/components/editor/pending-edits-exit-modal.tsx` (Planned / New) | Provide a persistent `Unresolved Edits Tracker` indicator and a 3-choice navigation/exit guard (`Save & Leave`, `Discard & Leave`, `Stay`).                                                      |
-| **`REQ-GRAPH-UI-01 .. 04`** | [`ADR-012`](../architecture/adrs/adr_012_json_decision_ledger_and_graph_traversal.md)  | `../../src/components/layout/sidebar.tsx`, `../../src/components/agent/decision-graph-explorer.tsx` (Planned / New)                                    | Provide a dedicated `Decision Graph` button in the Files panel launching an interactive visual network graph of `decisions.ledger.json` nodes and clickable edges.                               |
+| **`REQ-EXIT-01 .. 03`**     | Direct Product Requirement                                                             | `../../src/components/editor/unresolved-edits-tracker.tsx`, `../../src/components/editor/pending-edits-exit-modal.tsx` | Provide a persistent `Unresolved Edits Tracker` indicator and a 3-choice navigation/exit guard (`Save & Leave`, `Discard & Leave`, `Stay`).                                                      |
+| **`REQ-GRAPH-UI-01 .. 04`** | [`ADR-012`](../architecture/adrs/adr_012_json_decision_ledger_and_graph_traversal.md)  | `../../src/components/layout/sidebar.tsx`, `../../src/components/agent/decision-graph-explorer.tsx`                                    | Provide a dedicated `Decision Graph` button in the Files panel launching an interactive visual network graph of `decisions.ledger.json` nodes and clickable edges.                               |
 | **`REQ-UNDO-01 .. 04`**     | [`ADR-015`](../architecture/adrs/adr_015_two_tier_workspace_undo_and_turn_rollback.md) | `../../src/lib/sync/idb-types.ts`, `../../src/lib/sync/rollback.ts`, `../../src/hooks/use-editor-orchestrator.ts`                                      | Implement single-transaction `CodeMirror` `Ctrl + Z` undo for open files and Turn-Linked differential `IDBOperation` + `files.deletedAt` rollback per message/session.                           |
 
 ## 2. Three Agent Permission Modes (`REQ-PERM-01 .. 03`)
@@ -69,7 +69,7 @@ export interface WorkspacePendingGhostStore {
    - Closing an individual file tab via its `(X)` button removes the tab from `openTabs` view **without** discarding or rejecting its pending entries in `ghostHunksByFileId`.
    - `ghostHunksByFileId` is mirrored into `IndexedDB` (`textai_db_${userId}`) under store key `pending_ghost_hunks_${workspaceId}` so unresolved hunks survive accidental page reloads.
 3. **Unresolved Edits Tracker UI (`REQ-TABS-04`):**
-   - Component: `../../src/components/editor/unresolved-edits-tracker.tsx` (Planned / New).
+   - Component: `../../src/components/editor/unresolved-edits-tracker.tsx`.
    - Whenever `totalPendingGhostCount > 0` across `ghostHunksByFileId`, a persistent indicator pill (`"N Unresolved Edits in M Files"`) is displayed in both the `Sidebar` Files header and the right side of `WorkspaceTabBar`.
    - Clicking the indicator opens a popover listing every file with unresolved `GhostHunk` items (showing whether its tab is currently open or closed), with per-file and workspace-wide buttons:
      - **`Open & Review`**: Opens/focuses the file's tab and scrolls `CodeMirror` to the first pending hunk.
@@ -77,7 +77,7 @@ export interface WorkspacePendingGhostStore {
 
 ### 3.2. Three-Choice Exit & Navigation Guard (`REQ-EXIT-01 .. 03`)
 
-Component: `../../src/components/editor/pending-edits-exit-modal.tsx` (Planned / New)
+Component: `../../src/components/editor/pending-edits-exit-modal.tsx`
 
 Whenever `totalPendingGhostCount > 0` (or `hasUnsavedDirtyBuffer === true`) and the user initiates an action that leaves the active workspace (switching workspaces, navigating to `/dashboard`, `/account`, logging out via `TanStack Router` navigation blocker, or triggering browser `beforeunload` return-to-app flow):
 
@@ -88,7 +88,7 @@ Whenever `totalPendingGhostCount > 0` (or `hasUnsavedDirtyBuffer === true`) and 
 
 ## 4. Interactive Visual Decision Graph UI (`ADR-012` — `REQ-GRAPH-UI-01 .. 04`)
 
-Component: `../../src/components/agent/decision-graph-explorer.tsx` (Planned / New) & `../../src/components/layout/sidebar.tsx`
+Component: `../../src/components/agent/decision-graph-explorer.tsx` & `../../src/components/layout/sidebar.tsx`
 
 ```mermaid
 flowchart LR

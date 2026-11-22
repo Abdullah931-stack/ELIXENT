@@ -60,12 +60,16 @@ export type OperationStatus =
     | 'discarded';
 ```
 
-### 3.2. Extended `IDBOperation` Interface
+### 3.2. Extended `IDBOperation` Interface (Updated in Phase 5 / `v0.28.0`)
 ```typescript
 export interface IDBOperation {
     id: string;
     operationId?: string;
     userId?: string;
+    workspaceId?: string;
+    threadId?: string;
+    turnId?: string;
+    postTurnEtag?: string;
     fileId: string;
     baseVersion?: number;
     /** Monotonically increasing local revision within the client session */
@@ -85,16 +89,17 @@ export interface IDBOperation {
     isEncrypted?: boolean;
     snapshot?: {
         content: MarkdownSource;
-        etag?: string;
-        version?: number;
+        etag: string;
+        version: number;
+        encryptionMetadata?: IDBFile['encryptionMetadata'];
     };
 }
 ```
 
-### 3.3. IndexedDB Object Stores & Index Schema
-- **`files` Store:** Key: `id` (string), Indexes: `lastModified`, `isDirty`. Fields include `localRevision` (monotonic revision counter for CAS gating), `baseSnapshot`, `isEncrypted`, and `encryptionMetadata`.
-- **`operations` Store:** Key: `id` (string), Indexes: `fileId`, `timestamp`, `status`, `nextRetryAt`.
-- **`sync_metadata` Store:** Key: `id` (string).
+### 3.3. IndexedDB Object Stores & Index Schema (`DB_VERSION: 2`)
+- **`files` Store:** Key: `id` (string), Indexes: `lastModified`, `isDirty`. Fields include `workspaceId`, `isAiExcluded`, `localRevision` (monotonic revision counter for CAS gating), `baseSnapshot`, `isEncrypted`, and `encryptionMetadata`.
+- **`operations` Store:** Key: `id` (string), Indexes: `fileId`, `timestamp`, `synced`, `status`, `nextRetryAt`, `fileId_synced`, and composite index `idx_operations_workspace_turn` on `['workspaceId', 'turnId']` (added in IndexedDB v2 migration for $O(k)$ turn lookup via `getOperationsByWorkspaceTurn`).
+- **`sync_metadata` Store:** Key: `id` (string). Also stores encrypted-at-rest workspace ghost review records under key `pending_ghost_hunks_${workspaceId}` (`PersistedPendingGhostHunks`, managed by `savePendingGhostHunks`, `loadPendingGhostHunks`, and `clearPendingGhostHunks`).
 
 ---
 
@@ -287,6 +292,14 @@ Instead, the sync engine:
 1. Discards the in-memory checkpoint via `this.rollback.removeCheckpoint(checkpointId)`.
 2. Preserves the local dirty file state in IndexedDB (`isDirty = true`).
 3. Retains the operation in `status: 'failed'` with exponential backoff timers (`nextRetryAt`) scheduled for retry upon network re-establishment.
+
+### 8.3. Turn-Linked Agent Rollback (`SyncRollback.rollbackAgentTurn` — Phase 5 / `v0.28.0`)
+Implements Tier 2 differential rollback (`ADR-015` / `SRS-03` §5.2) via `rollbackAgentTurn(workspaceId, turnId)`:
+1. Queries `this.idb.getOperationsByWorkspaceTurn(workspaceId, turnId)` via composite index `idx_operations_workspace_turn` and iterates in strictly reverse chronological order (`timestamp DESC`).
+2. **`operationType === 'update'` (modified `.md` files and `decisions.ledger.json`):** Executes `this.rollbackOperation(op)` to restore `snapshot.content`, `snapshot.etag`, `snapshot.version`, and `snapshot.encryptionMetadata` in IndexedDB, then pushes the restored payload to PostgreSQL via `toggleFileEncryption` (for encrypted files) or `updateFileContent` (for plaintext files).
+3. **`operationType === 'create'`:** Soft-deletes the created file via `deleteFile(op.fileId)` and deletes its local IndexedDB record (`this.idb.deleteFile(op.fileId)`).
+4. **`operationType === 'delete'`:** Restores the soft-deleted file via `restoreWorkspaceFileRpc(op.fileId)`.
+5. Returns `{ rolledBackFiles, restoredFiles, deletedCreatedFiles }` so `useEditorOrchestrator` enforces `INV-UNDO-SYNC` (cancelling autosave, pushing restored content via `adapter.setValue(restoredContent, "rollback")`, and clearing dirty/ghost state).
 
 ---
 

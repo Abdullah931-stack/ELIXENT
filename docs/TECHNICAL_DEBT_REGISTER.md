@@ -2,10 +2,10 @@
 
 Living register of known technical debt, accepted risks, and deferred work.
 Each entry records the decision owner and the mitigation currently in place.
-Last reviewed: 2026-11-21 (v0.27.0 — Phase 4 Hono SSE/RPC Wiring, Ephemeral ZK Bridge & `AgentChatPanel` Controls).
+Last reviewed: 2026-11-22 (v0.28.0 — Phase 5 Multi-Tab Editor, Persistent Ghost Review, Decision Graph UI & Two-Tier Undo).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 156 unit suites (3281 tests) · 22 live suites (101 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 164 unit suites (3331 tests) · 22 live suites (101 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
 ---

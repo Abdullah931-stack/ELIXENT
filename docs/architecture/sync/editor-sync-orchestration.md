@@ -11,7 +11,8 @@ amended in Vault Phase 3 with Zero-Knowledge Vault gating (`vault_locked`),
 pre-save Web Worker envelope encryption, and offline-first dynamic file conversion (Section 6e);
 amended in Phase 17 (v1.45.0) with decoupled standalone `useEditorAutosave` hook (`src/hooks/use-editor-autosave.ts`), AI write-lock suspension/resumption gate, and React 19 ref discipline;
 amended in Phase 18 with decoupled standalone `useEditorConflict` hook (`src/hooks/use-editor-conflict.ts`), cross-tab lifecycle synchronization, 412 conflict isolation, and in-flight snapshot concurrent edit protection (Section 4);
-amended in v0.20.5 (`ELIXENT-SRS-LOCAL-FIRST-SYNC-v2.0`) with Local-First Cookie Identity Verification (0ms cold start, Better Auth seam), `initialBaselinePersistedRef` baseline synchronization, and Conditional React State Flushing on Server Conflict (412) and Server Fetch (reconnection pull, page reload / Step 2 fetch) (Sections 3.3, 6c, 6d).
+amended in v0.20.5 (`ELIXENT-SRS-LOCAL-FIRST-SYNC-v2.0`) with Local-First Cookie Identity Verification (0ms cold start, Better Auth seam), `initialBaselinePersistedRef` baseline synchronization, and Conditional React State Flushing on Server Conflict (412) and Server Fetch (reconnection pull, page reload / Step 2 fetch) (Sections 3.3, 6c, 6d);
+amended in Phase 5 (`v0.28.0`, `ADR-015` / `SRS-03`) with `WorkspaceTabsProvider` integration (`openTab`, `updateTabState`, `registerSaveFlushHandler`, `registerDiscardFlushHandler`), `hydrateGhostHunksForFile`, and `INV-UNDO-SYNC` turn/session rollback resync (`handleRevertTurn`, `handleRevertSession` cancelling pending autosave timers, pushing restored content via `adapter.setValue(..., "rollback")`, and clearing dirty/ghost state).
 **Authoritative Modules:** `src/hooks/use-editor-orchestrator.ts`, `src/hooks/use-editor-autosave.ts`, `src/hooks/use-editor-conflict.ts`, `src/lib/auth/client-identity.ts`
 **Consuming Page:** `src/client/routes/editor-page.tsx`
 
@@ -877,7 +878,7 @@ React editor state is **never** flushed unconditionally during routine sync cycl
   - **Vault Subsystem Total:** 10/10 test files, 178/178 tests passing (100% success rate).
 
 <!-- BEGIN:SSOT_TEST_METRICS_INLINE -->
-**Active Verification Baseline:** 156 unit suites (3281 tests) · 22 live suites (101 tests) · 14 E2E specs (15 journeys) — 100% Passing.
+**Active Verification Baseline:** 164 unit suites (3331 tests) · 22 live suites (101 tests) · 14 E2E specs (15 journeys) — 100% Passing.
 <!-- END:SSOT_TEST_METRICS_INLINE -->
 
   - **TypeScript Typecheck:** `npx tsc --noEmit` exits with code 0 (zero errors).
