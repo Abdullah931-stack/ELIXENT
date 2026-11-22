@@ -1,6 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { SyncCryptoGateway } from '@/lib/sync/sync-crypto-gateway';
 import { sessionKeyStore } from '@/lib/sync/session-key-store';
+import { base64ToUint8Array, cryptoWorkerBridge } from '@/lib/sync/crypto-worker-bridge';
+import { encryptionMetadataSchema } from '@/types/rpc-contracts';
+import {
+    fileEncryptionMetadataSchema,
+    encryptedStoragePayloadSchema,
+} from '@/types/storage-payload';
 
 describe('SyncCryptoGateway', () => {
     const testUserId = 'user-test-uuid-123';
@@ -120,5 +126,96 @@ describe('SyncCryptoGateway', () => {
 
         expect(tamperedDecryption.status).toBe('error');
         expect(tamperedDecryption.error).toBeDefined();
+    });
+
+    it('Phase 6 regression: encryptOutbound emits unique 16-byte CSPRNG base64 salt passing encryptionMetadataSchema and fileEncryptionMetadataSchema', async () => {
+        sessionKeyStore.storeMasterKeyRaw(rawMasterKey, 3600);
+
+        const plaintext = '# Zero-Knowledge Architecture Blueprint\nSensitive content.';
+        const enc1 = await SyncCryptoGateway.encryptOutbound(testFileId, plaintext, testUserId);
+        const enc2 = await SyncCryptoGateway.encryptOutbound(testFileId, plaintext, testUserId);
+
+        // Cross-contract schema compliance: both RPC and storage payload schemas enforce non-empty salt
+        expect(encryptionMetadataSchema.safeParse(enc1.encryptionMetadata).success).toBe(true);
+        expect(fileEncryptionMetadataSchema.safeParse(enc1.encryptionMetadata).success).toBe(true);
+        expect(
+            encryptedStoragePayloadSchema.safeParse({
+                type: 'encrypted',
+                ciphertextBase64: enc1.ciphertextBase64,
+                isEncrypted: true,
+                encryptionMetadata: enc1.encryptionMetadata,
+            }).success
+        ).toBe(true);
+
+        // Decoded salt is 16 CSPRNG bytes (128-bit) and decoded IV is 12 CSPRNG bytes (96-bit)
+        const saltBytes1 = base64ToUint8Array(enc1.encryptionMetadata.salt);
+        const ivBytes1 = base64ToUint8Array(enc1.encryptionMetadata.iv);
+        expect(saltBytes1.byteLength).toBe(16);
+        expect(ivBytes1.byteLength).toBe(12);
+        expect(saltBytes1.some((b) => b !== 0)).toBe(true);
+
+        // Consecutive encryptions must generate fresh salt & IV entropy
+        expect(enc1.encryptionMetadata.salt).not.toBe(enc2.encryptionMetadata.salt);
+        expect(enc1.encryptionMetadata.iv).not.toBe(enc2.encryptionMetadata.iv);
+
+        // Inbound decryption preserves non-empty salt metadata
+        const decrypted = await SyncCryptoGateway.decryptInbound({
+            fileId: testFileId,
+            content: enc1.ciphertextBase64,
+            isEncrypted: true,
+            encryptionMetadata: enc1.encryptionMetadata,
+            userId: testUserId,
+        });
+        expect(decrypted.status).toBe('decrypted');
+        expect(decrypted.content).toBe(plaintext);
+        expect(decrypted.encryptionMetadata?.salt).toBe(enc1.encryptionMetadata.salt);
+    });
+
+    it('fails closed when vault is locked and zeroes allocated IV and salt buffers on both success and encryption failure', async () => {
+        // Locked vault must reject outbound encryption before allocating crypto material
+        await expect(
+            SyncCryptoGateway.encryptOutbound(testFileId, 'secret', testUserId)
+        ).rejects.toThrow(/Vault is locked/i);
+
+        sessionKeyStore.storeMasterKeyRaw(rawMasterKey, 3600);
+
+        const realGenerateRandomBytes = cryptoWorkerBridge.generateRandomBytes.bind(cryptoWorkerBridge);
+        const allocatedBuffers: Uint8Array[] = [];
+        const rngSpy = vi
+            .spyOn(cryptoWorkerBridge, 'generateRandomBytes')
+            .mockImplementation(async (length: number) => {
+                const buf = await realGenerateRandomBytes(length);
+                allocatedBuffers.push(buf);
+                return buf;
+            });
+
+        try {
+            // 1. Happy path: both IV (12B) and salt (16B) buffers must be zeroed in-place in finally
+            await SyncCryptoGateway.encryptOutbound(testFileId, 'secret', testUserId);
+            expect(allocatedBuffers.map((b) => b.byteLength)).toEqual([12, 16]);
+            for (const buf of allocatedBuffers) {
+                expect(buf.every((byte) => byte === 0)).toBe(true);
+            }
+
+            // 2. Failure path: WebCrypto failure must still zero both buffers in finally
+            allocatedBuffers.length = 0;
+            const encryptSpy = vi
+                .spyOn(cryptoWorkerBridge, 'encryptAESGCM')
+                .mockRejectedValueOnce(new Error('Simulated WebCrypto failure'));
+
+            try {
+                await expect(
+                    SyncCryptoGateway.encryptOutbound(testFileId, 'secret', testUserId)
+                ).rejects.toThrow('Simulated WebCrypto failure');
+                expect(allocatedBuffers.map((b) => b.byteLength)).toEqual([12, 16]);
+                for (const buf of allocatedBuffers) {
+                    expect(buf.every((byte) => byte === 0)).toBe(true);
+                }
+            } finally {
+                encryptSpy.mockRestore();
+            }
+        } finally {
+            rngSpy.mockRestore();
+        }
     });
 });

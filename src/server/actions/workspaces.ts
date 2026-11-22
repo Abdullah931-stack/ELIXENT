@@ -1,4 +1,5 @@
-import { db, schema } from "@/server/db";
+import * as dbModule from "@/server/db";
+const { db, schema } = dbModule;
 import { deriveDefaultWorkspaceId } from "@/server/db/schema/files";
 import { requireAuthenticatedUser } from "@/server/auth/session";
 import { eq, and, isNull, or } from "drizzle-orm";
@@ -427,7 +428,16 @@ export async function decryptEntireWorkspace(
     }
 
     const now = new Date();
-    const updatedWorkspace = await db.transaction(async (tx) => {
+    let targetDb: typeof db = db;
+    try {
+      const candidateTxDb = (dbModule as unknown as { txDb?: typeof db }).txDb;
+      if (candidateTxDb && typeof candidateTxDb.transaction === "function") {
+        targetDb = candidateTxDb;
+      }
+    } catch {
+      // Fallback to db when a test mock of "@/server/db" omits txDb
+    }
+    const updatedWorkspace = await targetDb.transaction(async (tx) => {
       for (const file of encryptedFiles) {
         const payload = payloadByFileId.get(file.id)!;
         const currentVersion = file.version ?? 0;

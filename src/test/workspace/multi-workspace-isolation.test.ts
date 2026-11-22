@@ -32,7 +32,7 @@ interface InMemoryStore {
   userVaultProfiles: Array<Record<string, unknown>>;
 }
 
-const { sharedStore, mockSessionUser, createInMemoryDrizzleDb } = vi.hoisted(() => {
+const { sharedStore, mockSessionUser, mockTxDbOverride, createInMemoryDrizzleDb } = vi.hoisted(() => {
   const snakeToCamel = (colName: string): string =>
     colName.replace(/_([a-z])/g, (_, ch: string) => ch.toUpperCase());
 
@@ -340,6 +340,10 @@ const { sharedStore, mockSessionUser, createInMemoryDrizzleDb } = vi.hoisted(() 
         email: "multi-ws@elixent.test",
       } as { id: string; email: string } | null,
     },
+    mockTxDbOverride: {
+      mode: "omitted" as "omitted" | "present" | "throws",
+      client: null as ReturnType<typeof buildDb> | null,
+    },
     createInMemoryDrizzleDb: buildDb,
   };
 });
@@ -348,14 +352,27 @@ vi.mock("@/server/db", async () => {
   const actualSchema = await vi.importActual<typeof import("@/server/db/schema")>(
     "@/server/db/schema"
   );
-  return {
-    db: createInMemoryDrizzleDb(sharedStore, actualSchema),
+  const dbInstance = createInMemoryDrizzleDb(sharedStore, actualSchema);
+  mockTxDbOverride.client = createInMemoryDrizzleDb(sharedStore, actualSchema);
+  const mockExports = {
+    db: dbInstance,
     schema: actualSchema,
     files: actualSchema.files,
     workspaces: actualSchema.workspaces,
     userVaultProfiles: actualSchema.userVaultProfiles,
     agentCheckpoints: actualSchema.agentCheckpoints,
   };
+  Object.defineProperty(mockExports, "txDb", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      if (mockTxDbOverride.mode === "throws") {
+        throw new Error('No "txDb" export is defined on the "@/server/db" mock.');
+      }
+      return mockTxDbOverride.mode === "present" ? mockTxDbOverride.client : undefined;
+    },
+  });
+  return mockExports;
 });
 
 import { db as inMemoryDb } from "@/server/db";
@@ -526,6 +543,7 @@ function parseZipArchive(bytes: Uint8Array): ParsedZipEntry[] {
 
 describe("Multi-Workspace Isolation, ZK Governance & ZIP Export", () => {
   beforeEach(() => {
+    mockTxDbOverride.mode = "omitted";
     sharedStore.workspaces = [
       {
         id: WS_ALPHA,
@@ -738,6 +756,107 @@ describe("Multi-Workspace Isolation, ZK Governance & ZIP Export", () => {
       expect(updatedF1.encryptionMetadata).toBeNull();
       expect(updatedF1.content).toBe("# Plain 1\n");
       expect(updatedF1.version).toBe(3);
+    });
+
+    it("Phase 6 regression: decryptEntireWorkspace executes atomically via txDb.transaction on Neon HTTP runtime (where db.transaction throws) and rolls back on 409 ETag conflict", async () => {
+      mockTxDbOverride.mode = "present";
+      const dbTxSpy = vi
+        .spyOn(inMemoryDb, "transaction")
+        .mockRejectedValue(new Error("No transactions support in neon-http driver"));
+
+      try {
+        const f1 = randomUUID();
+        const f2 = randomUUID();
+        sharedStore.files.push(
+          {
+            id: f1,
+            userId: USER_A,
+            workspaceId: WS_ENCRYPTED,
+            title: "NeonSecret1.md",
+            content: "ciphertext-neon-1",
+            isFolder: false,
+            isEncrypted: true,
+            encryptionMetadata: VALID_ENC_META,
+            etag: "etag-neon-1",
+            version: 1,
+            deletedAt: null,
+          },
+          {
+            id: f2,
+            userId: USER_A,
+            workspaceId: WS_ENCRYPTED,
+            title: "NeonSecret2.md",
+            content: "ciphertext-neon-2",
+            isFolder: false,
+            isEncrypted: true,
+            encryptionMetadata: VALID_ENC_META,
+            etag: "etag-neon-2",
+            version: 1,
+            deletedAt: null,
+          }
+        );
+
+        // 1. ETag conflict on f2 must roll back f1 atomically via txDb without touching db.transaction
+        const etagConflict = await decryptEntireWorkspace(WS_ENCRYPTED, [
+          { fileId: f1, content: "# Plain Neon 1", expectedVersion: 1, expectedETag: "etag-neon-1" },
+          { fileId: f2, content: "# Plain Neon 2", expectedVersion: 1, expectedETag: "etag-stale" },
+        ]);
+        expect(etagConflict.success).toBe(false);
+        expect(etagConflict.status).toBe("conflict");
+        expect(etagConflict.statusCode).toBe(409);
+        expect(dbTxSpy).not.toHaveBeenCalled();
+        expect(sharedStore.files.find((f) => f.id === f1)?.isEncrypted).toBe(true);
+        expect(sharedStore.files.find((f) => f.id === f1)?.content).toBe("ciphertext-neon-1");
+        expect(sharedStore.workspaces.find((w) => w.id === WS_ENCRYPTED)?.isEncrypted).toBe(true);
+
+        // 2. Matching preconditions commit atomically via txDb even though db.transaction is unsupported
+        const okRes = await decryptEntireWorkspace(WS_ENCRYPTED, [
+          { fileId: f1, content: "# Plain Neon 1\r\n", expectedVersion: 1, expectedETag: "etag-neon-1" },
+          { fileId: f2, content: "# Plain Neon 2", expectedVersion: 1, expectedETag: "etag-neon-2" },
+        ]);
+        expect(okRes.success).toBe(true);
+        expect(okRes.data?.isEncrypted).toBe(false);
+        expect(dbTxSpy).not.toHaveBeenCalled();
+
+        const decryptedF1 = sharedStore.files.find((f) => f.id === f1)!;
+        const decryptedF2 = sharedStore.files.find((f) => f.id === f2)!;
+        expect(decryptedF1.isEncrypted).toBe(false);
+        expect(decryptedF1.encryptionMetadata).toBeNull();
+        expect(decryptedF1.content).toBe("# Plain Neon 1\n");
+        expect(decryptedF1.version).toBe(2);
+        expect(decryptedF2.isEncrypted).toBe(false);
+        expect(decryptedF2.encryptionMetadata).toBeNull();
+        expect(decryptedF2.version).toBe(2);
+      } finally {
+        dbTxSpy.mockRestore();
+      }
+    });
+
+    it("Phase 6 regression: decryptEntireWorkspace falls back to db.transaction when txDb export access throws on partial mocks", async () => {
+      mockTxDbOverride.mode = "throws";
+
+      const f1 = randomUUID();
+      sharedStore.files.push({
+        id: f1,
+        userId: USER_A,
+        workspaceId: WS_ENCRYPTED,
+        title: "PartialMockSecret.md",
+        content: "ciphertext-partial",
+        isFolder: false,
+        isEncrypted: true,
+        encryptionMetadata: VALID_ENC_META,
+        etag: "etag-partial-1",
+        version: 1,
+        deletedAt: null,
+      });
+
+      const okRes = await decryptEntireWorkspace(WS_ENCRYPTED, [
+        { fileId: f1, content: "# Decrypted via fallback", expectedVersion: 1, expectedETag: "etag-partial-1" },
+      ]);
+
+      expect(okRes.success).toBe(true);
+      expect(okRes.data?.isEncrypted).toBe(false);
+      expect(sharedStore.files.find((f) => f.id === f1)?.isEncrypted).toBe(false);
     });
   });
 

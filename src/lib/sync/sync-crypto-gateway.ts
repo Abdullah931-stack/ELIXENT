@@ -7,7 +7,7 @@
  */
 
 import { sessionKeyStore } from './session-key-store';
-import { cryptoWorkerBridge, wipeBuffer, base64ToUint8Array } from './crypto-worker-bridge';
+import { cryptoWorkerBridge, wipeBuffer, base64ToUint8Array, arrayBufferToBase64 } from './crypto-worker-bridge';
 import { EncryptedEnvelopeMetadata } from './idb-types';
 import { AAD } from '../crypto/aad';
 import { VaultManager } from '../vault/vault-manager';
@@ -150,6 +150,7 @@ export class SyncCryptoGateway {
         }
 
         const ivBytes = await cryptoWorkerBridge.generateRandomBytes(12);
+        const saltBytes = await cryptoWorkerBridge.generateRandomBytes(16);
         try {
             const aad = this.computeAad(userId, fileId);
             const encResult = await cryptoWorkerBridge.encryptAESGCM(
@@ -163,7 +164,7 @@ export class SyncCryptoGateway {
                 version: 1,
                 algorithm: 'AES-GCM-256',
                 keyId,
-                salt: '',
+                salt: arrayBufferToBase64(saltBytes),
                 iv: encResult.ivBase64,
                 kdfIterations: 600000,
             };
@@ -176,6 +177,7 @@ export class SyncCryptoGateway {
             };
         } finally {
             wipeBuffer(ivBytes);
+            wipeBuffer(saltBytes);
         }
     }
 }
