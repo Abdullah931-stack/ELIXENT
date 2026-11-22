@@ -6,7 +6,7 @@
 | **Classification** | `STANDALONE ARCHITECTURAL DECISION RECORD (ADR)` |
 | **Version & Status** | `v1.1 — Accepted (Audited & Schema-Normalized)` |
 | **Supersedes / Amends** | Amends the user-scoped `files` schema (`../../src/server/db/schema/files.ts`) and expands the explicit `targetFileIds` scope in [`03_workspace_ast_editor_and_vault_integration.md`](../03_workspace_ast_editor_and_vault_integration.md) (§1) |
-| **Governing Execution Plan** | [`ELIXENT-EXECUTION-PLAN-v1.1`](../../Plans/elixent-architectural-evolution-execution-plan.md) |
+| **Governing Execution Plan** | [`ELIXENT-EXECUTION-PLAN-v1.1`](../../records/plans/elixent-architectural-evolution-execution-plan.md) |
 | **Companion SRS** | [`SRS-02: Multi-Workspace Isolation, File Lifecycle & Zero-Knowledge Vault Governance`](../../specs/srs_02_multi_workspace_isolation_and_zk_vault_governance.md) |
 | **Affected Repository Scope** | `../../src/server/db/schema/workspaces.ts` (Planned / New), `../../src/server/db/schema/files.ts`, `../../src/core/workspace/provider.ts`, `../../src/core/workspace/cloud-provider.ts`, `../../src/server/routes/rpc.routes.ts`, `../../src/lib/sync/idb-types.ts` |
 

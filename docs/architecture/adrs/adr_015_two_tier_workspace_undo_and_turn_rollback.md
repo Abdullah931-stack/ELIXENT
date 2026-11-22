@@ -6,7 +6,7 @@
 | **Classification** | `STANDALONE ARCHITECTURAL DECISION RECORD (ADR)` |
 | **Version & Status** | `v1.1 — Accepted (Audited & Schema-Normalized)` |
 | **Supersedes / Amends** | Extends the offline operation log and rollback contracts in [`offline-sync-blueprint.md`](../../specs/offline-sync-blueprint.md), `../../src/lib/sync/idb-types.ts`, and `../../src/lib/sync/rollback.ts` with turn-linked multi-file rollback across open/closed files and `decisions.ledger.json` |
-| **Governing Execution Plan** | [`ELIXENT-EXECUTION-PLAN-v1.1`](../../Plans/elixent-architectural-evolution-execution-plan.md) |
+| **Governing Execution Plan** | [`ELIXENT-EXECUTION-PLAN-v1.1`](../../records/plans/elixent-architectural-evolution-execution-plan.md) |
 | **Companion SRS** | [`SRS-03: Multi-File Editor Tabs, Ghost Review, Decision Graph UI & Two-Tier Undo`](../../specs/srs_03_editor_tabs_multi_ghost_review_and_two_tier_undo.md) |
 | **Affected Repository Scope** | `../../src/lib/sync/idb-types.ts`, `../../src/lib/sync/rollback.ts`, `../../src/hooks/use-editor-orchestrator.ts`, `../../src/hooks/use-ai-stream.ts`, `../../src/server/routes/rpc.routes.ts` |
 

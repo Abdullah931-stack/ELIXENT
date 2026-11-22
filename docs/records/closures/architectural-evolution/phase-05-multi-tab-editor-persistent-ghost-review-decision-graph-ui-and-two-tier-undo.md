@@ -6,7 +6,7 @@
 | **Title** | Multi-Tab Editor, Persistent Ghost Review, Decision Graph UI & Two-Tier Undo |
 | **Release Version** | `v0.28.0` |
 | **Closure Date** | 2026-11-22 |
-| **Governing Plan** | [`docs/Plans/elixent-architectural-evolution-execution-plan.md`](../../../Plans/elixent-architectural-evolution-execution-plan.md) (Active — Phase 6 Remaining) |
+| **Governing Plan** | [`docs/Plans/elixent-architectural-evolution-execution-plan.md`](../../plans/elixent-architectural-evolution-execution-plan.md) (Active — Phase 6 Remaining) |
 | **Governing ADRs & SRS** | [`ADR-011`](../../../architecture/adrs/adr_011_multi_workspace_data_isolation_model.md) · [`ADR-012`](../../../architecture/adrs/adr_012_json_decision_ledger_and_graph_traversal.md) · [`ADR-015`](../../../architecture/adrs/adr_015_two_tier_workspace_undo_and_turn_rollback.md) · [`ADR-016`](../../../architecture/adrs/adr_016_zk_encryption_granularity_and_ephemeral_ai_bridge.md) · [`SRS-02`](../../../specs/srs_02_multi_workspace_isolation_and_zk_vault_governance.md) · [`SRS-03`](../../../specs/srs_03_editor_tabs_multi_ghost_review_and_two_tier_undo.md) |
 | **Status** | `CLOSED & VERIFIED` |
 
@@ -91,4 +91,4 @@ flowchart TD
 | **`npm run docs:sync` & `npm run docs:check`** | Documentation test metrics SSOT synchronization (`scripts/sync-doc-metrics.mjs`) | **PASS** (Exit 0 — `164` unit suites / `3,331` tests, `22` live suites / `101` tests, `14` E2E specs / `15` journeys) |
 | **`npm run lint:links`** | Repository-wide Markdown internal link integrity (`scripts/check-markdown-links.mjs`) | **PASS** (Exit 0 — 0 broken links) |
 
-> **Scope Note on Live DB & E2E Suites:** Phase 5 introduced no database schema changes, live test modifications, or Playwright E2E spec changes (Playwright E2E expansion and `npm run test:all` full-gate closure are scheduled in Phase 6 of [`elixent-architectural-evolution-execution-plan.md`](../../../Plans/elixent-architectural-evolution-execution-plan.md)); `npm run test:live` (`22` suites / `101` tests) and `npm run test:e2e` (`14` specs / `15` journeys) retain their last verified baselines in [`docs/METRICS.json`](../../../METRICS.json).
+> **Scope Note on Live DB & E2E Suites:** Phase 5 introduced no database schema changes, live test modifications, or Playwright E2E spec changes (Playwright E2E expansion and `npm run test:all` full-gate closure are scheduled in Phase 6 of [`elixent-architectural-evolution-execution-plan.md`](../../plans/elixent-architectural-evolution-execution-plan.md)); `npm run test:live` (`22` suites / `101` tests) and `npm run test:e2e` (`14` specs / `15` journeys) retain their last verified baselines in [`docs/METRICS.json`](../../../METRICS.json).

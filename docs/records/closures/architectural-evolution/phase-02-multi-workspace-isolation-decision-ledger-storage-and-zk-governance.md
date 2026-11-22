@@ -6,7 +6,7 @@
 | **Milestone / Version** | `v0.25.0` |
 | **Status** | `CLOSED / VERIFIED` ✅ |
 | **Closure Date** | `2026-11-18` |
-| **Governing Plan** | [`elixent-architectural-evolution-execution-plan.md`](../../../Plans/elixent-architectural-evolution-execution-plan.md) (`ELIXENT-EXECUTION-PLAN-v1.1` — **Active** across Phases 0–6; Phases 0–2 Closed, Phases 3–6 Active) |
+| **Governing Plan** | [`elixent-architectural-evolution-execution-plan.md`](../../plans/elixent-architectural-evolution-execution-plan.md) (`ELIXENT-EXECUTION-PLAN-v1.1` — **Active** across Phases 0–6; Phases 0–2 Closed, Phases 3–6 Active) |
 | **Associated ADRs** | [`ADR-011`](../../../architecture/adrs/adr_011_multi_workspace_data_isolation_model.md) · [`ADR-012`](../../../architecture/adrs/adr_012_json_decision_ledger_and_graph_traversal.md) · [`ADR-016`](../../../architecture/adrs/adr_016_zk_encryption_granularity_and_ephemeral_ai_bridge.md) |
 | **Companion SRS Suite** | [`SRS-02`](../../../specs/srs_02_multi_workspace_isolation_and_zk_vault_governance.md) |
 
@@ -18,7 +18,7 @@ Phase 2 implements PostgreSQL multi-workspace isolation, schema-backed `decision
 
 All user-owned files now carry a non-null `workspace_id` foreign key referencing `schema.workspaces`, workspace-scoped uniqueness (`idx_files_workspace_parent_title_live`), AI exclusion filtering (`is_ai_excluded`), and artifact role classification (`artifact_role` = `'document' | 'decision_ledger'`), alongside the `agent_checkpoints` table and `user_vault_profiles.allow_ai_on_encrypted_files` defaulting to `true` via migration `0014_multi_workspace_and_native_engine.sql`. `IWorkspaceProvider` and `CloudPostgresWorkspaceProvider` isolate every query and mutation to `(workspaceId, userId)`, reject cross-workspace access with HTTP `403` (`CrossWorkspaceAccessForbiddenError`), provide `listWorkspaceTree`, `createWorkspaceFile`, `deleteWorkspaceFile`, and `readDecisionLedger`/`writeDecisionLedger` (OCC `409`), return section/file hashes in `SectionReadResult`, and persist closed-file unencrypted `mergeSectionThreeWay` edits directly with `version` optimistic concurrency control (`409 FILE_VERSION_CONFLICT`).
 
-Because Phases 3–6 of [`elixent-architectural-evolution-execution-plan.md`](../../../Plans/elixent-architectural-evolution-execution-plan.md) remain open, the multi-phase execution plan stays active in `docs/Plans/`.
+Because Phases 3–6 of [`elixent-architectural-evolution-execution-plan.md`](../../plans/elixent-architectural-evolution-execution-plan.md) remain open, the multi-phase execution plan stays active in `docs/Plans/`.
 
 ---
 

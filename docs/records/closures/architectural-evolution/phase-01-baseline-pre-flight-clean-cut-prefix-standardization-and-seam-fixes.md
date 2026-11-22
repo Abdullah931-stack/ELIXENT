@@ -6,7 +6,7 @@
 | **Milestone / Version** | `v0.24.0` |
 | **Status** | `CLOSED / VERIFIED` ✅ |
 | **Closure Date** | `2026-11-18` |
-| **Governing Plan** | [`elixent-architectural-evolution-execution-plan.md`](../../../Plans/elixent-architectural-evolution-execution-plan.md) (`ELIXENT-EXECUTION-PLAN-v1.1` — **Active** across Phases 0–6; Phases 0–1 Closed, Phases 2–6 Active) |
+| **Governing Plan** | [`elixent-architectural-evolution-execution-plan.md`](../../plans/elixent-architectural-evolution-execution-plan.md) (`ELIXENT-EXECUTION-PLAN-v1.1` — **Active** across Phases 0–6; Phases 0–1 Closed, Phases 2–6 Active) |
 | **Associated ADRs** | [`ADR-009`](../../../architecture/adrs/adr_009_native_graph_orchestration_engine.md) · [`ADR-011`](../../../architecture/adrs/adr_011_multi_workspace_data_isolation_model.md) · [`ADR-012`](../../../architecture/adrs/adr_012_json_decision_ledger_and_graph_traversal.md) · [`ADR-016`](../../../architecture/adrs/adr_016_zk_encryption_granularity_and_ephemeral_ai_bridge.md) |
 | **Companion SRS Suite** | [`SRS-01`](../../../specs/srs_01_agent_orchestration_decision_graph_and_weight_engine.md) · [`SRS-02`](../../../specs/srs_02_multi_workspace_isolation_and_zk_vault_governance.md) · [`SRS-04`](../../../specs/srs_04_multi_provider_ai_gateway_and_wallet_metering.md) |
 
@@ -18,7 +18,7 @@ Phase 1 establishes the clean-cut baseline required before multi-workspace schem
 
 In parallel, three foundational architectural seams were completed: `src/core/agent/atms/dag.ts` was isolated from `@/server/db` and `drizzle-orm` to comply with the client/server AST boundary guard, `parseQualifiedModelId` was added in `src/lib/ai/client.ts` (including normalized circuit-breaker keys across structured, tool-agent, and streaming entrypoints), and `StreamGovernor.initializeLease(pessimisticInputTokens)` was implemented in `src/lib/metering/stream-governor.ts` with initialized input token/cost persistence for `settle()`. Unused `@google/generative-ai` and dead word-quota functions in `src/server/services/ai-settlement-service.ts` were removed alongside synchronized updates to all affected unit and live integration test suites.
 
-Because Phases 2–6 of [`elixent-architectural-evolution-execution-plan.md`](../../../Plans/elixent-architectural-evolution-execution-plan.md) remain open, the multi-phase execution plan stays active in `docs/Plans/`.
+Because Phases 2–6 of [`elixent-architectural-evolution-execution-plan.md`](../../plans/elixent-architectural-evolution-execution-plan.md) remain open, the multi-phase execution plan stays active in `docs/Plans/`.
 
 ---
 

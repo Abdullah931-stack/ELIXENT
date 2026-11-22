@@ -6,7 +6,7 @@
 | **Title** | Hono SSE/RPC Wiring, Ephemeral ZK Bridge & `AgentChatPanel` Controls |
 | **Release Version** | `v0.27.0` |
 | **Closure Date** | 2026-11-21 |
-| **Governing Plan** | [`docs/Plans/elixent-architectural-evolution-execution-plan.md`](../../../Plans/elixent-architectural-evolution-execution-plan.md) (Active — Phases 5–6 Remaining) |
+| **Governing Plan** | [`docs/Plans/elixent-architectural-evolution-execution-plan.md`](../../plans/elixent-architectural-evolution-execution-plan.md) (Active — Phases 5–6 Remaining) |
 | **Governing ADRs & SRS** | [`ADR-006`](../../../architecture/adrs/adr_006_unified_vite_tanstack_hono_rpc_architecture.md) · [`ADR-007`](../../../architecture/adrs/adr_007_dual_plane_separation_and_als_request_context.md) · [`ADR-009`](../../../architecture/adrs/adr_009_native_graph_orchestration_engine.md) · [`ADR-011`](../../../architecture/adrs/adr_011_multi_workspace_data_isolation_model.md) · [`ADR-016`](../../../architecture/adrs/adr_016_zk_encryption_granularity_and_ephemeral_ai_bridge.md) · [`SRS-02`](../../../specs/srs_02_multi_workspace_isolation_and_zk_vault_governance.md) · [`SRS-03`](../../../specs/srs_03_editor_tabs_multi_ghost_review_and_two_tier_undo.md) · [`SRS-04`](../../../specs/srs_04_multi_provider_ai_gateway_and_wallet_metering.md) |
 | **Status** | `CLOSED & VERIFIED` |
 

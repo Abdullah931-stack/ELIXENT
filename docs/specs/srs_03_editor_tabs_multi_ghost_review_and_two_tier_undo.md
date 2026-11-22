@@ -7,7 +7,7 @@
 | **Governing ADRs**          | [`ADR-012`](../architecture/adrs/adr_012_json_decision_ledger_and_graph_traversal.md), [`ADR-015`](../architecture/adrs/adr_015_two_tier_workspace_undo_and_turn_rollback.md)                                                                                                                                                                                  |
 | **Reference Baseline**      | `Elixent v0.22.0` (`Vite 6 SPA + TanStack Router + Hono RPC`)                                                                                                                                                                                                                                                                                                  |
 | **Target Repository Scope** | `../../src/client/routes/workspace-layout.tsx`, `../../src/client/routes/editor-page.tsx`, `../../src/components/editor/**`, `../../src/components/agent/**`, `../../src/components/layout/sidebar.tsx`, `../../src/hooks/use-editor-orchestrator.ts`, `../../src/hooks/use-ai-stream.ts`, `../../src/lib/sync/idb-types.ts`, `../../src/lib/sync/rollback.ts` |
-| **Status**                  | `IMPLEMENTED — Phases 4 & 5 (v0.27.0–v0.28.0); Phase 6 E2E Pending` |
+| **Status**                  | `IMPLEMENTED & VERIFIED — Phases 4, 5 & 6 E2E Release Gate Closed (v0.29.0)` |
 
 ## 1. Purpose, Scope & Architectural Traceability
 

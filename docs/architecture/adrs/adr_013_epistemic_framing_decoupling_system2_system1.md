@@ -6,7 +6,7 @@
 | **Classification** | `STANDALONE ARCHITECTURAL DECISION RECORD (ADR)` |
 | **Version & Status** | `v1.1 — Accepted (Audited & Schema-Normalized)` |
 | **Supersedes / Amends** | Amends `CanonicalOptionSchema` (`rationaleAndPremises` pre-scoring field) and the `POST /v1/decisions` context contract in [`02_agent_orchestration_and_decision_engine.md`](../02_agent_orchestration_and_decision_engine.md) (§3.1 & §4.1), `../../src/core/agent/schemas/decision-schemas.ts`, and `../../src/core/agent/nodes/jev-scoring-nodes.ts` |
-| **Governing Execution Plan** | [`ELIXENT-EXECUTION-PLAN-v1.1`](../../Plans/elixent-architectural-evolution-execution-plan.md) |
+| **Governing Execution Plan** | [`ELIXENT-EXECUTION-PLAN-v1.1`](../../records/plans/elixent-architectural-evolution-execution-plan.md) |
 | **Companion SRS** | [`SRS-01: Agent Orchestration Engine, Canonical Decision Graph & Weight Gate`](../../specs/srs_01_agent_orchestration_decision_graph_and_weight_engine.md) |
 | **Affected Repository Scope** | `../../src/core/agent/schemas/decision-schemas.ts`, `../../src/lib/jev/client.ts`, `../../src/lib/jev/conformal-classifier.ts`, `../../src/core/agent/nodes/jev-scoring-nodes.ts` |
 

@@ -6,7 +6,7 @@
 | **Classification** | `STANDALONE ARCHITECTURAL DECISION RECORD (ADR)` |
 | **Version & Status** | `v1.1 — Accepted (Audited & Schema-Normalized)` |
 | **Supersedes / Amends** | Supersedes the 14-node stage topology and `workspace_tool_node` / `confidence_classifier_node` separation in [`02_agent_orchestration_and_decision_engine.md`](../02_agent_orchestration_and_decision_engine.md) (§1 & §3) and `../../src/core/agent/graph.ts` |
-| **Governing Execution Plan** | [`ELIXENT-EXECUTION-PLAN-v1.1`](../../Plans/elixent-architectural-evolution-execution-plan.md) |
+| **Governing Execution Plan** | [`ELIXENT-EXECUTION-PLAN-v1.1`](../../records/plans/elixent-architectural-evolution-execution-plan.md) |
 | **Companion SRS** | [`SRS-01: Agent Orchestration Engine, Canonical Decision Graph & Weight Gate`](../../specs/srs_01_agent_orchestration_decision_graph_and_weight_engine.md) |
 | **Affected Repository Scope** | `../../src/core/agent/graph.ts`, `../../src/core/agent/nodes/orchestrator-node.ts`, `../../src/core/agent/nodes/search-nodes.ts`, `../../src/core/agent/nodes/assumption-and-linker-nodes.ts`, `../../src/core/agent/nodes/jev-scoring-nodes.ts`, `../../src/core/agent/nodes/resolution-and-ledger-nodes.ts`, `../../src/core/agent/nodes/hitl-nodes.ts`, `../../src/core/agent/nodes/document-writer-node.ts` |
 

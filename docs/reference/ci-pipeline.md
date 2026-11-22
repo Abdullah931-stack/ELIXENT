@@ -21,9 +21,9 @@ Phase 3 introduces:
 <!-- BEGIN:SSOT_TEST_METRICS_TABLE -->
 | Test Category | Engine / Configuration | Target Environment | Suites / Specs | Passing Tests | Pass Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 164 | 3331 | 100% ✅ |
+| **Unit & Contract** | Vitest (`vitest.config.mts`) | Pure In-Memory / Zero Network | 165 | 3348 | 100% ✅ |
 | **Live Multi-System** | Vitest (`vitest.live.config.mts`) | Isolated Neon PostgreSQL Branch | 22 | 101 | 100% ✅ |
-| **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 14 | 15 | 100% ✅ |
+| **E2E Browser Journeys** | Playwright (`playwright.config.ts`) | Headless Chromium / Full App | 18 | 20 | 100% ✅ |
 <!-- END:SSOT_TEST_METRICS_TABLE -->
 
 ---
@@ -37,7 +37,7 @@ flowchart TD
     end
 
     subgraph S2 ["Stage 2: Pure Unit Contracts"]
-        UC["npm run test (164 files, 3331 tests)<br/>Zero DB / Zero Network"]
+        UC["npm run test (165 files, 3348 tests)<br/>Zero DB / Zero Network"]
     end
 
     subgraph S3 ["Stage 3: Schema Integrity"]
@@ -53,7 +53,7 @@ flowchart TD
     end
 
     subgraph S6 ["Stage 6: Browser E2E Testing (Gated)"]
-        E2E["Playwright Chromium Headless (14 specs, 15 journeys)<br/>Progressive Fail-Closed Gate"]
+        E2E["Playwright Chromium Headless (18 specs, 20 journeys)<br/>Progressive Fail-Closed Gate"]
     end
 
     subgraph S7 ["Stage 7: Live Provider Smoke (Gated)"]
@@ -80,7 +80,7 @@ flowchart TD
 | **3. Schema Integrity** | `migration-integrity` | `ubuntu-latest` + `postgres:16-alpine` | `scripts/verify-migrations.mjs`, `npx drizzle-kit push --config drizzle.config.test.ts --force` | Validates clean schema application and confirms zero drift between Drizzle ORM schema and SQL migration files. |
 | **4. Concurrency & Isolation** | `concurrency-and-db-isolation` | `ubuntu-latest` + `postgres:16-alpine` + `redis:7-alpine` | `npm run test:live` | Runs 22 live integration suites against isolated containers; enforces `TEST_DB_FORBIDDEN_HOSTS` to block accidental production connections. |
 | **5. Production Build** | `build-verification` | `ubuntu-latest` | `npm run build` | Validates complete Vite 6 SPA production build compilation with chunk generation and asset optimization. |
-| **6. Browser E2E Testing** | `e2e-browser-testing` | `ubuntu-latest` | `npx playwright test` | Executes 14 Playwright specs across 15 user journeys in headless Chromium. Gated by progressive fail-closed rules. |
+| **6. Browser E2E Testing** | `e2e-browser-testing` | `ubuntu-latest` | `npx playwright test` | Executes 18 Playwright specs across 20 user journeys in headless Chromium. Gated by progressive fail-closed rules. |
 | **7. Live Provider Smoke** | `live-provider-smoke` | `ubuntu-latest` | `npx vitest run src/test/ai/ai-live-e2e.live.test.ts --config vitest.live.config.mts` | Gated verification of live Google Gemini API and cloud database connectivity. Strictly fail-closed on release branches. |
 
 ---

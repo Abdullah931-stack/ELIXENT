@@ -111,7 +111,7 @@ flowchart LR
 
     subgraph CryptoBoundary["Cryptographic Gateway (SyncCryptoGateway)"]
         Dec["decryptInbound()<br/>(Uses Server IV + MasterKey)"]
-        Enc["encryptOutbound()<br/>(Fresh 12-byte CSPRNG IV)"]
+        Enc["encryptOutbound()<br/>(Fresh 12B IV + 16B Salt CSPRNG)"]
     end
 
     subgraph PersistencePipeline["In-Flight & At-Rest Envelopes"]
@@ -134,7 +134,7 @@ flowchart LR
 - **Vault-Lock Quarantine (`CONFLICT_LOCKED`)**: If the user's vault is locked (`!sessionKeyStore.getMasterKeyRaw()`), inbound encrypted payloads are quarantined into `SyncEncryptedConflictStore` under `CONFLICT_LOCKED`. Locked encrypted files are filtered out of `SyncQueueWorker.pushDirtyFiles`, enabling non-blocking background synchronization of other unencrypted documents. In Phase 23, memory backpressure is bounded by `MAX_QUARANTINED_CONFLICTS = 100` (FIFO oldest eviction via $O(N)$ linear scan, false-eviction immunity), real-time diagnostics (`QuarantineDiagnostics`), and concurrency-safe discard (`discardPendingEncryptedConflict`).
 
 ### 6.2 Outbound Egress Pipeline
-- **Symmetric Re-Encryption**: Whenever a document is saved or a conflict is resolved, the orchestrator passes the plaintext to `encryptOutbound`. The gateway generates a cryptographically secure 12-byte IV via CSPRNG, constructs the file AAD binding (`zk:v1:file:${userId}:${fileId}`), and encrypts via AES-GCM-256.
+- **Symmetric Re-Encryption**: Whenever a document is saved or a conflict is resolved, the orchestrator passes the plaintext to `encryptOutbound`. The gateway generates a cryptographically secure 12-byte IV and a fresh 16-byte CSPRNG `salt` (`arrayBufferToBase64(saltBytes)`, satisfying strict non-empty `salt` validation in `encryptionMetadataSchema` and `fileEncryptionMetadataSchema`), constructs the file AAD binding (`zk:v1:file:${userId}:${fileId}`), encrypts via AES-GCM-256, and zeroes both `ivBytes` and `saltBytes` via `wipeBuffer` in a `finally` block.
 - **Double-Encryption Immunity**: Because the editor surface operates exclusively on decrypted Markdown, re-encryption always originates from clean plaintext, completely eliminating nested encryption bugs (`gcm:v1:gcm:v1:...`).
 
 ---

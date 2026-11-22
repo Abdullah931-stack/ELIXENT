@@ -6,7 +6,7 @@
 | **Title** | Elixent Native Graph Engine, 9 Canonical Nodes, Weight Gate & `@langchain/*` Purge |
 | **Release Version** | `v0.26.0` |
 | **Closure Date** | 2026-11-20 |
-| **Governing Plan** | [`docs/Plans/elixent-architectural-evolution-execution-plan.md`](../../../Plans/elixent-architectural-evolution-execution-plan.md) (Active — Phases 4–6 Remaining) |
+| **Governing Plan** | [`docs/Plans/elixent-architectural-evolution-execution-plan.md`](../../plans/elixent-architectural-evolution-execution-plan.md) (Active — Phases 4–6 Remaining) |
 | **Governing ADRs & SRS** | [`ADR-009`](../../../architecture/adrs/adr_009_native_graph_orchestration_engine.md) · [`ADR-010`](../../../architecture/adrs/adr_010_replay_safe_node_boundary_topology.md) · [`ADR-012`](../../../architecture/adrs/adr_012_json_decision_ledger_and_graph_traversal.md) · [`ADR-013`](../../../architecture/adrs/adr_013_epistemic_framing_decoupling_system2_system1.md) · [`ADR-014`](../../../architecture/adrs/adr_014_deterministic_change_weight_and_anti_domino_gate.md) · [`SRS-01`](../../../specs/srs_01_agent_orchestration_decision_graph_and_weight_engine.md) |
 | **Status** | `CLOSED & VERIFIED` |
 

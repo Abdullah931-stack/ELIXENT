@@ -7,7 +7,7 @@
 | **Governing ADRs**          | [`ADR-011`](../architecture/adrs/adr_011_multi_workspace_data_isolation_model.md), [`ADR-012`](../architecture/adrs/adr_012_json_decision_ledger_and_graph_traversal.md), [`ADR-016`](../architecture/adrs/adr_016_zk_encryption_granularity_and_ephemeral_ai_bridge.md)                                                                                             |
 | **Reference Baseline**      | `Elixent v0.22.0` (`Vite 6 SPA + TanStack Router + Hono RPC`)                                                                                                                                                                                                                                                                                                        |
 | **Target Repository Scope** | `../../src/server/db/schema/workspaces.ts`, `../../src/server/db/schema/files.ts`, `../../src/server/db/schema/vault.ts`, `../../src/core/workspace/**`, `../../src/lib/vault/**`, `../../src/lib/crypto/aad.ts`, `../../src/lib/export/workspace-zip-exporter.ts`, `../../src/lib/sync/**`, `../../src/server/routes/rpc.routes.ts` |
-| **Status**                  | `IMPLEMENTED — Phases 1, 2, 4 & 5 (v0.24.0–v0.28.0); Phase 6 E2E Pending` |
+| **Status**                  | `IMPLEMENTED & VERIFIED — Phases 1, 2, 4, 5 & 6 E2E Release Gate Closed (v0.29.0)` |
 
 ## 1. Purpose, Scope & Architectural Traceability
 

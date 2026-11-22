@@ -6,7 +6,7 @@
 | **Classification** | `STANDALONE ARCHITECTURAL DECISION RECORD (ADR)` |
 | **Version & Status** | `v1.1 — Accepted (Audited & Schema-Normalized)` |
 | **Supersedes / Amends** | Supersedes the `@langchain/langgraph` runtime and `PostgresSaver` 3-table checkpointer mandate in [`ADR-001`](../01_architecture_vision_and_adrs.md) (§3.1) and [`ADR-005`](../01_architecture_vision_and_adrs.md) (§3.5); amends [`02_agent_orchestration_and_decision_engine.md`](../02_agent_orchestration_and_decision_engine.md) (§2 & §3.1) |
-| **Governing Execution Plan** | [`ELIXENT-EXECUTION-PLAN-v1.1`](../../Plans/elixent-architectural-evolution-execution-plan.md) |
+| **Governing Execution Plan** | [`ELIXENT-EXECUTION-PLAN-v1.1`](../../records/plans/elixent-architectural-evolution-execution-plan.md) |
 | **Companion SRS** | [`SRS-01: Agent Orchestration Engine, Canonical Decision Graph & Weight Gate`](../../specs/srs_01_agent_orchestration_decision_graph_and_weight_engine.md) |
 | **Affected Repository Scope** | `../../src/core/agent/engine/runner.ts`, `../../src/core/agent/state.ts`, `../../src/core/agent/graph.ts`, `../../src/core/agent/checkpoint-serializer.ts`, `../../src/server/routes/agent.routes.ts`, `../../src/server/db/schema/langgraph-checkpoints.ts` (retired & deleted), `../../src/server/db/schema/agent-checkpoints.ts`, `../../package.json` |
 

@@ -6,7 +6,7 @@
 | **Classification** | `STANDALONE ARCHITECTURAL DECISION RECORD (ADR)` |
 | **Version & Status** | `v1.1 — Accepted (Audited & Schema-Normalized)` |
 | **Supersedes / Amends** | Supersedes the `project_decision_ledger` PostgreSQL table mandate in [`ADR-005`](../01_architecture_vision_and_adrs.md) (§3.5), [`02_agent_orchestration_and_decision_engine.md`](../02_agent_orchestration_and_decision_engine.md) (§5), and [`05_data_contracts_and_lugx_migration_plan.md`](../05_data_contracts_and_lugx_migration_plan.md) (§1.3) |
-| **Governing Execution Plan** | [`ELIXENT-EXECUTION-PLAN-v1.1`](../../Plans/elixent-architectural-evolution-execution-plan.md) |
+| **Governing Execution Plan** | [`ELIXENT-EXECUTION-PLAN-v1.1`](../../records/plans/elixent-architectural-evolution-execution-plan.md) |
 | **Companion SRS** | [`SRS-01`](../../specs/srs_01_agent_orchestration_decision_graph_and_weight_engine.md) (Graph Schema & Agent Tools) · [`SRS-03`](../../specs/srs_03_editor_tabs_multi_ghost_review_and_two_tier_undo.md) (Interactive Graph UI) |
 | **Affected Repository Scope** | `../../src/server/db/schema/project-decision-ledger.ts` (retired), `../../src/core/agent/atms/dag.ts`, `../../src/core/agent/nodes/search-nodes.ts`, `../../src/core/agent/nodes/resolution-and-ledger-nodes.ts`, `../../src/core/workspace/provider.ts`, `../../src/components/agent/decision-graph-explorer.tsx` (Planned / New) |
 

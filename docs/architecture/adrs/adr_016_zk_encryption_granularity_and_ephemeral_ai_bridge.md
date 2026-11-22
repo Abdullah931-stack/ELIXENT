@@ -6,7 +6,7 @@
 | **Classification** | `STANDALONE ARCHITECTURAL DECISION RECORD (ADR)` |
 | **Version & Status** | `v1.1 — Accepted (Audited & Schema-Normalized)` |
 | **Supersedes / Amends** | Amends the default `allow_ai_on_encrypted_files = false` policy in `../../src/server/db/schema/vault.ts` and [`03_workspace_ast_editor_and_vault_integration.md`](../03_workspace_ast_editor_and_vault_integration.md) (§5 Zero-Knowledge Vault Boundary) |
-| **Governing Execution Plan** | [`ELIXENT-EXECUTION-PLAN-v1.1`](../../Plans/elixent-architectural-evolution-execution-plan.md) |
+| **Governing Execution Plan** | [`ELIXENT-EXECUTION-PLAN-v1.1`](../../records/plans/elixent-architectural-evolution-execution-plan.md) |
 | **Companion SRS** | [`SRS-02: Multi-Workspace Isolation, File Lifecycle & Zero-Knowledge Vault Governance`](../../specs/srs_02_multi_workspace_isolation_and_zk_vault_governance.md) |
 | **Affected Repository Scope** | `../../src/server/db/schema/vault.ts`, `../../src/server/db/schema/workspaces.ts` (Planned / New), `../../src/lib/vault/ephemeral-memory-map.ts`, `../../src/lib/sync/sync-crypto-gateway.ts`, `../../src/server/routes/agent.routes.ts`, `../../src/hooks/use-ai-stream.ts` |
 
