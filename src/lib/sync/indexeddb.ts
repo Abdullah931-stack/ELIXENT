@@ -12,6 +12,7 @@ import {
     IDBOperation,
     OperationStatus,
     IDBSyncMetadata,
+    PersistedPendingGhostHunks,
     IDB_CONFIG,
     getDatabaseName,
     CorruptedLocalRecordError,
@@ -436,9 +437,23 @@ class IndexedDBManager {
             };
 
             request.onupgradeneeded = (event) => {
-                const db = (event.target as IDBOpenDBRequest).result;
+                const openReq = event.target as IDBOpenDBRequest;
+                const db = openReq.result;
                 if (event.oldVersion < 1) {
                     this.createInitialStores(db);
+                }
+                if (event.oldVersion < 2) {
+                    const tx = openReq.transaction;
+                    if (tx && db.objectStoreNames.contains(IDB_CONFIG.STORES.OPERATIONS)) {
+                        const opsStore = tx.objectStore(IDB_CONFIG.STORES.OPERATIONS);
+                        if (!opsStore.indexNames.contains(IDB_CONFIG.INDEXES.OPERATIONS_WORKSPACE_TURN)) {
+                            opsStore.createIndex(
+                                IDB_CONFIG.INDEXES.OPERATIONS_WORKSPACE_TURN,
+                                ['workspaceId', 'turnId'],
+                                { unique: false }
+                            );
+                        }
+                    }
                 }
             };
         });
@@ -462,6 +477,11 @@ class IndexedDBManager {
             opsStore.createIndex('status', 'status', { unique: false });
             opsStore.createIndex('nextRetryAt', 'nextRetryAt', { unique: false });
             opsStore.createIndex('fileId_synced', ['fileId', 'synced'], { unique: false });
+            opsStore.createIndex(
+                IDB_CONFIG.INDEXES.OPERATIONS_WORKSPACE_TURN,
+                ['workspaceId', 'turnId'],
+                { unique: false }
+            );
         }
 
         if (!db.objectStoreNames.contains(IDB_CONFIG.STORES.SYNC_METADATA)) {
@@ -907,6 +927,43 @@ class IndexedDBManager {
     }
 
     /**
+     * Retrieves and decrypts all operations for a specific workspace and agent turn
+     */
+    async getOperationsByWorkspaceTurn(workspaceId: string, turnId: string): Promise<IDBOperation[]> {
+        const db = await this.getDB();
+        const rawOps = await new Promise<IDBOperation[]>((resolve, reject) => {
+            const tx = db.transaction(IDB_CONFIG.STORES.OPERATIONS, 'readonly');
+            const store = tx.objectStore(IDB_CONFIG.STORES.OPERATIONS);
+            if (store.indexNames.contains(IDB_CONFIG.INDEXES.OPERATIONS_WORKSPACE_TURN)) {
+                const index = store.index(IDB_CONFIG.INDEXES.OPERATIONS_WORKSPACE_TURN);
+                const request = index.getAll(IDBKeyRange.only([workspaceId, turnId]));
+                request.onsuccess = () => resolve(request.result || []);
+                request.onerror = () => reject(request.error);
+            } else {
+                const request = store.getAll();
+                request.onsuccess = () => {
+                    const filtered = ((request.result as IDBOperation[]) || []).filter(
+                        (op) => op.workspaceId === workspaceId && op.turnId === turnId
+                    );
+                    resolve(filtered);
+                };
+                request.onerror = () => reject(request.error);
+            }
+        });
+
+        const decrypted: IDBOperation[] = [];
+        for (const raw of rawOps) {
+            try {
+                decrypted.push(await this.decryptOperationFromStorage(raw));
+            } catch (err) {
+                console.warn(`[IndexedDB] Isolated corrupted operation record ${raw.id}:`, err);
+            }
+        }
+
+        return decrypted;
+    }
+
+    /**
      * Retrieves and decrypts all operations across all files
      */
     async getAllOperations(): Promise<IDBOperation[]> {
@@ -1199,6 +1256,86 @@ class IndexedDBManager {
             metadata.lastSyncedAt = Date.now();
         }
         await this.saveSyncMetadata(metadata);
+    }
+
+    /**
+     * Persists pending ghost hunks for a workspace in sync_metadata (encrypted at rest)
+     */
+    async savePendingGhostHunks(
+        workspaceId: string,
+        payload: Omit<PersistedPendingGhostHunks, 'updatedAt'>
+    ): Promise<void> {
+        const recordId = `pending_ghost_hunks_${workspaceId}`;
+        const fullPayload: PersistedPendingGhostHunks = {
+            ghostHunksByFileId: payload.ghostHunksByFileId,
+            turnIdByHunkId: payload.turnIdByHunkId,
+            updatedAt: Date.now(),
+        };
+        const encryptedPayload = await this.encryptText(
+            JSON.stringify(fullPayload),
+            `sync_metadata:${recordId}`
+        );
+        const db = await this.getDB();
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(IDB_CONFIG.STORES.SYNC_METADATA, 'readwrite');
+            const req = tx.objectStore(IDB_CONFIG.STORES.SYNC_METADATA).put({
+                id: recordId,
+                payload: encryptedPayload,
+                updatedAt: fullPayload.updatedAt,
+            });
+            req.onsuccess = () => resolve();
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    /**
+     * Loads persisted pending ghost hunks for a workspace from sync_metadata
+     */
+    async loadPendingGhostHunks(workspaceId: string): Promise<PersistedPendingGhostHunks | null> {
+        const recordId = `pending_ghost_hunks_${workspaceId}`;
+        const db = await this.getDB();
+        const raw = await new Promise<{ id: string; payload?: string | PersistedPendingGhostHunks } | undefined>(
+            (resolve, reject) => {
+                const tx = db.transaction(IDB_CONFIG.STORES.SYNC_METADATA, 'readonly');
+                const req = tx.objectStore(IDB_CONFIG.STORES.SYNC_METADATA).get(recordId);
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            }
+        );
+
+        if (!raw || raw.payload === undefined) {
+            return null;
+        }
+
+        if (typeof raw.payload === 'string') {
+            const decryptedJson = await this.decryptText(
+                raw.payload,
+                `sync_metadata:${recordId}`,
+                IDB_CONFIG.STORES.SYNC_METADATA,
+                recordId
+            );
+            try {
+                return JSON.parse(decryptedJson) as PersistedPendingGhostHunks;
+            } catch {
+                return null;
+            }
+        }
+
+        return raw.payload;
+    }
+
+    /**
+     * Clears persisted pending ghost hunks for a workspace from sync_metadata
+     */
+    async clearPendingGhostHunks(workspaceId: string): Promise<void> {
+        const recordId = `pending_ghost_hunks_${workspaceId}`;
+        const db = await this.getDB();
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction(IDB_CONFIG.STORES.SYNC_METADATA, 'readwrite');
+            const req = tx.objectStore(IDB_CONFIG.STORES.SYNC_METADATA).delete(recordId);
+            req.onsuccess = () => resolve();
+            req.onerror = () => reject(req.error);
+        });
     }
 
     async clearAll(): Promise<void> {

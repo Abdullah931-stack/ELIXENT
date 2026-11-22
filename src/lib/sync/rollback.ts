@@ -7,6 +7,7 @@
 
 import { indexedDBManager, IndexedDBManager } from './indexeddb';
 import { IDBFile, IDBOperation } from './idb-types';
+import { deleteFile, restoreWorkspaceFileRpc, updateFileContent, toggleFileEncryption } from '@/client/rpc-client';
 
 /**
  * Checkpoint data structure
@@ -199,6 +200,10 @@ export class SyncRollback {
                 content: operation.snapshot.content,
                 etag: operation.snapshot.etag,
                 version: operation.snapshot.version,
+                encryptionMetadata:
+                    operation.snapshot.encryptionMetadata !== undefined
+                        ? operation.snapshot.encryptionMetadata
+                        : currentFile.encryptionMetadata,
                 lastModified: Date.now(),
                 isDirty: true,
             };
@@ -213,6 +218,70 @@ export class SyncRollback {
             }).catch(err => console.error('[Rollback] Failed to record rollback_failed:', err));
             return false;
         }
+    }
+
+    /**
+     * Rollback all operations belonging to an agent turn in reverse chronological order.
+     * Handles updates (.md & decisions.ledger.json), newly created files (soft-delete),
+     * and deleted files (restore).
+     */
+    async rollbackAgentTurn(
+        workspaceId: string,
+        turnId: string
+    ): Promise<{
+        rolledBackFiles: string[];
+        restoredFiles: string[];
+        deletedCreatedFiles: string[];
+    }> {
+        const ops = await this.idb.getOperationsByWorkspaceTurn(workspaceId, turnId);
+        const sortedOps = [...ops].sort((a, b) => b.timestamp - a.timestamp);
+
+        const rolledBackFiles: string[] = [];
+        const restoredFiles: string[] = [];
+        const deletedCreatedFiles: string[] = [];
+
+        for (const op of sortedOps) {
+            if (op.operationType === 'update') {
+                const ok = await this.rollbackOperation(op);
+                if (ok) {
+                    const restored = await this.idb.getFile(op.fileId);
+                    if (restored) {
+                        try {
+                            if (restored.isEncrypted && restored.encryptionMetadata) {
+                                await toggleFileEncryption(
+                                    op.fileId,
+                                    true,
+                                    restored.content,
+                                    restored.encryptionMetadata
+                                );
+                            } else {
+                                await updateFileContent(op.fileId, restored.content);
+                            }
+                        } catch (err) {
+                            console.warn(`[Rollback] Failed to push rolled-back content to server for ${op.fileId}:`, err);
+                        }
+                    }
+                    rolledBackFiles.push(op.fileId);
+                }
+            } else if (op.operationType === 'create') {
+                await deleteFile(op.fileId);
+                try {
+                    await this.idb.deleteFile(op.fileId);
+                } catch (err) {
+                    console.warn(`[Rollback] Ignoring missing IDB file during create rollback (${op.fileId}):`, err);
+                }
+                deletedCreatedFiles.push(op.fileId);
+            } else if (op.operationType === 'delete') {
+                await restoreWorkspaceFileRpc(op.fileId);
+                restoredFiles.push(op.fileId);
+            }
+        }
+
+        return {
+            rolledBackFiles,
+            restoredFiles,
+            deletedCreatedFiles,
+        };
     }
 
     /**

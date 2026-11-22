@@ -14,9 +14,20 @@ import {
     ShieldCheck,
     Lock,
     X,
+    GitBranch,
+    Download,
+    Archive,
 } from "lucide-react";
 import { AppLink as Link } from "@/components/ui/app-link";
-import { getUserFiles, getDeletedFiles, createFile, moveFile, importFile } from "@/client/rpc-client";
+import {
+    getUserFiles,
+    getDeletedFiles,
+    getFile,
+    createFile,
+    moveFile,
+    importFile,
+    createWorkspaceRpc,
+} from "@/client/rpc-client";
 import { validateFile } from "@/lib/parsers/file-validator";
 import { parseFileContent } from "@/lib/parsers/text-parser";
 import { pdfWorkerBridge } from "@/lib/parsers/pdf-worker-bridge";
@@ -34,7 +45,15 @@ import { FileContextMenu } from "@/components/files/file-context-menu";
 import { PdfImportModeDialog, PdfExtractionMode } from "@/components/layout/pdf-import-mode-dialog";
 import { PdfCorruptedFontDialog } from "@/components/layout/pdf-corrupted-font-dialog";
 import { isOcrPackageInstalled } from "@/lib/parsers/pdf-ocr-engine";
-import type { WireTimestamp } from "@/types/rpc-contracts";
+import { useOptionalWorkspaceTabs } from "@/components/editor/workspace-tab-bar";
+import { UnresolvedEditsTracker } from "@/components/editor/unresolved-edits-tracker";
+import { DecisionGraphExplorer } from "@/components/agent/decision-graph-explorer";
+import {
+    exportWorkspaceAsZip,
+    WorkspaceZipExportError,
+} from "@/lib/export/workspace-zip-exporter";
+import type { DecisionLedgerDocument } from "@/core/agent/atms/dag";
+import type { FileRecord, WireTimestamp } from "@/types/rpc-contracts";
 
 interface FileItem {
     id: string;
@@ -45,6 +64,8 @@ interface FileItem {
     deletedAt: WireTimestamp | null;
     isEncrypted?: boolean;
     userId?: string;
+    workspaceId?: string;
+    artifactRole?: "document" | "decision_ledger";
 }
 
 interface SidebarProps {
@@ -80,6 +101,12 @@ export function Sidebar({ userId }: SidebarProps = {}) {
     const abortControllerRef = useRef<AbortController | null>(null);
     const [deletedFiles, setDeletedFiles] = useState<FileItem[]>([]);
     const [showTrash, setShowTrash] = useState(false);
+    const [rawFiles, setRawFiles] = useState<FileRecord[]>([]);
+    const [showDecisionGraph, setShowDecisionGraph] = useState(false);
+    const [decisionLedgerDoc, setDecisionLedgerDoc] = useState<DecisionLedgerDocument | null>(null);
+    const [isExportingZip, setIsExportingZip] = useState(false);
+    const workspaceTabs = useOptionalWorkspaceTabs();
+    const activeWorkspaceId = workspaceTabs?.activeWorkspaceId;
     const { toast } = useToast();
 
     const resolveEffectiveUserId = useCallback(async (): Promise<string> => {
@@ -96,21 +123,42 @@ export function Sidebar({ userId }: SidebarProps = {}) {
     }, [userId]);
 
     useEffect(() => {
-        loadFiles();
+        void loadFiles();
         void resolveEffectiveUserId().then((uid) => {
             if (uid) setEffectiveUserId(uid);
         });
-    }, [resolveEffectiveUserId]);
+    }, [resolveEffectiveUserId, activeWorkspaceId]);
 
     async function loadFiles() {
         try {
             setLoading(true);
             const result = await getUserFiles();
             if (result.success && result.data) {
+                setRawFiles(result.data);
+
+                const workspaceScoped = activeWorkspaceId
+                    ? result.data.filter((f) => f.workspaceId === activeWorkspaceId)
+                    : result.data;
+
+                // Exclude internal decision_ledger artifacts from raw Markdown file tree
+                const visibleMarkdownFiles = workspaceScoped.filter(
+                    (f) => f.artifactRole !== "decision_ledger"
+                );
+
                 // Build nested tree structure from flat array
                 const { buildFileTree } = await import('@/lib/utils/file-tree');
-                const treeData = buildFileTree(result.data);
+                const treeData = buildFileTree(visibleMarkdownFiles);
                 setFiles(treeData);
+
+                // Load decision ledger metadata for active node count badge & JSON export
+                const ledgerRecord = workspaceScoped.find(
+                    (f) => f.artifactRole === "decision_ledger" && f.deletedAt == null
+                );
+                if (ledgerRecord) {
+                    void loadDecisionLedgerMetadata(ledgerRecord);
+                } else {
+                    setDecisionLedgerDoc(null);
+                }
             } else if (!result.success) {
                 console.warn("[Sidebar] Failed to load files:", result.error);
             }
@@ -118,6 +166,140 @@ export function Sidebar({ userId }: SidebarProps = {}) {
             console.error("Failed to load files:", error);
         } finally {
             setLoading(false);
+        }
+    }
+
+    async function loadDecisionLedgerMetadata(ledgerRecord: FileRecord) {
+        try {
+            const fileRes = await getFile(ledgerRecord.id);
+            if (!fileRes.success || !fileRes.data) return;
+            let content = fileRes.data.content ?? "";
+            if (fileRes.data.isEncrypted) {
+                const decrypted = await SyncCryptoGateway.decryptInbound({
+                    fileId: fileRes.data.id,
+                    content,
+                    isEncrypted: true,
+                    encryptionMetadata: fileRes.data.encryptionMetadata ?? null,
+                    userId: fileRes.data.userId,
+                });
+                if (decrypted.isVaultLocked) return;
+                if (decrypted.status === "error") {
+                    console.warn("[Sidebar] Failed to decrypt decision ledger:", decrypted.error ?? "Failed to decrypt decision ledger.");
+                    return;
+                }
+                content = decrypted.content;
+            }
+            if (!content.trim()) return;
+            setDecisionLedgerDoc(JSON.parse(content) as DecisionLedgerDocument);
+        } catch (err) {
+            console.warn("[Sidebar] Failed to preload decision ledger metadata:", err);
+        }
+    }
+
+    async function handleCreateWorkspace() {
+        if (!workspaceTabs) return;
+        const name = prompt("Enter workspace name:");
+        if (!name || !name.trim()) return;
+        try {
+            const res = await createWorkspaceRpc({ name: name.trim() });
+            if (res.success && res.data) {
+                await workspaceTabs.refreshWorkspaces();
+                workspaceTabs.setActiveWorkspaceId(res.data.id);
+                toast({
+                    title: "Workspace Created",
+                    description: `Switched to "${res.data.name}"`,
+                });
+            } else {
+                toast({
+                    title: "Create Workspace Failed",
+                    description: res.error || "Failed to create workspace",
+                    variant: "destructive",
+                });
+            }
+        } catch (err) {
+            toast({
+                title: "Create Workspace Error",
+                description: err instanceof Error ? err.message : "Failed to create workspace",
+                variant: "destructive",
+            });
+        }
+    }
+
+    function handleDownloadLedgerJson() {
+        if (!decisionLedgerDoc) {
+            setShowDecisionGraph(true);
+            return;
+        }
+        const json = JSON.stringify(decisionLedgerDoc, null, 2);
+        const blob = new Blob([json], { type: "application/json;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `decisions.ledger.${decisionLedgerDoc.workspaceId || "workspace"}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    async function handleExportWorkspaceZip() {
+        const targetWorkspaceId =
+            activeWorkspaceId || rawFiles[0]?.workspaceId || "default";
+        const workspaceFiles = rawFiles.filter(
+            (f) => !activeWorkspaceId || f.workspaceId === activeWorkspaceId
+        );
+
+        setIsExportingZip(true);
+        try {
+            const runExport = async (confirmedPlaintextExport: boolean) => {
+                const hydratedFiles = await Promise.all(
+                    workspaceFiles.map(async (f) => {
+                        if (f.isFolder) return f;
+                        const detail = await getFile(f.id);
+                        return detail.success && detail.data ? detail.data : f;
+                    })
+                );
+                return exportWorkspaceAsZip(targetWorkspaceId, {
+                    files: hydratedFiles,
+                    confirmedPlaintextExport,
+                });
+            };
+
+            let blob: Blob;
+            try {
+                blob = await runExport(false);
+            } catch (err) {
+                if (
+                    err instanceof WorkspaceZipExportError &&
+                    err.code === "ENCRYPTED_EXPORT_UNCONFIRMED"
+                ) {
+                    const confirmed = window.confirm(
+                        "This workspace contains encrypted files. Exporting as .zip will write decrypted plaintext files into the archive. Continue?"
+                    );
+                    if (!confirmed) return;
+                    blob = await runExport(true);
+                } else {
+                    throw err;
+                }
+            }
+
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `workspace-${targetWorkspaceId}.zip`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            toast({
+                title: "Export Failed",
+                description:
+                    err instanceof Error ? err.message : "Failed to export workspace",
+                variant: "destructive",
+            });
+        } finally {
+            setIsExportingZip(false);
         }
     }
 
@@ -551,22 +733,83 @@ export function Sidebar({ userId }: SidebarProps = {}) {
             onDrop={handleDrop}
         >
             {/* Header */}
-            <div className="h-14 border-b border-zinc-800/50 flex items-center justify-between px-3">
-                {!collapsed && (
-                    <span className="text-sm font-medium text-zinc-400">Files</span>
-                )}
-                <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => setCollapsed(!collapsed)}
-                    className="ml-auto"
-                >
-                    {collapsed ? (
-                        <ChevronRight className="w-4 h-4" />
-                    ) : (
-                        <ChevronLeft className="w-4 h-4" />
+            <div className="border-b border-zinc-800/50 px-3 py-2 space-y-2">
+                <div className="h-9 flex items-center justify-between gap-1.5">
+                    {!collapsed && (
+                        <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-sm font-medium text-zinc-400">Files</span>
+                            <UnresolvedEditsTracker compact />
+                        </div>
                     )}
-                </Button>
+                    <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => setCollapsed(!collapsed)}
+                        className="ml-auto shrink-0"
+                    >
+                        {collapsed ? (
+                            <ChevronRight className="w-4 h-4" />
+                        ) : (
+                            <ChevronLeft className="w-4 h-4" />
+                        )}
+                    </Button>
+                </div>
+
+                {/* Workspace Switcher */}
+                {!collapsed && workspaceTabs && workspaceTabs.workspaces.length > 0 && (
+                    <div className="flex items-center gap-1">
+                        <select
+                            aria-label="Active Workspace"
+                            value={activeWorkspaceId ?? ""}
+                            onChange={(e) => workspaceTabs.setActiveWorkspaceId(e.target.value)}
+                            className="flex-1 min-w-0 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-indigo-500"
+                        >
+                            {workspaceTabs.workspaces.map((ws) => (
+                                <option key={ws.id} value={ws.id}>
+                                    {ws.name}
+                                </option>
+                            ))}
+                        </select>
+                        <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => void handleCreateWorkspace()}
+                            title="Create Workspace"
+                            aria-label="Create Workspace"
+                        >
+                            <Plus className="w-3.5 h-3.5" />
+                        </Button>
+                    </div>
+                )}
+
+                {/* Decision Graph Header Action */}
+                {!collapsed && (
+                    <div className="flex items-center gap-1">
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="flex-1 justify-between gap-1.5 text-xs border-zinc-800 bg-zinc-950/60 hover:border-indigo-500/60 hover:text-indigo-300"
+                            onClick={() => setShowDecisionGraph(true)}
+                        >
+                            <span className="flex items-center gap-1.5">
+                                <GitBranch className="w-3.5 h-3.5 text-indigo-400" />
+                                <span>Decision Graph</span>
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded-full bg-zinc-800 text-[10px] font-mono text-zinc-300">
+                                {Object.keys(decisionLedgerDoc?.nodes ?? {}).length}
+                            </span>
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={handleDownloadLedgerJson}
+                            title="Download Decision Ledger JSON"
+                            aria-label="Download JSON"
+                        >
+                            <Download className="w-3.5 h-3.5" />
+                        </Button>
+                    </div>
+                )}
             </div>
 
             {/* Actions */}
@@ -765,6 +1008,17 @@ export function Sidebar({ userId }: SidebarProps = {}) {
                         variant="outline"
                         size="sm"
                         className="w-full gap-2 border-zinc-700 hover:border-indigo-500 hover:bg-indigo-500/10 hover:text-indigo-400 text-xs"
+                        onClick={() => void handleExportWorkspaceZip()}
+                        disabled={isExportingZip}
+                    >
+                        <Archive className="w-4 h-4" />
+                        {isExportingZip ? "Exporting..." : "Export Workspace (.zip)"}
+                    </Button>
+
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full gap-2 border-zinc-700 hover:border-indigo-500 hover:bg-indigo-500/10 hover:text-indigo-400 text-xs"
                         onClick={() => handleImportClick(null)}
                         disabled={isImporting}
                     >
@@ -773,6 +1027,13 @@ export function Sidebar({ userId }: SidebarProps = {}) {
                     </Button>
                 </div>
             )}
+
+            <DecisionGraphExplorer
+                isOpen={showDecisionGraph}
+                onClose={() => setShowDecisionGraph(false)}
+                workspaceId={activeWorkspaceId}
+                ledgerDocument={decisionLedgerDoc}
+            />
 
             {/* Unlock Vault Modal if needed during encrypted import */}
             <VaultUnlockModal

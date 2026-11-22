@@ -11,6 +11,7 @@
 export type MarkdownSource = string;
 
 import type { DocumentStoragePayload, PlaintextStoragePayload, EncryptedStoragePayload } from '@/types/storage-payload';
+import type { GhostHunk } from '@/components/editor/markdown/types';
 export type { DocumentStoragePayload, PlaintextStoragePayload, EncryptedStoragePayload };
 
 /**
@@ -31,6 +32,10 @@ export interface EncryptedEnvelopeMetadata {
 export interface IDBFile {
     /** Unique file identifier (matches server-side UUID) */
     id: string;
+    /** Workspace this file belongs to */
+    workspaceId?: string;
+    /** Whether this file is excluded from AI context */
+    isAiExcluded?: boolean;
     /** File content (Normalized Markdown text in-memory) */
     content: MarkdownSource;
     /** ETag for change detection (SHA-256 hash, first 32 chars) */
@@ -105,6 +110,14 @@ export interface IDBOperation {
     operationId?: string;
     /** Owner user ID for security and isolation */
     userId?: string;
+    /** Workspace this operation belongs to */
+    workspaceId?: string;
+    /** Agent conversation thread ID associated with this operation */
+    threadId?: string;
+    /** Agent turn ID associated with this operation (for turn-scoped rollback) */
+    turnId?: string;
+    /** File ETag recorded after an agent turn completes */
+    postTurnEtag?: string;
     /** File this operation belongs to */
     fileId: string;
     /** Base version expected for optimistic concurrency control */
@@ -140,6 +153,7 @@ export interface IDBOperation {
         content: MarkdownSource;
         etag: string;
         version: number;
+        encryptionMetadata?: IDBFile['encryptionMetadata'];
     };
 }
 
@@ -241,6 +255,15 @@ export interface IDBSchemaInfo {
 }
 
 /**
+ * Persisted pending ghost hunks state stored per workspace in IndexedDB
+ */
+export interface PersistedPendingGhostHunks {
+    readonly ghostHunksByFileId: Record<string, GhostHunk[]>;
+    readonly turnIdByHunkId: Record<string, string>;
+    readonly updatedAt: number;
+}
+
+/**
  * Constants for IndexedDB configuration
  */
 export const IDB_CONFIG = {
@@ -249,12 +272,16 @@ export const IDB_CONFIG = {
     /** Default database name for backward compatibility */
     DB_NAME: 'textai_db',
     /** Current database version */
-    DB_VERSION: 1,
+    DB_VERSION: 2,
     /** Object store names */
     STORES: {
         FILES: 'files',
         OPERATIONS: 'operations',
         SYNC_METADATA: 'sync_metadata',
+    },
+    /** Index names */
+    INDEXES: {
+        OPERATIONS_WORKSPACE_TURN: 'idx_operations_workspace_turn',
     },
     /** Maximum age for operations before garbage collection (7 days) */
     MAX_OPERATION_AGE_MS: 7 * 24 * 60 * 60 * 1000,

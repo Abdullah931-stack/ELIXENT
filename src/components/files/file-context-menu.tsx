@@ -14,6 +14,8 @@ import { sessionKeyStore } from "@/lib/sync/session-key-store";
 import { indexedDBManager } from "@/lib/sync/indexeddb";
 import { FolderPickerModal } from "./folder-picker-modal";
 import { CreateVaultModal, VaultUnlockModal } from "@/components/vault";
+import { WorkspaceDecryptionWarningModal } from "@/components/vault/workspace-decryption-warning-modal";
+import { useOptionalWorkspaceTabs } from "@/components/editor/workspace-tab-bar";
 import {
     resolveInitialClientUserIdSync,
     resolveLocalFirstAuthUser,
@@ -28,6 +30,8 @@ interface FileContextMenuProps {
     fileName: string;
     isFolder: boolean;
     isEncrypted?: boolean;
+    isWorkspaceEncrypted?: boolean;
+    workspaceId?: string;
     userId?: string;
     /** True when the item is a tombstone (deletedAt != null). */
     isDeleted?: boolean;
@@ -45,10 +49,17 @@ export function FileContextMenu({
     fileName,
     isFolder,
     isEncrypted = false,
+    isWorkspaceEncrypted,
+    workspaceId,
     userId = "",
     isDeleted = false,
     onRefresh,
 }: FileContextMenuProps) {
+    const workspaceTabs = useOptionalWorkspaceTabs();
+    const effectiveWorkspaceEncrypted =
+        isWorkspaceEncrypted ?? workspaceTabs?.activeWorkspace?.isEncrypted ?? false;
+    const effectiveWorkspaceId = workspaceId ?? workspaceTabs?.activeWorkspaceId ?? "";
+
     const [isRenaming, setIsRenaming] = useState(false);
     const [newName, setNewName] = useState(fileName);
     const [showCopyPicker, setShowCopyPicker] = useState(false);
@@ -57,6 +68,7 @@ export function FileContextMenu({
     // Vault modal states
     const [showCreateVault, setShowCreateVault] = useState(false);
     const [showUnlockVault, setShowUnlockVault] = useState(false);
+    const [showWorkspaceDecryptWarning, setShowWorkspaceDecryptWarning] = useState(false);
     const [isTransforming, setIsTransforming] = useState(false);
     const [resolvedUid, setResolvedUid] = useState<string>(() => userId?.trim() || resolveInitialClientUserIdSync() || "");
 
@@ -475,6 +487,11 @@ export function FileContextMenu({
                 return;
             }
 
+            if (effectiveWorkspaceEncrypted) {
+                setShowWorkspaceDecryptWarning(true);
+                return;
+            }
+
             await executeFileDecryption();
         } catch (err: unknown) {
             console.error("[FileContextMenu] Handle decrypt error:", err);
@@ -735,12 +752,28 @@ export function FileContextMenu({
                 onClose={() => setShowUnlockVault(false)}
                 onUnlocked={() => {
                     if (isEncrypted) {
-                        executeFileDecryption();
+                        if (effectiveWorkspaceEncrypted) {
+                            setShowWorkspaceDecryptWarning(true);
+                        } else {
+                            executeFileDecryption();
+                        }
                     } else {
                         executeFileEncryption();
                     }
                 }}
                 userId={resolvedUid || userId}
+            />
+
+            <WorkspaceDecryptionWarningModal
+                isOpen={showWorkspaceDecryptWarning}
+                onClose={() => setShowWorkspaceDecryptWarning(false)}
+                workspaceId={effectiveWorkspaceId}
+                userId={resolvedUid || userId}
+                onSuccess={() => {
+                    void workspaceTabs?.refreshWorkspaces();
+                    onRefresh?.();
+                    onClose();
+                }}
             />
         </>
     );
