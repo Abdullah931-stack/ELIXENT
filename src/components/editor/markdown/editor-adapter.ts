@@ -1,7 +1,8 @@
 import { EditorView } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
-import { undo, redo, undoDepth, redoDepth } from "@codemirror/commands";
+import { EditorState, Transaction } from "@codemirror/state";
+import { undo, redo, undoDepth, redoDepth, isolateHistory } from "@codemirror/commands";
 import { syntaxTree, ensureSyntaxTree } from "@codemirror/language";
+import { extractSectionBySlug } from "@/core/ast/heading-slicer";
 import { EditorAdapter, EditorMode, EditorSelection, DirectionSettings, GhostHunk } from "./types";
 import {
     livePreviewPlugin,
@@ -127,7 +128,10 @@ export class CodeMirrorEditorAdapter implements EditorAdapter {
 
         this.view.dispatch({
             changes: validChanges,
-            userEvent: "input",
+            annotations: [
+                Transaction.userEvent.of("agent.mutation"),
+                isolateHistory.of("full"),
+            ],
         });
     }
 
@@ -367,6 +371,21 @@ export class CodeMirrorEditorAdapter implements EditorAdapter {
         this.view.dispatch({
             effects: clearGhostSessionEffect.of(),
         });
+    }
+
+    scrollToHeading(headingSlug: string): boolean {
+        if (!headingSlug) return false;
+        const normalized = headingSlug.trim().replace(/^#/, "").trim().toLowerCase();
+        if (!normalized) return false;
+        const docText = this.view.state.doc.toString();
+        const section = extractSectionBySlug(docText, normalized);
+        if (!section) return false;
+        const targetOffset = Math.max(0, Math.min(section.startOffset, this.view.state.doc.length));
+        this.view.dispatch({
+            selection: { anchor: targetOffset, head: targetOffset },
+            effects: EditorView.scrollIntoView(targetOffset, { y: "start" }),
+        });
+        return true;
     }
 
     destroy(): void {

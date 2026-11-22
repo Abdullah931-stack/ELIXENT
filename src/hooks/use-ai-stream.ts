@@ -26,58 +26,41 @@ import {
 } from '@/core/agent/reducers';
 import type { ATMSDecisionNode } from '@/core/agent/atms/dag';
 import { extractSectionBySlug } from '@/core/ast/heading-slicer';
-import { diff3MergeSection } from '@/lib/sync/diff3';
+import { MAX_RECORD_KEYS } from '@/core/agent/stream-payload';
 import { sessionKeyStore } from '@/lib/sync/session-key-store';
+import { indexedDBManager } from '@/lib/sync/indexeddb';
+import type { IDBFile, IDBOperation } from '@/lib/sync/idb-types';
+import { SyncCryptoGateway } from '@/lib/sync/sync-crypto-gateway';
+import { getFile, getUserFiles, toggleFileEncryption } from '@/client/rpc-client';
+import { useOptionalWorkspaceTabs } from '@/components/editor/workspace-tab-bar';
 
-/**
- * Pure helper to synthesize section content for multi-hunk preview in the browser.
- */
-function synthesizeAgentSectionContent(
-    baseContent: string,
-    headingSlug: string,
-    relevantDecisions: readonly ATMSDecisionNode[]
-): string {
-    const trimmedBase = baseContent.trim();
-    const humanReadableHeading = headingSlug
-        .split('-')
-        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-        .join(' ');
-
-    const decisionLines: string[] = [];
-    for (const decision of relevantDecisions) {
-        decisionLines.push(
-            `- **${decision.topicSlug}** [${decision.selectedOptionKey}]: ${decision.selectionRationale}`
-        );
-    }
-
-    const decisionBlock =
-        decisionLines.length > 0
-            ? `\n\n<!-- BEGIN:AGENT_DECISION_ALIGNMENT -->\n${decisionLines.join('\n')}\n<!-- END:AGENT_DECISION_ALIGNMENT -->`
-            : '';
-
-    if (trimmedBase.length === 0) {
-        return `## ${humanReadableHeading}\n${decisionBlock.trimStart()}`;
-    }
-
-    const startMarker = '<!-- BEGIN:AGENT_DECISION_ALIGNMENT -->';
-    const endMarker = '<!-- END:AGENT_DECISION_ALIGNMENT -->';
-    const startIndex = trimmedBase.indexOf(startMarker);
-    const endIndex = trimmedBase.indexOf(endMarker);
-
-    if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
-        const beforeBlock = trimmedBase.slice(0, startIndex).trimEnd();
-        const afterBlock = trimmedBase.slice(endIndex + endMarker.length).trimStart();
-        return `${beforeBlock}${decisionBlock}\n\n${afterBlock}`.trim();
-    }
-
-    return `${trimmedBase}${decisionBlock}`;
+export interface AgentMutatedFileRecord {
+    fileId: string;
+    relativePath?: string;
+    action: 'created' | 'deleted' | 'updated';
+    postTurnEtag?: string;
 }
+
+export interface AgentMutatedTurn {
+    turnId: string;
+    threadId: string;
+    workspaceId: string;
+    prompt?: string;
+    timestamp: number;
+    mutatedFiles: AgentMutatedFileRecord[];
+    isReverted?: boolean;
+}
+
+const ZK_AI_NOTICE_STORAGE_KEY = 'elixent_zk_ai_notice_shown';
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type EditorInstance = EditorAdapter;
 
 export interface UseAIStreamOptions {
     fileId?: string;
+    workspaceId?: string;
     projectId?: string;
+    userId?: string | null;
     threadId?: string;
     editor?: EditorInstance | null;
     getEditor?: () => EditorInstance | null;
@@ -86,6 +69,7 @@ export interface UseAIStreamOptions {
     allowAIOnEncryptedFiles?: boolean | (() => boolean);
     isVaultUnlocked?: () => boolean;
     onVaultLocked?: () => void;
+    onVaultAiNotice?: (message: string) => void;
     onStreamStart?: () => void;
     onError?: (error: Error) => void;
     onHunkAccepted?: (updatedContent: string, hunkId: string, remainingCount: number) => void;
@@ -344,6 +328,18 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
     );
     const [clientGeneratedThreadId] = useState<string>(() => `thread_${crypto.randomUUID()}`);
     const [sessionThreadId, setSessionThreadId] = useState<string | null>(null);
+    const [ghostHunksByFileId, setGhostHunksByFileId] = useState<Record<string, GhostHunk[]>>({});
+    const [mutatedTurns, setMutatedTurns] = useState<AgentMutatedTurn[]>([]);
+    const [zkAiNotice, setZkAiNotice] = useState<string | null>(null);
+
+    const workspaceTabs = useOptionalWorkspaceTabs();
+    const workspaceTabsRef = useRef(workspaceTabs);
+    const rawExplicitWorkspaceId = options.workspaceId || workspaceTabs?.activeWorkspaceId || '';
+    const explicitWorkspaceId = UUID_REGEX.test(rawExplicitWorkspaceId)
+        ? rawExplicitWorkspaceId
+        : undefined;
+    const effectiveWorkspaceId =
+        rawExplicitWorkspaceId || options.projectId || options.fileId || '';
 
     const activeThreadId = options.threadId || sessionThreadId || clientGeneratedThreadId;
 
@@ -351,11 +347,16 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
     const threadIdRef = useRef<string>(activeThreadId);
     const selectedSystem2ModelIdRef = useRef<string>(selectedSystem2ModelId);
     const permissionModeRef = useRef<'safe' | 'semi_auto' | 'full_auto'>(permissionMode);
+    const effectiveWorkspaceIdRef = useRef<string>(effectiveWorkspaceId);
+    const explicitWorkspaceIdRef = useRef<string | undefined>(explicitWorkspaceId);
     useLayoutEffect(() => {
         optsRef.current = options;
         threadIdRef.current = activeThreadId;
         selectedSystem2ModelIdRef.current = selectedSystem2ModelId;
         permissionModeRef.current = permissionMode;
+        workspaceTabsRef.current = workspaceTabs;
+        effectiveWorkspaceIdRef.current = effectiveWorkspaceId;
+        explicitWorkspaceIdRef.current = explicitWorkspaceId;
     });
 
     const activeSessionRef = useRef<AIStreamSession | null>(null);
@@ -365,6 +366,11 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
     const masterDecisionLedgerRef = useRef<Record<string, ATMSDecisionNode>>({});
     const sessionInvalidationMapRef = useRef<Record<string, SectionTarget[]>>({});
     const activeGhostHunksRef = useRef<GhostHunk[]>([]);
+    const ghostHunksByFileIdRef = useRef<Record<string, GhostHunk[]>>({});
+    const turnIdByHunkIdRef = useRef<Record<string, string>>({});
+    const currentTurnIdRef = useRef<string | null>(null);
+    const currentTurnPromptRef = useRef<string | undefined>(undefined);
+    const preTurnSnapshotsRef = useRef<Record<string, NonNullable<IDBOperation['snapshot']>>>({});
     const ghostSessionStartedRef = useRef<boolean>(false);
     const acceptedHunkCountRef = useRef<number>(0);
     const lastAllHunksAcceptedPromiseRef = useRef<Promise<unknown> | null>(null);
@@ -459,6 +465,123 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         };
     }, []);
 
+    // Load persisted pending ghost hunks for the active workspace from IndexedDB
+    useEffect(() => {
+        const wsId = effectiveWorkspaceId;
+        if (!wsId || wsId === 'default-project' || wsId === 'default-file') return;
+        let cancelled = false;
+        indexedDBManager
+            .loadPendingGhostHunks(wsId)
+            .then((persisted) => {
+                if (cancelled || !persisted) return;
+                const nextMap: Record<string, GhostHunk[]> = {};
+                for (const [fId, hunks] of Object.entries(persisted.ghostHunksByFileId || {})) {
+                    if (Array.isArray(hunks) && hunks.length > 0) {
+                        nextMap[fId] = [...hunks];
+                    }
+                }
+                ghostHunksByFileIdRef.current = nextMap;
+                turnIdByHunkIdRef.current = { ...(persisted.turnIdByHunkId || {}) };
+                setGhostHunksByFileId(nextMap);
+            })
+            .catch(() => {
+                // Ignore IDB errors in constrained/test environments
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [effectiveWorkspaceId]);
+
+    const persistGhostHunksForFile = useCallback(
+        (targetFileId: string, hunks: GhostHunk[], turnId?: string): void => {
+            if (!targetFileId) return;
+            const nextMap = { ...ghostHunksByFileIdRef.current };
+            const nextTurnMap = { ...turnIdByHunkIdRef.current };
+
+            if (hunks.length > 0) {
+                nextMap[targetFileId] = hunks;
+                if (turnId) {
+                    for (const h of hunks) {
+                        nextTurnMap[h.hunkId] = turnId;
+                    }
+                }
+            } else {
+                const prevHunks = nextMap[targetFileId] || [];
+                for (const h of prevHunks) {
+                    delete nextTurnMap[h.hunkId];
+                }
+                delete nextMap[targetFileId];
+            }
+
+            ghostHunksByFileIdRef.current = nextMap;
+            turnIdByHunkIdRef.current = nextTurnMap;
+            setGhostHunksByFileId(nextMap);
+
+            try {
+                workspaceTabsRef.current?.setGhostHunksForFile(targetFileId, hunks, turnId);
+            } catch {
+                // Ignore if provider not mounted
+            }
+
+            const wsId = effectiveWorkspaceIdRef.current;
+            if (wsId && wsId !== 'default-project' && wsId !== 'default-file') {
+                indexedDBManager
+                    .savePendingGhostHunks(wsId, {
+                        ghostHunksByFileId: nextMap,
+                        turnIdByHunkId: nextTurnMap,
+                    })
+                    .catch(() => {
+                        // Ignore IDB persistence errors in unit tests
+                    });
+            }
+        },
+        []
+    );
+
+    const recordTurnMutation = useCallback(
+        (turnId: string, threadId: string, workspaceId: string, record: AgentMutatedFileRecord): void => {
+            setMutatedTurns((prev) => {
+                const existingIdx = prev.findIndex((t) => t.turnId === turnId);
+                if (existingIdx >= 0) {
+                    const existing = prev[existingIdx];
+                    const fileIdx = existing.mutatedFiles.findIndex((f) => f.fileId === record.fileId);
+                    const nextFiles = [...existing.mutatedFiles];
+                    if (fileIdx >= 0) {
+                        nextFiles[fileIdx] = { ...nextFiles[fileIdx], ...record };
+                    } else {
+                        nextFiles.push(record);
+                    }
+                    const next = [...prev];
+                    next[existingIdx] = { ...existing, mutatedFiles: nextFiles, isReverted: false };
+                    return next;
+                }
+                return [
+                    ...prev,
+                    {
+                        turnId,
+                        threadId,
+                        workspaceId,
+                        prompt: currentTurnPromptRef.current,
+                        timestamp: Date.now(),
+                        mutatedFiles: [record],
+                        isReverted: false,
+                    },
+                ];
+            });
+        },
+        []
+    );
+
+    const markTurnReverted = useCallback((turnId: string): void => {
+        setMutatedTurns((prev) =>
+            prev.map((t) => (t.turnId === turnId ? { ...t, isReverted: true } : t))
+        );
+    }, []);
+
+    const markSessionReverted = useCallback((): void => {
+        setMutatedTurns((prev) => prev.map((t) => ({ ...t, isReverted: true })));
+    }, []);
+
     const upsertHunksIntoSession = useCallback(
         (
             session: AIStreamSession,
@@ -507,18 +630,56 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
 
             activeGhostHunksRef.current = nextList;
             setActiveGhostHunks(nextList);
+            if (session.fileId) {
+                persistGhostHunksForFile(
+                    session.fileId,
+                    nextList,
+                    currentTurnIdRef.current ?? undefined
+                );
+            }
             if (nextList.length > 0) {
                 setPreviewText(nextList.map((h) => h.replacementText).join('\n\n'));
             }
         },
-        []
+        [persistGhostHunksForFile]
+    );
+
+    const hydrateGhostHunksForFile = useCallback(
+        (targetFileId: string, editorOverride?: EditorInstance | null): void => {
+            if (!targetFileId) return;
+            const pending = ghostHunksByFileIdRef.current[targetFileId];
+            if (!pending || pending.length === 0) return;
+            const editor = resolveEditor(editorOverride);
+            const hydratedHunks: GhostHunk[] = pending.map((hunk) => ({
+                ...hunk,
+                status: 'preview_ready',
+                onApply: () => acceptGhostHunkRef.current?.(hunk.hunkId),
+                onReject: () => rejectGhostHunkRef.current?.(hunk.hunkId),
+                onStop: () => stopStreamRef.current?.(),
+            }));
+            activeGhostHunksRef.current = hydratedHunks;
+            setActiveGhostHunks(hydratedHunks);
+            if (editor) {
+                if (typeof editor.startGhostSession === 'function') {
+                    ghostSessionStartedRef.current = true;
+                    editor.startGhostSession(`hydrated_${targetFileId}`, hydratedHunks);
+                } else if (typeof editor.upsertGhostHunk === 'function') {
+                    for (const hunk of hydratedHunks) {
+                        editor.upsertGhostHunk(hunk);
+                    }
+                }
+            }
+            setStatus('preview_ready');
+        },
+        [resolveEditor]
     );
 
     const buildGhostHunksFromRawEntries = useCallback(
         (
             rawEntries: ReadonlyArray<Record<string, unknown>>,
             liveContent: string,
-            ledger: Record<string, ATMSDecisionNode>
+            ledger: Record<string, ATMSDecisionNode>,
+            preserveRawOffsets = false
         ): GhostHunk[] => {
             const constructed: GhostHunk[] = [];
 
@@ -560,8 +721,13 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 let originalSlice: string;
 
                 if (typeof entry.from === 'number' && typeof entry.to === 'number') {
-                    from = Math.max(0, Math.min(entry.from, liveContent.length));
-                    to = Math.max(from, Math.min(entry.to, liveContent.length));
+                    if (liveContent.length === 0 && preserveRawOffsets) {
+                        from = Math.max(0, entry.from);
+                        to = Math.max(from, entry.to);
+                    } else {
+                        from = Math.max(0, Math.min(entry.from, liveContent.length));
+                        to = Math.max(from, Math.min(entry.to, liveContent.length));
+                    }
                     originalSlice =
                         typeof entry.originalSlice === 'string'
                             ? entry.originalSlice
@@ -571,8 +737,13 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                     typeof hunkRange.from === 'number' &&
                     typeof hunkRange.to === 'number'
                 ) {
-                    from = Math.max(0, Math.min(hunkRange.from, liveContent.length));
-                    to = Math.max(from, Math.min(hunkRange.to, liveContent.length));
+                    if (liveContent.length === 0 && preserveRawOffsets) {
+                        from = Math.max(0, hunkRange.from);
+                        to = Math.max(from, hunkRange.to);
+                    } else {
+                        from = Math.max(0, Math.min(hunkRange.from, liveContent.length));
+                        to = Math.max(from, Math.min(hunkRange.to, liveContent.length));
+                    }
                     originalSlice =
                         typeof entry.originalSlice === 'string'
                             ? entry.originalSlice
@@ -624,87 +795,6 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             }
 
             return constructed;
-        },
-        []
-    );
-
-    const synthesizeHunksFromLedgerAndInvalidation = useCallback(
-        (
-            activeFileId: string,
-            liveContent: string,
-            ledger: Record<string, ATMSDecisionNode>,
-            invalidationMap: Record<string, SectionTarget[]>
-        ): GhostHunk[] => {
-            const targetSlugs = new Set<string>();
-
-            for (const sections of Object.values(invalidationMap)) {
-                for (const sec of sections) {
-                    if (!activeFileId || sec.fileId === activeFileId) {
-                        targetSlugs.add(sec.headingSlug);
-                    }
-                }
-            }
-
-            if (targetSlugs.size === 0) {
-                for (const node of Object.values(ledger)) {
-                    for (const sec of node.affectedSections ?? []) {
-                        if (!activeFileId || sec.fileId === activeFileId) {
-                            targetSlugs.add(sec.headingSlug);
-                        }
-                    }
-                }
-            }
-
-            const synthesized: GhostHunk[] = [];
-            for (const headingSlug of targetSlugs) {
-                const relevantDecisions = Object.values(ledger).filter((node) =>
-                    node.affectedSections?.some(
-                        (sec) =>
-                            (!activeFileId || sec.fileId === activeFileId) &&
-                            sec.headingSlug === headingSlug
-                    )
-                );
-
-                const extracted = extractSectionBySlug(liveContent, headingSlug);
-                const baseSectionContent = extracted ? extracted.sectionContent : '';
-                const proposedContent = synthesizeAgentSectionContent(
-                    baseSectionContent,
-                    headingSlug,
-                    relevantDecisions
-                );
-
-                if (extracted) {
-                    const mergeOutcome = diff3MergeSection({
-                        headingSlug,
-                        liveDocumentContent: liveContent,
-                        baseSectionContent,
-                        agentProposedSectionContent: proposedContent,
-                    });
-                    synthesized.push({
-                        hunkId: `hunk_${headingSlug}`,
-                        decisionIds: relevantDecisions.map((d) => d.decisionId),
-                        headingSlug,
-                        from: mergeOutcome.hunkRange.from,
-                        to: mergeOutcome.hunkRange.to,
-                        originalSlice: baseSectionContent,
-                        replacementText: mergeOutcome.hunkRange.replacementText,
-                        status: 'streaming',
-                    });
-                } else {
-                    synthesized.push({
-                        hunkId: `hunk_${headingSlug}`,
-                        decisionIds: relevantDecisions.map((d) => d.decisionId),
-                        headingSlug,
-                        from: liveContent.length,
-                        to: liveContent.length,
-                        originalSlice: '',
-                        replacementText: proposedContent,
-                        status: 'streaming',
-                    });
-                }
-            }
-
-            return synthesized;
         },
         []
     );
@@ -796,13 +886,21 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             acceptedHunkCountRef.current += 1;
             activeGhostHunksRef.current = nextHunks;
             setActiveGhostHunks(nextHunks);
+            const activeFileId = activeSessionRef.current?.fileId || optsRef.current.fileId;
+            if (activeFileId) {
+                persistGhostHunksForFile(
+                    activeFileId,
+                    nextHunks,
+                    currentTurnIdRef.current ?? undefined
+                );
+            }
 
             optsRef.current.onHunkAccepted?.(updatedContent, hunkId, nextHunks.length);
             finalizeHunkLifecycleIfEmpty(nextHunks);
 
             return updatedContent;
         },
-        [finalizeHunkLifecycleIfEmpty, resolveEditor, resolveLiveContent, runAsProgrammaticTransaction]
+        [finalizeHunkLifecycleIfEmpty, persistGhostHunksForFile, resolveEditor, resolveLiveContent, runAsProgrammaticTransaction]
     );
 
     /**
@@ -820,11 +918,19 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             const nextHunks = activeGhostHunksRef.current.filter((h) => h.hunkId !== hunkId);
             activeGhostHunksRef.current = nextHunks;
             setActiveGhostHunks(nextHunks);
+            const activeFileId = activeSessionRef.current?.fileId || optsRef.current.fileId;
+            if (activeFileId) {
+                persistGhostHunksForFile(
+                    activeFileId,
+                    nextHunks,
+                    currentTurnIdRef.current ?? undefined
+                );
+            }
 
             optsRef.current.onHunkRejected?.(hunkId, nextHunks.length);
             finalizeHunkLifecycleIfEmpty(nextHunks);
         },
-        [finalizeHunkLifecycleIfEmpty, resolveEditor, runAsProgrammaticTransaction]
+        [finalizeHunkLifecycleIfEmpty, persistGhostHunksForFile, resolveEditor, runAsProgrammaticTransaction]
     );
 
     /**
@@ -860,6 +966,10 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         acceptedHunkCountRef.current += Math.max(1, currentHunks.length);
         activeGhostHunksRef.current = [];
         setActiveGhostHunks([]);
+        const activeFileId = activeSessionRef.current?.fileId || optsRef.current.fileId;
+        if (activeFileId) {
+            persistGhostHunksForFile(activeFileId, []);
+        }
 
         const maybePromise = optsRef.current.onAllHunksAccepted?.(updatedContent);
         if (maybePromise && typeof (maybePromise as Promise<unknown>).then === 'function') {
@@ -870,7 +980,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         finalizeHunkLifecycleIfEmpty([]);
 
         return updatedContent;
-    }, [finalizeHunkLifecycleIfEmpty, resolveEditor, resolveLiveContent, runAsProgrammaticTransaction]);
+    }, [finalizeHunkLifecycleIfEmpty, persistGhostHunksForFile, resolveEditor, resolveLiveContent, runAsProgrammaticTransaction]);
 
     /**
      * Rejects and clears all remaining ghost hunks without mutating the document.
@@ -881,10 +991,14 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
 
         activeGhostHunksRef.current = [];
         setActiveGhostHunks([]);
+        const activeFileId = activeSessionRef.current?.fileId || optsRef.current.fileId;
+        if (activeFileId) {
+            persistGhostHunksForFile(activeFileId, []);
+        }
 
         optsRef.current.onAllHunksRejected?.();
         finalizeHunkLifecycleIfEmpty([]);
-    }, [clearEditorGhostDecorations, finalizeHunkLifecycleIfEmpty, resolveEditor]);
+    }, [clearEditorGhostDecorations, finalizeHunkLifecycleIfEmpty, persistGhostHunksForFile, resolveEditor]);
 
     /**
      * Immediately aborts the active streaming session and dismantles ghost previews.
@@ -1047,6 +1161,167 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         [resolveLiveContent]
     );
 
+    const hydrateWorkspaceVaultPayloads = useCallback(
+        async (
+            basePayloads: Record<string, string> | undefined,
+            activeFileId: string
+        ): Promise<Record<string, string> | undefined> => {
+            const allowAIVal =
+                typeof optsRef.current.allowAIOnEncryptedFiles === 'function'
+                    ? optsRef.current.allowAIOnEncryptedFiles()
+                    : Boolean(optsRef.current.allowAIOnEncryptedFiles);
+            const isUnlockedVal =
+                typeof optsRef.current.isVaultUnlocked === 'function'
+                    ? optsRef.current.isVaultUnlocked()
+                    : sessionKeyStore.isVaultUnlocked();
+
+            if (!allowAIVal || !isUnlockedVal) {
+                return basePayloads;
+            }
+
+            const result: Record<string, string> = { ...(basePayloads ?? {}) };
+            const effectiveUserId = optsRef.current.userId ?? undefined;
+            const explicitWsId = explicitWorkspaceIdRef.current;
+
+            const allowedWorkspaceFileIds = new Set<string>();
+            const excludedRemoteFileIds = new Set<string>();
+            let hasRemoteCatalog = false;
+            type RemoteFileEntry = NonNullable<Awaited<ReturnType<typeof getUserFiles>>['data']>[number];
+            let remoteFilesList: RemoteFileEntry[] = [];
+
+            try {
+                const remoteFilesRes = await getUserFiles();
+                if (remoteFilesRes?.success && Array.isArray(remoteFilesRes.data)) {
+                    hasRemoteCatalog = true;
+                    remoteFilesList = remoteFilesRes.data;
+                    for (const remoteFile of remoteFilesList) {
+                        const rec = remoteFile as unknown as Record<string, unknown>;
+                        const fileWorkspaceId =
+                            typeof rec.workspaceId === 'string' ? rec.workspaceId : undefined;
+                        const belongsToOtherWorkspace =
+                            Boolean(explicitWsId) &&
+                            Boolean(fileWorkspaceId) &&
+                            fileWorkspaceId !== explicitWsId;
+                        if (
+                            remoteFile.isAiExcluded ||
+                            remoteFile.deletedAt ||
+                            remoteFile.isFolder ||
+                            belongsToOtherWorkspace
+                        ) {
+                            excludedRemoteFileIds.add(remoteFile.id);
+                        } else if (!explicitWsId || !fileWorkspaceId || fileWorkspaceId === explicitWsId) {
+                            allowedWorkspaceFileIds.add(remoteFile.id);
+                        }
+                    }
+                }
+            } catch {
+                // Ignore RPC errors in offline/unmocked unit tests
+            }
+
+            try {
+                const allFiles = await indexedDBManager.getAllFiles();
+                for (const file of allFiles) {
+                    if (Object.keys(result).length >= MAX_RECORD_KEYS) break;
+                    if (!file.isEncrypted || !file.content) continue;
+                    const localExcluded = file.isAiExcluded === true;
+                    if (localExcluded || excludedRemoteFileIds.has(file.id)) continue;
+                    if (explicitWsId) {
+                        const matchesWs = file.workspaceId
+                            ? file.workspaceId === explicitWsId
+                            : !hasRemoteCatalog || allowedWorkspaceFileIds.has(file.id);
+                        if (!matchesWs) continue;
+                    }
+                    if (file.id === activeFileId && result[file.id] !== undefined) continue;
+                    if (result[file.id] !== undefined) continue;
+
+                    const inbound = await SyncCryptoGateway.decryptInbound({
+                        fileId: file.id,
+                        content: file.content,
+                        isEncrypted: true,
+                        encryptionMetadata: file.encryptionMetadata ?? null,
+                        userId: effectiveUserId,
+                    });
+                    if (inbound.status === 'decrypted') {
+                        result[file.id] = inbound.content;
+                        preTurnSnapshotsRef.current[file.id] = {
+                            content: file.content,
+                            etag: file.etag,
+                            version: file.version,
+                            encryptionMetadata: file.encryptionMetadata ?? undefined,
+                        };
+                    }
+                }
+            } catch {
+                // Ignore IDB errors in constrained/test environments
+            }
+
+            try {
+                for (const remoteFile of remoteFilesList) {
+                    if (Object.keys(result).length >= MAX_RECORD_KEYS) break;
+                    if (excludedRemoteFileIds.has(remoteFile.id)) continue;
+                    if (!remoteFile.isEncrypted) continue;
+                    if (result[remoteFile.id] !== undefined) continue;
+
+                    let ciphertext = remoteFile.content;
+                    let encMeta = remoteFile.encryptionMetadata ?? null;
+                    let detailEtag = remoteFile.etag || '';
+                    let detailVersion = remoteFile.version ?? 1;
+                    if (!ciphertext) {
+                        const detailRes = await getFile(remoteFile.id).catch(() => null);
+                        if (detailRes?.success && detailRes.data) {
+                            ciphertext = detailRes.data.content;
+                            encMeta = detailRes.data.encryptionMetadata ?? encMeta;
+                            detailEtag = detailRes.data.etag || detailEtag;
+                            detailVersion = detailRes.data.version ?? detailVersion;
+                        }
+                    }
+                    if (!ciphertext) continue;
+
+                    const inbound = await SyncCryptoGateway.decryptInbound({
+                        fileId: remoteFile.id,
+                        content: ciphertext,
+                        isEncrypted: true,
+                        encryptionMetadata: encMeta,
+                        userId: effectiveUserId,
+                    });
+                    if (inbound.status === 'decrypted') {
+                        result[remoteFile.id] = inbound.content;
+                        preTurnSnapshotsRef.current[remoteFile.id] = {
+                            content: ciphertext,
+                            etag: detailEtag,
+                            version: detailVersion,
+                            encryptionMetadata: encMeta ?? undefined,
+                        };
+                    }
+                }
+            } catch {
+                // Ignore RPC errors in offline/unmocked unit tests
+            }
+
+            if (Object.keys(result).length > 0) {
+                try {
+                    const alreadyShown =
+                        typeof localStorage !== 'undefined' &&
+                        localStorage.getItem(ZK_AI_NOTICE_STORAGE_KEY) === '1';
+                    if (!alreadyShown) {
+                        if (typeof localStorage !== 'undefined') {
+                            localStorage.setItem(ZK_AI_NOTICE_STORAGE_KEY, '1');
+                        }
+                        const noticeMsg =
+                            'Encrypted workspace files were decrypted transiently in memory for this AI request and are never stored in plaintext on the server.';
+                        setZkAiNotice(noticeMsg);
+                        optsRef.current.onVaultAiNotice?.(noticeMsg);
+                    }
+                } catch {
+                    // Ignore localStorage errors
+                }
+            }
+
+            return Object.keys(result).length > 0 ? result : undefined;
+        },
+        []
+    );
+
     const executeStreamCycle = useCallback(
         async (
             session: AIStreamSession,
@@ -1118,7 +1393,7 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                         setActiveQuestionQueue(questions);
                     }
 
-                    // 3. Extract GhostHunk items when document_writer_node or synthesized_sections arrive
+                    // 3. Extract GhostHunk items when synthesized_sections / hunks arrive
                     const rawSectionEntries = extractRawSectionEntries(candidatePayloads);
                     const liveContent = resolveLiveContent(editor);
 
@@ -1129,28 +1404,10 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                             masterDecisionLedgerRef.current
                         );
                         upsertHunksIntoSession(session, editor, hunks);
-                    } else if (stage === 'document_writer_node') {
-                        const synthesizedHunks = synthesizeHunksFromLedgerAndInvalidation(
-                            session.fileId,
-                            liveContent,
-                            masterDecisionLedgerRef.current,
-                            sessionInvalidationMapRef.current
-                        );
-                        if (synthesizedHunks.length > 0) {
-                            upsertHunksIntoSession(session, editor, synthesizedHunks);
-                        }
                     }
                 },
                 onGhostHunkProposed: (ghostEvt) => {
                     if (isStaleSessionEvent(session, activeSessionRef.current)) {
-                        return;
-                    }
-                    if (
-                        ghostEvt.fileId &&
-                        session.fileId &&
-                        session.fileId !== 'default-file' &&
-                        ghostEvt.fileId !== session.fileId
-                    ) {
                         return;
                     }
                     if (!Array.isArray(ghostEvt.hunks) || ghostEvt.hunks.length === 0) {
@@ -1163,6 +1420,27 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                         fileId: entry.fileId ?? ghostEvt.fileId,
                     }));
 
+                    const isFileMismatch =
+                        Boolean(ghostEvt.fileId) &&
+                        Boolean(session.fileId) &&
+                        session.fileId !== 'default-file' &&
+                        ghostEvt.fileId !== session.fileId;
+
+                    if (isFileMismatch) {
+                        const targetHunks = buildGhostHunksFromRawEntries(
+                            normalizedEntries,
+                            '',
+                            masterDecisionLedgerRef.current,
+                            true
+                        );
+                        persistGhostHunksForFile(
+                            ghostEvt.fileId,
+                            targetHunks,
+                            currentTurnIdRef.current ?? undefined
+                        );
+                        return;
+                    }
+
                     const liveContent = resolveLiveContent(editor);
                     const hunks = buildGhostHunksFromRawEntries(
                         normalizedEntries,
@@ -1170,6 +1448,270 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                         masterDecisionLedgerRef.current
                     );
                     upsertHunksIntoSession(session, editor, hunks);
+                },
+                onFileMutated: async (mutatedEvt) => {
+                    if (isStaleSessionEvent(session, activeSessionRef.current)) {
+                        return;
+                    }
+                    const wsId =
+                        effectiveWorkspaceIdRef.current ||
+                        projectIdRef.current ||
+                        'default-workspace';
+                    const turnId = currentTurnIdRef.current || `turn_${session.sessionId}`;
+                    const opType =
+                        mutatedEvt.action === 'created'
+                            ? 'create'
+                            : mutatedEvt.action === 'deleted'
+                              ? 'delete'
+                              : 'update';
+
+                    let existingFile: IDBFile | undefined;
+                    try {
+                        existingFile = await indexedDBManager.getFile(mutatedEvt.fileId);
+                    } catch {
+                        existingFile = undefined;
+                    }
+
+                    let remoteFile: NonNullable<Awaited<ReturnType<typeof getFile>>['data']> | undefined;
+                    let remoteEtag: string | undefined;
+                    if (mutatedEvt.action === 'updated' || mutatedEvt.action === 'created') {
+                        try {
+                            const remoteRes = await getFile(mutatedEvt.fileId);
+                            if (remoteRes?.success && remoteRes.data) {
+                                remoteFile = remoteRes.data;
+                                remoteEtag = remoteRes.data.etag ?? remoteRes.etag;
+                            } else if (remoteRes?.etag) {
+                                remoteEtag = remoteRes.etag;
+                            }
+                        } catch {
+                            // Ignore RPC errors in offline/unmocked unit tests
+                        }
+                    }
+
+                    const postTurnEtag = remoteEtag ?? existingFile?.etag;
+                    const effectiveUid = optsRef.current.userId ?? undefined;
+                    const preTurnSnapshot: IDBOperation['snapshot'] = existingFile
+                        ? {
+                              content: existingFile.content,
+                              etag: existingFile.etag,
+                              version: existingFile.version,
+                              encryptionMetadata: existingFile.encryptionMetadata ?? undefined,
+                          }
+                        : preTurnSnapshotsRef.current[mutatedEvt.fileId];
+
+                    const opId = `op_mut_${turnId}_${mutatedEvt.fileId}_${Date.now()}`;
+                    const op: IDBOperation = {
+                        id: opId,
+                        operationId: opId,
+                        userId: effectiveUid,
+                        workspaceId: wsId,
+                        threadId: session.threadId,
+                        turnId,
+                        postTurnEtag,
+                        fileId: mutatedEvt.fileId,
+                        baseVersion: existingFile?.version ?? preTurnSnapshot?.version ?? 1,
+                        localRevision: (existingFile?.localRevision ?? 0) + 1,
+                        sentRevision: existingFile?.localRevision ?? 0,
+                        status: 'synced',
+                        attempts: 0,
+                        nextRetryAt: 0,
+                        lastError: undefined,
+                        operationType: opType,
+                        position: 0,
+                        content: remoteFile?.content ?? existingFile?.content ?? '',
+                        timestamp: Date.now(),
+                        synced: true,
+                        isEncrypted: remoteFile?.isEncrypted ?? existingFile?.isEncrypted,
+                        ...(preTurnSnapshot ? { snapshot: preTurnSnapshot } : {}),
+                    };
+
+                    try {
+                        await indexedDBManager.saveOperation(op);
+                        if (remoteFile) {
+                            const remoteRec = remoteFile as unknown as Record<string, unknown>;
+                            const remoteWsId =
+                                typeof remoteRec.workspaceId === 'string'
+                                    ? remoteRec.workspaceId
+                                    : existingFile?.workspaceId ?? explicitWorkspaceIdRef.current;
+                            await indexedDBManager.saveFile(
+                                {
+                                    id: mutatedEvt.fileId,
+                                    content: remoteFile.content ?? '',
+                                    etag: postTurnEtag || '',
+                                    lastModified: Date.now(),
+                                    lastSyncedAt: Date.now(),
+                                    isDirty: false,
+                                    version: remoteFile.version ?? (existingFile?.version ?? 1),
+                                    title: remoteFile.title || existingFile?.title || mutatedEvt.relativePath,
+                                    parentFolderId:
+                                        remoteFile.parentFolderId ?? existingFile?.parentFolderId ?? null,
+                                    isFolder: Boolean(remoteFile.isFolder),
+                                    isEncrypted: Boolean(remoteFile.isEncrypted),
+                                    encryptionMetadata:
+                                        remoteFile.encryptionMetadata ?? existingFile?.encryptionMetadata ?? null,
+                                    workspaceId: remoteWsId,
+                                    isAiExcluded:
+                                        remoteFile.isAiExcluded ?? existingFile?.isAiExcluded,
+                                    localRevision: (existingFile?.localRevision ?? 0) + 1,
+                                    syncStatus: 'synced',
+                                },
+                                effectiveUid
+                            );
+                        }
+                    } catch {
+                        // Ignore IDB errors in constrained/test environments
+                    }
+
+                    recordTurnMutation(turnId, session.threadId, wsId, {
+                        fileId: mutatedEvt.fileId,
+                        relativePath: mutatedEvt.relativePath,
+                        action: mutatedEvt.action,
+                        postTurnEtag,
+                    });
+
+                    if (
+                        mutatedEvt.fileId === session.fileId &&
+                        editor &&
+                        remoteFile &&
+                        !remoteFile.isEncrypted &&
+                        resolveLiveContent(editor) !== (remoteFile.content ?? '')
+                    ) {
+                        runAsProgrammaticTransaction(() => {
+                            editor.setValue?.(remoteFile.content ?? '', 'agent.mutation');
+                        });
+                    }
+                },
+                onVaultFileCommitRequired: async (commitEvt) => {
+                    if (isStaleSessionEvent(session, activeSessionRef.current)) {
+                        return;
+                    }
+                    const wsId =
+                        effectiveWorkspaceIdRef.current ||
+                        projectIdRef.current ||
+                        'default-workspace';
+                    const turnId = currentTurnIdRef.current || `turn_${session.sessionId}`;
+                    const effectiveUid = optsRef.current.userId ?? undefined;
+
+                    let existingFile: IDBFile | undefined;
+                    try {
+                        existingFile = await indexedDBManager.getFile(commitEvt.fileId);
+                    } catch {
+                        existingFile = undefined;
+                    }
+
+                    const opId = `op_vault_${turnId}_${commitEvt.fileId}_${Date.now()}`;
+                    const baseOp: IDBOperation = {
+                        id: opId,
+                        operationId: opId,
+                        userId: effectiveUid,
+                        workspaceId: wsId,
+                        threadId: session.threadId,
+                        turnId,
+                        fileId: commitEvt.fileId,
+                        baseVersion: existingFile?.version ?? 1,
+                        localRevision: (existingFile?.localRevision ?? 0) + 1,
+                        sentRevision: existingFile?.localRevision ?? 0,
+                        status: 'queued',
+                        attempts: 0,
+                        nextRetryAt: 0,
+                        lastError: undefined,
+                        operationType: 'update',
+                        position: 0,
+                        content: commitEvt.mergedContent,
+                        timestamp: Date.now(),
+                        synced: false,
+                        isEncrypted: true,
+                        ...(existingFile
+                            ? {
+                                  snapshot: {
+                                      content: existingFile.content,
+                                      etag: existingFile.etag,
+                                      version: existingFile.version,
+                                      encryptionMetadata:
+                                          existingFile.encryptionMetadata ?? undefined,
+                                  },
+                              }
+                            : {}),
+                    };
+
+                    try {
+                        await indexedDBManager.saveOperation(baseOp);
+                    } catch {
+                        // Ignore IDB errors in constrained/test environments
+                    }
+
+                    try {
+                        const enc = await SyncCryptoGateway.encryptOutbound(
+                            commitEvt.fileId,
+                            commitEvt.mergedContent,
+                            effectiveUid
+                        );
+                        const rpcRes = await toggleFileEncryption(
+                            commitEvt.fileId,
+                            true,
+                            enc.ciphertextBase64,
+                            enc.encryptionMetadata,
+                            { expectedVersion: existingFile?.version }
+                        );
+                        const postTurnEtag =
+                            rpcRes?.etag ?? rpcRes?.data?.etag ?? existingFile?.etag;
+                        const nextVersion =
+                            rpcRes?.version ??
+                            rpcRes?.data?.version ??
+                            (existingFile?.version ?? 1) + 1;
+
+                        const updatedIdbFile: IDBFile = {
+                            id: commitEvt.fileId,
+                            content: enc.ciphertextBase64,
+                            etag: postTurnEtag || '',
+                            lastModified: Date.now(),
+                            lastSyncedAt: Date.now(),
+                            isDirty: false,
+                            version: nextVersion,
+                            title: existingFile?.title || commitEvt.relativePath,
+                            parentFolderId: existingFile?.parentFolderId ?? null,
+                            isFolder: false,
+                            isEncrypted: true,
+                            encryptionMetadata: enc.encryptionMetadata,
+                            workspaceId:
+                                existingFile?.workspaceId ?? explicitWorkspaceIdRef.current,
+                            isAiExcluded: existingFile?.isAiExcluded,
+                            localRevision: (existingFile?.localRevision ?? 0) + 1,
+                            syncStatus: 'synced',
+                        };
+                        await indexedDBManager.saveFile(updatedIdbFile, effectiveUid).catch(() => {});
+                        await indexedDBManager
+                            .saveOperation({
+                                ...baseOp,
+                                postTurnEtag,
+                                status: 'synced',
+                                synced: true,
+                            })
+                            .catch(() => {});
+
+                        recordTurnMutation(turnId, session.threadId, wsId, {
+                            fileId: commitEvt.fileId,
+                            relativePath: commitEvt.relativePath,
+                            action: 'updated',
+                            postTurnEtag,
+                        });
+
+                        if (
+                            commitEvt.fileId === session.fileId &&
+                            editor &&
+                            resolveLiveContent(editor) !== commitEvt.mergedContent
+                        ) {
+                            runAsProgrammaticTransaction(() => {
+                                editor.setValue?.(commitEvt.mergedContent, 'agent.mutation');
+                            });
+                        }
+                    } catch (commitErr) {
+                        const message =
+                            commitErr instanceof Error
+                                ? commitErr.message
+                                : 'Failed to commit encrypted vault file';
+                        setError(message);
+                    }
                 },
                 onInterrupt: (interruptEvt: AgentStreamInterruptEvent) => {
                     if (isStaleSessionEvent(session, activeSessionRef.current)) {
@@ -1298,8 +1840,10 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         [
             buildGhostHunksFromRawEntries,
             clearEditorGhostDecorations,
+            persistGhostHunksForFile,
+            recordTurnMutation,
             resolveLiveContent,
-            synthesizeHunksFromLedgerAndInvalidation,
+            runAsProgrammaticTransaction,
             upsertHunksIntoSession,
         ]
     );
@@ -1393,6 +1937,16 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 return;
             }
 
+            const turnId = `turn_${crypto.randomUUID()}`;
+            currentTurnIdRef.current = turnId;
+            currentTurnPromptRef.current = prompt;
+            const wireWorkspaceId = explicitWorkspaceIdRef.current;
+
+            const hydratedVaultPayloads = await hydrateWorkspaceVaultPayloads(
+                vaultAndSnapshots.ephemeralVaultPayloads,
+                activeFileId
+            );
+
             const session = createStreamSession({
                 threadId,
                 projectId,
@@ -1418,19 +1972,21 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             const requestPayload: AgentStreamRequestPayload = {
                 threadId,
                 projectId,
+                ...(wireWorkspaceId ? { workspaceId: wireWorkspaceId } : {}),
+                turnId,
                 prompt,
                 targetFileIds,
                 selectedSystem2ModelId: effectiveModelId,
                 permissionMode: effectivePermissionMode,
-                ...(vaultAndSnapshots.ephemeralVaultPayloads
-                    ? { ephemeralVaultPayloads: vaultAndSnapshots.ephemeralVaultPayloads }
+                ...(hydratedVaultPayloads
+                    ? { ephemeralVaultPayloads: hydratedVaultPayloads }
                     : {}),
                 liveDocumentSnapshots: vaultAndSnapshots.liveDocumentSnapshots,
             };
 
             await executeStreamCycle(session, requestPayload, editor);
         },
-        [clearEditorGhostDecorations, executeStreamCycle, resolveEditor, resolveVaultAndSnapshots]
+        [clearEditorGhostDecorations, executeStreamCycle, hydrateWorkspaceVaultPayloads, resolveEditor, resolveVaultAndSnapshots]
     );
 
     /**
@@ -1488,6 +2044,14 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
                 return;
             }
 
+            const hydratedVaultPayloads = await hydrateWorkspaceVaultPayloads(
+                vaultAndSnapshots.ephemeralVaultPayloads,
+                activeFileId
+            );
+            const wireWorkspaceId = explicitWorkspaceIdRef.current;
+            const turnId = currentTurnIdRef.current || `turn_${crypto.randomUUID()}`;
+            currentTurnIdRef.current = turnId;
+
             setError(null);
             setActiveQuestionQueue([]);
 
@@ -1509,19 +2073,21 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             const requestPayload: AgentStreamRequestPayload = {
                 threadId,
                 projectId,
+                ...(wireWorkspaceId ? { workspaceId: wireWorkspaceId } : {}),
+                turnId,
                 targetFileIds,
                 selectedSystem2ModelId: selectedSystem2ModelIdRef.current,
                 permissionMode: permissionModeRef.current,
                 resumePayload: { answers: validation.data.answers },
-                ...(vaultAndSnapshots.ephemeralVaultPayloads
-                    ? { ephemeralVaultPayloads: vaultAndSnapshots.ephemeralVaultPayloads }
+                ...(hydratedVaultPayloads
+                    ? { ephemeralVaultPayloads: hydratedVaultPayloads }
                     : {}),
                 liveDocumentSnapshots: vaultAndSnapshots.liveDocumentSnapshots,
             };
 
             await executeStreamCycle(resumedSession, requestPayload, editor);
         },
-        [executeStreamCycle, resolveEditor, resolveVaultAndSnapshots]
+        [executeStreamCycle, hydrateWorkspaceVaultPayloads, resolveEditor, resolveVaultAndSnapshots]
     );
 
     /**
@@ -1559,6 +2125,14 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
             return;
         }
 
+        const hydratedVaultPayloads = await hydrateWorkspaceVaultPayloads(
+            vaultAndSnapshots.ephemeralVaultPayloads,
+            activeFileId
+        );
+        const wireWorkspaceId = explicitWorkspaceIdRef.current;
+        const turnId = currentTurnIdRef.current || `turn_${crypto.randomUUID()}`;
+        currentTurnIdRef.current = turnId;
+
         setError(null);
 
         const resumedSession = createStreamSession({
@@ -1579,18 +2153,20 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         const requestPayload: AgentStreamRequestPayload = {
             threadId,
             projectId,
+            ...(wireWorkspaceId ? { workspaceId: wireWorkspaceId } : {}),
+            turnId,
             targetFileIds,
             selectedSystem2ModelId: selectedSystem2ModelIdRef.current,
             permissionMode: permissionModeRef.current,
             resumePayload: { resumeReason: 'INSUFFICIENT_CREDITS' },
-            ...(vaultAndSnapshots.ephemeralVaultPayloads
-                ? { ephemeralVaultPayloads: vaultAndSnapshots.ephemeralVaultPayloads }
+            ...(hydratedVaultPayloads
+                ? { ephemeralVaultPayloads: hydratedVaultPayloads }
                 : {}),
             liveDocumentSnapshots: vaultAndSnapshots.liveDocumentSnapshots,
         };
 
         await executeStreamCycle(resumedSession, requestPayload, editor);
-    }, [executeStreamCycle, resolveEditor, resolveVaultAndSnapshots]);
+    }, [executeStreamCycle, hydrateWorkspaceVaultPayloads, resolveEditor, resolveVaultAndSnapshots]);
 
     useLayoutEffect(() => {
         acceptGhostHunkRef.current = acceptGhostHunk;
@@ -1613,6 +2189,13 @@ export function useAIStream(options: UseAIStreamOptions = {}) {
         masterDecisionLedger,
         activeGhostHunks,
         activeGhostHunksCount,
+        ghostHunksByFileId,
+        mutatedTurns,
+        zkAiNotice,
+        hydrateGhostHunksForFile,
+        persistGhostHunksForFile,
+        markTurnReverted,
+        markSessionReverted,
         selectedSystem2ModelId,
         setSelectedSystem2ModelId,
         permissionMode,

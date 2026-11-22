@@ -28,7 +28,10 @@ import type { FileEncryptionMetadata } from "@/types/storage-payload";
 import { useSync, type UseSyncReturn } from "@/hooks/use-sync";
 import { useEditorAutosave, type UseEditorAutosaveReturn } from "@/hooks/use-editor-autosave";
 import { useEditorConflict, type RemoteUpdatePayload } from "@/hooks/use-editor-conflict";
-import { useAIStream } from "@/hooks/use-ai-stream";
+import { useAIStream, type AgentMutatedTurn } from "@/hooks/use-ai-stream";
+import { useOptionalWorkspaceTabs } from "@/components/editor/workspace-tab-bar";
+import { indexedDBManager } from "@/lib/sync/indexeddb";
+import { syncRollback } from "@/lib/sync/rollback";
 import { sessionKeyStore } from "@/lib/sync/session-key-store";
 import { createClient } from "@/lib/supabase/client";
 import type { SyncConflict, IDBFile } from "@/lib/sync/idb-types";
@@ -95,6 +98,12 @@ export interface UseEditorOrchestratorReturn {
     rejectGhostHunk: (hunkId: string) => void;
     acceptAllGhostHunks: () => void;
     rejectAllGhostHunks: () => void;
+    mutatedTurns: AgentMutatedTurn[];
+    revertingTurnId: string | null;
+    isRevertingSession: boolean;
+    handleRevertTurn: (turnId: string, skipStaleConfirm?: boolean) => Promise<boolean>;
+    handleRevertSession: () => Promise<void>;
+    zkAiNotice: string | null;
 
     // Legacy / Transitional Preview & AI Accessors
     previewText: string;
@@ -156,6 +165,12 @@ export function useEditorOrchestrator({
     useLayoutEffect(() => {
         adapterRef.current = currentAdapter;
     }, [currentAdapter]);
+
+    const workspaceTabs = useOptionalWorkspaceTabs();
+    const workspaceTabsRef = useRef(workspaceTabs);
+    workspaceTabsRef.current = workspaceTabs;
+    const [revertingTurnId, setRevertingTurnId] = useState<string | null>(null);
+    const [isRevertingSession, setIsRevertingSession] = useState<boolean>(false);
 
     // --- 1. Document State ---
     const [title, setTitle] = useState<string>("");
@@ -382,7 +397,9 @@ export function useEditorOrchestrator({
     // --- Architectural Agent Stream Hook Integration ---
     const aiStream = useAIStream({
         fileId,
+        workspaceId: workspaceTabs?.activeWorkspaceId || undefined,
         projectId: projectId || fileId,
+        userId,
         getEditor: () => adapterRef.current,
         getLiveContent: () => {
             const anyAdapter = adapterRef.current as (EditorAdapter & { getContent?: () => string }) | null;
@@ -1758,6 +1775,220 @@ export function useEditorOrchestrator({
         aiStream.rejectAllGhostHunks();
     }, [aiStream]);
 
+    // Register active file tab, sync dirty state, hydrate pending hunks, and register Save & Leave flush handler
+    useEffect(() => {
+        const tabs = workspaceTabsRef.current;
+        if (!tabs || !fileId || hydration !== "ready") return;
+        tabs.openTab({
+            fileId,
+            title: title || "Untitled",
+            relativePath: title || fileId,
+            isDirty: autosave.isDirty,
+            isEncrypted: isEncryptedRef.current,
+        });
+        tabs.setActiveFileId(fileId);
+    }, [fileId, hydration, title, autosave.isDirty]);
+
+    useEffect(() => {
+        const tabs = workspaceTabsRef.current;
+        if (!tabs || !fileId) return;
+        tabs.updateTabState(fileId, { isDirty: autosave.isDirty });
+    }, [autosave.isDirty, fileId]);
+
+    useEffect(() => {
+        const tabs = workspaceTabsRef.current as
+            | (NonNullable<typeof workspaceTabs> & {
+                  registerDiscardFlushHandler?: (
+                      fn: (() => void | Promise<void>) | null
+                  ) => void;
+              })
+            | null;
+        if (!tabs) return;
+        tabs.registerSaveFlushHandler?.(async () => {
+            if (autosaveRef.current?.isDirty && executeServerWriteRef.current) {
+                autosaveRef.current.cancelAutosave();
+                await executeServerWriteRef.current(editorContentRef.current, fileId);
+            }
+        });
+        tabs.registerDiscardFlushHandler?.(() => {
+            autosaveRef.current?.cancelAutosave();
+            autosaveRef.current?.markClean();
+        });
+        return () => {
+            const currentTabs = workspaceTabsRef.current as typeof tabs;
+            currentTabs?.registerSaveFlushHandler?.(null);
+            currentTabs?.registerDiscardFlushHandler?.(null);
+        };
+    }, [fileId]);
+
+    useEffect(() => {
+        if (hydration === "ready" && fileId && currentAdapter) {
+            aiStream.hydrateGhostHunksForFile?.(fileId, currentAdapter);
+        }
+    }, [hydration, fileId, currentAdapter, aiStream.hydrateGhostHunksForFile]);
+
+    // INV-UNDO-SYNC: Turn-scoped & session-scoped rollback with stale-etag guard and editor/autosave resync
+    const handleRevertTurn = useCallback(
+        async (turnId: string, skipStaleConfirm = false): Promise<boolean> => {
+            const effectiveWorkspaceId = workspaceTabs?.activeWorkspaceId || projectId || fileId;
+            if (!effectiveWorkspaceId || !turnId) return false;
+
+            if (!skipStaleConfirm) {
+                try {
+                    const ops = await indexedDBManager.getOperationsByWorkspaceTurn(
+                        effectiveWorkspaceId,
+                        turnId
+                    );
+                    let hasStale = false;
+                    for (const op of ops) {
+                        if (!op.postTurnEtag) continue;
+                        const currentFile = await indexedDBManager.getFile(op.fileId);
+                        if (currentFile && currentFile.etag !== op.postTurnEtag) {
+                            hasStale = true;
+                            break;
+                        }
+                    }
+                    if (
+                        hasStale &&
+                        typeof window !== "undefined" &&
+                        typeof window.confirm === "function"
+                    ) {
+                        const confirmed = window.confirm(
+                            "One or more files modified in this turn have been edited since the agent ran. Reverting will overwrite those newer changes. Continue?"
+                        );
+                        if (!confirmed) return false;
+                    }
+                } catch {
+                    // Proceed if stale check fails in constrained environments
+                }
+            }
+
+            setRevertingTurnId(turnId);
+            try {
+                const rollbackResult = await syncRollback.rollbackAgentTurn(
+                    effectiveWorkspaceId,
+                    turnId
+                );
+
+                const activeAffected =
+                    rollbackResult.rolledBackFiles.includes(fileId) ||
+                    rollbackResult.restoredFiles.includes(fileId) ||
+                    rollbackResult.deletedCreatedFiles.includes(fileId);
+
+                if (rollbackResult.deletedCreatedFiles.includes(fileId)) {
+                    autosave.cancelAutosave();
+                    markClean();
+                    workspaceTabs?.updateTabState(fileId, { isDirty: false });
+                    aiStream.rejectAllGhostHunks();
+                    aiStream.markTurnReverted?.(turnId);
+                    if (onNavigate) onNavigate("/workspace");
+                    return true;
+                }
+
+                if (activeAffected) {
+                    autosave.cancelAutosave();
+
+                    let restoredContent: string | null = null;
+                    const idbFile = await indexedDBManager.getFile(fileId).catch(() => undefined);
+                    if (idbFile) {
+                        if (idbFile.isEncrypted && idbFile.content && sessionKeyStore.isVaultUnlocked()) {
+                            const effectiveUid = await resolveEffectiveUserId();
+                            const inbound = await SyncCryptoGateway.decryptInbound({
+                                fileId,
+                                content: idbFile.content,
+                                isEncrypted: true,
+                                encryptionMetadata: idbFile.encryptionMetadata ?? null,
+                                userId: effectiveUid,
+                            });
+                            restoredContent =
+                                inbound.status === "decrypted" ? inbound.content : idbFile.content;
+                        } else {
+                            restoredContent = idbFile.content;
+                        }
+                    } else {
+                        const remoteRes = await getFile(fileId).catch(() => null);
+                        if (remoteRes?.success && remoteRes.data) {
+                            restoredContent = remoteRes.data.content || "";
+                        }
+                    }
+
+                    if (restoredContent !== null) {
+                        isProgrammaticUpdateRef.current = true;
+                        try {
+                            adapterRef.current?.setValue(restoredContent, "rollback");
+                        } finally {
+                            isProgrammaticUpdateRef.current = false;
+                        }
+                        editorContentRef.current = restoredContent;
+                        baseContentRef.current = restoredContent;
+                        setContent(restoredContent);
+                    }
+
+                    markClean();
+                    workspaceTabs?.updateTabState(fileId, { isDirty: false });
+                    aiStream.rejectAllGhostHunks();
+                }
+
+                aiStream.markTurnReverted?.(turnId);
+                return true;
+            } catch (err) {
+                setError(err instanceof Error ? err.message : "Failed to revert agent turn");
+                return false;
+            } finally {
+                setRevertingTurnId(null);
+            }
+        },
+        [aiStream, autosave, fileId, markClean, onNavigate, projectId, resolveEffectiveUserId, workspaceTabs]
+    );
+
+    const handleRevertSession = useCallback(async (): Promise<void> => {
+        const activeTurns = aiStream.mutatedTurns.filter((t) => !t.isReverted);
+        if (activeTurns.length === 0) return;
+
+        const effectiveWorkspaceId = workspaceTabs?.activeWorkspaceId || projectId || fileId;
+        try {
+            let hasStale = false;
+            for (const turn of activeTurns) {
+                const ops = await indexedDBManager.getOperationsByWorkspaceTurn(
+                    effectiveWorkspaceId,
+                    turn.turnId
+                );
+                for (const op of ops) {
+                    if (!op.postTurnEtag) continue;
+                    const currentFile = await indexedDBManager.getFile(op.fileId);
+                    if (currentFile && currentFile.etag !== op.postTurnEtag) {
+                        hasStale = true;
+                        break;
+                    }
+                }
+                if (hasStale) break;
+            }
+            if (
+                hasStale &&
+                typeof window !== "undefined" &&
+                typeof window.confirm === "function"
+            ) {
+                const confirmed = window.confirm(
+                    "One or more files modified in this session have newer edits. Reverting the session will overwrite those changes. Continue?"
+                );
+                if (!confirmed) return;
+            }
+        } catch {
+            // Proceed if stale check fails
+        }
+
+        setIsRevertingSession(true);
+        try {
+            const reversed = [...activeTurns].reverse();
+            for (const turn of reversed) {
+                await handleRevertTurn(turn.turnId, true);
+            }
+            aiStream.markSessionReverted?.();
+        } finally {
+            setIsRevertingSession(false);
+        }
+    }, [aiStream, fileId, handleRevertTurn, projectId, workspaceTabs]);
+
     // Title Change
     const handleTitleChange = useCallback(
         async (newTitle: string) => {
@@ -1822,6 +2053,12 @@ export function useEditorOrchestrator({
         rejectGhostHunk,
         acceptAllGhostHunks,
         rejectAllGhostHunks,
+        mutatedTurns: aiStream.mutatedTurns,
+        revertingTurnId,
+        isRevertingSession,
+        handleRevertTurn,
+        handleRevertSession,
+        zkAiNotice: aiStream.zkAiNotice,
 
         previewText: aiStream.previewText,
         isStreaming: aiStream.isStreaming,

@@ -18,6 +18,7 @@ import type {
 } from "@/core/agent/atms/dag";
 import { isSystemReservedDecisionId } from "@/core/agent/taxonomy/predefined-tags";
 import type { GhostHunk } from "@/components/editor/markdown/types";
+import type { AgentMutatedTurn } from "@/hooks/use-ai-stream";
 import { HITLQuestionCard } from "@/components/agent/hitl-question-card";
 import { Button } from "@/components/ui/button";
 import modelsConfig from "@/config/models.config.json";
@@ -90,6 +91,12 @@ export interface AgentChatPanelProps {
   isVaultUnlocked?: boolean;
   allowAIOnEncryptedFiles?: boolean;
   isOffline?: boolean;
+  mutatedTurns?: ReadonlyArray<AgentMutatedTurn>;
+  onRevertTurn?: (turnId: string) => void | Promise<unknown>;
+  onRevertSession?: () => void | Promise<unknown>;
+  revertingTurnId?: string | null;
+  isRevertingSession?: boolean;
+  zkAiNotice?: string | null;
   className?: string;
 }
 
@@ -632,6 +639,12 @@ export function AgentChatPanel({
   isVaultUnlocked = true,
   allowAIOnEncryptedFiles = true,
   isOffline = false,
+  mutatedTurns,
+  onRevertTurn,
+  onRevertSession,
+  revertingTurnId = null,
+  isRevertingSession = false,
+  zkAiNotice = null,
   className,
 }: AgentChatPanelProps) {
   const [prompt, setPrompt] = useState("");
@@ -751,6 +764,27 @@ export function AgentChatPanel({
         </div>
 
         <div className="flex items-center gap-1">
+          {mutatedTurns &&
+            mutatedTurns.some((t) => !t.isReverted && t.mutatedFiles.length > 0) &&
+            onRevertSession && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => void onRevertSession()}
+                disabled={isRevertingSession || Boolean(revertingTurnId)}
+                data-testid="agent-revert-session-button"
+                title="Revert all mutations from this session"
+                className="gap-1 text-xs text-amber-300 hover:text-amber-200"
+              >
+                {isRevertingSession ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-3.5 w-3.5" />
+                )}
+                <span>Revert Session</span>
+              </Button>
+            )}
           {isResettable && onResetSession && (
             <Button
               type="button"
@@ -781,6 +815,17 @@ export function AgentChatPanel({
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5 custom-scrollbar">
+        {zkAiNotice && (
+          <div
+            role="status"
+            data-testid="agent-zk-ai-notice"
+            className="flex items-center gap-2 rounded-lg border border-indigo-500/30 bg-indigo-950/30 px-3 py-2 text-xs text-indigo-200"
+          >
+            <Lock className="h-4 w-4 text-indigo-400 shrink-0" />
+            <span>{zkAiNotice}</span>
+          </div>
+        )}
+
         {isOffline && (
           <div
             role="status"
@@ -1098,6 +1143,66 @@ export function AgentChatPanel({
             </div>
           )}
         </section>
+
+        {mutatedTurns && mutatedTurns.length > 0 && (
+          <section
+            aria-label="Agent Turn Mutations"
+            data-testid="agent-turn-mutations"
+            className="space-y-2.5"
+          >
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+              Turn Mutations ({mutatedTurns.length})
+            </h3>
+            <div className="space-y-2">
+              {mutatedTurns.map((turn) => (
+                <div
+                  key={turn.turnId}
+                  data-testid={`agent-turn-card-${turn.turnId}`}
+                  className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3 space-y-2 text-xs"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-zinc-200 truncate">
+                      {turn.prompt || turn.turnId}
+                    </span>
+                    {onRevertTurn && !turn.isReverted && turn.mutatedFiles.length > 0 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void onRevertTurn(turn.turnId)}
+                        disabled={revertingTurnId === turn.turnId || isRevertingSession}
+                        data-testid={`agent-revert-turn-${turn.turnId}`}
+                        className="h-6 px-2 gap-1 text-[11px] text-amber-300 hover:text-amber-200 shrink-0"
+                      >
+                        {revertingTurnId === turn.turnId ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <RotateCcw className="h-3 w-3" />
+                        )}
+                        <span>Revert Turn</span>
+                      </Button>
+                    )}
+                    {turn.isReverted && (
+                      <span className="text-[11px] text-emerald-400 font-medium shrink-0">
+                        Reverted
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {turn.mutatedFiles.map((mf) => (
+                      <span
+                        key={`${turn.turnId}-${mf.fileId}`}
+                        className="rounded bg-zinc-950 border border-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-300"
+                      >
+                        {mf.relativePath || mf.fileId} ({mf.action})
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
       </div>
 
       <form

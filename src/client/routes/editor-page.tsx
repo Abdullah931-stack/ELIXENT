@@ -120,6 +120,12 @@ export default function EditorPage() {
         rejectGhostHunk,
         acceptAllGhostHunks,
         rejectAllGhostHunks,
+        mutatedTurns,
+        revertingTurnId,
+        isRevertingSession,
+        handleRevertTurn,
+        handleRevertSession,
+        zkAiNotice,
 
         // Editor & Sync State
         isCommitting,
@@ -154,6 +160,26 @@ export default function EditorPage() {
     });
 
     const isVaultUnlocked = !isVaultLocked;
+
+    // Scroll to #headingSlug when navigating from DecisionGraphExplorer or changing hash
+    useEffect(() => {
+        if (!adapter || hydration !== "ready") return;
+        const scrollToCurrentHash = () => {
+            if (typeof window === "undefined") return;
+            const rawHash = window.location.hash;
+            if (!rawHash || rawHash.length <= 1) return;
+            const slug = decodeURIComponent(rawHash.slice(1));
+            const maybeScroll = (
+                adapter as EditorAdapter & { scrollToHeading?: (headingSlug: string) => boolean }
+            ).scrollToHeading;
+            maybeScroll?.call(adapter, slug);
+        };
+        scrollToCurrentHash();
+        window.addEventListener("hashchange", scrollToCurrentHash);
+        return () => {
+            window.removeEventListener("hashchange", scrollToCurrentHash);
+        };
+    }, [adapter, hydration]);
 
     // Fetch authenticated user ID
     useEffect(() => {
@@ -517,6 +543,12 @@ export default function EditorPage() {
                     isEncrypted={isEncrypted}
                     isVaultUnlocked={isVaultUnlocked}
                     allowAIOnEncryptedFiles={allowAIOnEncryptedFiles}
+                    mutatedTurns={mutatedTurns}
+                    onRevertTurn={handleRevertTurn}
+                    onRevertSession={handleRevertSession}
+                    revertingTurnId={revertingTurnId}
+                    isRevertingSession={isRevertingSession}
+                    zkAiNotice={zkAiNotice}
                 />
             </div>
 
