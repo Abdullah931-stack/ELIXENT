@@ -1164,4 +1164,50 @@ describe("POST /api/agent/stream Route Handler", () => {
       expect(mockFlushPendingSettlements).toHaveBeenCalledWith(mockUser.id);
     });
   });
+
+  describe("16. Open-Ceiling Single-Layer Metering Contract (BUG-04 / SRS-04 §3.2)", () => {
+    it("should not impose a route-level token ceiling or abort multi-node streams with large token totals", async () => {
+      graphConfigState.chunksToEmit = [
+        {
+          nodeId: "search_discovery_node",
+          stepIndex: 1,
+          status: "COMPLETED",
+          tokenUsage: { inputTokens: 85_000, outputTokens: 12_000, totalTokens: 97_000 },
+        },
+        {
+          nodeId: "assumption_extractor_node",
+          stepIndex: 2,
+          status: "COMPLETED",
+          tokenUsage: { inputTokens: 120_000, outputTokens: 25_000, totalTokens: 145_000 },
+        },
+        {
+          nodeId: "workspace_mutator_node",
+          stepIndex: 3,
+          status: "COMPLETED",
+          tokenUsage: { inputTokens: 210_000, outputTokens: 45_000, totalTokens: 255_000 },
+        },
+      ];
+
+      const req = new Request("http://localhost:3000/api/agent/stream", {
+        method: "POST",
+        body: JSON.stringify({
+          threadId: "th-open-ceiling",
+          projectId: "proj-1",
+          targetFileIds: ["file-1"],
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const res = await route.POST(req);
+      expect(res.status).toBe(200);
+      const frames = parseSSEFrames(await readStreamToText(res));
+
+      expect(frames[0].event).toBe("start");
+      expect(frames[frames.length - 1].event).toBe("done");
+      expect(frames.some((f) => f.event === "error")).toBe(false);
+      expect(frames.some((f) => f.event === "interrupt")).toBe(false);
+      const updateFrames = frames.filter((f) => f.event === "update");
+      expect(updateFrames).toHaveLength(3);
+    });
+  });
 });

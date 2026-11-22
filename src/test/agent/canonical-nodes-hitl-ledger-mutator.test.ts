@@ -504,6 +504,159 @@ describe("Node 6: hitl_clarification_node (hitl-nodes.ts — BUG-02, Anti-Domino
     expect(nextState.master_ledger.dec_root).toBeUndefined();
     expect(nextState.master_ledger.dec_child).toBeUndefined();
   });
+
+  it("frames neutral System 2 options (both evaluatedAlternatives and default fallback) and synthesizes post-adjudication selectionRationale", async () => {
+    const provider = createMockWorkspaceProvider();
+    const { ctx } = createRuntimeContext(provider);
+
+    // 1. Neutral framing on interrupt: dec_eval keeps neutralSummary/rationaleAndPremises without probabilities;
+    //    dec_default falls back to 3 neutral default options when < 2 alternatives exist.
+    const interruptState = createInitialAgentGraphState({
+      scored_decisions: [
+        {
+          decisionId: "dec_eval",
+          topicSlug: "cache_tier",
+          questionPrompt: "Choose cache tier?",
+          status: "UNRESOLVED",
+          evaluatedAlternatives: [
+            {
+              optionKey: "redis",
+              neutralSummary: "Managed Redis",
+              rationaleAndPremises: "Low-latency shared cache.",
+              normalizedProbability: 0.55,
+            },
+            {
+              optionKey: "in_memory",
+              neutralSummary: "In-memory LRU",
+              rationaleAndPremises: "Zero external dependencies.",
+              normalizedProbability: 0.45,
+            },
+          ],
+        },
+        {
+          decisionId: "dec_default",
+          topicSlug: "retry_policy",
+          questionPrompt: "Choose retry policy?",
+          status: "UNRESOLVED",
+        },
+      ],
+      unresolved_ledger: [
+        {
+          decisionId: "dec_eval",
+          topicSlug: "cache_tier",
+          questionPrompt: "Choose cache tier?",
+          conceptTags: ["performance"],
+          reason: "MULTI_OPTION_CORE_PREDICTION_SET",
+        },
+        {
+          decisionId: "dec_default",
+          topicSlug: "retry_policy",
+          questionPrompt: "Choose retry policy?",
+          conceptTags: ["reliability"],
+          reason: "EMPTY_CORE_PREDICTION_SET",
+        },
+      ],
+    });
+
+    const interruptRes = await hitlClarificationNode(interruptState, ctx);
+    expect(interruptRes.status).toBe("INTERRUPTED");
+    if (interruptRes.status === "INTERRUPTED") {
+      const questions = interruptRes.stateDelta.question_queue?.questions ?? [];
+      expect(questions).toHaveLength(2);
+      expect(questions[0].options).toEqual([
+        {
+          optionKey: "redis",
+          neutralSummary: "Managed Redis",
+          rationaleAndPremises: "Low-latency shared cache.",
+        },
+        {
+          optionKey: "in_memory",
+          neutralSummary: "In-memory LRU",
+          rationaleAndPremises: "Zero external dependencies.",
+        },
+      ]);
+      expect(questions[1].options.map((o) => o.optionKey)).toEqual([
+        "approve_conservative",
+        "adopt_direct_solution",
+        "defer_implementation",
+      ]);
+      for (const opt of questions[1].options) {
+        expect(opt.neutralSummary.length).toBeGreaterThan(10);
+        expect(opt.rationaleAndPremises?.length).toBeGreaterThan(10);
+      }
+    }
+
+    // 2. Post-adjudication rationale synthesis across all 3 branches
+    const resumeState = createInitialAgentGraphState({
+      scored_decisions: [
+        {
+          decisionId: "dec_base_plus_note",
+          topicSlug: "t1",
+          questionPrompt: "Q1?",
+          status: "UNRESOLVED",
+          selectionRationale: "Base System 2 premise",
+        },
+        {
+          decisionId: "dec_note_only",
+          topicSlug: "t2",
+          questionPrompt: "Q2?",
+          status: "UNRESOLVED",
+          selectionRationale: "",
+        },
+        {
+          decisionId: "dec_empty_both",
+          topicSlug: "t3",
+          questionPrompt: "Q3?",
+          status: "UNRESOLVED",
+        },
+      ],
+      unresolved_ledger: [
+        { decisionId: "dec_base_plus_note", topicSlug: "t1", questionPrompt: "Q1?", conceptTags: [], reason: "AMBIGUOUS" },
+        { decisionId: "dec_note_only", topicSlug: "t2", questionPrompt: "Q2?", conceptTags: [], reason: "AMBIGUOUS" },
+        { decisionId: "dec_empty_both", topicSlug: "t3", questionPrompt: "Q3?", conceptTags: [], reason: "AMBIGUOUS" },
+      ],
+      clarification_answers: {
+        answers: [
+          { questionId: "dec_base_plus_note", selectedOptionKey: "opt_1", customNotes: "Team preference" },
+          { questionId: "dec_note_only", selectedOptionKey: "opt_2", customNotes: "Compliance mandate" },
+          { questionId: "dec_empty_both", selectedOptionKey: "opt_3" },
+        ],
+      },
+    });
+
+    const resumeRes = await hitlClarificationNode(resumeState, ctx);
+    expect(resumeRes.status).toBe("COMPLETED");
+    const resolved = resumeRes.stateDelta.scored_decisions ?? [];
+    expect(resolved.find((d) => d.decisionId === "dec_base_plus_note")?.selectionRationale).toBe(
+      "Base System 2 premise (User note: Team preference)",
+    );
+    expect(resolved.find((d) => d.decisionId === "dec_note_only")?.selectionRationale).toBe(
+      "Compliance mandate",
+    );
+    expect(resolved.find((d) => d.decisionId === "dec_empty_both")?.selectionRationale).toBe(
+      "Explicitly selected by user during HITL clarification.",
+    );
+
+    // 3. Node 7 ledgerCommitNode default rationale fallback when selectionRationale is omitted
+    const commitRes = await ledgerCommitNode(
+      createInitialAgentGraphState({
+        scored_decisions: [
+          {
+            decisionId: "dec_commit_default",
+            topicSlug: "commit_topic",
+            questionPrompt: "Commit?",
+            status: "APPROVED_DIRECT",
+            selectedOptionKey: "opt_x",
+          },
+        ],
+      }),
+      ctx,
+    );
+    expect(commitRes.status).toBe("COMPLETED");
+    expect(
+      commitRes.stateDelta.master_ledger?.["dec_commit_default"]?.selectionRationale,
+    ).toBe("Adopted during resolution commit.");
+  });
 });
 
 describe("Node 7: ledger_commit_node (resolution-and-ledger-nodes.ts)", () => {

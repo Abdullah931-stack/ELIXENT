@@ -14,9 +14,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   IDB_CONFIG,
   getDatabaseName,
+  type EncryptedEnvelopeMetadata,
   type IDBFile,
   type IDBOperation,
 } from "@/lib/sync/idb-types";
+import { encryptionMetadataSchema } from "@/types/rpc-contracts";
 import {
   IndexedDBManager,
   createIndexedDBManager,
@@ -640,5 +642,82 @@ describe("SyncRollback.rollbackAgentTurn (Wave 5.1)", () => {
     });
     expect(mockDeleteFile).not.toHaveBeenCalled();
     expect(mockRestoreWorkspaceFileRpc).not.toHaveBeenCalled();
+  });
+
+  it("pushes rolled-back encrypted file state with pre-turn encryptionMetadata via toggleFileEncryption instead of plaintext updateFileContent", async () => {
+    const preTurnEncryptionMetadata: EncryptedEnvelopeMetadata =
+      encryptionMetadataSchema.parse({
+        version: 1,
+        algorithm: "AES-GCM-256",
+        keyId: "master-v1",
+        iv: "cHJlLXR1cm4taXYx",
+        salt: "cHJlLXR1cm4tc2FsdC0xNg==",
+        kdfIterations: 600000,
+      });
+    const postTurnEncryptionMetadata: EncryptedEnvelopeMetadata =
+      encryptionMetadataSchema.parse({
+        version: 1,
+        algorithm: "AES-GCM-256",
+        keyId: "master-v1",
+        iv: "cG9zdC10dXJuLWl2",
+        salt: "cG9zdC10dXJuLXNhbHQtMTY=",
+        kdfIterations: 600000,
+      });
+
+    await idb.saveFile(
+      buildFile({
+        id: "file-enc",
+        title: "vault-secret.md",
+        content: "CIPHERTEXT_V2",
+        etag: "etag-enc-v2",
+        version: 2,
+        isEncrypted: true,
+        encryptionMetadata: postTurnEncryptionMetadata,
+      }),
+    );
+
+    await idb.addOperation(
+      buildOperation({
+        id: "op-enc-update",
+        workspaceId: "ws-enc",
+        turnId: "turn-enc-1",
+        fileId: "file-enc",
+        operationType: "update",
+        timestamp: 2000,
+        content: "CIPHERTEXT_V2",
+        snapshot: {
+          content: "CIPHERTEXT_V1_PRE_TURN",
+          etag: "etag-enc-v1",
+          version: 1,
+          encryptionMetadata: preTurnEncryptionMetadata,
+        },
+      }),
+    );
+
+    const summary = await rollback.rollbackAgentTurn("ws-enc", "turn-enc-1");
+
+    expect(summary).toEqual({
+      rolledBackFiles: ["file-enc"],
+      restoredFiles: [],
+      deletedCreatedFiles: [],
+    });
+
+    const restored = await idb.getFile("file-enc");
+    expect(restored).toMatchObject({
+      content: "CIPHERTEXT_V1_PRE_TURN",
+      etag: "etag-enc-v1",
+      version: 1,
+      isEncrypted: true,
+      encryptionMetadata: preTurnEncryptionMetadata,
+    });
+
+    expect(mockToggleFileEncryption).toHaveBeenCalledTimes(1);
+    expect(mockToggleFileEncryption).toHaveBeenCalledWith(
+      "file-enc",
+      true,
+      "CIPHERTEXT_V1_PRE_TURN",
+      preTurnEncryptionMetadata,
+    );
+    expect(mockUpdateFileContent).not.toHaveBeenCalled();
   });
 });

@@ -578,6 +578,32 @@ describe("3. 4-Source Decision Change Weight W(d) & Anti-Domino Gate (atms/inval
         extraNodes: [],
         expected: { total: 28, structural: 28, provenance: 0, topology: 0, surface: 0 },
       },
+      {
+        name: "clamps Infinity/-Infinity to min bounds and caps W(d) <= 100 across depth-3+ transitive dependents",
+        node: createDecisionNode("d_inf_depth", {
+          couplingLevel: Number.POSITIVE_INFINITY, // non-finite -> clamped to 0
+          rollbackCost: Number.NEGATIVE_INFINITY, // non-finite -> clamped to 0 -> structural = 10
+          provenance: "SYSTEM1_DIRECT_APS",
+          dominanceMargin: Number.POSITIVE_INFINITY, // non-finite -> clamped to 0 -> provenance = 10
+          dependedBy: ["d1", "d2", "d3", "d4"], // 4 direct (24 raw, capped at 20)
+          affectedSections: [
+            { fileId: "f1", headingSlug: "s1" },
+            { fileId: "f2", headingSlug: "s2" },
+            { fileId: "f3", headingSlug: "s3" },
+            { fileId: "f4", headingSlug: "s4" },
+          ], // raw surface > 10, capped at 10
+        }),
+        extraNodes: [
+          createDecisionNode("d1", { dependedBy: ["d1_child"] }),
+          createDecisionNode("d1_child", { dependedBy: ["d1_grandchild"] }),
+          createDecisionNode("d1_grandchild", { dependedBy: ["d_inf_depth"] }), // cycle back to root safely ignored
+          createDecisionNode("d2", { dependedBy: ["d2_child"] }),
+          createDecisionNode("d2_child"),
+          createDecisionNode("d3"),
+          createDecisionNode("d4"),
+        ],
+        expected: { total: 50, structural: 10, provenance: 10, topology: 20, surface: 10 },
+      },
     ])("computes exact 4-source breakdown for $name", ({ node, extraNodes, expected }) => {
       const allNodes: Record<string, DecisionGraphNode> = {
         [node.decisionId]: node,
