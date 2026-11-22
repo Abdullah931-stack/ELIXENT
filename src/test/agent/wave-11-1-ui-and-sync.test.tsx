@@ -29,6 +29,15 @@ vi.mock("@/lib/ai/stream-handler", async (importOriginal) => {
     };
 });
 
+// Hermetic HTTP boundary stub so pre-stream workspace vault hydration does not boot @/server/app
+vi.mock("@/client/rpc-client", () => ({
+    getUserFiles: vi.fn().mockResolvedValue({ success: true, data: [] }),
+    getFile: vi.fn().mockResolvedValue({ success: false, data: null }),
+    toggleFileEncryption: vi.fn().mockResolvedValue({ success: true }),
+    listWorkspacesRpc: vi.fn().mockResolvedValue({ success: true, data: [] }),
+    updateFileContent: vi.fn().mockResolvedValue({ success: true }),
+}));
+
 import modelsConfig from "@/config/models.config.json";
 import { AgentStreamRequestPayloadSchema } from "@/core/agent/stream-payload";
 import { useAIStream } from "@/hooks/use-ai-stream";
@@ -1113,7 +1122,7 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
             expect(result.current.status).toBe("completed");
         });
 
-        it("transitions to failed on INSUFFICIENT_CREDITS interrupt and synthesizes section hunks from ledger + invalidation_map", async () => {
+        it("pauses on INSUFFICIENT_CREDITS interrupt, resumes cleanly, and never fabricates client-side section hunks when document_writer_node emits only ledger + invalidation_map (BUG-03)", async () => {
             const editor = createSimpleEditor(
                 "# Storage Layer\n\nLegacy storage description.\n\n# Network Layer\n\nTCP transport."
             );
@@ -1189,13 +1198,15 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
             expect(result.current.status).toBe("completed");
             expect(result.current.error).toBeNull();
 
-            // 2. Client-side synthesis fallback when document_writer_node emits ledger + invalidation_map
+            // 2. BUG-03 removal: when document_writer_node emits only master_ledger + invalidation_map
+            //    without server-authored hunks or ghost_hunk_proposed, useAIStream MUST merge the ledger
+            //    and complete cleanly without fabricating placeholder client-side ghost hunks.
             mockConsumeAgentStream.mockImplementationOnce(async (opts: StreamHandlerOptions) => {
                 opts.onStart?.({
                     type: "start",
-                    sessionId: "s-synth",
-                    threadId: "t-synth",
-                    operationId: "op-synth",
+                    sessionId: "s-no-client-synth",
+                    threadId: "t-no-client-synth",
+                    operationId: "op-no-client-synth",
                 });
                 opts.onUpdate?.({
                     type: "update",
@@ -1213,8 +1224,8 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
                 });
                 opts.onDone?.({
                     type: "done",
-                    threadId: "t-synth",
-                    operationId: "op-synth",
+                    threadId: "t-no-client-synth",
+                    operationId: "op-no-client-synth",
                 });
             });
 
@@ -1222,10 +1233,12 @@ describe("Phase 11 — Wave 11.1 UI Components & Orchestration Suite", () => {
                 await result.current.startAgentSession("Synthesize storage layer");
             });
 
-            expect(result.current.status).toBe("preview_ready");
-            expect(result.current.activeGhostHunks).toHaveLength(1);
-            expect(result.current.activeGhostHunks[0].headingSlug).toBe("storage-layer");
-            expect(result.current.activeGhostHunks[0].decisionIds).toContain("dec_storage_01");
+            expect(result.current.status).toBe("completed");
+            expect(result.current.activeGhostHunks).toHaveLength(0);
+            expect(result.current.masterDecisionLedger.dec_storage_01).toMatchObject({
+                decisionId: "dec_storage_01",
+                selectedOptionKey: "opt_postgres",
+            });
         });
 
         it("rejects empty prompt and sets error without dispatching stream", async () => {

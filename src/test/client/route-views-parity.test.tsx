@@ -637,7 +637,7 @@ describe("Migrated Client Route Views Behavioral Parity (src/client/routes/*)", 
         expect(sidebar.getAttribute("data-user-id")).toBe("workspace-user-id");
       });
       expect(screen.getByTestId("mock-outlet")).toBeTruthy();
-      expect(screen.getByAltText("LUGX")).toBeTruthy();
+      expect(screen.getByAltText("Elixent")).toBeTruthy();
     });
   });
 
